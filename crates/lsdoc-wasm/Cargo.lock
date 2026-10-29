@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "tine-outline"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "lsdoc",
  "serde",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "tine-search"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "regex",
  "unicode-normalization",

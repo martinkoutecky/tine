@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.2",
+  "baseTag": "v0.8.1",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.8.2 is a stable patch: four bug fixes on one stable fix branch (merged into develop first, then master), the new one (GH #798) with fail-before on stable and three re-applied from develop with their tests; full suites and hosted CI run on the candidate. Martin authorized the cut on 2026-10-29 (\"Jn2 yes cut 0.8.2.\")."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH798-PICKER-RUNTIME-REF-ID"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-GH798-PICKER-RUNTIME-REF-ID; the picker tests fail on v0.8.1 (fail-before recorded on batch/fix-gh798-ref-id) and pass on the candidate.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Block.referenceAuthoring.test.tsx",
+          "src/store.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the documented behaviour; no Guide text describes the broken behaviour.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A first launch with a default journal template no longer sometimes opens Journals as \"Couldn't open this page: Journal feed read failed\" while today's template page is still being saved; Journals shows as soon as that save ends (GH #671, E2E-BASE-4).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH671-STARTUP-SAVE-DEFERRED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-GH671-STARTUP-SAVE-DEFERRED; Page.test.tsx and the e2e-gh671-journal-startup journey pin the deferred (not failed) feed while the template save runs. Picked with -x from develop ec3936fec.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Page.test.tsx",
+          "scripts/e2e-gh671-journal-startup.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the documented behaviour; no Guide text describes the broken behaviour.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).",
+      "userVisible": true,
+      "regressions": [
+        "UI-JOURNAL-FEED-PAGING-WHILE-EDITING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-JOURNAL-FEED-PAGING-WHILE-EDITING; Page.feedPaging.test.tsx fails before the fix (picked with -x from develop 52d1be3b0).",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Page.feedPaging.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the documented behaviour; no Guide text describes the broken behaviour.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page file that a sync tool is replacing while Tine lists the folder is no longer reported as \"couldn't be read\" (REG-SCAN-VANISHED-ENTRY).",
+      "userVisible": true,
+      "regressions": [
+        "REG-SCAN-VANISHED-ENTRY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row REG-SCAN-VANISHED-ENTRY; the tine-store scan test removes and replaces a file mid-scan (picked with -x from develop 3d385f3cf; the re-check now lives in crates/tine-store/src/scan_recheck.rs for the size ratchet).",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "crates/tine-store/src/scan_recheck.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the documented behaviour; no Guide text describes the broken behaviour.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    }
+  ]
+}

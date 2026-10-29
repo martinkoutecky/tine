@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-29
+
+Bug fixes for Tine 0.8.1: block references picked from the `((` search, Journals on a first launch and while editing, and a page file a sync tool is replacing.
+
 ### Fixed
 
 - Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
@@ -7013,7 +7017,8 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/martinkoutecky/tine/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/martinkoutecky/tine/compare/v0.8.0...v0.8.1
 [0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
 [0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
