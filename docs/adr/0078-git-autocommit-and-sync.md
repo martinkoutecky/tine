@@ -314,7 +314,7 @@ only for its local checks, not during the network transfer (review F3). The OS e
 the graph on shared storage). Android's shared storage (MediaProvider FUSE) reports another owner for every file,
 so libgit2's repository-owner check is off on Android only (accepted under the trust model, 2026-10-28: it excludes an attacker with write access
 to the files). On that storage a case-only rename succeeds but keeps the old spelling, so a pull that renames a page
-by capitalization alone stays `pull-incomplete` and writes nothing (an open decision).
+by capitalization alone stays `pull-incomplete` and writes nothing (a stated limit for 0.9.0-beta.1, D-20261029-GS1; a two-step rename follows in a later 0.9 Beta).
 
 ## Unit cost (I-25)
 

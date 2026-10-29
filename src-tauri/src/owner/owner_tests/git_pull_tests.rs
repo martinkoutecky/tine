@@ -622,6 +622,35 @@ fn q_git_resume_test_that_cannot_scan_defers_the_autocommit() {
 }
 
 #[test]
+fn q_git_resume_test_that_cannot_hash_a_file_defers_the_autocommit() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    let up = upstream(
+        &repo,
+        &[
+            Edit::Write("pages/a.md", b"- theirs\n"),
+            Edit::Write("assets/n.txt", b"note\n"),
+        ],
+    );
+    test_hook::crash_at(Step::AfterPages);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    let _ = std::fs::remove_file(repo.path().join("index.lock"));
+    test_hook::restart(&graph.root);
+    test_hook::fail_hash();
+    assert_eq!(
+        commit_now(&graph.root, "Tine: autosave").unwrap(),
+        Outcome::PullPending
+    );
+    assert_eq!(head(&repo), h, "the half-applied tree was committed");
+    landed(&pull(&slot));
+    assert_eq!(head(&repo), up);
+    assert_eq!(dirty(&repo), Vec::<String>::new());
+}
+
+#[test]
 fn q_git_resume_after_uncertain() {
     test_hook::clear();
     let graph = Graph::new();

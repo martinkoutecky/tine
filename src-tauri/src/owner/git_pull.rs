@@ -276,7 +276,12 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
         let at_u = blob_at(&u_tree, path);
         let on_disk = match hash_on_disk(&key.join(path)) {
             Ok(blob) => blob,
-            Err(_) => return false,
+            // A folder or link where a file was is a local change.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => return false,
+            // A read that fails (a page save replacing the file, a sharing
+            // violation) cannot rule the pull out either: defer, as for a
+            // failed scan (REG-SB1-GIT-RESUME-HASH-ERROR).
+            Err(_) => return true,
         };
         if on_disk != at_u {
             return false;
@@ -295,8 +300,13 @@ fn blob_at(tree: &git2::Tree<'_>, path: &str) -> Option<Oid> {
 }
 
 /// The blob id of the regular file at `path`, `None` when absent; a folder,
-/// symlink or other non-file is an error.
+/// symlink or other non-file is an `InvalidInput` error, a failed read any
+/// other error.
 fn hash_on_disk(path: &Path) -> std::io::Result<Option<Oid>> {
+    #[cfg(test)]
+    if test_hook::hash_fails() {
+        return Err(std::io::Error::other("error reading file for hashing"));
+    }
     #[cfg(test)]
     if test_hook::folding() && !path.exists() {
         if let Some(parent) = path.parent() {
@@ -323,7 +333,10 @@ fn hash_on_disk(path: &Path) -> std::io::Result<Option<Oid>> {
         Ok(meta) if meta.is_file() => Oid::hash_file(ObjectType::Blob, path)
             .map(Some)
             .map_err(|e| std::io::Error::other(e.message().to_string())),
-        Ok(_) => Err(std::io::Error::other("not a regular file")),
+        Ok(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        )),
     }
 }
 
@@ -1268,6 +1281,7 @@ pub(crate) mod test_hook {
         static AFTER_HOST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
         static FOLDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         static STATUS_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static HASH_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     /// Answer the next host operations: `Some((apply_first, result))`
@@ -1290,6 +1304,7 @@ pub(crate) mod test_hook {
         AFTER_HOST.with(|h| *h.borrow_mut() = None);
         FOLDING.with(|f| f.set(false));
         STATUS_FAILS.with(|f| f.set(false));
+        HASH_FAILS.with(|f| f.set(false));
     }
 
     /// Fail the next resume test's status scan, as a page save replacing a
@@ -1300,6 +1315,16 @@ pub(crate) mod test_hook {
 
     pub(super) fn status_fails() -> bool {
         STATUS_FAILS.with(|f| f.replace(false))
+    }
+
+    /// Fail the next on-disk hash, as a read racing a save's replace can
+    /// (one shot).
+    pub(crate) fn fail_hash() {
+        HASH_FAILS.with(|f| f.set(true));
+    }
+
+    pub(super) fn hash_fails() -> bool {
+        HASH_FAILS.with(|f| f.replace(false))
     }
 
     pub(super) fn host(op: &HostOp) -> Option<(bool, Result<(), ApplyRefusal>)> {
