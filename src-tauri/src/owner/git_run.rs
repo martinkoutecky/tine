@@ -35,6 +35,9 @@ use tine_store::PageId;
 use super::wire::{ok, ErrorBody};
 use crate::state::GraphSlot;
 
+mod index_lock_identity;
+use index_lock_identity::IndexLockIdentity;
+
 pub(crate) const TRAILER: &str = "Tine-Run";
 const SNAPSHOT_TRAILER: &str = "Tine-Snapshot";
 const REVERT_TRAILER: &str = "Tine-Run-Revert";
@@ -548,11 +551,16 @@ impl Repo {
 /// `HEAD` over an index still naming the old blobs, left by a crash between
 /// the two or by a power cut that undid the index rename, would let the user's
 /// next plain `git commit` record a reversion.
+/// If another process removed this lock while Tine was suspended, the held
+/// handle's identity must still match the path before install or release.
+/// Otherwise install refuses and drop leaves the current lock alone. Native
+/// check-to-mutation races remain (storage contract I-8).
 pub(super) struct IndexLock {
     guard: Arc<GitMutationGuard>,
     /// `index.lock`, held until drop; it stays empty (git never reads another
     /// command's lock file).
     lock: Option<std::fs::File>,
+    identity: IndexLockIdentity,
     lock_file: PathBuf,
     index_file: PathBuf,
     scratch: PathBuf,
@@ -631,6 +639,9 @@ impl IndexLock {
                 std::io::ErrorKind::AlreadyExists => LockRefusal::Held,
                 _ => LockRefusal::Failed(format!("{}: {e}", lock_file.display())),
             })?;
+        let identity = IndexLockIdentity::from_file(&lock).map_err(|e| {
+            LockRefusal::Failed(format!("the index lock identity could not be read: {e}"))
+        })?;
         remove_stale_copies(gitdir, &guard);
         let scratch = gitdir.join(format!(
             "{SCRATCH_PREFIX}{}.tmp",
@@ -669,6 +680,7 @@ impl IndexLock {
             Ok(index) => Ok(Self {
                 guard,
                 lock: Some(lock),
+                identity,
                 lock_file,
                 index_file,
                 scratch,
@@ -681,8 +693,9 @@ impl IndexLock {
                 if check(&scratch.with_extension("tmp.lock")).is_ok() {
                     let _ = std::fs::remove_file(scratch.with_extension("tmp.lock"));
                 }
+                let owned = check(&lock_file).is_ok() && identity.matches_path(&lock_file);
                 drop(lock);
-                if check(&lock_file).is_ok() {
+                if owned {
                     let _ = std::fs::remove_file(&lock_file);
                 }
                 Err(refusal)
@@ -761,6 +774,7 @@ impl IndexLock {
     /// means the branch must not move; the index is then the old or the new
     /// one, either of which is safe under the old `HEAD`.
     pub(super) fn install(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.check_ownership().map_err(|e| e.message())?;
         self.guard.check_path(&self.scratch)?;
         self.guard
             .check_path(&self.scratch.with_extension("tmp.lock"))?;
@@ -773,6 +787,7 @@ impl IndexLock {
             .sync_all()?;
         self.guard.check_path(&self.scratch)?;
         self.guard.check_path(&self.index_file)?;
+        self.check_ownership().map_err(|e| e.message())?;
         std::fs::rename(&self.scratch, &self.index_file)?;
         let gitdir = self.index_file.parent().ok_or("the index has no folder")?;
         self.guard.check_path(gitdir)?;
@@ -805,8 +820,11 @@ impl Drop for IndexLock {
         }
         // Close before unlinking: Windows keeps a deleted, open file's name
         // until its last handle closes, which would refuse the next lock.
+        let ownership = self.check_ownership();
         drop(self.lock.take());
-        if self.guard.check_path(&self.lock_file).is_ok() {
+        if let Err(refusal) = ownership {
+            crate::debug::diag_private("git-index-lock-lost", refusal.message());
+        } else {
             let _ = std::fs::remove_file(&self.lock_file);
         }
     }

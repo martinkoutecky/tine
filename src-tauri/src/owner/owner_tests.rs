@@ -632,6 +632,10 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("git_mobile_tests", include_str!("git_mobile_tests.rs")),
         ("git_pull", include_str!("git_pull.rs")),
         ("git_run", include_str!("git_run.rs")),
+        (
+            "index_lock_identity",
+            include_str!("git_run/index_lock_identity.rs"),
+        ),
         ("git_sync", include_str!("git_sync.rs")),
         (
             "git_sync_credentials",

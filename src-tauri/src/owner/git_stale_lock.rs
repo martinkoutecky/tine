@@ -1,5 +1,5 @@
 //! A stale `index.lock` the person can remove with one click (ADR 0078 §1,
-//! slice 3; GS-LOCK, pending Martin's answer).
+//! slice 3; approved D-20261029-GSL).
 //!
 //! When the OS ends Tine during a commit, the empty `index.lock` Tine's own
 //! commit holds ([`super::git_run::IndexLock`]) stays behind, and every later
@@ -8,17 +8,23 @@
 //! it by itself, and only when all of these hold:
 //!
 //! 1. Tine runs no git operation itself: [`RUN_LOCK`] is free (every Tine path
-//!    that takes `index.lock` holds it), so the lock is not Tine's own live one.
+//!    that takes `index.lock` holds it), excluding this process's live lock.
 //! 2. The lock is a regular, **empty** file. Tine's lock is always empty; a
 //!    git program writes the new index into its lock as it goes, and the one
 //!    long honest holder, `git commit -a` (or `git commit <paths>`) waiting
 //!    in an editor, holds an index already written into it. A lock with
 //!    content keeps today's "busy" behaviour, and Settings names it.
 //! 3. It has not changed for [`STALE_AFTER`] (by its modification time; a
-//!    time in the future counts as fresh). A live lock of a concurrent honest
-//!    client (a second Tine, Termux git, Working Copy, a desktop git app) is
-//!    held for seconds; one that a sync tool delivers from another device
-//!    keeps the other device's time, so a live one arrives fresh.
+//!    time in the future counts as fresh).
+//!
+//! Known limit: a process the OS froze or suspended while it held an empty
+//! lock (Android freezer, iOS suspension, e.g. Tine beside Tine Beta, or a git
+//! app paused mid-checkout) is indistinguishable by age. Each process has its
+//! own RUN_LOCK. IndexLock's held-file identity check prevents a resumed Tine
+//! from installing its old index or deleting a replacement lock after it
+//! observes lost ownership; a frozen third-party client remains a gap in
+//! D-20261029-GSL's "never for a lock another git program holds" requirement.
+//! Server/client or synced-peer clock skew can also make a live lock look old.
 //!
 //! The click passes back the lock's identity as offered ([`StaleLock::token`]:
 //! size, modification and creation times). Under [`RUN_LOCK`] the click
@@ -116,8 +122,9 @@ fn run_lock_within(wait: Duration) -> Option<MutexGuard<'static, ()>> {
 
 /// Conditions 2 and 3 for the lock at `root`. The caller holds [`RUN_LOCK`].
 pub(super) fn assess(root: &Path, now: SystemTime) -> Option<StaleLock> {
-    let repo = super::git_run::discover(root).ok()?;
-    let path = repo.path().join("index.lock");
+    let repo = open_repo_at(root).ok()?;
+    let path = repo.repo.path().join("index.lock");
+    repo.guard.check_path(&path).ok()?;
     let meta = std::fs::symlink_metadata(&path).ok()?;
     stale(&meta, now).then(|| StaleLock {
         path: path.display().to_string(),
@@ -185,6 +192,13 @@ pub(super) fn remove_within(
     if token(&meta) != offered || !stale(&meta, now) {
         return Err(Refusal::Changed);
     }
+    #[cfg(test)]
+    BEFORE_MOVE.with(|h| {
+        let hook = h.borrow_mut().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    });
     match std::fs::rename(&lock, &aside) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Removed::Gone),
@@ -210,4 +224,16 @@ pub(super) fn remove_within(
         format!("git-stale-lock-removed {} ({offered})", lock.display()),
     );
     Ok(Removed::Removed)
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_MOVE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(super) fn before_move_test_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_MOVE.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
 }

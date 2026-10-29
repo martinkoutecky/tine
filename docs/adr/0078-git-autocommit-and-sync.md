@@ -55,13 +55,14 @@ Tine's exact bytes and a later normalising checkout changes only line endings), 
 skip-worktree entry under the graph root: libgit2's add would commit the excluded files as deleted), and on macOS
 and iOS a repository without `core.precomposeunicode = true` (decomposed names would commit every diacritic page as
 a delete plus an add). A held `index.lock` is "busy, retry"; after three busy cycles spanning 30 minutes Settings
-names the file and says to remove it if no git command is running (a crash can leave it; Tine never deletes it).
+names the file and says to remove it if no git command is running (a crash can leave it; the exception below
+allows an explicit click to remove a qualifying `index.lock`).
 Slice 3: the lock named is the one actually held, `index.lock` or a ref lock a crashed commit left on `HEAD`, the
 branch or `packed-refs` (`held_lock`; before, Settings always named `index.lock`, even when a branch lock was the cause).
-Slice 3, GS-LOCK (built ahead of Martin's answer; this sentence replaces "Tine never deletes it" for `index.lock`
-only once he accepts it): when a commit or sync finds `index.lock` held, Tine offers **Remove the stale lock** in
+Slice 3, D-20261029-GSL (Martin approved 2026-10-29): when a commit or sync finds `index.lock` held,
+Tine offers **Remove the stale lock** in
 the app's notice (under every committing policy) and in Settings if (a) Tine runs no git operation itself
-(`RUN_LOCK` is free; every Tine path that takes `index.lock` holds it), (b) the lock is a regular, empty file
+(`RUN_LOCK` is free in this process; every Tine path that takes `index.lock` holds it), (b) the lock is a regular, empty file
 (Tine's own lock is always empty; a git program writes the new index into its lock, and `git commit -a` holds such
 a written lock while its editor is open), and (c) its modification time is at least 10 minutes old and not in
 the future. The click passes back the offered identity (size, modification and creation times); under `RUN_LOCK`
@@ -69,6 +70,19 @@ Tine rechecks (a)–(c) and the identity, renames the lock aside, checks the ren
 (otherwise links it back), deletes it, logs `git-stale-lock-removed`, and the worker commits (and syncs) at once.
 Tine never removes a lock unasked, and never a ref, `HEAD`, `packed-refs` or `shallow` lock
 (`src-tauri/src/owner/git_stale_lock.rs`).
+The offer also applies the click's guard, clean repository state and attached-HEAD checks, so a merge or
+detached HEAD does not offer an action that must refuse.
+
+Known limit: a process the OS froze or suspended while it held an empty lock (Android freezer, iOS suspension,
+e.g. Tine beside Tine Beta, or a git app paused mid-checkout) is indistinguishable by age. Each Tine process has
+its own `RUN_LOCK`. To limit the cascade, `IndexLock` records the created handle's identity (Unix dev+ino;
+Windows volume serial + file ID) and refuses to install or unlink after observing a missing or replaced lock.
+This protects a resumed Tine from overwriting the index or deleting its successor's lock; it cannot protect
+a frozen third-party git client without such a check. That remains a gap in the approval's "never for a lock
+another git program holds" requirement. Identity errors or zero IDs fail closed without a timestamp fallback;
+unstable FUSE/NFS identities can refuse an otherwise safe commit. Native check-to-mutation races remain.
+Network filesystem/peer clock skew can also defeat the age test; filesystems without hard links preserve a
+raced replacement at the named aside path for recovery (see the storage contract's refusal/limit table).
 Sync additionally needs the graph root to be the work tree root: a fast-forward of a bigger repository changes
 files outside the graph, which Tine does not own.
 

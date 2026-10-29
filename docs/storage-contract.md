@@ -1131,11 +1131,12 @@ while it is on. This is an existing Git config key, not a new Tine persisted
 format or page-writer path. A converted checkout links to the Guide's
 commit-first, clean-status, local-config and re-checkout steps instead.
 
-`git_remove_stale_lock` (GS-LOCK, ADR 0078 §1 slice 3; all five targets; built ahead of Martin's answer)
+`git_remove_stale_lock` (D-20261029-GSL, ADR 0078 §1 slice 3; all five targets)
 removes one file, the worktree gitdir's `index.lock`, and only on the person's click. In-scope threats: a crash
 or the OS ending Tine mid-commit (the lock it leaves is Tine's own empty one), and concurrent honest git clients
-(a second Tine, Termux git, Working Copy, a desktop git app, a lock a sync tool delivers with the other device's
-modification time). It is offered only when Tine runs no git operation (`RUN_LOCK` free), the lock is a regular
+(Termux git, Working Copy, a desktop git app, a lock a sync tool delivers with the other device's
+modification time). It is offered only when the same repository guard, clean-state and attached-HEAD checks as
+the click pass, Tine runs no git operation in this process (`RUN_LOCK` free), the lock is a regular
 empty file and unchanged for 10 minutes (a future time counts as fresh). The click refuses, removing nothing:
 `TineBusy` when `RUN_LOCK` stays held for 5 s (Tine's own operation may own the lock); `Changed` when the lock's
 size, modification or creation time differs from the offer or it no longer qualifies (a git program took the
@@ -1146,6 +1147,13 @@ deleted only if the renamed file still carries the offered identity; otherwise i
 No graph file, index, ref or other lock (`refs/heads/<branch>.lock`, `HEAD.lock`, `packed-refs.lock`,
 `shallow.lock`) is touched. A crash between the rename and the delete leaves an empty aside file only. No new
 persisted format: the worker's offer is in-memory state.
+
+| Stale-lock refusal or limit | In-scope threat and response |
+|---|---|
+| Lost Tine lock ownership | `IndexLock` records the created handle's identity (Unix device + inode; Windows volume serial + file ID), and compares it with the regular file at `index.lock` before writing its copy, immediately before installing it, and before unlinking on drop or acquisition-error cleanup. A missing, redirected, replaced or unidentifiable lock refuses installation through the existing git error paths ("the index lock was removed while Tine held it") and leaves the current lock alone; drop logs the refusal. A resumed Tine therefore cannot install its older index or delete another client's lock after observing lost ownership. |
+| Frozen or suspended live holder | A process the OS froze or suspended while it held an empty lock (Android freezer, iOS suspension, e.g. Tine beside Tine Beta, or a git app paused mid-checkout) is indistinguishable by age. The ownership check limits the Tine-to-Tine cascade; third-party clients without that check remain a known gap in D-20261029-GSL's "never for a lock another git program holds" requirement. |
+| Filesystem identity limits | No timestamp fallback: unavailable or zero file IDs refuse commits and preserve the lock. Android FUSE uses the same Unix identity checks, not a platform exemption; unstable IDs (including on NFS) may cause safe refusals. A filesystem returning the same nonzero ID for different files cannot provide this ownership guarantee. Honest native check-to-mutation races remain; this is not an atomic conditional rename/unlink. |
+| Clock and link support | NFS/SMB server mtime versus a client clock over 10 minutes ahead, or a clock-skewed peer delivering a live `.git` lock, can make a live empty lock look stale. A filesystem without hard links (some FUSE providers) cannot restore a replacement in the check-to-move race; the refusal names the preserved aside file for recovery. |
 
 Each row below is keyed by the source file, owning function and refusal family.
 The count is the number of production constructions or save-adapter outcomes;
