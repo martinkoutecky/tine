@@ -6,7 +6,7 @@ import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { Field } from "./settingsField";
 import { DialogActions } from "./DialogActions";
 import { GitSyncFixes } from "./GitSyncNotice";
-import { gitLineEndingsProblem, gitSyncProblem, gitSyncResult } from "../gitSync";
+import { gitLineEndingsProblem, gitStaleLockProblem, gitSyncProblem, gitSyncResult } from "../gitSync";
 
 const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
 
@@ -105,6 +105,10 @@ export function GitAutocommitSetting(): JSX.Element {
         <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
       </div>}</Show>
       <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
+      <Show when={gitStaleLockProblem(s().last?.stale_lock_offer)}>{(p) => <div role="status" data-git-stale-lock>
+        {p().text}
+        <GitSyncFixes problem={p()} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
+      </div>}</Show>
       <Show when={s().last?.syncthing_ignore_added}>{(path) => <div role="status">{t("git-settings-syncthing-ignore-added", { path: path() })}</div>}</Show>
       <Show when={s().last?.syncthing_ignore_failed}><div role="status">{t("git-settings-syncthing-ignore-failed")}</div></Show>
       <Show when={s().last?.repack_deferred}><div role="status">{t("git-settings-repack-deferred")}</div></Show>

@@ -1272,6 +1272,7 @@ pub fn run() {
             git_settings::set_git_autocommit,
             git_settings::git_sync_now,
             git_settings::git_disable_line_endings,
+            git_settings::git_remove_stale_lock,
             git_settings::git_sync_notice,
             git_settings::git_sign_in,
             git_settings::git_sign_out,
