@@ -115,6 +115,19 @@ if (!project.includes("      - path: PrivacyInfo.xcprivacy")) {
   );
 }
 
+// libgit2 (ADR 0078 slice 3, vendored) links zlib and iconv. Cargo names them
+// for its own links, but Xcode links the static libapp.a and never sees that.
+const libappMarker = "      - framework: libapp.a\n        embed: false";
+if (!project.includes("      - sdk: libz.tbd")) {
+  if (project.split(libappMarker).length !== 2) {
+    throw new Error("generated iOS project does not contain the expected libapp.a dependency");
+  }
+  project = project.replace(
+    libappMarker,
+    `${libappMarker}\n      - sdk: libz.tbd\n      - sdk: libiconv.tbd`,
+  );
+}
+
 if (signingValues.length === 3) {
   if (!/^Apple Distribution: .+ \([A-Z0-9]{10}\)$/.test(signing.identity)) {
     throw new Error("IOS_SIGNING_IDENTITY is not an Apple Distribution identity");

@@ -34,6 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A develop or Beta checkout carries the Beta identity (page.tine.TineBeta),
+      # but the Share Extension's identifier is the stable page.tine.Tine one, so
+      # Xcode's embedded-binary check refuses the build (run 40757848227). iOS has
+      # no Beta app: TestFlight ships a Beta under the stable identity
+      # (ios-testflight.yml, D-20261018-I1 option A). Probe what it ships.
+      - name: Probe under the stable identity, as TestFlight ships
+        run: node scripts/set-app-identity.mjs release
+
       # Pin to the same toolchain the Android mobile build uses (release.yml), so
       # this probes the compiler we'd actually ship mobile with, not a moving stable.
       - uses: dtolnay/rust-toolchain@1.96.0

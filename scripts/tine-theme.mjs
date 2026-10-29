@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+// One grammar for font stacks and line height, shared with the app (GH #760).
+import { BLOCK_LINE_HEIGHT_MAX, BLOCK_LINE_HEIGHT_MIN, isBlockLineHeight, parseFontStack } from "../src/themes/fontStack.mjs";
 
 const TOKENS = new Set([
   "--ls-active-primary-color", "--ls-primary-background-color", "--ls-secondary-background-color",
@@ -15,11 +17,13 @@ const TOKENS = new Set([
 ]);
 const COLOR = /^(?:#[0-9A-Fa-f]{3,8}|transparent|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\- /]+\))$/;
 const LICENSES = new Set(["0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT", "MPL-2.0", "GPL-2.0-only", "GPL-3.0-only", "AGPL-3.0-only", "Unlicense"]);
-const API_VERSIONS = new Set(["0.1", "0.2"]);
+const API_VERSIONS = new Set(["0.1", "0.2", "0.3"]);
 const ROOT_FIELDS = new Set([
   "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
-  "source", "modes", "presentation", "screenshots", "portedFrom", "aiDevelopment",
+  "source", "modes", "presentation", "typography", "screenshots", "portedFrom", "aiDevelopment",
 ]);
+const TYPOGRAPHY_FONTS = ["bodyFont", "monoFont", "titleFont"];
+const TYPOGRAPHY_FIELDS = new Set([...TYPOGRAPHY_FONTS, "blockLineHeight"]);
 // Registry intake must never certify bytes Tine refuses to install. The runtime
 // parser (src/themes/manifest.ts, parseProvenance) is the authority; this block
 // mirrors it field for field. GH #410 was the drift: the checker asked only for
@@ -62,7 +66,7 @@ export function checkTheme(file) {
   for (const key of Object.keys(value)) {
     if (!ROOT_FIELDS.has(key)) fail(report.errors, "theme.field", `${key} is not a recognized theme field`);
   }
-  if (value.schemaVersion !== 1 || !API_VERSIONS.has(value.apiVersion)) fail(report.errors, "theme.api", "theme schemaVersion/apiVersion must be 1 and one of 0.1, 0.2");
+  if (value.schemaVersion !== 1 || !API_VERSIONS.has(value.apiVersion)) fail(report.errors, "theme.api", "theme schemaVersion/apiVersion must be 1 and one of 0.1, 0.2, 0.3");
   if (typeof value?.id !== "string" || !/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$/.test(value.id) || !value.id.includes(".")) fail(report.errors, "theme.id", "id must be a lowercase dotted identifier");
   if (!LICENSES.has(value?.license)) fail(report.errors, "theme.license", "license must be a recognized registry SPDX identifier");
   if (!checkUrl(value?.source)) fail(report.errors, "theme.source", "source must be a public https URL");
@@ -106,7 +110,7 @@ export function checkTheme(file) {
     }
   }
   if (value.presentation !== undefined) {
-    if (value.apiVersion !== "0.2") {
+    if (value.apiVersion !== "0.2" && value.apiVersion !== "0.3") {
       fail(report.errors, "theme.presentation-api", "presentation requires theme API 0.2");
     } else if (!value.presentation || typeof value.presentation !== "object" || Array.isArray(value.presentation)) {
       fail(report.errors, "theme.presentation", "presentation must be an object");
@@ -116,6 +120,28 @@ export function checkTheme(file) {
           fail(report.errors, "theme.presentation-field", `${key} is not a host-owned presentation setting`);
         } else if (!PRESENTATION[key].has(setting)) {
           fail(report.errors, "theme.presentation-value", `${key} has an unsupported presentation value`);
+        }
+      }
+    }
+  }
+  if (value.typography !== undefined) {
+    const typography = value.typography;
+    if (value.apiVersion !== "0.3") {
+      fail(report.errors, "theme.typography-api", "typography requires theme API 0.3");
+    } else if (!typography || typeof typography !== "object" || Array.isArray(typography)) {
+      fail(report.errors, "theme.typography", "typography must be an object");
+    } else {
+      if (Object.keys(typography).length === 0) fail(report.errors, "theme.typography", "typography must not be empty");
+      for (const [key, setting] of Object.entries(typography)) {
+        if (!TYPOGRAPHY_FIELDS.has(key)) {
+          fail(report.errors, "theme.typography-field", `${key} is not a typography setting`);
+        } else if (key === "blockLineHeight") {
+          if (!isBlockLineHeight(setting)) {
+            fail(report.errors, "theme.typography-line-height", `blockLineHeight must be an even integer from ${BLOCK_LINE_HEIGHT_MIN} to ${BLOCK_LINE_HEIGHT_MAX}`);
+          }
+        } else {
+          const parsed = parseFontStack(setting);
+          if (!parsed.ok) fail(report.errors, "theme.typography-font", `typography.${key} ${parsed.error}`);
         }
       }
     }

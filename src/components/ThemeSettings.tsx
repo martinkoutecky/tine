@@ -8,11 +8,15 @@ import type { GalleryTheme } from "../styles/themes";
 import {
   applyThemeColors,
   applyThemeStyle,
+  applyThemeTypography,
   clearThemeSelection,
   galleryThemes,
   selectedThemeColors,
   selectedThemeStyle,
+  selectedThemeTypography,
 } from "../themeGallery";
+import { fontPresence } from "../themes/fontAvailability";
+import { hasTypography, leadingFamilies } from "../themes/typography";
 import {
   installThemePackage,
   installedThemes,
@@ -28,6 +32,11 @@ import { theme } from "../ui";
 type InstalledTheme = ReturnType<typeof installedThemes>[number];
 const hasPresentation = (installed: InstalledTheme): boolean =>
   Object.keys(installed.manifest.presentation ?? {}).length > 0;
+
+const providesTypography = (installed: InstalledTheme): boolean => hasTypography(installed.manifest.typography);
+/** Declared leading fonts this device does not have (probed once per name, never during block rendering). */
+const missingFonts = (installed: InstalledTheme): string[] =>
+  leadingFamilies(installed.manifest.typography).filter((name) => fontPresence(name) === "missing");
 
 function galleryBadge(theme: GalleryTheme): string {
   if (theme.modes.length === 1) return theme.modes[0] === "light" ? t("themes-light-only") : t("themes-dark-only");
@@ -133,7 +142,23 @@ export function ThemeSettings(): JSX.Element {
             {(installed) => <option value={installed.key}>{installed.manifest.name}</option>}
           </For>
         </select>
-      </div><div class="settings-section">{t("themes-color-scheme")}</div>
+      </div>
+      <Show when={installedThemes().some((installed) => !themeVersionIsRevoked(installed.key) && providesTypography(installed))}>
+        <div class="settings-row">
+          <div><div class="settings-label">{t("themes-typography")}</div><div class="settings-hint">{t("themes-fonts-and-block-line-height-from-a-theme-package")}</div>
+          </div>
+          <select
+            class="settings-select"
+            aria-label={t("themes-typography")}
+            value={selectedThemeTypography()}
+            onChange={(event) => applyThemeTypography(event.currentTarget.value)}
+          ><option value="">{t("themes-default")}</option>
+            <For each={installedThemes().filter((installed) => !themeVersionIsRevoked(installed.key) && providesTypography(installed))}>
+              {(installed) => <option value={installed.key}>{installed.manifest.name}</option>}
+            </For>
+          </select>
+        </div>
+      </Show><div class="settings-section">{t("themes-color-scheme")}</div>
       <div class="theme-gallery-grid">
         <ThemeGalleryCard
           id=""
@@ -239,6 +264,14 @@ export function ThemeSettings(): JSX.Element {
                           onClick={() => applyThemeStyle(installed.key)}
                         >{revoked() ? t("themes-revoked") : selectedThemeStyle() === installed.key ? t("themes-style-selected") : t("themes-use-style")}
                         </button>
+                      </Show>
+                      <Show when={providesTypography(installed)}>
+                        <button
+                          class="settings-btn"
+                          disabled={revoked() || selectedThemeTypography() === installed.key}
+                          onClick={() => applyThemeTypography(installed.key)}
+                        >{revoked() ? t("themes-revoked") : selectedThemeTypography() === installed.key ? t("themes-typography-selected") : t("themes-use-typography")}
+                        </button>
                       </Show><button class="settings-link" onClick={() => void backend().openExternal(installed.manifest.source)}>{t("themes-details")}</button>
                       <button
                         class="settings-btn settings-btn-danger"
@@ -249,6 +282,9 @@ export function ThemeSettings(): JSX.Element {
                     </div>
                   </div>
                   <div class="settings-hint settings-field-hint">{installed.manifest.description}</div>
+                  <For each={missingFonts(installed)}>
+                    {(font) => <div class="settings-hint installed-theme-font-hint">{t("themes-font-not-installed", { font })}</div>}
+                  </For>
                   <Show when={installed.manifest.portedFrom} keyed>{(origin) => <div class="settings-hint">{t("themes-behavioral-port-of-for-credited-to", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</div>}
                   </Show>
                 </div>

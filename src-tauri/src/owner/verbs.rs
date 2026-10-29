@@ -238,13 +238,9 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "ref" | "embed" => in_run(slot, args, "tine block id", || {
             super::pages::block_reference(slot, args, request.verb == "embed")
         }),
-        #[cfg(desktop)]
         "run.begin" => super::git_run::run_begin(slot),
-        #[cfg(desktop)]
         "run.show" => super::git_run::run_show(slot, args),
-        #[cfg(desktop)]
         "run.end" => super::git_run::serialized(|| super::git_run::run_end(slot, args)),
-        #[cfg(desktop)]
         "run.revert" => super::git_run::serialized(|| super::git_run::run_revert(slot, args)),
         other => Err(ErrorBody::new(
             "unknown-verb",
@@ -261,34 +257,14 @@ fn in_run(
     subject: &str,
     verb: impl FnOnce() -> Result<Value, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    #[cfg(desktop)]
-    {
-        let Some(run) = super::git_run::run_of(args)? else {
-            return verb();
-        };
-        // The save and its commits as one step, in save order (CL1).
-        super::git_run::serialized(|| {
-            super::git_run::check_repository(slot)?;
-            super::write::in_run(Some(run), subject, verb)
-        })
-    }
-    #[cfg(not(desktop))]
-    {
-        let _ = subject;
-        if args
-            .get("run")
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.is_empty())
-        {
-            let _ = slot;
-            return Err(super::write::refused(
-                "git",
-                None,
-                "git runs need the desktop app",
-            ));
-        }
-        verb()
-    }
+    let Some(run) = super::git_run::run_of(args)? else {
+        return verb();
+    };
+    // The save and its commits as one step, in save order (CL1).
+    super::git_run::serialized(|| {
+        super::git_run::check_repository(slot)?;
+        super::write::in_run(Some(run), subject, verb)
+    })
 }
 
 #[derive(Deserialize)]
