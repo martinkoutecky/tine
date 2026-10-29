@@ -88,6 +88,16 @@ export interface GitSyncStatus {
   /** Shown outside Settings too. */
   persistent: boolean;
   line_endings?: GitLineEndingsProbe | null;
+  /** Only on the notice's `stale-lock` row: the lock Tine offers to remove. */
+  stale_lock?: GitStaleLock | null;
+}
+/** An `index.lock` that looks left behind (empty, unchanged for 10 minutes, no Tine git operation running):
+ *  Tine offers to remove it, and the click passes `token` back so the backend can recheck it is the same file. */
+export interface GitStaleLock {
+  path: string;
+  /** Unix seconds of its last change. */
+  modified: number;
+  token: string;
 }
 export interface GitLineEndingsProbe {
   safe: boolean;
@@ -153,6 +163,8 @@ export interface GitAutocommitStatus {
     refused: [string, string] | null;
     /** An `index.lock` held through several cycles over 30 minutes. */
     stale_lock: string | null;
+    /** The held `index.lock` looks stale: Tine offers to remove it (GS-LOCK). */
+    stale_lock_offer?: GitStaleLock | null;
     sync?: GitSyncStatus;
   };
   /** The tracked remote, when sync can run here. */

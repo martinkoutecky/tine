@@ -1414,3 +1414,16 @@ fn an_autocommit_without_a_repository_identity_uses_the_shared_identity_rule() {
     );
     assert!(super::super::git_run::user_identity(&f.repo, "").wrote(&author));
 }
+
+#[test]
+fn index_lock_identity_failure_leaves_no_lock_behind() {
+    // FAT32/exFAT and SMB shares can lack file IDs; a refused capture must
+    // not strand the empty lock Tine just created (that blocked every later
+    // commit and the user's own git).
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let gitdir = f.work.join(".git");
+    super::super::git_run::index_lock_identity::FAIL_CAPTURE.with(|fail| fail.set(true));
+    assert!(IndexLock::acquire(&f.repo, open_checked(&f.work).unwrap().guard).is_err());
+    assert!(!gitdir.join("index.lock").exists());
+    drop(IndexLock::acquire(&f.repo, open_checked(&f.work).unwrap().guard).unwrap());
+}

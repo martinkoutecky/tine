@@ -889,8 +889,11 @@ pub(crate) struct LastAttempt {
     /// The last refusal (`Unusable::code`) and its message.
     pub(crate) refused: Option<(String, String)>,
     /// A lock ([`held_lock`]) stayed held through several cycles: probably
-    /// left by a crash. Settings names it; Tine never deletes it.
+    /// left by a crash. Settings names it.
     pub(crate) stale_lock: Option<String>,
+    /// The held `index.lock` looks stale ([`super::git_stale_lock`]): Settings
+    /// and the app's notice offer to remove it. Tine never removes it unasked.
+    pub(crate) stale_lock_offer: Option<super::git_stale_lock::StaleLock>,
     pub(crate) sync: SyncStatus,
 }
 
@@ -914,6 +917,9 @@ mod registry {
         pub(super) last: LastAttempt,
         /// "Sync now" was asked for.
         pub(super) sync_requested: bool,
+        /// A commit was asked for at once (after the person removed a stale
+        /// lock).
+        pub(super) commit_requested: bool,
         /// The app went to the background ([`backgrounded`]).
         pub(super) background: bool,
         /// The app came back to the foreground ([`foregrounded`]): sync at
@@ -1046,9 +1052,30 @@ pub(crate) fn request_sync(root: &Path) -> bool {
     true
 }
 
+/// The person removed a stale `index.lock` ([`super::git_stale_lock`]): the
+/// offer goes, and the worker retries at once, a commit and, with `sync`,
+/// a sync cycle. `false` when the graph has no worker.
+pub(crate) fn lock_removed(root: &Path, sync: bool) -> bool {
+    let Some(worker) = registry::get(root) else {
+        return false;
+    };
+    let mut state = worker.state.lock().unwrap();
+    state.last.stale_lock_offer = None;
+    state.last.stale_lock = None;
+    if sync {
+        state.sync_requested = true;
+        state.last.sync.running = true;
+    } else {
+        state.commit_requested = true;
+    }
+    worker.wake.notify_all();
+    true
+}
+
 /// The lock a commit keeps finding held: `index.lock`, or the lock a git
 /// program (or Tine, ended by the OS mid-commit) left on `HEAD`, the branch
-/// or the packed refs. Tine names it and never removes it (ADR 0078 §1).
+/// or the packed refs. Tine names it; of these it offers to remove only a
+/// stale `index.lock`, and only on the person's click (ADR 0078 §1).
 pub(crate) fn held_lock(root: &Path) -> Option<String> {
     let repo = super::git_run::discover(root).ok()?;
     let mut locks = vec![
@@ -1142,15 +1169,21 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     let mut sync_after: Option<Instant> = None;
     let mut backing_off = false;
     loop {
-        let (settings, flush, slot, sync_now, background, foreground, away) = {
+        let (settings, flush, slot, sync_now, background, foreground, away, retry) = {
             let mut state = worker.state.lock().unwrap();
             // A sync the person asked for while the app is away waits for
             // the foreground (review r2 FU1): no fetch or pull starts away.
             let asked = state.sync_requested && !state.away;
-            if !state.flush && !asked && !state.background && !state.foreground {
+            if !state.flush
+                && !asked
+                && !state.background
+                && !state.foreground
+                && !state.commit_requested
+            {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
+            let retry = std::mem::take(&mut state.commit_requested);
             let sync_now = !state.away && std::mem::take(&mut state.sync_requested);
             let background = std::mem::take(&mut state.background);
             let foreground = std::mem::take(&mut state.foreground);
@@ -1162,6 +1195,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                 background,
                 foreground,
                 state.away,
+                retry,
             )
         };
         let ending = ended(slot.as_ref());
@@ -1198,9 +1232,15 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                 || (changed_at.is_some()
                     && last_commit.is_some_and(|at| at.elapsed() >= settings.interval)));
         let mut committed = false;
-        if commit && (flush || ending || due || first || sync_now || background_commit) {
+        if commit && (flush || ending || due || first || sync_now || background_commit || retry) {
             let outcome = commit_now(&root, MESSAGE);
+            // Outside the state lock: the offer takes RUN_LOCK, which is
+            // taken before a worker's state elsewhere ([`around`]).
+            let offer = (outcome == Err(Unusable::Busy))
+                .then(|| super::git_stale_lock::offer(&root))
+                .flatten();
             let mut state = worker.state.lock().unwrap();
+            state.last.stale_lock_offer = offer;
             match &outcome {
                 Ok(done) => {
                     busy_since = None;
@@ -1313,10 +1353,17 @@ fn sync_on_worker(
     // The transport refuses in words, the pull with its `conversion` code.
     let line_endings = (cycle.code == "conversion" || cycle.message.contains("conversion"))
         .then(|| super::git_sync::line_endings::probe(&slot.root_key));
+    // A cycle that found `index.lock` held (fetch and push take it for their
+    // local checks, the pull for its barrier) may offer its removal.
+    let offer = matches!(cycle.code, "busy" | "pull-held-busy")
+        .then(|| super::git_stale_lock::offer(&slot.root_key));
     drop(slot);
     let mut state = worker.state.lock().unwrap();
     let delay = state.last.sync.record(&cycle, interval);
     state.last.sync.line_endings = line_endings;
+    if let Some(offer) = offer {
+        state.last.stale_lock_offer = offer;
+    }
     Some((delay, cycle.backs_off()))
 }
 

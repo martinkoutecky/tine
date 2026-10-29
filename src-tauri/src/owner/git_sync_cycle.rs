@@ -293,6 +293,10 @@ pub(crate) struct SyncStatus {
     pub(crate) persistent: bool,
     /// Raw-byte precondition for the repository-local autocrlf repair.
     pub(crate) line_endings: Option<super::git_sync::line_endings::Probe>,
+    /// Only on the app's notice (row `stale-lock`): the stale `index.lock`
+    /// it offers to remove ([`super::git_stale_lock`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stale_lock: Option<super::git_stale_lock::StaleLock>,
 }
 
 impl SyncStatus {

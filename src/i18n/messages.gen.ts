@@ -975,6 +975,7 @@ export interface MessageArgs {
   "git-settings-token": {};
   "git-settings-unusable": { "message": string | number };
   "git-settings-username": {};
+  "git-stale-lock-notice-title": {};
   "git-sync-auth-required": {};
   "git-sync-busy": {};
   "git-sync-copy-failed": {};
@@ -983,6 +984,7 @@ export interface MessageArgs {
   "git-sync-fix-line-endings": {};
   "git-sync-fix-line-endings-guide": {};
   "git-sync-fix-open-folder": {};
+  "git-sync-fix-remove-stale-lock": {};
   "git-sync-fix-sign-in": {};
   "git-sync-held-changed": { "path": string | number };
   "git-sync-held-changed-unnamed": {};
@@ -1008,6 +1010,8 @@ export interface MessageArgs {
   "git-sync-pull-stopped": { "message": string | number; "path": string | number };
   "git-sync-refused": { "message": string | number };
   "git-sync-running": {};
+  "git-sync-stale-lock": { "path": string | number; "time": string | number };
+  "git-sync-stale-lock-failed": { "error": string | number };
   "gpu-software-rendering-is-on-tine-gpu-0-webkit": {};
   "gpu-this-app-image-is-rendering-on-the-cpu": {};
   "gpu-tine-is-rendering-on-the-cpu-your-gpu": {};

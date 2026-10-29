@@ -6,6 +6,8 @@
 //     Settings, and the notice outside Settings appears with the git command to merge.
 //  5. An HTTPS remote offers Sign in; the token lands in a private app-data file, never in the settings file.
 //  6. An autocrlf refusal offers a local-only repair, then sync completes without restarting.
+//  7. GS-LOCK: an empty .git/index.lock a killed commit left, unchanged for 20 minutes, holds the commit; the notice
+//     offers Remove the stale lock, and the click removes only that file, commits and pushes.
 // Usage: node scripts/e2e-git-sync.mjs (needs git on PATH; a custom-protocol build at TINE_APP or target/debug/tine).
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
@@ -157,6 +159,34 @@ try {
   if (git("rev-parse", "HEAD") !== theirs) throw new Error("HEAD did not fast-forward to the laptop's commit");
   if (fs.readFileSync(path.join(graph, "pages/Other.md"), "utf8") !== "- from the laptop\n") throw new Error("the pulled page is not on disk");
   console.log("PASS: a commit from another clone reaches the open page through Sync now");
+
+  // 7. A stale index.lock: offered in the notice, removed on the click, then the commit and its push.
+  const lock = path.join(graph, ".git", "index.lock");
+  const branchLockDir = path.join(graph, ".git", "refs", "heads");
+  fs.writeFileSync(path.join(graph, "pages/Locked.md"), "- written while the lock was left\n");
+  fs.writeFileSync(lock, "");
+  const old = new Date(Date.now() - 20 * 60_000);
+  fs.utimesSync(lock, old, old);
+  const headBefore = git("rev-parse", "HEAD");
+  await openGitSettings();
+  await browser.$("[data-git-sync-now]").waitForEnabled({ timeout: 10_000, timeoutMsg: "Sync now stayed disabled" });
+  await browser.execute(() => document.querySelector("[data-git-sync-now]").click());
+  await browser.$("[data-git-stale-lock] [data-git-sync-fix=remove-stale-lock]").waitForExist({ timeout: 25_000, timeoutMsg: "Settings never offered to remove the stale lock" });
+  await closeSettings();
+  await browser.waitUntil(() => browser.execute(() => document.querySelector('[data-testid="git-sync-notice"]')?.getAttribute("data-git-sync-code") === "stale-lock"),
+    { timeout: 25_000, interval: 500, timeoutMsg: "the notice never offered the stale lock" });
+  const lockNotice = await browser.execute(() => document.querySelector('[data-testid="git-sync-notice"]')?.textContent ?? "");
+  if (!lockNotice.includes("index.lock") || !lockNotice.includes("Remove the stale lock")) throw new Error(`stale-lock notice: ${JSON.stringify(lockNotice)}`);
+  if (git("rev-parse", "HEAD") !== headBefore || !fs.existsSync(lock)) throw new Error("Tine committed or removed the lock before the click");
+  await shot("notice-stale-lock");
+  await browser.execute(() => document.querySelector('[data-testid="git-sync-notice"] [data-git-sync-fix="remove-stale-lock"]').click());
+  await browser.waitUntil(() => !fs.existsSync(lock) && git("rev-parse", "HEAD") !== headBefore && remoteGit("rev-parse", "main") === git("rev-parse", "HEAD"),
+    { timeout: 30_000, interval: 250, timeoutMsg: "the click did not remove the lock, commit and push" });
+  if (!git("show", "HEAD:pages/Locked.md").includes("written while the lock was left")) throw new Error("the commit after the click lacks the held-back change");
+  if (fs.readdirSync(path.join(graph, ".git")).some((name) => name.startsWith("tine-stale-index-"))) throw new Error("the removed lock's aside copy was left in .git");
+  if (fs.readdirSync(branchLockDir).some((name) => name.endsWith(".lock"))) throw new Error("a ref lock appeared");
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector('[data-testid="git-sync-notice"]')), { timeout: 20_000, timeoutMsg: "the stale-lock notice stayed after the click" });
+  console.log("PASS: a stale index.lock is offered in the notice; the click removes only it, then Tine commits and pushes");
 
   // 6. Converted-by-default configuration, but these working bytes are already LF.
   const globalBefore = fs.readFileSync(globalConfig);
