@@ -1170,9 +1170,15 @@ fn a_lock_replaced_between_check_and_move_is_linked_back_never_deleted() {
     }
     assert_eq!(refused, Err(Refusal::Changed));
     assert_eq!(same_file::Handle::from_path(&lock).unwrap(), identity);
+    // NTFS tunnelling gives a name re-created within 15 s the old entry's
+    // creation time, so on Windows only size and mtime carry over.
+    let carried = |token: String| match cfg!(windows) {
+        true => token.rsplit_once(':').unwrap().0.to_string(),
+        false => token,
+    };
     assert_eq!(
-        stale_lock::token(&fs::symlink_metadata(lock).unwrap()),
-        replacement_token
+        carried(stale_lock::token(&fs::symlink_metadata(lock).unwrap())),
+        carried(replacement_token)
     );
     assert!(fs::read_dir(repo.path()).unwrap().all(|e| {
         !e.unwrap()

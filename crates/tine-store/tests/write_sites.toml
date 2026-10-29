@@ -1640,8 +1640,8 @@ domain = "dotgit"
 guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
-mutations = ".create_new=1, .write=1, OpenOptions::new=1, fs::remove_file=3, fs::write=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. A failed lock-identity read removes the lock create_new just made (index_lock_identity_failure_leaves_no_lock_behind). Linux fault evidence; Windows/macOS runtime acceptance pending."
+mutations = ".create_new=1, .write=1, OpenOptions::new=1, fs::remove_file=4, fs::write=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
