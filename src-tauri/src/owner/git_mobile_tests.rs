@@ -997,6 +997,10 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
     let (mut untouched, mut at_h, mut moved) = (Duration::ZERO, Duration::ZERO, Duration::MAX);
     let fractions = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2];
     let (mut bisect_pages, mut bisect_ref) = (0, 0);
+    // Pull times vary between children (a loaded runner), so a later kill
+    // can land earlier in the pull than an earlier, shorter one did: the two
+    // bounds may cross, and the midpoint is then taken the other way round.
+    let mid = |a: Duration, b: Duration| a.min(b) + a.abs_diff(b) / 2;
     let mut i = 0;
     loop {
         let kill = if i < 2 {
@@ -1007,12 +1011,12 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
             // Bisect between nothing and landed until a kill lands inside
             // the page writes (required below).
             bisect_pages += 1;
-            Some(untouched + (moved.min(timing * 2) - untouched) / 2)
+            Some(mid(untouched, moved.min(timing * 2)))
         } else if kills.landed + kills.index_at_u == 0 && bisect_ref < 8 {
             // Then try for the barrier, index and ref window (recorded,
             // not required: it is a few milliseconds wide).
             bisect_ref += 1;
-            Some(at_h + (moved.min(timing * 2) - at_h) / 2)
+            Some(mid(at_h, moved.min(timing * 2)))
         } else {
             break;
         };
