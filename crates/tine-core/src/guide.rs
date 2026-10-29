@@ -955,8 +955,11 @@ mod rename_guide_tests {
             "the branch Tine commits to and the last commit",
             "Last attempt failed",
             "Git cleanup is waiting; commits continue. Tine will retry automatically.",
-            "adds `.syncthing.*` to the graph folder's `.gitignore` once",
-            "You can remove the line; Tine will not add it again",
+            "`.syncthing.*` for Syncthing's temporary files, and `logseq/.tine-*` for Tine's own files for this device",
+            "You can remove a line; Tine will not add it again",
+            "Tine's commits always exclude Syncthing temporary files and Tine's own files",
+            "removes them from git (not from disk) in a separate commit",
+            "a sync never writes another device's copies",
             "conflict copies (`*.sync-conflict-*`) are still committed",
         ] {
             assert!(
