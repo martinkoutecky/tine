@@ -96,7 +96,7 @@ try {
   if ((await choice.getValue()) !== "tab") throw Error("Search results open in should default to New tab");
   await choice.selectByAttribute("value", "here");
   await browser.waitUntil(async () => (await choice.getValue()) === "here", { timeout: 5000 });
-  await browser.keys(["Escape"]);
+  await browser.$("//div[contains(@class,'settings-modal')]//button[normalize-space(.)='✕']").click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000, reverse: true });
   stage = "GH #796: return to the Search tab";
   await browser.execute((id) => document.querySelector(`.tab-strip-scroll .tab[data-tab-id="${id}"]`)?.click(), tabsBefore.active);
