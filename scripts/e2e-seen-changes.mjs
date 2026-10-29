@@ -9,6 +9,9 @@
 //  5. After a restart the page is still seen (the record is on this device, not in memory).
 //  6. A later commit by the other author shows again; Page actions → Mark page seen clears it,
 //     and Settings → Graph offers Mark whole graph seen and Forget seen state.
+//  7. On a long page (D-20261029-SS) the notice's Next / Previous change step through the other
+//     author's three edits in page order, scrolling each into view below the notice, highlighting
+//     it, opening a folded parent without touching the file, wrapping at the ends, never editing.
 // Screenshots land in artifacts/seen-ui/. Usage: node scripts/e2e-seen-changes.mjs (needs git on PATH).
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
@@ -29,6 +32,13 @@ const seenPage = path.join(graph, "pages/Seen.md");
 const body = (lines) => `${lines.map((line) => `- ${line}`).join("\n")}\n`;
 fs.writeFileSync(seenPage, body(["Alpha stays the same for everyone", "Beta will change in the next commit", "Gamma will be removed in the next commit", "Delta stays the same for everyone"]));
 fs.writeFileSync(path.join(graph, "pages/Other.md"), "- another page\n");
+// A page taller than the window, with a folded parent, for stepping through changes (step 7).
+const longPage = path.join(graph, "pages/Long.md");
+const longRows = (edited, removed = []) => Array.from({ length: 70 }, (_, i) => i).filter((i) => !removed.includes(i)).map((i) => {
+  const text = `Row ${i} filler text for scrolling${edited.includes(i) ? "!" : ""}`;
+  return i === 40 ? `- Row 40 folded parent\n  collapsed:: true\n\t- Row 40 child${edited.includes(40) ? "!" : ""}` : `- ${text}`;
+}).join("\n") + "\n";
+fs.writeFileSync(longPage, longRows([]));
 const git = (...args) => execFileSync("git", ["-C", graph, ...args], { encoding: "utf8" }).trim();
 git("init", "-q", "-b", "main");
 git("config", "user.name", "Me");
@@ -173,7 +183,7 @@ try {
   commitAs("Me", "me@example.invalid", "I edit Alpha");
   s = await waitFor(browser, "the other author's changes never showed", (x) => x.changed.length === 1 && x.removed.length === 1);
   expectEq("blocks with the margin bar", s.changed, ["Beta will change in the next commit now"]);
-  expectEq("header", s.header, "2 changes since you last lookedMark page seen");
+  expectEq("header", s.header, "2 changes since you last lookedPrevious changeNext changeMark page seen");
   expectEq("the removed block's marker follows its previous sibling, folded", s.removed, [{ after: "Beta will change in the next commit now", open: false }]);
   await shot("seen-bar-header-marker.png");
   await browser.execute(() => document.querySelector("[data-seen-removed] button")?.click());
@@ -223,7 +233,7 @@ try {
   commitAs("Jo", "jo@example.invalid", "Jo edits Delta");
   s = await waitFor(browser, "the later commit never showed", (x) => x.changed.length === 1 && !x.removed.length);
   expectEq("blocks with the margin bar after a later commit", s.changed, ["Delta stays the same for everyone now"]);
-  expectEq("header", s.header, "1 change since you last lookedMark page seen");
+  expectEq("header", s.header, "1 change since you last lookedPrevious changeNext changeMark page seen");
   await openPageActions(browser);
   await clickMenuItem(browser, "Mark page seen");
   await waitFor(browser, "Mark page seen never cleared the page", (x) => x.header === null && !x.changed.length, { poke: false });
@@ -241,6 +251,80 @@ try {
   await browser.waitUntil(async () => ((await calls(browser)).forget_seen_state ?? 0) === 1, { timeout: 10_000, timeoutMsg: "Forget seen state never reached the backend" });
   console.log("PASS: Settings → Graph marks the whole graph seen and forgets the seen state");
   await browser.keys("Escape");
+
+  // 7. Previous / Next change on a long page.
+  // After Forget seen state a page's baseline is the moment it is first read, so open it before Jo's commit.
+  await openPageByName(browser, "Long");
+  await waitFor(browser, "the long page never rendered", (x) => x.rows >= 10, { poke: false });
+  await sleep(1500);
+  fs.writeFileSync(longPage, longRows([8, 40], [62]));
+  commitAs("Jo", "jo@example.invalid", "Jo edits two rows of Long and removes one");
+  s = await waitFor(browser, "the long page's three changes never showed", (x) => /^3 changes since you last looked/.test(x.header ?? ""));
+  // Remember every row that ever got the highlight, so the check does not depend on its 1.2 s window.
+  await browser.execute(() => {
+    window.__flashedRows = [];
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const el = record.target;
+        if (el.classList?.contains("block-flash") && el.hasAttribute?.("data-seen-item")) window.__flashedRows.push("marker");
+        else if (el.classList?.contains("block-flash")) {
+          const text = (el.querySelector(":scope > .block-main .block-content")?.textContent ?? "").trim();
+          if (text && !window.__flashedRows.includes(text)) window.__flashedRows.push(text);
+        }
+      }
+    }).observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
+  });
+  const stepState = (text) => browser.execute((wanted) => {
+    const header = document.querySelector("[data-seen-header]");
+    const scroller = header?.closest(".main-content");
+    const row = wanted === "marker"
+      ? document.querySelector("[data-seen-item]")
+      : [...document.querySelectorAll(".ls-block")]
+        .find((el) => (el.querySelector(":scope > .block-main .block-content")?.textContent ?? "").trim() === wanted);
+    const rect = row?.getBoundingClientRect();
+    const view = scroller?.getBoundingClientRect();
+    return {
+      position: document.querySelector("[data-seen-position]")?.textContent ?? null,
+      flashed: window.__flashedRows.includes(wanted),
+      belowNotice: !!rect && !!header && rect.top >= header.getBoundingClientRect().bottom - 1 && rect.top < (view?.bottom ?? 0),
+      editing: !!document.querySelector(".ls-block textarea"),
+
+      scrollTop: scroller?.scrollTop ?? 0,
+    };
+  }, text);
+  const stepTo = async (what, direction, position, text) => {
+    await browser.execute((w) => document.querySelector(`[data-seen-step="${w}"]`)?.click(), direction);
+    let got = null;
+    try {
+      await browser.waitUntil(async () => {
+        got = await stepState(text);
+        return got.position === position && got.belowNotice && got.flashed;
+      }, { timeout: 8000, interval: 300 });
+    } catch (error) {
+      throw new Error(`${what}: expected ${position} with "${text}" below the notice and highlighted; last ${JSON.stringify(got)}`);
+    }
+    expectEq(`${what}: not editing`, got.editing, false);
+    return got;
+  };
+  const row8 = "Row 8 filler text for scrolling!";
+  const row40 = "Row 40 child!";
+  const row62 = "marker"; // the removed Row 62 leaves its marker after Row 61
+  let stop = await stepTo("first Next change", "next", "1 of 3", row8);
+  await shot("seen-step-1.png");
+  const firstScroll = stop.scrollTop;
+  stop = await stepTo("second Next change (inside the folded parent)", "next", "2 of 3", row40);
+  if (!(stop.scrollTop > firstScroll)) throw new Error(`Next change did not scroll: ${firstScroll} then ${stop.scrollTop}`);
+  await shot("seen-step-2.png");
+  await stepTo("third Next change (the removed block's marker)", "next", "3 of 3", row62);
+  await browser.execute(() => { window.__flashedRows = []; });
+  await stepTo("Next past the last wraps and says so", "next", "1 of 3, wrapped around", row8);
+  await shot("seen-step-wrapped.png");
+  await browser.execute(() => { window.__flashedRows = []; });
+  await stepTo("Previous before the first wraps to the last", "previous", "3 of 3, wrapped around", row62);
+  await browser.execute(() => { window.__flashedRows = []; });
+  await stepTo("Previous change", "previous", "2 of 3", row40);
+  expectEq("stepping never wrote the folded parent or any row", fs.readFileSync(longPage, "utf8"), longRows([8, 40], [62]));
+  console.log("PASS: Next / Previous change step through a long page in order, wrap, reveal a folded parent and never edit");
 } catch (error) {
   fs.writeFileSync(path.join(run, "failure.json"), JSON.stringify({ journey: "seen changes", expected: "another author's commit shows bar, marker and header; leaving and restarting keep it cleared", observed: String(error), classification: "ambiguous", commit: process.env.TESTED_COMMIT || "working tree" }, null, 2));
   throw error;

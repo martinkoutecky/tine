@@ -12,12 +12,14 @@ import { batch, createEffect, createMemo, createSignal, on, onCleanup, untrack, 
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
-import { node, seenPageSnapshot } from "../document";
+import { childIds, node, pageRoots, seenPageSnapshot } from "../document";
 import { pageIdentityKey } from "../pageIdentity";
 import { dbg } from "../debug";
 import { onAppReturn } from "../windowRealm";
 import { emptyMarks, SEEN_PAGE_ROOT, changeCount, marksFromChanges, type RemovedMark, type SeenMarks } from "./marks";
 import { noteSeenAnswer, registerDisplayed, seenAvailable, seenRevision } from "./seenState";
+import { revealSeenItem } from "./reveal";
+import { orderedChangeItems, stepTarget, type SeenCursor } from "./steps";
 
 export interface PageSeen {
   /** Does this block carry the margin bar? */
@@ -32,6 +34,12 @@ export interface PageSeen {
   unattributed: Accessor<boolean>;
   /** The backend's note on this answer, or null. */
   reason: Accessor<string | null>;
+  /** Where the last Previous / Next change landed ("3 of 12"), while the page's
+   *  changes are still the ones it was counted against; null otherwise. */
+  position: Accessor<{ index: number; total: number; wrapped: boolean } | null>;
+  /** Previous (-1) / next (+1) change in page order, wrapping at the ends; brings
+   *  it into `scroller` below the sticky notice. Never edits and never focuses. */
+  step(direction: 1 | -1, scroller: HTMLElement): Promise<void>;
 }
 
 /** Track `page()` while it is non-null. `page` must change identity when the
@@ -69,6 +77,25 @@ export function createPageSeen(page: Accessor<{ name: string } | null>): PageSee
     read(current.name, token);
   }));
 
+  // Previous / Next change (D-20261029-SS): a cursor into the page-order list of
+  // items, rebuilt on every step from the live tree (cost O(page blocks) per
+  // click, nothing per edit). A new page or a mark / forget starts it afresh.
+  let cursor: SeenCursor | null = null;
+  let stepping = 0;
+  const [landed, setLanded] = createSignal<{ index: number; total: number; wrapped: boolean; count: number } | null>(null);
+  createEffect(on([() => page(), seenRevision], () => { cursor = null; stepping++; setLanded(null); }, { defer: true }));
+  const step = async (direction: 1 | -1, scroller: HTMLElement): Promise<void> => {
+    const current = untrack(page);
+    if (!current) return;
+    const items = untrack(() => orderedChangeItems(marks, pageRoots(current.name), childIds, (id) => node(id)?.raw));
+    const target = stepTarget(items, cursor, direction);
+    if (!target) return;
+    cursor = { key: target.item.key, index: target.index };
+    const token = ++stepping;
+    setLanded({ index: target.index + 1, total: items.length, wrapped: target.wrapped, count: untrack(count) });
+    await revealSeenItem(target.item, scroller, () => token === stepping);
+  };
+
   const changed = (id: string): boolean => {
     const raw = marks.blocks[id];
     return raw !== undefined && node(id)?.raw === raw;
@@ -82,5 +109,10 @@ export function createPageSeen(page: Accessor<{ name: string } | null>): PageSee
     identityKnown: () => marks.identityKnown,
     unattributed: () => marks.unattributed,
     reason: () => marks.reason,
+    position: () => {
+      const at = landed();
+      return at && at.count === count() ? { index: at.index, total: at.total, wrapped: at.wrapped } : null;
+    },
+    step,
   };
 }

@@ -238,6 +238,8 @@ export interface MessageArgs {
   "command-right-sidebar-shrink-width": {};
   "command-seen-mark-graph": {};
   "command-seen-mark-page": {};
+  "command-seen-next-change": {};
+  "command-seen-previous-change": {};
   "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
   "command-sidebar-shrink-width": {};
@@ -2348,15 +2350,19 @@ export interface MessageArgs {
   "row-chrome-collapse-all-descendants": {};
   "row-chrome-expand-all-descendants": {};
   "search-result-row-block": {};
+  "seen-change-position": { "index": string | number; "total": string | number };
+  "seen-change-position-wrapped": { "index": string | number; "total": string | number };
   "seen-forget-failed": { "error": string | number };
   "seen-graph-marked": {};
   "seen-header-count": { "count": number };
   "seen-mark-failed": { "error": string | number };
   "seen-mark-page": {};
+  "seen-next-change": {};
   "seen-note-identity-unknown": {};
   "seen-note-unattributed": {};
   "seen-note-unattributed-line": {};
   "seen-page-marked": { "name": string | number };
+  "seen-previous-change": {};
   "seen-removed-block": {};
   "seen-settings-forget": {};
   "seen-settings-hint": {};

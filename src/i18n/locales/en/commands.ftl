@@ -157,3 +157,5 @@ all-graphs-keyboard-help = Use Up and Down to choose a graph, Enter to open it. 
 all-graphs-new-window-help = Shift+Enter opens the selected graph in a new window.
 command-seen-mark-page = Mark page seen
 command-seen-mark-graph = Mark whole graph seen
+command-seen-next-change = Next change since you last looked
+command-seen-previous-change = Previous change since you last looked

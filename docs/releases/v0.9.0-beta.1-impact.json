@@ -251,13 +251,14 @@
     },
     {
       "section": "Added",
-      "text": "**Changed since you last looked** (git graphs, all platforms): a margin bar marks blocks other people or tools committed since you last left a page, a removed block leaves a marker that unfolds its text, and the page header counts the changes. Leaving the page marks it seen; **Mark page seen** is in the page actions menu and command palette; **Mark whole graph seen** is in the command palette and Settings → Graph; **Forget seen state** is in Settings → Graph. Your own commits never count, uncommitted edits are invisible, and the record stays on this device (ADR 0079). The notice stays at the top while you scroll, keeping Mark page seen reachable (UI-SEEN-STICKY).",
+      "text": "**Changed since you last looked** (git graphs, all platforms): a margin bar marks blocks other people or tools committed since you last left a page, a removed block leaves a marker that unfolds its text, and the page header counts the changes. Leaving the page marks it seen; **Mark page seen** is in the page actions menu and command palette; **Mark whole graph seen** is in the command palette and Settings → Graph; **Forget seen state** is in Settings → Graph. Your own commits never count, uncommitted edits are invisible, and the record stays on this device (ADR 0079). The notice stays at the top while you scroll, keeping Mark page seen reachable (UI-SEEN-STICKY). **Previous change** and **Next change** in that notice step through the changed blocks and removed-block markers in page order, wrapping at the ends (\"3 of 12\"); each is highlighted and a folded parent opens on the way, without editing the file or entering edit mode. The same two steps are in the command palette, with no key assigned (UI-SEEN-STEPS, discussion 645).",
       "userVisible": true,
       "regressions": [
         "UI-SEEN-STICKY",
         "UI-SEEN-CHANGES-MARKS",
         "UI-SEEN-CHANGES-LEAVE",
-        "UI-SEEN-CHANGES-ACTIONS"
+        "UI-SEEN-CHANGES-ACTIONS",
+        "UI-SEEN-STEPS"
       ],
       "regressionEvidence": {
         "status": "current",

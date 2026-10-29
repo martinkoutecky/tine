@@ -10,7 +10,7 @@ const observations = [];
 try {
   for (const width of [1280, 390]) for (const theme of ["light", "dark"]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
-    await page.goto(`${process.env.TINE_URL || "http://localhost:5181"}/${out}/fixture.html?theme=${theme}&panes=${width === 1280 ? "all" : "one"}`);
+    await page.goto(`${process.env.TINE_URL || "http://localhost:5181"}/${out}/fixture.html?step=1&theme=${theme}&panes=${width === 1280 ? "all" : "one"}`);
     await page.locator("[data-seen-header]").first().waitFor();
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({ path: `${out}/${width}-${theme}-title.png` });
@@ -19,11 +19,13 @@ try {
     const geometry = await page.evaluate(() => [...document.querySelectorAll("[data-seen-header]")].map(header => {
       const pane = header.closest(".main-content, .right-sidebar"), r = header.getBoundingClientRect(), p = pane.getBoundingClientRect();
       return { headerTop: r.top, paneTop: p.top, left: r.left, right: r.right, paneLeft: p.left, paneRight: p.right,
-        padding: parseFloat(getComputedStyle(pane).scrollPaddingTop), height: r.height };
+        padding: parseFloat(getComputedStyle(pane).scrollPaddingTop), height: r.height,
+        // Previous / Next change and their "12 of 12, wrapped around" label stay inside the notice.
+        steps: [...header.querySelectorAll("[data-seen-step], [data-seen-position]")].every(el => { const b = el.getBoundingClientRect(); return b.left >= r.left - 0.5 && b.right <= r.right + 0.5; }) && header.querySelectorAll("[data-seen-step]").length === 2 && header.scrollWidth <= header.clientWidth };
     }));
     observations.push({ width, theme, geometry });
     await page.screenshot({ path: `${out}/${width}-${theme}-scrolled.png` });
-    for (const g of geometry) if (Math.abs(g.headerTop - g.paneTop) > 3 || g.left < g.paneLeft || g.right > g.paneRight || g.padding < g.height)
+    for (const g of geometry) if (Math.abs(g.headerTop - g.paneTop) > 3 || g.left < g.paneLeft || g.right > g.paneRight || g.padding < g.height || !g.steps)
       throw Error(`Sticky notice or reveal space failed: ${JSON.stringify({ width, theme, g })}`);
     await page.close();
   }

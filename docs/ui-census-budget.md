@@ -60,6 +60,12 @@ journey (`scripts/e2e-*.mjs`), not here.
 - 2026-10-29, D-20261029-ST (GH #796): `settings.editor.advanced` 10→11 for the explicitly
   decided **Search results open in** (New tab / This tab) setting. It sits behind the Advanced
   disclosure beside "Switch to an already-open tab", so `settings.editor.open` stays 9.
+- 2026-10-29, D-20261029-SS (Previous / Next change in the seen notice, discussion 645):
+  `commands.registry` 129→131 for the required bindable **Next change since you last looked**
+  and **Previous change since you last looked** commands. Both are offered (palette and
+  remapping) only while a seen notice with changes is on screen, so the jsdom palette count
+  does not move; no key is bound. The two notice buttons are page chrome shown only while
+  N > 0, not a census surface.
 - 2026-10-28, sweep-nav dossier / GH #785: `commands.registry` 126→129 and
   `commands.palette` 71→74 for the explicitly requested localized **Expand all**,
   **Collapse all**, and OG's remappable **t o** toggle. No new topbar control.
