@@ -878,6 +878,9 @@ fn pull_until_killed(root: &Path, app_data: &Path, marks: &Path) {
     let slot = restarted(root, app_data);
     fs::write(marks.join("ready"), "").unwrap();
     let done = cycle(&slot, &credentials());
+    if let Some(path) = &done.path {
+        fs::write(marks.join("path"), path).unwrap();
+    }
     fs::write(marks.join("done"), done.code).unwrap();
 }
 
@@ -959,7 +962,7 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
     // One child per pull: `None` lets it finish, `Some(d)` kills it `d`
     // after it is ready. Returns its cycle code if it finished.
     let run = |kill: Option<Duration>| -> (Option<String>, Duration) {
-        for mark in ["ready", "done"] {
+        for mark in ["ready", "done", "path"] {
             let _ = fs::remove_file(marks.join(mark));
         }
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1029,7 +1032,12 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
         let u = phone.peer_pushes(&borrowed);
         let (done, elapsed) = run(kill);
         if kill.is_none() {
-            assert_eq!(done.as_deref(), Some("pulled"), "unkilled pull {i}");
+            let path = fs::read_to_string(marks.join("path")).ok();
+            assert_eq!(
+                done.as_deref(),
+                Some("pulled"),
+                "unkilled pull {i}: {path:?}"
+            );
             if i == 1 {
                 timing = elapsed;
             }
