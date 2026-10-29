@@ -217,7 +217,7 @@ try {
 
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
-    await openInstalledTab(browser, label);
+    await openInstalledTab(browser, "revoked");
     await browser.waitUntil(async () => browser.execute((id) => {
       const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
       const toggle = row?.querySelector('[role="switch"]');
@@ -247,7 +247,7 @@ try {
     await assertNoContribution(browser, "restart-without-cache");
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
-    await openInstalledTab(browser, label);
+    await openInstalledTab(browser, "restart-without-cache");
     await browser.waitUntil(async () => browser.execute((id) => {
       const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
       const toggle = row?.querySelector('[role="switch"]');
