@@ -37,7 +37,7 @@ pub(super) fn forced_list_failure(root: &Path, dir: &Path) -> Option<std::io::Er
         let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
         (faults.borrow().1.as_deref() == Some(rel.as_ref())).then(|| {
             std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
+                SCAN_FAULT_KIND.with(|kind| kind.get()),
                 "injected list failure",
             )
         })
@@ -55,7 +55,7 @@ pub(super) fn forced_stat_failure(rel: &str) -> Option<std::io::Error> {
     SCAN_FAULTS.with(|faults| {
         (faults.borrow().0.as_deref() == Some(rel)).then(|| {
             std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
+                SCAN_FAULT_KIND.with(|kind| kind.get()),
                 "injected stat failure",
             )
         })
@@ -84,6 +84,9 @@ fn run_hook(slot: usize, path: &Path) {
 
 #[cfg(test)]
 thread_local! {
+    pub(super) static SCAN_FAULT_KIND: std::cell::Cell<std::io::ErrorKind> = const {
+        std::cell::Cell::new(std::io::ErrorKind::PermissionDenied)
+    };
     /// (entry name whose type read fails, directory whose listing fails).
     pub(super) static SCAN_FAULTS: std::cell::RefCell<(Option<String>, Option<String>)> =
         const { std::cell::RefCell::new((None, None)) };

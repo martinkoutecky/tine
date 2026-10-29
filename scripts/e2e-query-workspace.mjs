@@ -241,7 +241,10 @@ await withApp(0, async (browser) => {
   await browser.$(".unlinked-references .references-header").click();
   const unlinkedBlocks = await browser.$(".unlinked-references .reference-blocks");
   await unlinkedBlocks.waitForExist({ timeout: 10_000 });
-  await unlinkedBlocks.scrollIntoView();
+  // Explicit block-start scroll: WDIO's scrollIntoView is a no-op for an element whose top edge is already
+  // inside the viewport, which left the second (lazily rendered) group below the fold after the references
+  // header got shorter (UI-LP-FIX).
+  await browser.execute((el) => el.scrollIntoView({ block: "start" }), unlinkedBlocks);
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".unlinked-references .reference-blocks")]
       .some((group) => group.textContent?.includes("names Query parity near the start"))), {
@@ -739,6 +742,8 @@ await withApp(2, async (browser) => {
   // The bulk action is one state-dependent toggle. Reacquire it by its
   // current label so both linked and unlinked groups prove each transition.
   async function bulkReferenceAction(section, label) {
+    // Persistent toasts sit bottom-right and now cover the header-row button (UI-LP-FIX moved it there).
+    await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach((b) => b.click()));
     const controls = await browser.$(`${section} .reference-bulk-controls`);
     const action = await controls.$(`button=${label}`);
     await action.waitForDisplayed({ timeout: 5_000 });

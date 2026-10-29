@@ -6914,8 +6914,9 @@ img.emoji {
 /* ---------------------------------------------------------- references */
 
 .linked-references {
-  margin-top: 40px;
-  padding-top: 12px;
+  /* UI-LP-FIX F7: the trailing-block target above already adds 30px of air. */
+  margin-top: 16px;
+  padding-top: 8px;
 }
 
 .references-header {
@@ -6932,6 +6933,7 @@ img.emoji {
 
 .references-header > button { margin-left: 0; }
 .references-header > button:first-of-type { margin-left: auto; }
+.references-header > .reference-bulk-controls ~ button:first-of-type { margin-left: 0; }
 
 .hierarchy-toggle {
   background: none;
@@ -7115,6 +7117,7 @@ img.emoji {
 }
 
 .references-count-stale {
+  display: inline-flex;
   color: var(--text-muted);
   opacity: 0.6;
 }
@@ -7166,7 +7169,7 @@ img.emoji {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  margin: -2px 0 8px;
+  margin: 0 0 0 auto;
 }
 
 .reference-bulk-controls button,
@@ -7324,6 +7327,8 @@ img.emoji {
   padding: 4px 0 4px 12px;
 }
 .block-references-header {
+  display: flex;
+  align-items: center;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
@@ -9007,25 +9012,7 @@ html.tine-embed-shading-accent .embed-block {
   border-radius: 9px;
   background: var(--bg-secondary);
 }
-.query-board-column h2 {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 8px;
-  font-size: 13px;
-}
-.query-board-count {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.query-board-card {
-  display: block;
-  width: 100%;
-  margin-top: 5px;
-  padding: 8px;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
+/* board column heading, count and cards: query.css (F3/F4) */
 
 .query-advanced-overlay {
   align-items: center;

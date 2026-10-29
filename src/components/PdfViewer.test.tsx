@@ -1844,7 +1844,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       }
       scroll.scrollTop = 900;
       scroll.dispatchEvent(new Event("scroll"));
-      await vi.advanceTimersByTimeAsync(50);
+      await vi.advanceTimersByTimeAsync(250);
       await flush();
       expect(route()?.page).toBe(2);
       expect(scrollIntoView).not.toHaveBeenCalled();

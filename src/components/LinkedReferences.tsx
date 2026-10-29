@@ -397,6 +397,11 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
           {heading()} <span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span>
           <StaleReferenceCount stale={freshness.stale()} />
           <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
+          <Show when={!collapsed() && shown().length > 1}>
+            <span class="reference-bulk-controls" role="group" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>
+              <button type="button" onClick={(event) => { event.stopPropagation(); setAllGroups(bulkCollapseTarget(shown(), groupCollapsed)); }}>{t(bulkCollapseTarget(shown(), groupCollapsed) ? "references-collapse-all" : "references-expand-all")}</button>
+            </span>
+          </Show>
           <button type="button" class="reference-export-toggle"
             aria-label={t(props.unlinked ? "references-copy-unlinked" : "references-copy-linked")} title={t(props.unlinked ? "references-copy-unlinked-title" : "references-copy-linked-title")}
             disabled={!count()}
@@ -491,11 +496,6 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
                   </For>
                 </div>
               </Show>
-            </div>
-          </Show>
-          <Show when={shown().length > 1}>
-            <div class="reference-bulk-controls" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>
-              <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(shown(), groupCollapsed))}>{t(bulkCollapseTarget(shown(), groupCollapsed) ? "references-collapse-all" : "references-expand-all")}</button>
             </div>
           </Show>
           <For each={shown().map(groupKey)}>

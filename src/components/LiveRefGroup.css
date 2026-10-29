@@ -26,3 +26,11 @@
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+/* F13 (OG block.css `.breadcrumb .asset-container > img { height: 18px }`): an image
+   in an ancestor's text sits in the trail at line height, whatever size or width the
+   block gave it. The !important beats the inline width/height the image carries. */
+.ref-breadcrumb .inline-image-wrap,
+.embed-source-breadcrumb .inline-image-wrap { width: auto !important; max-width: none; vertical-align: middle; }
+.ref-breadcrumb .inline-image,
+.embed-source-breadcrumb .inline-image { width: auto !important; height: 18px !important; max-width: none; vertical-align: middle; }
