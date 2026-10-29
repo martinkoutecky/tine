@@ -5,6 +5,7 @@ import { backend } from "../backend";
 import { QuickShareSettings } from "./QuickShareSettings";
 import { Settings } from "./Settings";
 import { closeSettings, openSettings } from "../ui";
+import { resetQuickShareGateForTest } from "../quickShareGate";
 import { setToasts, toasts } from "../toasts";
 import type { QuickShareListed, QuickShareListing } from "../quickShare/commands";
 import * as definitions from "../quickShare/definitions";
@@ -185,6 +186,8 @@ it("an unreadable shares file is reported, not shown as no shares", async () => 
 
 it("Settings shows the Sharing tab only where quick share is on", async () => {
   for (const enabled of [false, true]) {
+    // Each pass is a different build: the gate is read once per session.
+    resetQuickShareGateForTest();
     api.list.mockImplementation(async () => listing({ enabled }));
     const root = document.createElement("div"); document.body.append(root);
     const done = render(() => <Suspense><Settings /></Suspense>, root);

@@ -98,6 +98,7 @@ Outside the model: torn reads while another program writes; other programs' in-p
 
 ### Fixed
 
+- Settings opens with its full tab list: the Sharing tab no longer appears a moment later and pushes Plugins and the tabs below it down under the pointer, so a quick click no longer opens the tab above the one aimed at (UI-SETTINGS-SHARING-TAB-SHIFT).
 - Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
 - The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).

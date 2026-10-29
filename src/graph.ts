@@ -37,6 +37,7 @@ import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
 import { msg, t } from "./i18n";
+import { primeQuickShareGate } from "./quickShareGate";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -355,6 +356,7 @@ export async function loadGraphPath(
   // whole-graph parse (master 5bb8ce020, GH #266).
   void injectCustomCss();
   void loadGlobalCss();
+  void primeQuickShareGate();
   if (!switching) void pruneSidebarBlocks();
   maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
