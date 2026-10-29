@@ -544,8 +544,10 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
             remote_locks += 1;
             fs::remove_file(lock).unwrap();
         }
-        // ADR 0078 §1: Tine never removes a lock; the next commit is busy
-        // and Settings names the lock until the person removes it.
+        // ADR 0078 §1: Tine never removes a lock unasked; the next commit is
+        // busy and Settings names the lock until the person removes it. An
+        // `index.lock` a kill left is Tine's own, empty one (GS-LOCK's second
+        // condition), and once it is old, the click removes it.
         for _ in 0..4 {
             let next = commit_now(&phone.root, MESSAGE);
             if next != Err(Unusable::Busy) {
@@ -563,7 +565,30 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
             *stale_locks
                 .entry(lock.file_name().unwrap().to_string_lossy().into_owned())
                 .or_insert(0) += 1;
-            fs::remove_file(lock).unwrap();
+            if lock.file_name() == Some(std::ffi::OsStr::new("index.lock")) {
+                assert_eq!(
+                    fs::metadata(&lock).unwrap().len(),
+                    0,
+                    "killed after {delay} ms: a non-empty index.lock on {volume}"
+                );
+                let later = SystemTime::now() + STALE_AFTER;
+                let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+                let offer = stale_lock::assess(&phone.root, later)
+                    .unwrap_or_else(|| panic!("killed after {delay} ms: not offered"));
+                drop(_run);
+                assert_eq!(
+                    stale_lock::remove_within(
+                        &phone.root,
+                        &offer.token,
+                        Duration::from_secs(60),
+                        later
+                    ),
+                    Ok(Removed::Removed),
+                    "killed after {delay} ms on {volume}"
+                );
+            } else {
+                fs::remove_file(lock).unwrap();
+            }
         }
         // The next holder of the index lock removes a killed index copy.
         let leftovers = assert_whole(&phone.repo, "after the next commit");
@@ -856,6 +881,424 @@ fn commit_only_never_pushes_from_the_background() {
     assert!(
         crate::owner::git_sync::push_pending(&phone.root),
         "the commit waits for a sync the person starts"
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+// ---- a stale index.lock (GS-LOCK) -------------------------------------------------
+
+use crate::owner::git_stale_lock::{self as stale_lock, Refusal, Removed, StaleLock, STALE_AFTER};
+use std::time::SystemTime;
+
+/// An empty `index.lock`, as a commit the OS ended leaves it, last changed
+/// `age` ago.
+fn left_lock(phone: &Phone, age: Duration) -> PathBuf {
+    let lock = phone.repo.path().join("index.lock");
+    fs::write(&lock, "").unwrap();
+    set_age(&lock, age);
+    lock
+}
+
+fn set_age(path: &Path, age: Duration) {
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(SystemTime::now() - age)
+        .unwrap();
+}
+
+/// The offer as the worker computes it, holding RUN_LOCK for as long as
+/// another test's commit takes (the worker's own check gives up after
+/// 250 ms instead).
+fn offered(root: &Path) -> Option<StaleLock> {
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    stale_lock::assess(root, SystemTime::now())
+}
+
+fn click(root: &Path, token: &str) -> Result<Removed, Refusal> {
+    stale_lock::remove_within(root, token, Duration::from_secs(60), SystemTime::now())
+}
+
+/// Before GS-LOCK a lock a killed commit left kept every commit busy until
+/// someone removed it by hand. Now Tine offers it, and the click recovers the
+/// commit.
+#[test]
+fn a_stale_index_lock_is_offered_and_removing_it_recovers_the_commit() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER + Duration::from_secs(60));
+    phone.edit("pages/b.md", "- typed before the kill\n");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    let offer = offered(&phone.root).expect("a stale empty lock is offered");
+    assert_eq!(PathBuf::from(&offer.path), lock);
+    assert_eq!(click(&phone.root, &offer.token), Ok(Removed::Removed));
+    assert!(!lock.exists());
+    let leftovers: Vec<_> = fs::read_dir(phone.repo.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("tine-stale-index-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    assert!(matches!(
+        commit_now(&phone.root, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    assert_eq!(offered(&phone.root), None);
+}
+
+#[test]
+fn a_fresh_or_future_index_lock_is_not_offered() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, Duration::ZERO);
+    assert_eq!(offered(&phone.root), None, "just created");
+    set_age(&lock, STALE_AFTER - Duration::from_secs(60));
+    assert_eq!(offered(&phone.root), None, "nine minutes old");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&lock)
+        .unwrap()
+        .set_modified(SystemTime::now() + Duration::from_secs(3600))
+        .unwrap();
+    assert_eq!(offered(&phone.root), None, "a time in the future");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    assert!(lock.exists());
+}
+
+/// A git program writes the new index into its lock; `git commit -a` holds
+/// that lock for as long as its editor is open. Old or not, it is not offered.
+#[test]
+fn an_index_lock_with_content_is_not_offered() {
+    let phone = Phone::new();
+    let lock = phone.repo.path().join("index.lock");
+    fs::copy(phone.repo.path().join("index"), &lock).unwrap();
+    set_age(&lock, STALE_AFTER * 6);
+    assert_eq!(offered(&phone.root), None);
+    assert!(lock.exists());
+}
+
+#[test]
+fn no_offer_and_no_removal_while_tine_runs_a_git_operation() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    let (held, release) = (
+        std::sync::mpsc::channel::<()>(),
+        std::sync::mpsc::channel::<()>(),
+    );
+    let (held_tx, held_rx) = held;
+    let (release_tx, release_rx) = release;
+    let operation = std::thread::spawn(move || {
+        let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        held_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    });
+    held_rx.recv().unwrap();
+    assert_eq!(stale_lock::offer(&phone.root), None);
+    assert_eq!(
+        stale_lock::remove_within(
+            &phone.root,
+            &token,
+            Duration::from_millis(100),
+            SystemTime::now()
+        ),
+        Err(Refusal::TineBusy)
+    );
+    assert!(lock.exists());
+    release_tx.send(()).unwrap();
+    operation.join().unwrap();
+    assert_eq!(click(&phone.root, &token), Ok(Removed::Removed));
+}
+
+/// The click rechecks the lock it was offered: one changed since (a git
+/// program took it up again), even one still old, stays.
+#[test]
+fn the_click_refuses_a_lock_that_changed_since_the_offer() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    set_age(&lock, STALE_AFTER + Duration::from_secs(30));
+    assert_eq!(click(&phone.root, &token), Err(Refusal::Changed));
+    assert!(lock.exists());
+    set_age(&lock, Duration::ZERO);
+    assert_eq!(click(&phone.root, &token), Err(Refusal::Changed));
+    assert!(lock.exists());
+    fs::write(&lock, "a git program's new index").unwrap();
+    set_age(&lock, STALE_AFTER * 2);
+    let now = offered(&phone.root);
+    assert_eq!(now, None, "content: not offered any more");
+    // A lock someone else removed meanwhile is simply gone.
+    fs::remove_file(&lock).unwrap();
+    assert_eq!(click(&phone.root, &token), Ok(Removed::Gone));
+}
+
+/// A suspended Tine may resume after someone removed its lock and another
+/// client took it. It must neither install an old index nor unlink that lock.
+#[test]
+fn an_index_lock_replaced_while_tine_held_it_is_never_installed_or_deleted() {
+    let phone = Phone::new();
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = crate::owner::git_run::open_repo_at(&phone.root).unwrap();
+    let before = fs::read(phone.repo.path().join("index")).unwrap();
+    let mut held = repo.lock_index(false).unwrap();
+    held.index.clear().unwrap();
+    let lock = phone.repo.path().join("index.lock");
+    // Keep the original alive so neither Windows deletion semantics nor
+    // inode reuse makes this test depend on the host filesystem's timing.
+    fs::rename(&lock, phone.repo.path().join("original.lock")).unwrap();
+    fs::write(&lock, "").unwrap();
+    let error = held
+        .install()
+        .expect_err("a lost lock must refuse the install");
+    assert!(
+        error
+            .to_string()
+            .contains("the index lock was removed while Tine held it"),
+        "{error}"
+    );
+    assert_eq!(fs::read(phone.repo.path().join("index")).unwrap(), before);
+    drop(held);
+    assert_eq!(fs::read(lock).unwrap(), b"");
+}
+
+#[test]
+fn an_index_lock_removed_while_tine_held_it_cannot_install() {
+    let phone = Phone::new();
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = crate::owner::git_run::open_repo_at(&phone.root).unwrap();
+    let before = fs::read(phone.repo.path().join("index")).unwrap();
+    let mut held = repo.lock_index(false).unwrap();
+    held.index.clear().unwrap();
+    fs::rename(
+        phone.repo.path().join("index.lock"),
+        phone.repo.path().join("original.lock"),
+    )
+    .unwrap();
+    assert!(held.install().is_err());
+    drop(held);
+    assert_eq!(fs::read(phone.repo.path().join("index")).unwrap(), before);
+    assert!(!phone.repo.path().join("index.lock").exists());
+}
+
+#[test]
+fn dropping_an_index_lock_never_deletes_a_replacement() {
+    let phone = Phone::new();
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = crate::owner::git_run::open_repo_at(&phone.root).unwrap();
+    let held = repo.lock_index(false).unwrap();
+    let lock = phone.repo.path().join("index.lock");
+    fs::rename(&lock, phone.repo.path().join("original.lock")).unwrap();
+    fs::write(&lock, "").unwrap();
+    drop(held);
+    assert_eq!(fs::read(lock).unwrap(), b"");
+}
+
+#[test]
+fn a_stale_lock_is_not_offered_during_a_merge_or_with_detached_head() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    fs::write(
+        phone.repo.path().join("MERGE_HEAD"),
+        head(&phone.repo).to_string(),
+    )
+    .unwrap();
+    assert_eq!(offered(&phone.root), None);
+    assert!(matches!(
+        click(&phone.root, &token),
+        Err(Refusal::Failed(_))
+    ));
+    assert!(lock.exists());
+    fs::remove_file(phone.repo.path().join("MERGE_HEAD")).unwrap();
+    phone.repo.set_head_detached(head(&phone.repo)).unwrap();
+    assert_eq!(offered(&phone.root), None);
+    assert!(matches!(
+        click(&phone.root, &token),
+        Err(Refusal::Failed(_))
+    ));
+    assert!(lock.exists());
+}
+
+/// Replacement in the stat-to-rename window must give the new lock back,
+/// retaining the file itself, rather than merely reporting a changed token.
+#[test]
+fn a_lock_replaced_between_check_and_move_is_linked_back_never_deleted() {
+    // Exercise link-back on the private filesystem even when the mobile
+    // suite puts graphs on a provider that does not support hard links.
+    let private = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(private.path()).unwrap();
+    let repo = Repository::init(&root).unwrap();
+    let lock = repo.path().join("index.lock");
+    fs::write(&lock, "").unwrap();
+    set_age(&lock, STALE_AFTER * 2);
+    let token = offered(&root).unwrap().token;
+    let replacement = repo.path().join("replacement.lock");
+    fs::write(&replacement, "").unwrap();
+    let identity = same_file::Handle::from_file(fs::File::open(&replacement).unwrap()).unwrap();
+    let replacement_token = stale_lock::token(&fs::symlink_metadata(&replacement).unwrap());
+    assert_ne!(replacement_token, token);
+    let original = repo.path().join("original.lock");
+    let target = lock.clone();
+    stale_lock::before_move_test_hook(move || {
+        fs::rename(&target, original).unwrap();
+        fs::rename(replacement, target).unwrap();
+    });
+    let probe = root.join("link-probe");
+    fs::write(&probe, "").unwrap();
+    let links = fs::hard_link(&probe, root.join("link-probe-2")).is_ok();
+    let refused = click(&root, &token);
+    // Android denies hard links even in app-private storage, so link-back
+    // falls to the contract's no-link outcome: the replacement is kept
+    // under the aside name the refusal gives, never deleted.
+    if cfg!(target_os = "android") && !links {
+        let Err(Refusal::Failed(message)) = &refused else {
+            panic!("{refused:?}");
+        };
+        let aside = fs::read_dir(repo.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("tine-stale-index-")
+            })
+            .unwrap();
+        assert!(message.contains(&aside.display().to_string()), "{message}");
+        assert_eq!(same_file::Handle::from_path(&aside).unwrap(), identity);
+        assert!(!lock.exists());
+        return;
+    }
+    assert_eq!(refused, Err(Refusal::Changed));
+    assert_eq!(same_file::Handle::from_path(&lock).unwrap(), identity);
+    // NTFS tunnelling gives a name re-created within 15 s the old entry's
+    // creation time, so on Windows only size and mtime carry over.
+    let carried = |token: String| match cfg!(windows) {
+        true => token.rsplit_once(':').unwrap().0.to_string(),
+        false => token,
+    };
+    assert_eq!(
+        carried(stale_lock::token(&fs::symlink_metadata(lock).unwrap())),
+        carried(replacement_token)
+    );
+    assert!(fs::read_dir(repo.path()).unwrap().all(|e| {
+        !e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("tine-stale-index-")
+    }));
+}
+
+/// Only `index.lock` is ever offered or removed: a branch lock a killed
+/// commit left stays for the person, and Settings goes on naming it.
+#[test]
+fn removing_a_stale_index_lock_leaves_ref_locks_alone() {
+    let phone = Phone::new();
+    let branch = phone.repo.path().join("refs/heads/main.lock");
+    fs::write(&branch, "").unwrap();
+    set_age(&branch, STALE_AFTER * 2);
+    assert_eq!(offered(&phone.root), None, "a branch lock alone");
+    left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    assert_eq!(click(&phone.root, &token), Ok(Removed::Removed));
+    assert!(branch.exists());
+    phone.edit("pages/b.md", "- typed before the kill\n");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    assert!(held_lock(&phone.root)
+        .unwrap()
+        .ends_with("refs/heads/main.lock"));
+    fs::remove_file(branch).unwrap();
+}
+
+/// End to end on the worker: the phone goes to the background, the commit
+/// finds the lock a killed commit left, the notice offers it under the
+/// commit-only policy too, and after the click the worker commits at once.
+#[test]
+fn the_worker_offers_a_stale_lock_and_commits_after_the_click() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::Commit,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    let before = head(&phone.repo);
+    phone.edit("pages/b.md", "- typed before switching apps\n");
+    backgrounded_at(&phone.root);
+    wait_for("the offer", || {
+        last_attempt(&phone.root).stale_lock_offer.is_some()
+    });
+    foregrounded_at(&phone.root);
+    let notice = crate::git_settings::notice_for(Policy::Commit, &phone.root).unwrap();
+    assert_eq!(notice.code.as_deref(), Some("stale-lock"));
+    assert!(notice.persistent);
+    let offer = notice.stale_lock.unwrap();
+    assert_eq!(PathBuf::from(&offer.path), lock);
+    assert_eq!(
+        crate::git_settings::notice_for(Policy::Off, &phone.root),
+        None
+    );
+    assert_eq!(
+        stale_lock::remove(&phone.root, &offer.token),
+        Ok(Removed::Removed)
+    );
+    assert!(lock_removed(&phone.root, false));
+    wait_for("the commit after the click", || head(&phone.repo) != before);
+    wait_for("the offer to clear", || {
+        last_attempt(&phone.root).stale_lock_offer.is_none()
+    });
+    assert_eq!(
+        crate::git_settings::notice_for(Policy::Commit, &phone.root),
+        None
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+#[test]
+fn the_sync_worker_offers_a_stale_lock_and_pushes_after_the_click() {
+    let phone = Phone::new();
+    left_lock(&phone, STALE_AFTER * 2);
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncOnDemand,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    let before = phone.remote_tip();
+    phone.edit("pages/b.md", "- waiting to sync\n");
+    assert!(request_sync(&phone.root));
+    wait_for("the busy sync cycle and offer", || {
+        let last = last_attempt(&phone.root);
+        !last.sync.running
+            && matches!(last.sync.code.as_deref(), Some("busy" | "pull-held-busy"))
+            && last.stale_lock_offer.is_some()
+    });
+    let notice = crate::git_settings::notice_for(Policy::SyncOnDemand, &phone.root).unwrap();
+    let offer = notice.stale_lock.unwrap();
+    assert_eq!(click(&phone.root, &offer.token), Ok(Removed::Removed));
+    assert!(lock_removed(&phone.root, true));
+    wait_for("the push after the click", || phone.remote_tip() != before);
+    wait_for("the sync to finish and offer to clear", || {
+        let last = last_attempt(&phone.root);
+        !last.sync.running && last.stale_lock_offer.is_none()
+    });
+    assert_eq!(phone.remote_tip(), head(&phone.repo));
+    let remote_commit = phone.bare.find_commit(phone.remote_tip()).unwrap();
+    let blob = remote_commit
+        .tree()
+        .unwrap()
+        .get_path(Path::new("pages/b.md"))
+        .unwrap()
+        .id();
+    assert_eq!(
+        phone.bare.find_blob(blob).unwrap().content(),
+        b"- waiting to sync\n"
     );
     slot.background_cancelled.store(true, Ordering::Release);
 }

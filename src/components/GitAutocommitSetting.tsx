@@ -6,7 +6,7 @@ import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { Field } from "./settingsField";
 import { DialogActions } from "./DialogActions";
 import { GitSyncFixes } from "./GitSyncNotice";
-import { gitLineEndingsProblem, gitSyncProblem, gitSyncResult } from "../gitSync";
+import { gitLineEndingsProblem, gitStaleLockProblem, gitSyncProblem, gitSyncResult } from "../gitSync";
 
 const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
 
@@ -14,7 +14,8 @@ const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
  *  sits in, how often, and whether it syncs them with the branch's upstream. The setting is per device and per graph
  *  (`tine-settings.json`); the backend applies it to the running worker at once. Shows the branch, the remote (read
  *  from the repository config), why Tine can't commit or sync, the last commit and sync, each sync
- *  problem with a way to fix it, an `index.lock` left held for a long time (Tine never removes it), and the sign-in
+ *  problem with a way to fix it, an `index.lock` left held for a long time (a stale one is offered for removal on
+ *  the person's click, GS-LOCK; Tine never removes a lock unasked), and the sign-in
  *  for an HTTPS remote (the token goes to a private file on this device). */
 export function GitAutocommitSetting(): JSX.Element {
   let alive = true;
@@ -105,6 +106,10 @@ export function GitAutocommitSetting(): JSX.Element {
         <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
       </div>}</Show>
       <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
+      <Show when={gitStaleLockProblem(s().last?.stale_lock_offer)}>{(p) => <div role="status" data-git-stale-lock>
+        {p().text}
+        <GitSyncFixes problem={p()} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
+      </div>}</Show>
       <Show when={s().last?.syncthing_ignore_added}>{(path) => <div role="status">{t("git-settings-syncthing-ignore-added", { path: path() })}</div>}</Show>
       <Show when={s().last?.syncthing_ignore_failed}><div role="status">{t("git-settings-syncthing-ignore-failed")}</div></Show>
       <Show when={s().last?.repack_deferred}><div role="status">{t("git-settings-repack-deferred")}</div></Show>

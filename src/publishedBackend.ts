@@ -1200,6 +1200,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setGitAutocommit",
   "gitSyncNow",
   "gitDisableLineEndings",
+  "gitRemoveStaleLock",
   "gitSignIn",
   "gitSignOut",
   "markPageSeen",

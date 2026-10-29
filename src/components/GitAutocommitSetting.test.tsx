@@ -230,3 +230,16 @@ it("signs in to the remote's host without keeping the token on the page, and sig
   expect(signOut).toHaveBeenCalledOnce();
   dispose();
 });
+
+it("GS-LOCK: Settings offers to remove a stale index.lock under the commit-only policy", async () => {
+  const offer = { path: "/graph/.git/index.lock", modified: 1_700_000_000, token: "0:1:2" };
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ policy: "commit", last: { committed_at: null, commit: null, refused: ["busy", "Another git command is using the repository (its index.lock is held)."], stale_lock: null, stale_lock_offer: offer } }));
+  const remove = vi.spyOn(backend(), "gitRemoveStaleLock").mockResolvedValue(repo({ policy: "commit" }));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-stale-lock] [data-git-sync-fix=remove-stale-lock]")).not.toBeNull());
+  expect(root.querySelector("[data-git-stale-lock]")!.textContent).toContain("/graph/.git/index.lock");
+  root.querySelector<HTMLButtonElement>("[data-git-sync-fix=remove-stale-lock]")!.click();
+  await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("0:1:2"));
+  await vi.waitFor(() => expect(root.querySelector("[data-git-stale-lock]")).toBeNull());
+  dispose();
+});

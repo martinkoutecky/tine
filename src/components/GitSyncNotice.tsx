@@ -28,6 +28,17 @@ export function GitSyncFixes(props: { problem: GitSyncProblem; onSignIn: () => v
       if (owner()) setError(t("git-sync-line-endings-failed", { error: String(failure) }));
     } finally { if (owner()) setRepairing(false); }
   };
+  // GS-LOCK: the backend rechecks the lock it offered before removing it, then commits at once.
+  const removeLock = async (token: string) => {
+    const owner = bindingOwner();
+    setRepairing(true);
+    try {
+      const answer = await writeOwned(owner, backend().gitRemoveStaleLock(token));
+      if (answer.kind === "current") { setError(""); props.onRepaired?.(answer.value); }
+    } catch (failure) {
+      if (owner()) setError(t("git-sync-stale-lock-failed", { error: String(failure) }));
+    } finally { if (owner()) setRepairing(false); }
+  };
   const copy = async (command: string) => {
     try { await writeClipboardText(command); setError(""); }
     catch { setError(t("git-sync-copy-failed")); }
@@ -49,6 +60,8 @@ export function GitSyncFixes(props: { problem: GitSyncProblem; onSignIn: () => v
         case "open-folder": return <Show when={canRevealInFileManager()}>
           <button class="settings-btn" data-git-sync-fix={fix} onClick={() => void reveal()}>{t("git-sync-fix-open-folder")}</button></Show>;
         case "line-endings": return <button class="settings-btn" data-git-sync-fix={fix} disabled={repairing()} onClick={() => void repair()}>{t("git-sync-fix-line-endings")}</button>;
+        case "remove-stale-lock": return <Show when={props.problem.staleLock}>{(token) =>
+          <button class="settings-btn" data-git-sync-fix={fix} disabled={repairing()} onClick={() => void removeLock(token())}>{t("git-sync-fix-remove-stale-lock")}</button>}</Show>;
         case "line-endings-guide": return <button class="settings-btn" data-git-sync-fix={fix} onClick={() => { closeSettings(); void openGuide("Reference/Files, external edits, and backups", "e7ad234c-701e-4473-a6e3-111264be9655"); }}>{t("git-sync-fix-line-endings-guide")}</button>;
       }
     }}</For>
@@ -95,7 +108,7 @@ export function GitSyncNotice(): JSX.Element {
   const problem = () => gitSyncProblem(sync(), graphMeta()?.root);
   return <Show when={sync()?.persistent && problem()}>{(p) =>
     <div class="root-recovery-notice" role="status" data-testid="git-sync-notice" data-git-sync-code={sync()?.code ?? ""}>
-      <strong>{t("git-sync-notice-title")}</strong>
+      <strong>{t(sync()?.code === "stale-lock" ? "git-stale-lock-notice-title" : "git-sync-notice-title")}</strong>
       <span>{p().text}</span>
       <GitSyncFixes problem={p()} onSignIn={() => openSettings("graph")} onSyncNow={() => void syncNow()} onRepaired={() => setSync(null)} />
       <button class="settings-btn" data-git-sync-settings onClick={() => openSettings("graph")}>{t("git-sync-notice-settings")}</button>

@@ -22,6 +22,7 @@ pub(crate) mod git_autocommit;
 pub(crate) mod git_identity;
 pub(crate) mod git_pull;
 pub(crate) mod git_run;
+pub(crate) mod git_stale_lock;
 pub(crate) mod git_sync;
 pub(crate) mod git_sync_cycle;
 pub(crate) mod lease;

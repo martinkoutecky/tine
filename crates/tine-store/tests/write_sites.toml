@@ -2073,3 +2073,33 @@ test = "src-tauri/src/owner/git_sync/line_endings.rs#crlf_fix_overrides_inherite
 oracle = false
 note = "D-20261028-CRLF: explicit user repair only. RUN_LOCK and index.lock protect a repeated raw-byte probe; bound common-dir config and config.lock containment checks precede libgit2's locked local-config replace. No graph, index or ref publication; a crash leaves conversion enabled or disabled, both safe for the checked bytes. Included/global/system files are never written."
 mutations = ".set_bool=1, .set_multivar=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run/index_lock_identity.rs"
+fn = "IndexLockIdentity::capture_new"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#index_lock_identity_failure_leaves_no_lock_behind"
+oracle = false
+note = "GS-LOCK-FIX2: called only by IndexLock::acquire right after its guard-checked create_new; a failed identity read removes that just-created, still-empty index.lock (it is Tine's own), so no lock is left behind. No other path."
+mutations = "fs::remove_file=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run/index_lock_identity.rs"
+fn = "IndexLockIdentity::matches_path"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_mobile_tests.rs#an_index_lock_replaced_while_tine_held_it_is_never_installed_or_deleted"
+oracle = false
+note = "GS-LOCK-FIX1: read-only Windows ownership probe of the guard-checked index.lock entry, opened without following reparse points. The census counts OpenOptions without write/create. No content mutation; compare the volume serial and file ID with the held handle before install/unlink. Missing/unavailable/mismatched identity refuses. Unix uses symlink_metadata; Windows runtime acceptance pending."
+mutations = "OpenOptions::new=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_stale_lock.rs"
+fn = "remove_within"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_mobile_tests.rs#a_lock_replaced_between_check_and_move_is_linked_back_never_deleted"
+oracle = false
+note = "D-20261029-GSL: explicit click only, under RUN_LOCK, on the guard-checked index.lock and same-gitdir aside path. Recheck regular empty stale lock and offered times; rename aside, verify the moved token, then delete. A changed replacement is hard-linked back without replacing another lock; failed restoration preserves the named aside file. Crash may leave an aside file; no graph/index/ref write. Frozen third-party holders, clock skew and native check-to-call limits are documented in storage-contract I-8."
+mutations = "fs::hard_link=1, fs::remove_file=2, fs::rename=1"

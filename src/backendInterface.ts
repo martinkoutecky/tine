@@ -644,6 +644,9 @@ export interface Backend {
   /** "Sync now": commit pending changes, then one sync cycle on the graph's git thread. Answers at once. */
   gitSyncNow(): Promise<GitAutocommitStatus>;
   gitDisableLineEndings(): Promise<GitAutocommitStatus>;
+  /** "Remove the stale lock": remove the offered `index.lock` after rechecking it; refused (rejects) when it
+   *  changed, or while Tine's own git operation runs. Then the worker commits (and syncs) at once. */
+  gitRemoveStaleLock(token: string): Promise<GitAutocommitStatus>;
   /** A sync problem that persists, for the notice outside Settings; `null` when there is none. */
   gitSyncNotice(): Promise<GitSyncStatus | null>;
   /** Keep a token for the remote's HTTPS host on this device (never in the graph or settings). */

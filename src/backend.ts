@@ -914,6 +914,9 @@ class TauriBackend implements Backend {
   gitDisableLineEndings() {
     return this.call<GitAutocommitStatus>("git_disable_line_endings");
   }
+  gitRemoveStaleLock(token: string) {
+    return this.call<GitAutocommitStatus>("git_remove_stale_lock", { token });
+  }
   gitSyncNotice() {
     return this.call<GitSyncStatus | null>("git_sync_notice");
   }
