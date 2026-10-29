@@ -1102,7 +1102,38 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
         }
         kills.max_resume_cycles = kills.max_resume_cycles.max(codes.len());
         kills.held_resumes += u32::from(codes.len() > 1);
-        assert_eq!(head(&repo), u, "{what}: resumed {codes:?}");
+        if head(&repo) != u {
+            // Name what the resume committed or left that is neither H's
+            // nor U's (the bytes, or the commit's path list).
+            let mut odd = Vec::new();
+            let at = head(&repo);
+            if at != h {
+                let (ht, at_tree) = (
+                    phone.repo.find_commit(h).unwrap().tree().unwrap(),
+                    repo.find_commit(at).unwrap().tree().unwrap(),
+                );
+                let diff = repo
+                    .diff_tree_to_tree(Some(&ht), Some(&at_tree), None)
+                    .unwrap();
+                for delta in diff.deltas() {
+                    let path = delta.new_file().path().or(delta.old_file().path());
+                    let path = path.unwrap().to_string_lossy().into_owned();
+                    let new = Some(delta.new_file().id()).filter(|id| !id.is_zero());
+                    if new != blob_at(&phone.bare, u, &path) {
+                        odd.push(format!("committed {path} {new:?}"));
+                    }
+                }
+            }
+            for (path, _) in &changes {
+                let (bh, bu) = (blob_at(&phone.bare, h, path), blob_at(&phone.bare, u, path));
+                let disk = on_disk(path);
+                if disk != bh && disk != bu {
+                    let text = fs::read_to_string(phone.root.join(path)).unwrap_or_default();
+                    odd.push(format!("disk {path} {:?}", text.lines().next()));
+                }
+            }
+            panic!("{what}: resumed {codes:?}; neither H nor U: {odd:?}");
+        }
         // A pull killed inside a page-host operation leaves that operation's
         // durable custody in app data. The restarted host finishes it first;
         // until then the pull is held (its page has input, or the store has
