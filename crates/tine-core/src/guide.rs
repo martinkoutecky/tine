@@ -957,6 +957,8 @@ mod rename_guide_tests {
             "`index.lock`",
             "Tine offers **Remove the stale lock**",
             "a notice (and Settings) offers **Remove the stale lock**",
+            "goes through a temporary name in Tine's own `logseq/.tine-respell` folder",
+            "the page is back under its new name the next time Tine opens the graph",
             "never removes a lock by itself",
             "from 1 to 1440 minutes",
             "run `git init` on a computer, or use a git app on a phone",
