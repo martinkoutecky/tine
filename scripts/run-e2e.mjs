@@ -393,6 +393,27 @@ function archiveInfrastructureAttempt(dir, attempt) {
   }
 }
 
+// The app warns (toast "Tine is keeping application data in temporary or
+// memory-backed storage", src-tauri/src/data_home.rs `volatile_location`, L9-15)
+// when its app-data dir lies under its own temp directory, which is TMPDIR or
+// /tmp. Journeys keep their disposable XDG_DATA_HOME under /tmp or os.tmpdir(),
+// so without help every journey shows that real-user warning, and the toast
+// stack intercepts clicks on the controls at the bottom right. The warning
+// stays; the harness instead gives the *app process* (and only it) a private
+// TMPDIR that contains no journey data. Journeys keep computing their own paths
+// from the unchanged environment. A launcher script is the one point every
+// journey and CI job shares, because each reads the binary from TINE_APP and
+// spawns it with its own environment (tauri-driver, WebKitWebDriver, or
+// directly). `exec` keeps the pid, so process identity is unchanged.
+function privateTempAppLauncher(dir, binary) {
+  const appTmp = path.join(dir, "app-tmp");
+  fs.mkdirSync(appTmp, { recursive: true });
+  const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+  const launcher = path.join(dir, "tine-app-launcher.sh");
+  fs.writeFileSync(launcher, `#!/bin/sh\nTMPDIR=${quote(appTmp)}\nexport TMPDIR\nexec ${quote(binary)} "$@"\n`, { mode: 0o755 });
+  return launcher;
+}
+
 async function runScenario([id, script, extraEnv], contractEntry) {
   const started = Date.now();
   const dir = path.join(artifactRoot, id);
@@ -438,6 +459,7 @@ async function runScenario([id, script, extraEnv], contractEntry) {
       env.E2E_TMP_DIR = process.env.E2E_TMP_DIR
         || path.join(os.tmpdir(), `tine-e2e-${suiteName}-${id}-${process.pid}-${driverPort}`);
     }
+    if (process.platform === "linux") env.TINE_APP = privateTempAppLauncher(dir, app);
     const nativeLinux = process.platform === "linux" && id !== "selection-wrap" && id !== "wayland-app-id";
     const owner = process.platform === "linux" && id !== "selection-wrap"
       ? accountHomeFixture(dir, dir, env) : undefined;

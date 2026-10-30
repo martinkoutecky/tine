@@ -472,6 +472,7 @@ async function nativeClickSelector(selector, id, text) {
     throw new Error(`native pointer target was ${state}: ${selector} ${text ?? ""}; ${JSON.stringify(target.candidates)}`.trim());
   }
   await nativeClickAt(target.point, id);
+  return target;
 }
 
 // Reader tools remain available through the overflow menu in narrow panes.
@@ -1711,13 +1712,58 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
-  await browser.waitUntil(() => browser.execute((highlightId) =>
-    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
-    document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
-    timeout: 10_000,
-    timeoutMsg: "a same-PDF block reference did not scroll to its exact second highlight",
+  // GH #735: a reference's hover preview opens after OG's 1000 ms dwell, below the
+  // reference, so over the next line. The WebDriver click above left the pointer
+  // resting on the first reference; on a slower runner its preview opened after the
+  // native click below was aimed and before it was dispatched, and the click opened
+  // the preview's source page instead (PDF-LOGSEQ-HOSTED). A user moves off the
+  // reference before aiming at the next one: do the same, and let any preview close.
+  const parking = await browser.execute(() => {
+    const rect = document.querySelector(".pdf-zoom-level")?.getBoundingClientRect();
+    return rect && rect.width > 0 ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
   });
+  if (!parking) throw new Error("the PDF zoom level is not visible to park the pointer on");
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id: "second-pdf-park",
+      parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerMove", duration: 0, origin: "viewport", x: Math.round(parking.x), y: Math.round(parking.y) }],
+    }]);
+  } finally {
+    await browser.releaseActions();
+  }
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".peek-popup")), {
+    timeout: 5_000,
+    timeoutMsg: "the first reference's hover preview stayed open after the pointer left it",
+  });
+  const sameTargetClick = await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
+  try {
+    await browser.waitUntil(() => browser.execute((highlightId) =>
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
+      document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
+      timeout: 10_000,
+      timeoutMsg: "a same-PDF block reference did not scroll to its exact second highlight",
+    });
+  } catch (error) {
+    const diagnostic = await browser.execute((point) => {
+      const viewer = document.querySelector(".pdf-viewer");
+      const hit = document.elementFromPoint(point.x, point.y);
+      return {
+        target: viewer?.getAttribute("data-pdf-highlight-target"),
+        ready: viewer?.getAttribute("data-pdf-ready"),
+        scrollTop: document.querySelector(".pdf-scroll")?.scrollTop,
+        highlights: [...document.querySelectorAll(".pdf-hl")].map((element) => ({
+          id: element.getAttribute("data-highlight-id"), target: element.classList.contains("pdf-hl-target"),
+          top: Math.round(element.getBoundingClientRect().top),
+        })),
+        hitNow: hit && { className: String(hit.className).slice(0, 60), text: hit.textContent?.slice(0, 60) },
+        peek: !!document.querySelector(".peek-popup"),
+        pageTitle: document.querySelector("main .page-title")?.textContent?.slice(0, 60),
+      };
+    }, sameTargetClick.point);
+    throw new Error(`${error.message}: ${JSON.stringify({ click: sameTargetClick, ...diagnostic })}`, { cause: error });
+  }
   if ((await browser.$(".pdf-viewer")).elementId !== secondViewerElementId) {
     throw new Error("same-PDF highlight navigation remounted the PDF resource");
   }

@@ -13,6 +13,7 @@ import { openInPageFind, setInPageFindQuery, inPageFindMatches, closeInPageFind 
 import { installKeybindings } from "../keybindings";
 import { PageView } from "./Page";
 import * as blockIdentity from "../blockIdentity";
+import * as documentApi from "../document";
 import { setDoc } from "../document/model";
 
 class WindowObserver {
@@ -88,6 +89,18 @@ it("GH #623: the routed 2,000-block page mounts bounded shells, including its fi
     expect(host.querySelectorAll(".ls-block").length).toBeLessThan(100);
     expect(node("window-1999")?.raw).toBe("Row 1999 unique content");
     expect(host.querySelector('[data-block-id="window-1999"]')).toBeNull();
+  } finally { dispose(); }
+});
+
+it.each([false, true])("BIGLOAD-090: opening a 2,000-block page (read-only: %s) asks read-only per page, not per block", async readOnly => {
+  // Window sizing and height estimates walk every block of the page; the
+  // read-only fold choice belongs to the page, so a pass asks it once.
+  const readOnlyAsks = vi.spyOn(documentApi, "blockPageReadOnly");
+  if (readOnly) readOnlyAsks.mockReturnValue(true);
+  const { host, dispose } = await mount(2000, true);
+  try {
+    expect(host.querySelector('[data-block-id="window-0"]')).not.toBeNull();
+    expect(readOnlyAsks.mock.calls.length).toBeLessThan(400);
   } finally { dispose(); }
 });
 

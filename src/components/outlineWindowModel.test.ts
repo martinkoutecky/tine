@@ -1,7 +1,8 @@
 import { afterEach, expect, it } from "vitest";
-import { createComputed, createRoot, createSignal } from "solid-js";
+import { createComputed, createRoot, createSignal, getOwner, type Owner } from "solid-js";
+import { produce } from "solid-js/store";
 import { resetStore } from "../document";
-import { setDoc, type Node } from "../document/model";
+import { setDoc, writeRaw, type Node } from "../document/model";
 import { createOutlineWindowGeometry, createOutlineWindowModel } from "./outlineWindowModel";
 
 const row = (id: string, children: string[] = []): Node => ({
@@ -12,7 +13,7 @@ afterEach(resetStore);
 it("keeps reveal membership stable on text edits while updating multiline spacer geometry", () => {
   setDoc("byId", { root: row("root", ["child"]), child: row("child") });
   createRoot(dispose => {
-    const model = createOutlineWindowModel(() => ["root"], (_id, stored) => stored);
+    const model = createOutlineWindowModel(() => ["root"], () => (_id, _page, stored) => stored);
     const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
     let registrations = 0;
     createComputed(() => { model(); registrations++; });
@@ -38,7 +39,7 @@ it("rebuilds geometry and reveal membership for structure and occurrence folds, 
   setDoc("byId", { root: row("root", ["child"]), child: row("child"), added: row("added") });
   createRoot(dispose => {
     const [folded, setFolded] = createSignal(false);
-    const model = createOutlineWindowModel(() => ["root"], () => folded());
+    const model = createOutlineWindowModel(() => ["root"], () => () => folded());
     const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
     const old = geometry();
     setDoc("byId", "root", "children", ["added"]);
@@ -60,7 +61,7 @@ it("rebuilds geometry and reveal membership for structure and occurrence folds, 
 it("reuses content versions on remount and detects edits made with no window mounted", () => {
   setDoc("byId", { root: row("root") });
   const readVersion = () => createRoot(dispose => {
-    const model = createOutlineWindowModel(() => ["root"], (_id, stored) => stored);
+    const model = createOutlineWindowModel(() => ["root"], () => (_id, _page, stored) => stored);
     const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
     const version = geometry().version();
     dispose();
@@ -70,4 +71,32 @@ it("reuses content versions on remount and detects edits made with no window mou
   expect(readVersion()).toBe(initial);
   setDoc("byId", "root", "raw", "edited while unmounted");
   expect(readVersion()).toBeGreaterThan(initial);
+});
+
+it("BIGLOAD-090b: opening a 2,000-row window creates O(1) reactive computations, not one per row", () => {
+  const ids = Array.from({ length: 2000 }, (_, i) => `b${i}`);
+  setDoc("byId", Object.fromEntries(ids.map(id => [id, row(id)])));
+  const computations = (owner: Owner): number =>
+    (owner.owned ?? []).reduce((total, child) => total + 1 + computations(child), 0);
+  createRoot(dispose => {
+    const model = createOutlineWindowModel(() => ids, () => (_id, _page, stored) => stored);
+    const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
+    expect(geometry().estimate()).toBe(2000 * 28);
+    expect(computations(getOwner()!)).toBeLessThan(10);
+    dispose();
+  });
+});
+
+it("BIGLOAD-090b: a producer raw write reaches the window through the raw funnel", () => {
+  setDoc("byId", { root: row("root", ["child"]), child: row("child") });
+  createRoot(dispose => {
+    const model = createOutlineWindowModel(() => ["root"], () => (_id, _page, stored) => stored);
+    const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
+    const before = model(), version = geometry().version();
+    setDoc(produce(state => writeRaw(state, "child", "one\ntwo\nthree")));
+    expect(model()).toBe(before);
+    expect(geometry().estimate()).toBe(108);
+    expect(geometry().version()).toBeGreaterThan(version);
+    dispose();
+  });
 });
