@@ -63,7 +63,8 @@ fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
     drop(file);
     fs::rename(&temporary, &target).unwrap();
     let handle = fs::File::open(&target).unwrap().metadata().unwrap();
-    let directory = fs::File::open(dir.path()).unwrap().sync_all();
+    // diagnostic only: Windows cannot open a folder without backup semantics
+    let directory = fs::File::open(dir.path()).and_then(|d| d.sync_all());
     let path = fs::symlink_metadata(&target).unwrap();
     let (handle, path) = (describe(&handle), describe(&path));
     println!("GH811-STAMP handle: {handle}");
