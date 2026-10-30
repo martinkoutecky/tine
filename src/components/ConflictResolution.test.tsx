@@ -237,7 +237,7 @@ describe("in-page conflict resolution", () => {
     button(host, "Apply resolution").click();
     await settle();
     expect(resolve).not.toHaveBeenCalled();
-    expect(toasts().map((t) => t.message)).toContain("Resolve this page’s save conflict first, then apply this resolution.");
+    expect(toasts().map((t) => t.message)).toContain("Resolve this page’s save conflict first with the choice in the red bar, then apply this resolution.");
     dispose();
   });
 

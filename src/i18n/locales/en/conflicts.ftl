@@ -72,6 +72,8 @@ conflict-resolution-the-other-file-moves-to-the-recoverable-trash = The other fi
 
 conflict-resolution-the-copy-moves-to-the-recoverable-trash-once = The copy moves to the recoverable trash once this is applied.
 
+conflict-resolution-another-version-waits = Another version of this page also arrived. Resolve your unsaved edits here first; its comparison opens next.
+
 conflict-resolution-applying = Applying…
 
 conflict-resolution-apply-resolution = Apply resolution

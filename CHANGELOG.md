@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its "Two versions of this page arrived" panel used to hide the review of the unsaved edits, and its Apply only said "Resolve this page’s save conflict first". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied.
+
 ## [0.8.2] - 2026-10-29
 
 Bug fixes for Tine 0.8.1: block references picked from the `((` search, Journals on a first launch and while editing, and a page file a sync tool is replacing.

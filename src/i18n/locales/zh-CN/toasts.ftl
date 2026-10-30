@@ -63,7 +63,7 @@ conflict-resolution-resolved-the-conflict-in = 已解决“{ $page_name }”中�
 
 conflict-resolution-applied-the-resolution-to-but-it-is-not = 已为“{ $page_name }”应用解决方案，但尚未保存。Tine 会继续尝试保存。
 
-conflict-resolution-resolve-this-page-s-save-conflict-first-then = 请先解决此页面的保存冲突，再应用此解决方案。
+conflict-resolution-resolve-this-page-s-save-conflict-first-then = 请先使用红色提示栏中的选项解决此页面的保存冲突，再应用此解决方案。
 
 conflict-resolution-the-file-changed-on-disk-re-reading-it = 磁盘上的文件发生了更改，正在重新读取，请重新选择。
 

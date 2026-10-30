@@ -41,12 +41,10 @@ import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
-import { PageConflictResolution } from "./ConflictResolution";
+import { PageConflictPanel } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
-import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
-import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow } from "../windowRealm";
 
@@ -1149,13 +1147,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
       </Show>
       <ExternalChangeBar name={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
-      <Show when={conflictForPage(props.page.id) ?? liveConflictForPage(props.page.name, props.page.id)}>
-        {(conflict) => (
-          <FailureBoundary region="The conflict panel">
-            <PageConflictResolution conflict={conflict()} />
-          </FailureBoundary>
-        )}
-      </Show>
+      <FailureBoundary region="The conflict panel">
+        <PageConflictPanel name={props.page.name} path={props.page.id} />
+      </FailureBoundary>
       <div class="page-blocks">
         <Show when={preambleContent()}>
           {(content) => (

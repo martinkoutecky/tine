@@ -30,7 +30,7 @@ const REQUIRED_SEAMS: Array<{ file: string; component: string }> = [
 
   { file: "src/components/Page.tsx", component: "LinkedReferences" },
   { file: "src/components/Page.tsx", component: "UnlinkedReferences" },
-  { file: "src/components/Page.tsx", component: "PageConflictResolution" },
+  { file: "src/components/Page.tsx", component: "PageConflictPanel" },
   { file: "src/components/RightSidebar.tsx", component: "LinkedReferences" },
   { file: "src/components/RightSidebar.tsx", component: "UnlinkedReferences" },
 ];
