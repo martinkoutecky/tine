@@ -85,6 +85,13 @@ export function facetsFromDto(d: {
   };
 }
 
+/** The heading state a block's own `heading::` property declares (what the editor needs when the property is
+ * hidden from its text), in the shape `effectiveHeadingLevel` takes. */
+export function headingPropertyFacets(properties: readonly [string, string][]): Pick<Facets, "headingLevel" | "headingAuto"> {
+  const { level, auto } = headingPropertyState(properties);
+  return { headingLevel: level, headingAuto: auto };
+}
+
 function headingPropertyState(properties: readonly [string, string][]): {
   level: number | null;
   auto: boolean;

@@ -58,4 +58,18 @@ describe("a heading block edits at the view's heading size", () => {
     const { root, editor } = edit("Title\nsecond line\nheading:: 2", [["heading", "2"]]);
     expect(shownLevel(root, editor)).toBe(editor.kind === "textarea" ? null : 2);
   });
+  it("follows a # prefix as it is typed and removed (OG reads the content)", () => {
+    const { root, editor } = edit("Title");
+    expect(shownLevel(root, editor)).toBeNull();
+    editor.input("## Title");
+    expect(shownLevel(root, editor)).toBe(2);
+    editor.input("Title");
+    expect(shownLevel(root, editor)).toBeNull();
+  });
+  it("lets a typed # prefix win over the hidden heading:: property, as the view's ATX level does", () => {
+    const { root, editor } = edit("Title\nheading:: 3", [["heading", "3"]]);
+    expect(shownLevel(root, editor)).toBe(3);
+    editor.input("# Title");
+    expect(shownLevel(root, editor)).toBe(1);
+  });
 });

@@ -80,7 +80,7 @@ import {
   type SelectionAction,
 } from "../editor/selectionActions";
 import { selectionActionLabel } from "./SelectionActionLabel";
-import { effectiveHeadingLevel, EMPTY_FACETS, type Facets } from "../render/facets";
+import { effectiveHeadingLevel, facetsOf, headingPropertyFacets, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
 import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
@@ -583,13 +583,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // GH #357: while the buffer IS one whole-block code fence the editor presents
   // as the same mono, no-wrap card the rendered face is (no re-layout jump).
   // Mixed content / ```calc keep their own modes; re-derived per keystroke.
-  // The level comes from the whole block (`heading:: N` / `heading:: true` live in the hidden properties, which
-  // the editor text no longer contains); the single-line gate is on the editor text. OG parity:
-  // `components/editor.cljs get-editor-style-class` reads `(:heading (:block/properties block))` and gates on
-  // the content being one line (`uniline-block`).
+  // OG parity: `components/editor.cljs get-editor-style-class` takes the level from the block's own `heading::`
+  // property (`(:heading (:block/properties block))`), else from the content's `#` prefix, and gates on the content
+  // being one line (`uniline-block`). The typed text answers the `#` prefix live; the hidden `heading::` property
+  // is not in the editor text, so it comes from the whole block.
   const editorHeadingLevel = createMemo(() => {
-    if (editorValue().includes("\n")) return null;
-    return effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id));
+    const visible = editorValue();
+    if (visible.includes("\n")) return null;
+    const typed = effectiveHeadingLevel(facetsOf(visible, pageFmt()), depthOf(props.id));
+    if (typed !== null) return typed;
+    return effectiveHeadingLevel(headingPropertyFacets(propertySession.facets(node().raw, pageFmt()).properties), depthOf(props.id));
   });
   // Live calc preview: when this editor opened on a ```calc fence, show the SAME
   // results panel as the rendered view, recomputed on every keystroke (onInput
