@@ -521,6 +521,19 @@
   line-height: 1;
 }
 
+/* PDF5-SCROLL: pdf.js 5 styles every glyph span with
+   `transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))`.
+   A span pdf.js neither stretched (--scale-x) nor rotated (--rotate) — every
+   single-character span, most of a typical page — gets an identity transform,
+   yet WebKit still keeps it as its own transformed layer and repaints them all
+   on each scroll frame, which halved fast-scroll throughput. pdf.js 4 left such
+   spans untransformed; so do we when the minimum font size is 1 px (the class
+   is set by PdfViewer), where the min-font scale is identity as well. */
+.pdf-page .textLayer.pdf-text-unit-font > :not(.markedContent, [style*="--scale-x"], [style*="--rotate"]),
+.pdf-page .textLayer.pdf-text-unit-font .markedContent span:not(.markedContent, [style*="--scale-x"], [style*="--rotate"]) {
+  transform: none;
+}
+
 .pdf-hl-layer {
   position: absolute;
   inset: 0;

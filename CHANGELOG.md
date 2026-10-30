@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Fast scrolling through a PDF no longer leaves pages blank for up to a second behind the scroll, a regression in 0.9.0-beta.1 from the pdf.js 5 upgrade. pdf.js 5 gave every glyph of the hidden selectable-text layer its own transformed layer, which the webview repainted on every scroll frame; glyphs that need no stretching or rotation are now drawn untransformed again, as with pdf.js 4, with text selection unchanged (PDF5-SCROLL).
+
 ## [0.9.0-beta.1] - 2026-10-29
 
 The first Tine 0.9 Beta. Git sync on phones and computers, with sign-in and automatic commits; "Changed since you last looked", which marks what other people or tools committed to a page, with buttons to step through each change; pages shared as encrypted links that open in the browser; margin comments with replies; a command line that can write, now also on Windows, for scripts and AI agents; tabs organized in the sidebar; theme fonts; the PDF viewer on pdf.js 5; and the 0.9 storage checks described below. It includes every fix in stable 0.8.2.

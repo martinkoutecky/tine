@@ -966,6 +966,10 @@ export function PdfViewer(props: {
     tl.innerHTML = "";
     pinTextScale(n, atScale, viewport.userUnit);
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
+    // pdf.js sets the browser's minimum font size here; at 1 px its compensating
+    // scale is identity and the glyph spans it never stretched or rotated may drop
+    // their transform (pdf-workspace.css, PDF5-SCROLL).
+    tl.classList.toggle("pdf-text-unit-font", tl.style.getPropertyValue("--min-font-size") === "1");
     textInflight[n] = layer;
     // pdf.js 5 positions glyphs with CSS variables. Building them in a visible
     // layer repeatedly resolves the growing tree in WebKit (notably when its
