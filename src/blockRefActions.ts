@@ -1,6 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandRow } from "./collapseCommandSurface";
-import { collapseCommandSurface, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
+import { collapseCommandRow, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -173,7 +172,6 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   const surface = row?.surface;
   // A selected whole-block embed host folds its visible root row (D-20261030-EMB).
   if (row) parents = parents.map((id, i) => i === 0 ? row.id : id);
-  const surface = parents.length ? collapseCommandSurface(parents[0]) : undefined;
   // Result rows answer to the group that shows them, and so do their descendants.
   const rowSurface = new Map<string, CommandCollapseSurface>();
   const surfaceOf = (id: string): CommandCollapseSurface | undefined => rowSurface.get(id) ?? surface;
