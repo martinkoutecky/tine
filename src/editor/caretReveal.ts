@@ -50,14 +50,14 @@ export function revealCaretColumn(ref: HTMLTextAreaElement | undefined, offset: 
   else if (x > ref.scrollLeft + ref.clientWidth - margin) ref.scrollLeft = x - ref.clientWidth + margin;
 }
 
-/** Scroll `scroller` the minimum that shows the caret row of the focused
- * `editor`. Returns whether it scrolled. O(editor text) for one row
- * measurement; a no-op without layout, an unfocused editor, or no scroller. */
-export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null): boolean {
-  if (!scroller || !editor.isConnected || !scroller.contains(editor) || documentOf(editor).activeElement !== editor) return false;
+/** Where the caret row of the focused `editor` is, in viewport pixels, and the
+ * top edge the view must keep it below (scroller top, its scroll-padding, the
+ * sticky pins, the margin). Null without layout, an unfocused editor, or no scroller. */
+export function caretViewRow(editor: HTMLTextAreaElement, scroller: HTMLElement | null): { top: number; bottom: number; visibleTop: number; visibleBottom: number } | null {
+  if (!scroller || !editor.isConnected || !scroller.contains(editor) || documentOf(editor).activeElement !== editor) return null;
   const caret = editor.selectionDirection === "backward" ? editor.selectionStart : editor.selectionEnd;
   const row = textareaCaretRow(editor, caret ?? 0);
-  if (!row) return false;
+  if (!row) return null;
   const box = editor.getBoundingClientRect();
   const top = box.top + editor.clientTop + row.top - editor.scrollTop;
   const bottom = box.top + editor.clientTop + row.bottom - editor.scrollTop;
@@ -72,12 +72,42 @@ export function revealCaretRect(editor: HTMLElement, scroller: HTMLElement | nul
   const reservedTop = parseFloat(windowOf(scroller).getComputedStyle(scroller).scrollPaddingTop) || 0;
   const visibleTop = Math.max(view.top + scroller.clientTop + reservedTop, pinnedBottom(editor, scroller)) + MARGIN;
   const visibleBottom = view.top + scroller.clientTop + scroller.clientHeight - MARGIN;
+  return { top, bottom, visibleTop, visibleBottom };
+}
+
+/** Scroll `scroller` the minimum that shows the caret row of the focused
+ * `editor`. Returns whether it scrolled. O(editor text) for one row
+ * measurement; a no-op without layout, an unfocused editor, or no scroller. */
+export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null): boolean {
+  const g = caretViewRow(editor, scroller);
+  if (!g || !scroller) return false;
   let delta = 0;
-  if (top < visibleTop) delta = top - visibleTop;
-  else if (bottom > visibleBottom) delta = bottom - visibleBottom;
+  if (g.top < g.visibleTop) delta = g.top - g.visibleTop;
+  else if (g.bottom > g.visibleBottom) delta = g.bottom - g.visibleBottom;
   if (Math.abs(delta) <= 0.5) return false;
   scroller.scrollTop += delta;
   return true;
+}
+
+/** How far to scroll so the focused editor clears a keyboard toolbar whose top is
+ * `toolbarTop` (GH #384; GH #783). The rule is the editor's bottom edge, 8px above
+ * the toolbar, but only while the whole editor fits the room between the pins and
+ * the toolbar: then the caret row, which is inside it, stays visible too. An
+ * editor taller than that room (a long paragraph) cannot fit, and scrolling its
+ * bottom above the toolbar carried the caret row off the top of the screen - once
+ * from the dock appearing before the keyboard had resized the view, again at the
+ * resize, and nothing scrolled it back when the keyboard outran the settled
+ * reveal. For such an editor only the caret row is brought clear of the toolbar,
+ * and never upward. Without layout the rule is the editor's bottom, as before. */
+export function scrollToClearToolbar(editor: HTMLTextAreaElement, scroller: HTMLElement | null, toolbarTop: number): number {
+  const limit = toolbarTop - MARGIN;
+  const bottomRule = editor.getBoundingClientRect().bottom - limit;
+  if (bottomRule <= 0) return 0;
+  const g = caretViewRow(editor, scroller);
+  if (!g) return bottomRule;
+  const room = limit - g.visibleTop;
+  if (editor.getBoundingClientRect().height <= room) return bottomRule;
+  return Math.max(0, g.bottom - limit);
 }
 
 /** Reveal the caret once the layout around the freshly focused editor has

@@ -188,3 +188,43 @@ it("GH #745: the late watch expires", () => {
     expect(f.scroller.scrollTop).toBe(1000);
   } finally { vi.useRealTimers(); }
 });
+
+// GH #783: the keyboard toolbar reveal must not carry the caret row off the top of a tall editor.
+import { scrollToClearToolbar } from "./caretReveal";
+/** A 500px scroller at viewport y=100 (pins none: the caret may sit down to y=108), an editor of `height` at `top`. */
+function toolbarFixture(top: number, height: number) {
+  const scroller = document.createElement("div");
+  const block = document.createElement("div"); block.className = "ls-block";
+  const editor = document.createElement("textarea");
+  block.append(editor); scroller.append(block); document.body.append(scroller);
+  editor.focus();
+  Object.defineProperty(scroller, "clientHeight", { value: 500 });
+  scroller.getBoundingClientRect = () => ({ top: 100 } as DOMRect);
+  editor.getBoundingClientRect = () => ({ top, bottom: top + height, height } as DOMRect);
+  return { scroller, editor };
+}
+const TOOLBAR_TOP = 600; // limit 592
+it("clears a short editor's bottom above the toolbar, as before (GH #384)", () => {
+  const f = toolbarFixture(560, 100); // bottom 660: 68 below the limit, and it fits the 108..592 room
+  expect(scrollToClearToolbar(f.editor, f.scroller, TOOLBAR_TOP)).toBe(68);
+});
+it("does not scroll when the editor already clears the toolbar", () => {
+  const f = toolbarFixture(400, 100);
+  expect(scrollToClearToolbar(f.editor, f.scroller, TOOLBAR_TOP)).toBe(0);
+});
+it("GH #783: a tall editor with the caret on its first line is not scrolled so that line leaves the top", () => {
+  row = { top: 0, bottom: 20 };
+  const f = toolbarFixture(400, 800); // bottom 1200; the editor cannot fit the 484px room
+  // the old rule scrolled 608px, taking the caret row (y 400) to y -208, above the scroller top (100)
+  expect(scrollToClearToolbar(f.editor, f.scroller, TOOLBAR_TOP)).toBe(0);
+});
+it("GH #783: a tall editor scrolls just enough to bring a caret row hidden under the toolbar clear of it", () => {
+  row = { top: 300, bottom: 320 }; // caret row at y 700..720 in the viewport
+  const f = toolbarFixture(400, 800);
+  expect(scrollToClearToolbar(f.editor, f.scroller, TOOLBAR_TOP)).toBe(720 - 592);
+});
+it("without layout the editor's bottom rule applies, as before", () => {
+  row = null;
+  const f = toolbarFixture(400, 800);
+  expect(scrollToClearToolbar(f.editor, f.scroller, TOOLBAR_TOP)).toBe(608);
+});
