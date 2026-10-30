@@ -31,6 +31,12 @@
       "nonRequirements":["Exact pixels, timing, display scaling, and certification on the reporter's Windows 10/WebView2 153 device."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh810-embed-scroll.mjs": {
+      "contracts":[{"class":"core-operation","userOutcome":"On a long page with several expanded block embeds, scrolling down and back up with the wheel does not move the blocks in view: no visible block jumps by a large amount when an outline window holding an embed scrolls back into view (GH #810).","blocking":true}],
+      "acceptableVariations":["Small settling shifts of a few pixels while rows are first measured and the exact frame timing may vary; the jump measured is a visible block moving by 40 px or more between consecutive frames."],
+      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 (Chromium scroll anchoring); estimates for outline windows or embeds never seen before."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
       "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab including level 2 to 1 and back with NESTED=1, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs (GH #745).","blocking":true}],
       "acceptableVariations":["Exactly where in the viewport the caret row lands, a few lines of extra scroll for a merged block that grew, and animation or settle timing may vary while the caret row is visible and the view did not jump by most of a screen."],
