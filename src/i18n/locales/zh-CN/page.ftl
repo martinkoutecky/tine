@@ -7,6 +7,7 @@ page-no-journals-hint = 请确认打开的是 Logseq 图谱（包含 <code>journ
 page-guide-read-only = 内置指南页面，仅供阅读，不会写入你的图谱。
 
 page-ui-could-not-load-journal-feed-it-will-retry-when = 无法加载日记列表。视图刷新时会重试。
+page-ui-journal-template-not-applied = 无法将日记模板添加到今天的页面：{ $error } 日记仍会显示，但不含模板；日记刷新时会重试。
 
 page-ui-tine-did-not-modify-the-file-try-reopening-or = Tine 未修改文件。请尝试重新打开，或检查磁盘文件。
 
