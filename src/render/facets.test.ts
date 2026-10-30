@@ -93,6 +93,37 @@ describe("planning facets", () => {
     expect(facetsOf("```\nDEADLINE: <2026-07-30 Thu>\n```", "md").deadline).toBeNull();
   });
 
+  // CM6-SAMELINE. OG renders every Scheduled/Deadline Timestamp as nothing in the body and shows the chips
+  // from the block's facets (block.cljs `["Timestamp" [(:or "Scheduled" "Deadline") _]] nil`), so a line holding
+  // both gives two chips and no stray `<date>`. Tine's own rule (only a LINE-LEADING timestamp is planning) must
+  // treat the second timestamp of such a line as leading too, or its chip is missing and its date stays in the body.
+  it("takes SCHEDULED and DEADLINE that share one line as two planning timestamps", () => {
+    const body = (raw: string) => stripPlanningLines(parseBody(raw, "md"), raw)
+      .map((block) => ("inline" in block ? inlineText(block.inline) : "")).join("|");
+    for (const [raw, scheduled, deadline] of [
+      ["Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon .+2d>", "2026-10-30 Thu", "2026-11-02 Mon .+2d"],
+      ["Review\nDEADLINE: <2026-11-02 Mon> SCHEDULED: <2026-10-30 Thu>", "2026-10-30 Thu", "2026-11-02 Mon"],
+      ["Review\n  SCHEDULED: <2026-10-30 Thu>   DEADLINE: <2026-11-02 Mon>", "2026-10-30 Thu", "2026-11-02 Mon"],
+    ] as const) {
+      const f = facetsOf(raw, "md");
+      expect([f.scheduled, f.deadline], raw).toEqual([scheduled, deadline]);
+      expect(JSON.stringify(stripPlanningLines(parseBody(raw, "md"), raw)), raw).not.toContain('"k":"timestamp"');
+      expect(body(raw).trimEnd(), raw).toBe("Review|"); // indentation before the line may remain as blank text
+    }
+    // Text after the last timestamp of the run stays body content; nothing else does.
+    const tail = "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon> and a tail";
+    expect(facetsOf(tail, "md").deadline).toBe("2026-11-02 Mon");
+    expect(body(tail)).toBe("Review| and a tail");
+    // Not line-leading, so still content (the divergence above), even with a second timestamp after it.
+    const mid = "Discuss SCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon>";
+    expect([facetsOf(mid, "md").scheduled, facetsOf(mid, "md").deadline]).toEqual([null, null]);
+    expect(JSON.stringify(stripPlanningLines(parseBody(mid, "md"), mid))).toContain('"ts":"Deadline"');
+    // A second timestamp after ordinary text on a later line is not leading.
+    const later = "Review\nSCHEDULED: <2026-10-30 Thu> words DEADLINE: <2026-11-02 Mon>";
+    expect(facetsOf(later, "md").scheduled).toBe("2026-10-30 Thu");
+    expect(facetsOf(later, "md").deadline).toBeNull();
+  });
+
   it("uses Logseq's heading property for Org blocks", () => {
     const raw = "Org heading\n:PROPERTIES:\n:heading: 3\n:END:";
     expect(facetsOf(raw, "org").headingLevel).toBe(3);

@@ -1,7 +1,7 @@
 import { blockRegions, parseBlock } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline } from "../render/ast";
-import { planningChipOf } from "../render/facets";
+import { planningChipsOf, type PlanningChip } from "../render/facets";
 
 export interface PreviewSpan {
   from: number;
@@ -49,14 +49,19 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
   ] as const) {
     if (range && label) add({ from: cursor(range[0]), to: cursor(range[1]), kind, label });
   }
+  // lsdoc plans per inline flow: a planning timestamp may follow another one on its line (`SCHEDULED: <a> DEADLINE: <b>`).
+  const chips = new Map<Inline, PlanningChip>();
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) { value.forEach(visit); return; }
     if (!value || typeof value !== "object") return;
     const n = value as Inline | Block;
+    if (!("k" in n) && (n.kind === "paragraph" || n.kind === "bullet" || n.kind === "heading")) {
+      for (const [inline, chip] of planningChipsOf(n.inline, raw)) chips.set(inline, chip);
+    }
     if (n.span) {
       const from = cursor(n.span[0] - 2 + lead);
       let to = cursor(n.span[1] - 2 + lead);
-      const chip = "k" in n && n.k === "timestamp" ? planningChipOf(n, raw) : null;
+      const chip = "k" in n ? chips.get(n) : undefined;
       if (chip?.value) {
         // The view draws a standalone planning line as a date chip after the first line, not as body text.
         // Take the line break (and indentation) before the line too, so edit mode keeps the chip there; a

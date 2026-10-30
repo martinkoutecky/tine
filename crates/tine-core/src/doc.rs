@@ -661,34 +661,86 @@ fn header_facets(
 struct PlanningSourceLine<'a> {
     text: &'a str,
     has_trailing_body: bool,
+    /// Byte offset of the start of the source line, to tell which timestamps share a line.
+    line_start: usize,
 }
 
-/// Map a parser span from the re-bulleted input (`"- " + raw.trim_start()`) to
-/// its original raw slice, but only when the span starts its source line (with
-/// optional horizontal whitespace before it). Text after the span is ordinary
-/// body content. Deliberate OG divergence: a parser-recognized mid-text
-/// `Discuss SCHEDULED: <…>` remains content in Tine rather than header chrome.
-fn standalone_source_line<'a>(
+/// The line-leading planning timestamps of ONE inline flow, by index into `inlines`.
+/// Map each parser span from the re-bulleted input (`"- " + raw.trim_start()`) to
+/// its original raw slice. A timestamp is line-leading when only horizontal
+/// whitespace, or an EARLIER line-leading planning timestamp of the same line,
+/// precedes it: `SCHEDULED: <a> DEADLINE: <b>` on one line is two planning
+/// timestamps (OG renders every Scheduled/Deadline Timestamp as nothing in the body
+/// and shows both chips). `has_trailing_body` is about the text after the LAST
+/// timestamp of such a run, which is ordinary body content. Deliberate OG
+/// divergence: a parser-recognized mid-text `Discuss SCHEDULED: <…>` remains
+/// content in Tine rather than header chrome.
+fn planning_lines<'a>(
+    inlines: &[lsdoc::ast::Inline],
     raw: &'a str,
-    span: &lsdoc::ast::Span,
-) -> Option<PlanningSourceLine<'a>> {
+) -> Vec<(usize, PlanningSourceLine<'a>)> {
+    use lsdoc::ast::Inline;
     let lead = raw.len() - raw.trim_start().len();
-    let start = span.0.checked_sub(2)?.checked_add(lead)?;
-    let end = span.1.checked_sub(2)?.checked_add(lead)?;
-    let source = raw.get(start..end)?;
-    let line_start = raw[..start].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = raw[end..].find('\n').map_or(raw.len(), |i| end + i);
-    if !raw[line_start..start].trim().is_empty() {
-        return None;
+    // (index, text, line_start, end, line_end)
+    let mut found: Vec<(usize, &'a str, usize, usize, usize)> = Vec::new();
+    let mut last: Option<(usize, usize)> = None; // (line_start, end) of the previous accepted one
+    for (index, i) in inlines.iter().enumerate() {
+        let Inline::Timestamp {
+            ts,
+            span: Some(span),
+            ..
+        } = i
+        else {
+            continue;
+        };
+        if ts != "Scheduled" && ts != "Deadline" {
+            continue;
+        }
+        let (Some(start), Some(end)) = (
+            span.0.checked_sub(2).and_then(|s| s.checked_add(lead)),
+            span.1.checked_sub(2).and_then(|e| e.checked_add(lead)),
+        ) else {
+            continue;
+        };
+        let Some(text) = raw.get(start..end) else {
+            continue;
+        };
+        let line_start = raw[..start].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = raw[end..].find('\n').map_or(raw.len(), |i| end + i);
+        let after_earlier = last.is_some_and(|(ls, e)| {
+            ls == line_start && raw.get(e..start).is_some_and(|t| t.trim().is_empty())
+        });
+        if !raw[line_start..start].trim().is_empty() && !after_earlier {
+            continue;
+        }
+        found.push((index, text, line_start, end, line_end));
+        last = Some((line_start, end));
     }
-    Some(PlanningSourceLine {
-        text: source,
-        has_trailing_body: !raw[end..line_end].trim().is_empty(),
-    })
+    // Trailing body is judged once per run, after its last timestamp.
+    found
+        .iter()
+        .map(|&(index, text, line_start, _end, line_end)| {
+            let run_end = found
+                .iter()
+                .filter(|f| f.2 == line_start)
+                .map(|f| f.3)
+                .max()
+                .unwrap_or(line_start);
+            (
+                index,
+                PlanningSourceLine {
+                    text,
+                    has_trailing_body: !raw[run_end..line_end].trim().is_empty(),
+                    line_start,
+                },
+            )
+        })
+        .collect()
 }
 
 /// SCHEDULED / DEADLINE display text (`<…>` content) for parser-recognized
-/// Timestamp nodes that start a source line. lsdoc can put same-line or next-line
+/// Timestamp nodes that start a source line (or follow another planning timestamp
+/// of that line). lsdoc can put same-line or next-line
 /// trailing body text in the SAME Paragraph as the planning timestamp (#75), so
 /// the older whole-AST-block `is_standalone_planning` check rejected genuine
 /// planning lines.
@@ -703,13 +755,8 @@ fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, O
             | Block::Paragraph { inline, .. } => inline,
             _ => continue,
         };
-        for i in inlines {
-            let Inline::Timestamp {
-                ts,
-                span: Some(span),
-                ..
-            } = i
-            else {
+        for (index, line) in planning_lines(inlines, raw) {
+            let Inline::Timestamp { ts, .. } = &inlines[index] else {
                 continue;
             };
             let slot = match ts.as_str() {
@@ -717,13 +764,9 @@ fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, O
                 "Deadline" => &mut deadline,
                 _ => continue,
             };
-            if slot.is_some() {
-                continue;
+            if slot.is_none() {
+                *slot = angle_after(line.text, ts);
             }
-            let Some(line) = standalone_source_line(raw, span) else {
-                continue;
-            };
-            *slot = angle_after(line.text, ts);
         }
     }
     (scheduled, deadline)
@@ -736,9 +779,12 @@ fn inline_is_break(i: &lsdoc::ast::Inline) -> bool {
     )
 }
 
+fn inline_is_blank_text(i: &lsdoc::ast::Inline) -> bool {
+    matches!(i, lsdoc::ast::Inline::Plain { text, .. } if text.trim().is_empty())
+}
+
 fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
-    use lsdoc::ast::Inline;
-    inline_is_break(i) || matches!(i, Inline::Plain { text, .. } if text.trim().is_empty())
+    inline_is_break(i) || inline_is_blank_text(i)
 }
 
 /// Remove parser-confirmed line-leading planning timestamps from the body AST
@@ -749,7 +795,7 @@ pub fn strip_planning_lines(
     mut blocks: Vec<lsdoc::ast::Block>,
     raw: &str,
 ) -> Vec<lsdoc::ast::Block> {
-    use lsdoc::ast::{Block, Inline};
+    use lsdoc::ast::Block;
     if !raw.contains("SCHEDULED:") && !raw.contains("DEADLINE:") {
         return blocks;
     }
@@ -760,27 +806,29 @@ pub fn strip_planning_lines(
             | Block::Heading { inline, .. } => inline,
             _ => return true,
         };
-        let planning: Vec<(usize, bool)> = inlines
-            .iter()
-            .enumerate()
-            .filter_map(|(index, i)| match i {
-                Inline::Timestamp {
-                    ts,
-                    span: Some(span),
-                    ..
-                } if ts == "Scheduled" || ts == "Deadline" => {
-                    standalone_source_line(raw, span).map(|line| (index, line.has_trailing_body))
-                }
-                _ => None,
-            })
+        let planning: Vec<(usize, usize, bool)> = planning_lines(inlines, raw)
+            .into_iter()
+            .map(|(index, line)| (index, line.line_start, line.has_trailing_body))
             .collect();
         if planning.is_empty() {
             return true;
         }
 
         let mut remove = vec![false; inlines.len()];
-        for (index, has_trailing_body) in planning {
+        let mut previous: Option<(usize, usize)> = None; // (index, line_start)
+        for (index, line_start, has_trailing_body) in planning {
             remove[index] = true;
+            // The blanks between two timestamps of one line go with them.
+            if let Some((before, before_line)) = previous {
+                if before_line == line_start {
+                    for k in before + 1..index {
+                        if inline_is_blank_text(&inlines[k]) {
+                            remove[k] = true;
+                        }
+                    }
+                }
+            }
+            previous = Some((index, line_start));
             if has_trailing_body {
                 continue;
             }
@@ -1456,6 +1504,42 @@ mod projection_tests {
         let mid =
             DocBlock::new("Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after the timestamp");
         assert_eq!(mid.scheduled(), None);
+    }
+
+    #[test]
+    fn scheduled_and_deadline_sharing_one_line_are_both_planning() {
+        // OG renders every Scheduled/Deadline Timestamp as nothing in the body and shows both chips.
+        for raw in [
+            "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon .+2d>",
+            "Review\nDEADLINE: <2026-11-02 Mon .+2d> SCHEDULED: <2026-10-30 Thu>",
+            "Review\n  SCHEDULED: <2026-10-30 Thu>   DEADLINE: <2026-11-02 Mon .+2d>",
+        ] {
+            let b = DocBlock::new(raw);
+            assert_eq!(b.scheduled(), Some("2026-10-30 Thu"), "{raw}");
+            assert_eq!(b.deadline(), Some("2026-11-02 Mon .+2d"), "{raw}");
+            let body = format!(
+                "{:?}",
+                strip_planning_lines(crate::render::parse_block(raw, false), raw)
+            );
+            assert!(!body.contains("2026-1"), "no stray date in the body: {body}");
+            assert!(!body.contains("Timestamp"), "no timestamp left: {body}");
+            assert!(body.contains("Review"), "title remains: {body}");
+        }
+        // Text after the last timestamp of the run stays body content.
+        let tail = "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon> and a tail";
+        assert_eq!(DocBlock::new(tail).deadline(), Some("2026-11-02 Mon"));
+        let body = format!(
+            "{:?}",
+            strip_planning_lines(crate::render::parse_block(tail, false), tail)
+        );
+        assert!(body.contains("and a tail") && !body.contains("2026-1"), "{body}");
+        // Mid-text stays content, even with a second timestamp after it.
+        let mid = DocBlock::new("Discuss SCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon>");
+        assert_eq!((mid.scheduled(), mid.deadline()), (None, None));
+        // A later timestamp after ordinary words on the line is not line-leading.
+        let later = DocBlock::new("Review\nSCHEDULED: <2026-10-30 Thu> words DEADLINE: <2026-11-02 Mon>");
+        assert_eq!(later.scheduled(), Some("2026-10-30 Thu"));
+        assert_eq!(later.deadline(), None);
     }
 
     #[test]

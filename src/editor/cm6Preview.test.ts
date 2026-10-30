@@ -85,6 +85,20 @@ describe("planning lines follow the view's date chip", () => {
     expect(crlf.slice(wrapped.from, wrapped.to)).toBe("\r\n  DEADLINE: <2026-10-31 Fri>  ");
     expect(crlf.slice(wrapped.revealFrom!, wrapped.to)).toBe("  DEADLINE: <2026-10-31 Fri>  ");
   });
+  // CM6-SAMELINE: both keywords on one source line are two planning timestamps (OG: two chips, nothing in the body).
+  it("makes one chip per timestamp when SCHEDULED and DEADLINE share a line, the first taking the line break", () => {
+    const text = "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon .+2d>";
+    const spans = previewSpans(text, "md").filter(s => s.kind === "planning");
+    expect(spans.map(s => s.planning)).toEqual([{ ts: "Scheduled", value: "2026-10-30 Thu" }, { ts: "Deadline", value: "2026-11-02 Mon .+2d" }]);
+    expect(spans.map(s => text.slice(s.from, s.to))).toEqual(["\nSCHEDULED: <2026-10-30 Thu> ", "DEADLINE: <2026-11-02 Mon .+2d>"]);
+    expect(text.slice(spans[0].revealFrom!, spans[0].to)).toBe("SCHEDULED: <2026-10-30 Thu> ");
+    expect(spans[1].revealFrom).toBeUndefined();
+    const tail = `${text} and a tail`;
+    const withTail = previewSpans(tail, "md").filter(s => s.kind === "planning");
+    expect(withTail.map(s => tail.slice(s.from, s.to))).toEqual(["SCHEDULED: <2026-10-30 Thu>", "DEADLINE: <2026-11-02 Mon .+2d>"]);
+    // Not line-leading: stays text.
+    expect(previewSpans("Discuss SCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon>", "md").some(s => s.kind === "planning")).toBe(false);
+  });
   it("renders under a heading as the same chip", () => {
     const text = "# Title\nDEADLINE: <2026-10-31 Fri>";
     expect(previewSpans(text, "md").map(s => [s.kind, text.slice(s.from, s.to)])).toEqual([["bullet", "# Title"], ["planning", "\nDEADLINE: <2026-10-31 Fri>"]]);
