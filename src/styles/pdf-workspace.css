@@ -501,8 +501,26 @@
   position: relative;
   flex: 0 0 auto;
   margin-inline: auto;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
   background: var(--pdf-page-bg);
+}
+
+/* PDF9-5: the page shadow is a pre-rendered 9-slice image, not `box-shadow: 0 2px
+   10px rgba(0, 0, 0, .25)`. Without GPU compositing (WebKitGTK software mode: no
+   GPU, remote desktop, driver fallback) WebKit repaints the whole scroller on
+   every scroll frame, and re-blurring a page-sized shadow cost ~20 ms of a 45 ms
+   frame at DPR 2. pdf.js renders a page in 15 ms slices, one per animation frame,
+   so slow frames also stretched every render and the fit-width fast-scroll blank.
+   The image is the same shadow (scripts/gen-pdf-page-shadow.mjs: 2x pixels, 24 px
+   slices drawn 12 px wide). The pseudo-element is the page's own box; the image
+   paints 12 px outside it (border-image-outset), which, like a box-shadow, adds
+   no scrollable overflow, and it takes no pointer events. */
+.pdf-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 12px solid transparent;
+  border-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAACBElEQVR42u2ba2rDMBCE13ba+BE3TkIohEAolEJv0fufqghWYFTFljVy4+ARzN/1zrcrGfQQ4eDg4Jh3ZKAIgABWaPppYfiSzkE9BYihqs0BYDEgQtq2ALXYqRGSWJ4AQL5ECNmEtt+ACp0O2VLn+wuoRa0LU82bFn4FVSwFwlTjVltQ7noQCuIh5vvJ2jlcgrJxhkDMCgExb1SB2jwSwlTz/WTtItaAsnF8IGaFEGveJmwXsRaUjeOCmB1CCvNmEXsDtU0EIXn1h8zbFdwsYh2oshcvFALcBanMm0XsBKpKCOFfzJc987WInEHVPQjlHBDume0bdQ1WukK3Ok87rZZJ+F1ELiJyFZGbiPyAummsi8Y+67c6/XaruVQeQD4wf4AQAAEQAAEQAAEQAAEQAAEQAAEQAAGsEMDYvkDu2QBxYZhNi50ms9fkjproN6iTxuo0dqvfqgdMbwI2R4I3RkK6odYq7LQqJtGDJv4F6qix9hp7p9+qJ1Q9CkA2sg021AV2WpjEP0EdnHYPrX6Bbo3FTIPGMxU+QLmt3yRo/yx0QzSP6AIXwg1UjPnJ7Y90wRiEK6gx88mqH7sl7jsL6EO4gLpnPrb6WcpzgbEzgUb/3YiawLOBZIcjqzsY4dEYD0d5PM4LErwiw0tSvCbHi5K8KsvL0rwuzwcTfDLDR1Mrezb3CwsFklMasa13AAAAAElFTkSuQmCC") 24 / 12px / 12px stretch;
+  pointer-events: none;
 }
 
 .pdf-tile-layer {
