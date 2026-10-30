@@ -139,6 +139,7 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
+import { bindRowHost, type RowHost } from "./block/embedRowHost";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
@@ -185,7 +186,8 @@ export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 // LiveRefGroup carries the embed's host block here so the caret exits to the
 // block preceding the embed on the host page (OG leaves the embed upward instead
 // of trapping the caret).
-export const EmbedNavExitContext = createContext<{ hostBlockId: string; firstRoot: () => string | undefined } | null>(null);
+// D-20261030-EMB: `rowHost` names the host a whole-block embed's one root row stands for.
+export const EmbedNavExitContext = createContext<{ hostBlockId: string; firstRoot: () => string | undefined; rowHost: (id: string) => RowHost | null } | null>(null);
 /** A plain bullet click opens the block here instead of zooming the pane (a
  *  hover preview opens it in a new tab, D-20261023-VQ). */
 export const BulletOpenContext = createContext<((id: string) => void) | null>(null);
@@ -194,11 +196,11 @@ export interface CollapseSurfaceApi {
   toggle: (id: string, current: boolean) => void;
   setMany: (ids: readonly string[], collapsed: boolean) => void;
 }
-// Deliberate Tine divergence from OG Logseq: a secondary/transcluded rendering
-// never mutates its source. A block embed follows the source until its macro
-// host records an explicit occurrence-owned collapse override; reference/query
-// surfaces keep their local presentation state. Keep the surface contract
-// explicit when changing collapse parity.
+// Deliberate Tine divergence from OG Logseq: a block embed's root follows the
+// source until its macro host records an explicit occurrence-owned collapse
+// override; folds below it are the source's (D-20261030-EMB). Reference/query
+// surfaces and page embeds keep local presentation state. Keep the surface
+// contract explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 /** Render and edit one document block through the document door. Work scales
@@ -237,7 +239,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const storedFolded = () => storedFold(props.id); // `collapsed::`, else a query's authored `:collapsed? true` (GH #619 Q8)
-  bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing);
+  const embedRow = useContext(EmbedNavExitContext);
+  const rowHost = () => embedRow?.rowHost(props.id) ?? null;
+  bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing, rowHost);
   const collapsed = () => viewCollapseSurface()?.collapsed(props.id, storedFolded()) ?? storedFolded();
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
@@ -287,9 +291,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // An org page Tine can't round-trip is shown but NOT editable (Tine must never
   // rewrite it). Clicking a block doesn't enter the editor on such a page.
   const readOnly = () => blockPageReadOnly(props.id);
-  // GH #726: OG block.cljs block-embed/page-embed keep the source outline
-  // inside the host's content. Both host and source retain their own handles;
-  // every menu and drag acts on the block whose bullet was pressed.
+  // D-20261030-EMB (0.8): a whole-block `{{embed ((uuid))}}` host shows no
+  // controls of its own; the source root's row is its one bullet, standing at
+  // the host's position (`rowHost`). Page embeds and hosts with text keep theirs.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
@@ -312,6 +316,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id}
+      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); }}
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
@@ -330,7 +335,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           mainEl = el;
           // GH #501: touch swipes on the row while a touch input exists, following
           // it if it appears or goes away (src/blockSwipe.ts).
-          followBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly });
+          followBlockSwipe(el, { get id() { return rowHost()?.id ?? props.id; }, get scope() { return rowHost() ? rowHost()!.scope : outlineScope; },
+            editorId: props.id, editing, readOnly: () => blockPageReadOnly(rowHost()?.id ?? props.id) });
         }}
         classList={{
           // Heading level on the row so the bullet column can match the (taller)
@@ -352,10 +358,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           // GH #726: a nested result/embed row owns its menu (contextMenuPolicy).
           if (!ownsBlockContextMenu(e.target, mainEl) || !shouldOpenBlockContextMenu(e.target)) return;
           e.preventDefault();
-          openContextMenu(e.clientX, e.clientY, props.id);
+          openContextMenu(e.clientX, e.clientY, rowHost()?.id ?? props.id);
         }}
       >
-        <Show when={!bulletless()}>
+        <Show when={!blockEmbedHost() && !bulletless()}>
         <div class="block-controls">
           <span
             class="collapse-toggle"
@@ -376,7 +382,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               // Shared link gesture contract (GH #207): suppress shift-range selection
               // and middle-button autoscroll / PRIMARY-paste the destinations replace.
               internalLinkMouseDown(e);
-              if (e.button === 0 && !readOnly()) beginDrag(props.id, e);
+              const owner = rowHost()?.id ?? props.id; // click/zoom stays the source's (GH #514)
+              if (e.button === 0 && !blockPageReadOnly(owner)) beginDrag(owner, e);
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -531,6 +538,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   // A navOnly display-list scope must never act as a merge/structural topology.
   const structuralScope = outlineScope?.navOnly ? null : outlineScope;
+  // Where this row sits: a whole-block embed's root row stands for its host (D-20261030-EMB).
+  const position = (): RowHost => embedNavExit?.rowHost(props.id) ?? { id: props.id, scope: outlineScope };
   const setOccurrenceCollapsed = (value: boolean) => {
     if (!collapseSurface) { setCollapsed(props.id, value); return; }
     const n = docNode(props.id);
@@ -1764,26 +1773,28 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   // Move the block up/down among siblings, keeping edit mode + caret (the DOM
-  // reorder briefly blurs the textarea; cross-day it remounts).
+  // reorder briefly blurs the textarea; cross-day it remounts). A whole-block
+  // embed's root moves its host on this page, like Tab (D-20261030-EMB).
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
     const movedEditor = ref;
+    const { id, scope } = position();
     const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
     const restore = () => restoreMovedSelection(ref, props.id, selection.start, selection.end, selection.direction);
     commit(ref.value);
-    void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
+    void withBlockMoving(docNode(id)?.page ?? "", async () => {
       startEditing(props.id, selection, null, editSurface());
       const intentIsCurrent = captureEditIntent();
       // A sibling reorder happens synchronously (a feed move's own sync part)
       // and keeps this textarea. Restore it in the same gesture: waiting a
       // frame lets Android dismiss the IME despite the later focus.
-      const move = outlineScope && !outlineScope.navOnly ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
+      const move = scope && !scope.navOnly ? moveItem(id, dir) : moveBlockFeed(id, dir);
       if (intentIsCurrent() && ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (documentOf(movedEditor).activeElement === movedEditor
           || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
       const moved = await move;
       // GH #641: a move this surface cannot show says where the block went.
-      if (moved !== false && moved !== "none") noticeMoveOutOfView(props.id, outlineScope);
+      if (moved !== false && moved !== "none") noticeMoveOutOfView(id, scope);
       await nextFrame(ref);
       if (intentIsCurrent() && documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
@@ -1809,7 +1820,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     if (!atEdge) return false;
     e.preventDefault();
     commit(raw);
-    selectBlock(props.id, outlineScope);
+    selectBlock(position().id, position().scope);
     moveSelection(dir, true);
     return true;
   };
@@ -1925,7 +1936,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       if (!fullySelected) return false;
       e.preventDefault();
       commit(ref.value);
-      selectBlockSubtree(props.id, outlineScope);
+      selectBlockSubtree(position().id, position().scope);
       return true;
     },
     "editor/cycle-todo": (e) => { e.preventDefault(); cycleTodoCmd(); return true; },
@@ -1935,19 +1946,21 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // Later in-block list lines and Org retain their list-item nudges.
       const ll = listLine(ref.value, ref.selectionStart);
       if (ll && (pageFmt() === "org" || ll.lineStart > 0)) { nudgeListItem(ll, +2); return true; }
-      if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
+      const { id, scope } = position();
+      if (!scope?.navOnly && scope?.roots.includes(id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
-      if (indentBlock(props.id, selection, editSurface()) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
+      if (indentBlock(id, selection, editSurface(), props.id) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
       return true;
     },
     "editor/outdent": (e) => {
       e.preventDefault();
       const ll = listLine(ref.value, ref.selectionStart);
       if (ll && (pageFmt() === "org" || ll.lineStart > 0) && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
-      if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
+      const { id, scope } = position();
+      if (scope?.forceExpandedRoot === docNode(id)?.parent) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
-      commit(ref.value); outdentBlock(props.id, selection, editSurface()); return true;
+      commit(ref.value); outdentBlock(id, selection, editSurface(), props.id); return true;
     },
   };
   const mobileKeyEvent = { preventDefault() {} } as KeyboardEvent;
@@ -2327,12 +2340,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // A folded embed's displayed root is the host's keyboard boundary. Use
       // occurrence collapse, not source collapse; source editors and descendants
       // retain their ordinary structural Enter behavior (GH #642).
-      const hostMacro = embedNavExit
-        ? detectMacro(docNode(embedNavExit.hostBlockId)?.raw ?? "", formatForBlockId(embedNavExit.hostBlockId)) : null;
-      const foldedEmbedHost = embedNavExit && props.id === embedNavExit.firstRoot()
-        && isBlockEmbedMacro(hostMacro)
-        && collapseSurface?.collapsed(props.id, node().collapsed)
-        ? embedNavExit.hostBlockId : null;
+      const foldedEmbedHost = position().id !== props.id && collapseSurface?.collapsed(props.id, node().collapsed)
+        ? position().id : null;
       if (foldedEmbedHost && start === end && end === raw.length) {
         e.preventDefault();
         commit(raw);
@@ -2582,7 +2591,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      selectBlock(props.id, outlineScope); // exit editing into block-selection mode
+      selectBlock(position().id, position().scope); // exit editing into block-selection mode
     }
   };
 

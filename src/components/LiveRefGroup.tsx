@@ -2,11 +2,13 @@ import { For, Show, createComputed, createEffect, createMemo, createResource, cr
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, blockWritable, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, blockWritable, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
+import { detectMacro } from "./Rendered";
+import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
@@ -141,6 +143,9 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // The mounted child keeps the existing render-once lifecycle and keyed rows.
 function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
+  // The host block's own outline and surface, read before this group provides its own.
+  const hostScope = useContext(OutlineScopeContext);
+  const hostSurface = useContext(SurfaceContext);
   const readScope = {};
   let alive = true;
   onCleanup(() => { alive = false; });
@@ -324,7 +329,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // otherwise both instances (same "main" surface) call focus() and the off-screen
   // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
-  const surface = props.surfaceKey ?? `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
+  // An embed's key names its host in the host's surface, so a caret kept on the
+  // embed root survives the host moving (Tab, D-20261030-EMB) and remounting it.
+  const surface = props.surfaceKey ?? (props.surface === "embed" && props.hostBlockId
+    ? `embed:${hostSurface}\u0000${props.hostBlockId}` : `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId());
   const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = new Map<string, boolean>();
   // Local fold rows. The embedded ROOT has a durable occurrence-owned override on
@@ -381,11 +389,16 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     initialCollapsed.set(id, initial);
     return initial;
   };
+  // D-20261030-EMB: inside a block embed, folds below its root are the
+  // source's own `collapsed::`, shared everywhere (OG). Page embeds keep 0.8's
+  // local folds below their page's blocks.
+  const sourceFolds = () => isEmbed() && !!props.embedId;
   const collapseSurface: CollapseSurfaceApi = {
     collapsed: (id, stored) => {
       if (isEmbed()) {
         const override = embedRootOverride(id);
         if (override !== null) return override;
+        if (sourceFolds()) return stored;
         // Nested local folds govern only while the source hasn't written
         // another collapse since. The root never enters this map: its explicit
         // true/false host property survives remount and reload.
@@ -403,9 +416,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
         setBlockProperty(props.hostBlockId, "collapsed", String(!current));
         return;
       }
+      if (sourceFolds()) { setCollapsed(id, !current); return; }
       setLocalCollapsed((state) => ({ ...state, [id]: { v: !current, epoch: collapseEpochOf(id) } }));
     },
-    setMany: (ids, collapsed) => setLocalCollapsed((state) => {
+    setMany: (ids, collapsed) => sourceFolds() ? setCollapsedBlocks(ids, collapsed) : setLocalCollapsed((state) => {
       const next = { ...state };
       for (const id of ids) next[id] = { v: collapsed, epoch: collapseEpochOf(id) };
       return next;
@@ -508,7 +522,12 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             into the host page; the other rows stay surface-local. */}
         <EmbedNavExitContext.Provider value={
           props.surface === "embed" && props.hostBlockId
-            ? { hostBlockId: props.hostBlockId, firstRoot: () => props.blocks[0]?.id }
+            ? { hostBlockId: props.hostBlockId, firstRoot: () => props.blocks[0]?.id, rowHost: (id) => {
+              // D-20261030-EMB: a whole-block host's one bullet is its root row.
+              const host = props.hostBlockId!;
+              return id === props.embedId && isBlockEmbedMacro(detectMacro(docNode(host)?.raw ?? "", formatForBlock(host)))
+                ? { id: host, scope: hostScope } : null;
+            } }
             : null
         }>
         {/* Master GH #341: arrow navigation out of an edited block in this group

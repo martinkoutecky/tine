@@ -77,15 +77,17 @@ function mouseDownAndUp(element: Element): void {
 }
 
 describe("block embed hierarchy", () => {
-  it("gives the host and embedded source separate interactive bullets", async () => {
+  // D-20261030-EMB (back to 0.8): one bullet, the source root's row; beta.1
+  // (GH #726) gave the host a second bullet beside it.
+  it("shows one bullet for a whole-block embed: the embedded root's", async () => {
     const targetId = "embed-hierarchy-root";
     const { root, dispose, hostId } = renderFixture(targetId);
 
     try {
       const host = root.querySelector<HTMLElement>(`[data-block-id="${hostId}"]`);
       expect(host).not.toBeNull();
-      await vi.waitFor(() => expect(host?.querySelectorAll(".bullet-container")).toHaveLength(4));
-      expect(host?.querySelector(":scope > .block-main > .block-controls .bullet-container")).not.toBeNull();
+      await vi.waitFor(() => expect(host?.querySelectorAll(".bullet-container")).toHaveLength(3));
+      expect(host?.querySelector(":scope > .block-main > .block-controls")).toBeNull();
       expect(host?.classList.contains("block-embed-host")).toBe(true);
       expect(host?.querySelector(".embed-block .bullet-container")).not.toBeNull();
     } finally {
@@ -109,7 +111,8 @@ describe("block embed hierarchy", () => {
     }
   });
 
-  // GH #726 supersedes GH #514: each visible bullet drags its own block.
+  // D-20261030-EMB: the embedded root's bullet drags the host (its position on
+  // this page, as in 0.8); deeper bullets drag their own source rows.
   function dragFrom(element: Element): string | null {
     // jsdom has no elementFromPoint; the drag hit-test only needs "nothing there".
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
@@ -121,7 +124,7 @@ describe("block embed hierarchy", () => {
     return dragging;
   }
 
-  it("dragging the embedded root's bullet moves the source block", async () => {
+  it("dragging the embedded root's bullet moves the host block", async () => {
     const targetId = "embed-drag-root";
     const { root, dispose, hostId } = renderFixture(targetId);
     try {
@@ -130,10 +133,9 @@ describe("block embed hierarchy", () => {
         expect(el).not.toBeNull();
         return el!;
       });
-      expect(dragFrom(rootBullet)).toBe(targetId);
-      const hostBullet = root.querySelector(`[data-block-id="${hostId}"] > .block-main > .block-controls .bullet-container`);
-      expect(hostBullet).not.toBeNull();
-      expect(dragFrom(hostBullet!)).toBe(hostId);
+      expect(dragFrom(rootBullet)).toBe(hostId);
+      // The source on its own page still drags itself.
+      expect(dragFrom(root.querySelector(`.main-source [data-block-id="${targetId}"] > .block-main .bullet-container`)!)).toBe(targetId);
     } finally {
       dispose();
     }
@@ -193,7 +195,9 @@ describe("block embed hierarchy", () => {
     }
   });
 
-  it("keeps recursive guide collapse local to the embed surface", async () => {
+  // D-20261030-EMB: folds below a block embed's root are the source's own
+  // (beta.1 kept them local to the embed surface).
+  it("saves recursive guide collapse inside a block embed on the source", async () => {
     const targetId = "embed-guide-collapse";
     const { root, dispose } = renderFixture(targetId);
     const childId = `${targetId}-child`;
@@ -211,8 +215,9 @@ describe("block embed hierarchy", () => {
       await vi.waitFor(() =>
         expect(root.querySelector(".embed-block")?.textContent).not.toContain("Embedded grandchild")
       );
-      expect(doc.byId[childId].collapsed).toBe(false);
-      expect(doc.byId[childId].raw).not.toContain("collapsed:: true");
+      expect(doc.byId[childId].collapsed).toBe(true);
+      expect(doc.byId[childId].raw).toContain("collapsed:: true");
+      expect(root.querySelector(".main-source")?.textContent).not.toContain("Embedded grandchild");
 
       guide.click();
       await vi.waitFor(() =>

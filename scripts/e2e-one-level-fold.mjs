@@ -132,7 +132,11 @@ try {
     await chord("k"); await chord("k");
     await visibleText(scope, "Embedded child", false);
     await waitForFileText(embedHostFile, text => text.includes("collapsed:: true"));
-    if (fs.readFileSync(embedSourceFile, "utf8") !== embedSource.replace(PARENT, EMBED)) throw Error("Embedded source was changed by occurrence folds");
+    // D-20261030-EMB: the root fold is the host's; a fold below it is the source's own.
+    await waitForFileText(embedSourceFile, text => /- Embedded child\n\s+collapsed:: true/.test(text));
+    await chord("j"); await chord("j"); // reopen the root (host) and then the child (source)
+    await visibleText(scope, "Embedded grandchild", true);
+    await waitForFileText(embedSourceFile, text => text === embedSource.replace(PARENT, EMBED));
     stage = `GH #769 child page embed in ${scope}`;
     await editRow(scope, "Page embed parent");
     await chord("j");
@@ -144,7 +148,7 @@ try {
     // use the same X11 capture as the original one-level journey above.
     execFileSync("import", ["-window", "root", path.join(out, scope === ".main-content" ? "embeds-main.png" : "embeds-sidebar.png")], { env });
   }
-  proof.embedSourceUnchanged = true;
+  proof.embedNestedFoldOnSource = true;
   proof.outcome = "PASS";
   proof.journey += "; GH #768 block embed opens its own root then children; GH #769 child page embeds open and close, main pane and right sidebar";
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
@@ -153,7 +157,7 @@ try {
   try { execFileSync("import", ["-window", "root", path.join(out, "failure.png")], { env }); } catch {}
   try { fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.getPageSource()); } catch {}
   fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, file: fs.readFileSync(file, "utf8"),
-    expected: "One-level folds follow displayed block/page embed state in main/sidebar and preserve embedded source folds", observed: String(error.stack),
+    expected: "One-level folds follow displayed block/page embed state in main/sidebar; a block embed's root fold stays on its host and folds below it are the source's (D-20261030-EMB)", observed: String(error.stack),
     classification: "ambiguous; inspect driver log and DOM" }, null, 2));
   throw error;
 } finally {

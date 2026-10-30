@@ -7859,9 +7859,21 @@ html.tine-embed-shading-accent .embed-block {
   background: none;
 }
 
-/* GH #726: retain the host's control column and the embed's inset, as OG's
-   block-embed does. The source bullet is a distinct handle inside the host's
-   content. Its descendant guide identifies the source outline boundary. */
+/* D-20261030-EMB (0.8): a whole-block block embed is visually the referenced
+   outline, not an empty parent followed by another root. Block.tsx removes only
+   the macro host's controls; the referenced root keeps its real interactive
+   bullet (standing for the host), collapse toggle, zoom/sidebar actions, and
+   editor surface. Removing the wrapper inset puts that surviving bullet on the
+   ordinary outline column. Its descendant guide is slightly heavier to identify
+   the embedded boundary without a box. */
+.block-embed-host > .block-main > .block-content-wrapper > .macro-host {
+  padding: 0;
+}
+.block-embed-host > .block-main > .block-content-wrapper > .macro-host > .embed-block {
+  border-left: 0;
+  padding-left: 0;
+  margin: 0;
+}
 .block-embed-host .embed-block > .live-ref-group > .ls-block > .block-main > .block-controls .bullet {
   background: var(--tine-embed-accent, var(--block-embed-accent));
 }

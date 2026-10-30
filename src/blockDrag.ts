@@ -7,6 +7,7 @@
 import { selectBlock, extendSelectionTo } from "./document";
 import { scrollHome, startEdgeAutoscroll, viewportPoint, type EdgeAutoscroll } from "./edgeAutoscroll";
 import { documentOf, onEachWindow } from "./windowRealm";
+import { rowHostOf } from "./components/block/embedRowHost";
 
 // Interactive chrome whose drags mean something else (bullet = reorder handle,
 // links/buttons/chips = clicks). A text-selection drag must not start on these.
@@ -14,18 +15,19 @@ const CHROME = ".bullet-container, .comment-handle, .block-controls, .collapse-t
 const SHEET_INTERNAL =
   ".block-sheet-container, .sheet-grid, .sheet-table, .sheet-board, .sheet-cell, .sheet-board-card";
 
-function blockIdAt(doc: Document, x: number, y: number, paneId: string | null): string | null {
+function blockRowAt(doc: Document, x: number, y: number, paneId: string | null): Element | null {
   const el = doc.elementFromPoint(x, y);
   if (paneId) {
     const overPane = el?.closest("[data-pane-id]")?.getAttribute("data-pane-id") ?? null;
     if (overPane !== paneId) return null;
   }
-  return el?.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null;
+  return el?.closest("[data-block-id]") ?? null;
 }
 
 export function installBlockSelectionDrag(): () => void {
   let armed = false; // a potential drag started inside a block's content
   let startId: string | null = null;
+  let startRow: Element | null = null;
   let startPaneId: string | null = null;
   let startHome: HTMLElement | null = null;
   let converting = false; // crossed a boundary → now in block-selection mode
@@ -42,6 +44,7 @@ export function installBlockSelectionDrag(): () => void {
     stopAutoscroll();
     converting = false;
     startId = null;
+    startRow = null;
     startPaneId = null;
     if (e.button !== 0) return;
     const target = e.target as Element | null;
@@ -50,6 +53,7 @@ export function installBlockSelectionDrag(): () => void {
     const block = target.closest("[data-block-id]");
     if (!block) return; // not in the outline (sidebar, title, dialogs, …)
     startHome = scrollHome(target);
+    startRow = block;
     startId = block.getAttribute("data-block-id");
     startPaneId = block.closest("[data-pane-id]")?.getAttribute("data-pane-id") ?? null;
     armed = !!startId;
@@ -59,16 +63,21 @@ export function installBlockSelectionDrag(): () => void {
   // autoscroll reports after it scrolled the content under a still pointer.
   const follow = (doc: Document, x: number, y: number): boolean => {
     if (startId === null) return false;
-    const overId = blockIdAt(doc, x, y, startPaneId);
+    const overRow = blockRowAt(doc, x, y, startPaneId);
+    const overId = overRow?.getAttribute("data-block-id") ?? null;
     if (overId === null) return false; // off the outline — keep current selection
     // Still inside the start block and haven't crossed yet: leave the native
     // in-textarea text selection alone (this is the "select part of a bullet" case).
     if (!converting && overId === startId) return false;
+    // An embed's root row selects as its host and never extends into the
+    // source rows inside it (D-20261030-EMB).
+    const start = rowHostOf(startRow);
+    const over = start && startRow?.contains(overRow) ? start.id : rowHostOf(overRow)?.id ?? overId;
     if (!converting) {
       converting = true;
-      selectBlock(startId); // exits editing (commits via blur), anchor = focus = start
+      selectBlock(start?.id ?? startId, start?.scope ?? null); // exits editing (commits via blur), anchor = focus = start
     }
-    extendSelectionTo(overId);
+    extendSelectionTo(over);
     doc.getSelection()?.removeAllRanges(); // drop the half-formed text highlight
     return true;
   };

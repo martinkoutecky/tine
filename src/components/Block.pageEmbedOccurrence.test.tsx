@@ -56,7 +56,10 @@ for (const format of ["md", "org"] as const) {
   });
 
   for (const container of ["page", "block"] as const) for (const action of ["mouse", "keyboard"] as const)
-    it(`${format}: page embed nested in ${container} embed ${action} folds locally without changing source`, async () => {
+    // D-20261030-EMB: below a BLOCK embed's root, folds are the source's own
+    // (beta.1 kept them local); page embeds keep 0.8's local inner folds.
+    it(`${format}: page embed nested in ${container} embed ${action} folds ${container === "block" ? "the source" : "locally without changing source"}`, async () => {
+    const shared = container === "block";
     const nested = { id: "nested", raw: "{{embed [[Deep]]}}", collapsed: false, children: [] };
     const target = { id: "target", raw: "outer block", collapsed: false, children: [nested] };
     const sourcePage = { ...source, format, blocks: [nested] };
@@ -78,12 +81,13 @@ for (const format of ["md", "org"] as const) {
         key(editorIn(row), "Up");
       }
       await tick();
-      expect(blockProperty("nested", "collapsed")).toBeNull();
-      expect(doc.byId.nested.collapsed).toBe(false);
+      expect(blockProperty("nested", "collapsed")).toBe(shared ? "true" : null);
+      expect(doc.byId.nested.collapsed).toBe(shared);
       expect(row.textContent).not.toContain("deep body");
       if (action === "keyboard") {
         key(editorIn(row), "Down");
-        expect(blockProperty("nested", "collapsed")).toBeNull();
+        expect(doc.byId.nested.collapsed).toBe(false);
+        if (!shared) expect(blockProperty("nested", "collapsed")).toBeNull();
         endEdit("page-navigation");
       } else row.querySelector<HTMLButtonElement>(".collapse-toggle")!.click();
       await tick(); expect(row.textContent).toContain("deep body");

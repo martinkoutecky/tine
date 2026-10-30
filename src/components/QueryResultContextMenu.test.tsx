@@ -292,11 +292,13 @@ describe("block embeds (GH #726 sweep)", () => {
     } finally { dispose(); }
   });
 
-  it("the embedded root's menu belongs to the source (GH #726 supersedes GH #514)", async () => {
+  // D-20261030-EMB restores GH #514 (0.8), which beta.1's GH #726 had reversed:
+  // the one bullet of a whole-block embed is the host's on this page.
+  it("the embedded root's menu belongs to the host (D-20261030-EMB, GH #514)", async () => {
     const { root, dispose } = mount(() => <For each={pageByName("HostPage")!.roots}>{(id) => <Block id={id} />}</For>);
     try {
       rightClick(await embedded(root, "target"));
-      expect(contextMenu()).toMatchObject({ kind: "block", blockId: "target" });
+      expect(contextMenu()).toMatchObject({ kind: "block", blockId: "host" });
     } finally { dispose(); }
   });
 });

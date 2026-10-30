@@ -678,10 +678,18 @@ export function collapsibleDescendantIds(id: string): string[] {
 export function setCollapsedDescendants(id: string, collapsed: boolean) {
   const root = doc.byId[id];
   if (!root || !blockWritable(id)) return;
-  const changes = collapsibleDescendantIds(id)
+  setCollapsedBlocks(collapsibleDescendantIds(id), collapsed);
+}
+
+/** `setCollapsedDescendants` for a given list of blocks on one page (a block
+ *  embed's rows, D-20261030-EMB): one snapshot, one store transaction. */
+export function setCollapsedBlocks(ids: readonly string[], collapsed: boolean) {
+  const page = ids.length ? doc.byId[ids[0]]?.page : undefined;
+  if (!page) return;
+  const changes = ids
     .map((childId) => {
       const child = doc.byId[childId];
-      if (!child || child.collapsed === collapsed) return null;
+      if (!child || child.page !== page || !blockWritable(childId) || child.collapsed === collapsed) return null;
       return {
         id: childId,
         raw: rawWithCollapsed(child.raw, collapsed, formatForBlock(childId)),
@@ -689,7 +697,7 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
     })
     .filter((change): change is { id: string; raw: string } => change !== null);
   if (!changes.length) return;
-  pushUndo("collapse-descendants", [root.page]);
+  pushUndo("collapse-descendants", [page]);
   setDoc(
     produce((state) => {
       for (const change of changes) {
@@ -701,5 +709,5 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
     })
   );
   bumpCollapseEpochs(changes.map((change) => change.id));
-  markDirty(root.page, "save-block");
+  markDirty(page, "save-block");
 }
