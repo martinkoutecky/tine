@@ -5,7 +5,7 @@ import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBr
 import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
-import { scrollToClearToolbar } from "../editor/caretReveal";
+import { revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
 
 type ToolbarIcon =
   | "outdent"
@@ -174,6 +174,24 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       updateDock();
       scheduleEditorReveal();
     };
+    // GH #783: the toolbar rule above only ever scrolls DOWN, and the mount-time
+    // caret reveal runs before the keyboard has resized the view. If anything moves
+    // the page while the view shrinks, the tapped line could stay above the top with
+    // nothing to bring it back. After every resize the caret is re-checked once the
+    // layout is steady (a no-op while it is visible).
+    let settleCaret: (() => void) | undefined;
+    const keepCaretAfterResize = () => {
+      settleCaret?.();
+      settleCaret = undefined;
+      const editor = document.activeElement;
+      if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) return;
+      const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");
+      if (scroller) settleCaret = revealCaretSettled(editor, scroller);
+    };
+    const updateAfterResize = () => {
+      updateViewport();
+      keepCaretAfterResize();
+    };
     const updateAfterFocusChange = () => setTimeout(updateViewport, 0);
     const revealAfterEditorInput = (event: Event) => {
       if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains("block-editor")) {
@@ -182,25 +200,26 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     };
     const updateFromNativeIme = (event: Event) => {
       nativeIme = (event as CustomEvent<unknown>).detail === true;
-      updateViewport();
+      updateAfterResize();
     };
     updateDock();
     window.addEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
-    vv?.addEventListener("resize", updateViewport);
+    vv?.addEventListener("resize", updateAfterResize);
     vv?.addEventListener("scroll", updateViewport);
-    window.addEventListener("resize", updateViewport);
+    window.addEventListener("resize", updateAfterResize);
     window.addEventListener("focusin", updateAfterFocusChange);
     window.addEventListener("focusout", updateAfterFocusChange);
     document.addEventListener("input", revealAfterEditorInput, true);
     onCleanup(() => {
       window.removeEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
-      vv?.removeEventListener("resize", updateViewport);
+      vv?.removeEventListener("resize", updateAfterResize);
       vv?.removeEventListener("scroll", updateViewport);
-      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("resize", updateAfterResize);
       window.removeEventListener("focusin", updateAfterFocusChange);
       window.removeEventListener("focusout", updateAfterFocusChange);
       document.removeEventListener("input", revealAfterEditorInput, true);
       if (revealFrame) cancelAnimationFrame(revealFrame);
+      settleCaret?.();
     });
   }
 
