@@ -69,9 +69,16 @@ fn a_restore_stop_relaunches_one_host_on_the_restored_tree() {
         kinds,
         ..
     } = live;
+    let stopping = host.session();
     let Ok(stopped) = host.stop_saved(id, StopMode::Restore) else {
         panic!("the restore stop completes");
     };
+    // Mail the stopped host sent before the stop returned (a slow runner can
+    // deliver the save's later mail after its answer) stays in the sink; the
+    // relaunched host's mail is checked from here on.
+    for old in mail.try_iter() {
+        assert_eq!(old.session, stopping, "mail before the relaunch");
+    }
     assert_eq!(fs::read_to_string(root.join(&key)).unwrap(), "- two\n");
     {
         let _writer = store.writer.lock().unwrap();

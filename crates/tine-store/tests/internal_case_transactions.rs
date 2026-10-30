@@ -165,10 +165,13 @@ fn unchanged_case_move_has_one_live_name_and_creates_no_staging_directory() {
 fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
     let _integration_guard = crate::test_transactions::integration_lock();
     use crate::{Area, EditKind, FaultPoint, TxOutcome};
-    for noop in [false, true] {
+    // `noop`: the provider keeps the old case, so the move goes through its
+    // temporary entry (GS1); with `temp_fails` that second half fails and
+    // the entry moves back.
+    for (noop, temp_fails) in [(false, false), (true, false), (true, true)] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
-        if noop {
+        if temp_fails {
             // Also exercise a graph retaining empty recovery directories on
             // Linux, where the destination does not alias the live source.
             fs::create_dir_all(dir.path().join("logseq/.tine-trash/pages")).unwrap();
@@ -182,25 +185,30 @@ fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
         if noop {
             store.inject_fault(FaultPoint::CaseMoveAliasNoop);
         }
+        if temp_fails {
+            store.inject_fault(FaultPoint::CaseMoveTemporaryIo);
+        }
         let mut tx = store.page_plan(Some(EditKind::RenamePage));
         tx.move_file(&src, rev, &dst, None);
         let outcome = tx.commit_internal();
         assert_eq!(
             matches!(outcome, TxOutcome::Committed { .. }),
-            !noop,
+            !temp_fails,
             "{outcome:?}"
         );
+        let temporary = dir.path().join("logseq/.tine-respell/pages/Old.md");
+        assert!(!temporary.exists(), "no entry stays at {temporary:?}");
         let names: Vec<_> = fs::read_dir(dir.path().join("pages"))
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert_eq!(names, [if noop { "old.md" } else { "Old.md" }]);
+        assert_eq!(names, [if temp_fails { "old.md" } else { "Old.md" }]);
         assert_eq!(
             fs::read(dir.path().join("pages").join(&names[0])).unwrap(),
             b"- original\n"
         );
         let trash = dir.path().join("logseq/.tine-trash");
-        if noop {
+        if temp_fails {
             // A real provider reports rename success before its unchanged
             // listing refuses the operation. On folding volumes undo can
             // stage the aliased live bytes, restore the source and remove
@@ -268,4 +276,71 @@ fn failed_case_move_undo_keeps_live_bytes_and_recovers_the_baseline() {
         );
         store.close();
     }
+}
+
+#[test]
+fn gs1_case_move_kill_worker() {
+    use crate::{Area, EditKind, FaultPoint};
+    let Ok(root) = std::env::var("TINE_GS1_KILL_ROOT") else {
+        return;
+    };
+    let store = Store::open(std::path::Path::new(&root), Default::default())
+        .unwrap()
+        .0;
+    let src = store.file_id(Area::Pages, "old.md").unwrap();
+    let dst = store.file_id(Area::Pages, "Old.md").unwrap();
+    let rev = store.read(&src, None).unwrap().1;
+    store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+    store.inject_fault(FaultPoint::CaseMoveAliasNoop);
+    store.inject_fault(FaultPoint::AbortBetweenCaseMoveSteps);
+    let mut tx = store.page_plan(Some(EditKind::RenamePage));
+    tx.move_file(&src, rev, &dst, None);
+    let _ = tx.commit_internal();
+    panic!("the case move did not reach its abort point");
+}
+
+/// GS1: a process killed between the two halves of a case move on a
+/// provider that keeps the old case leaves the bytes whole at the temporary
+/// entry; the next host launch finishes the move.
+#[test]
+fn gs1_a_case_move_killed_between_its_halves_finishes_at_the_next_launch() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "test_transactions::og_gh609_case_rename::gs1_case_move_kill_worker",
+        ])
+        .env("TINE_GS1_KILL_ROOT", dir.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("panicked at"),
+        "must reach the injected abort, not panic before it: {output:?}"
+    );
+    let pages = || {
+        let mut names: Vec<_> = fs::read_dir(dir.path().join("pages"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    };
+    let temporary = dir.path().join("logseq/.tine-respell/pages/Old.md");
+    assert!(pages().is_empty(), "{:?}", pages());
+    assert_eq!(fs::read(&temporary).unwrap(), b"- original\n");
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = crate::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    assert_eq!(pages(), ["Old.md"]);
+    assert_eq!(
+        fs::read(dir.path().join("pages/Old.md")).unwrap(),
+        b"- original\n"
+    );
+    assert!(!temporary.exists());
+    drop(host);
+    store.close();
 }

@@ -61,6 +61,11 @@ pub enum FaultPoint {
     CaseMoveAliasRefusal,
     /// Model a folded-alias rename succeeding without changing its spelling.
     CaseMoveAliasNoop,
+    /// Fail the second half of a case move through its temporary entry (GS1).
+    CaseMoveTemporaryIo,
+    /// Abort with the page at its temporary entry, between the two halves of
+    /// a case move (GS1); requires `test-faults`.
+    AbortBetweenCaseMoveSteps,
     /// Abort the process after a rewritten move has copied the old bytes to
     /// trash and published new destination bytes; requires `test-faults`.
     AbortAfterMoveRewrite,
@@ -98,6 +103,8 @@ pub(crate) enum FaultPoint {
     AbortBeforeMoveSync,
     CaseMoveAliasRefusal,
     CaseMoveAliasNoop,
+    CaseMoveTemporaryIo,
+    AbortBetweenCaseMoveSteps,
     AbortAfterMoveRewrite,
     MoveAfterTrashCopyIo,
     AbortAfterMarkerStage,

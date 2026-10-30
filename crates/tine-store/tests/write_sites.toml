@@ -1084,6 +1084,36 @@ note = "Transaction target resolves through PagePlan::path; move helpers use spe
 mutations = "move_file_noreplace=1, rename_spelling_replace=1, sync_move_dirs=1"
 
 [[site]]
+file = "crates/tine-store/src/transaction/move_file.rs"
+fn = "PagePlan::respell_through_temporary"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::check_write_target"
+test = "crates/tine-store/src/transaction/move_file.rs#a_provider_keeping_the_old_case_moves_through_a_temporary_entry"
+oracle = false
+note = "GS1: only after publish_move observed a provider keeping the old case. Each no-replace move (source to logseq/.tine-respell/<rel>, then to the destination, or back) is preceded by check_write_target and followed by sync_move_dirs; the temporary folder is created durably under the graph root. Bytes are never rewritten. Kill between the halves: internal_case_transactions.rs gs1_a_case_move_killed_between_its_halves_finishes_at_the_next_launch."
+mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=3, sync_move_dirs=3"
+
+[[site]]
+file = "crates/tine-store/src/transaction/move_file.rs"
+fn = "PagePlan::complete_case_move"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::check_write_target"
+test = "crates/tine-store/src/transaction/move_file.rs#a_launch_keeps_a_temporary_entry_in_trash_when_its_name_is_taken"
+oracle = false
+note = "GS1 launch completion, under the store writer before any host page is registered: a temporary entry moves no-replace to its destination only when no listed entry spells that name (exactly or folded), then is published synchronously; otherwise it moves no-replace into page trash. Every target is checked first; nothing is overwritten."
+mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=2, sync_move_dirs=2"
+
+[[site]]
+file = "crates/tine-store/src/transaction/move_file.rs"
+fn = "PagePlan::complete_case_moves"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::check_write_target"
+test = "crates/tine-store/src/transaction/move_file.rs#a_launch_finishes_a_case_move_left_at_its_temporary_entry"
+oracle = false
+note = "GS1: removes only empty folders under logseq/.tine-respell after launch completion (remove_dir refuses a non-empty folder), each checked as a write target."
+mutations = "model::remove_graph_dir=1"
+
+[[site]]
 file = "crates/tine-store/src/transaction/read_checks.rs"
 fn = "PagePlan::stage2_faults"
 domain = "graph"

@@ -353,6 +353,7 @@ export interface MessageArgs {
   "conflict-resolution-both-merge": {};
   "conflict-resolution-choosing-below-folds-the-other-file-into-this": {};
   "conflict-resolution-conflict-unavailable": {};
+  "conflict-resolution-copy-gone": {};
   "conflict-resolution-couldn-t-do-that": { "error": string | number };
   "conflict-resolution-couldn-t-read-this-conflict": { "error": string | number };
   "conflict-resolution-couldn-t-resolve-it": { "error": string | number };
@@ -1391,6 +1392,7 @@ export interface MessageArgs {
   "page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle": {};
   "page-ui-focus-or-create-a-trailing-block": {};
   "page-ui-hide-tag-table": {};
+  "page-ui-journal-template-not-applied": { "error": string | number };
   "page-ui-last-d": { "value1": string | number };
   "page-ui-loading-page": {};
   "page-ui-move-this-day-s-unfinished-tasks-to-today": {};

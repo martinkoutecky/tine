@@ -51,6 +51,10 @@ pub(crate) struct StorageCounters {
     pub failed: AtomicU64,
     pub drafts_written: AtomicU64,
     pub drafts_recovered: AtomicU64,
+    /// Case moves a launch finished from their temporary entry (GS1).
+    pub case_moves_completed: AtomicU64,
+    /// Temporary case-move entries a launch kept in trash: their spelling was taken.
+    pub case_moves_kept_in_trash: AtomicU64,
     container_adoptions: AtomicU64,
     user_adoptions: AtomicU64,
 }
@@ -74,6 +78,10 @@ impl StorageCounters {
             },
             "draftsWritten": self.drafts_written.load(Relaxed),
             "draftsRecovered": self.drafts_recovered.load(Relaxed),
+            "caseMovesFinishedAtLaunch": {
+                "completed": self.case_moves_completed.load(Relaxed),
+                "keptInTrash": self.case_moves_kept_in_trash.load(Relaxed),
+            },
             "draftNamespaceAdoptions": {
                 "appContainerMove": self.container_adoptions.load(Relaxed),
                 "userRecovery": self.user_adoptions.load(Relaxed),
