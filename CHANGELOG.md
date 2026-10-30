@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-30
+
 ### Fixed
 
 - A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its "Two versions of this page arrived" panel used to hide the review of the unsaved edits, and its Apply only said "Resolve this page’s save conflict first". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display ("This page could not be displayed") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).

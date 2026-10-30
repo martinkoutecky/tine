@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.3",
+  "baseTag": "v0.8.2",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.8.3 is a stable patch: the GH #800 conflict fixes and the CONFLICT-INVALIDINPUT fix, ported from the Beta line to one stable fix branch (cherry-picked with -x, journey adapted), with fail-before on stable 0.8.2; full suites and hosted CI run on the candidate. Martin authorized the cut on 2026-10-30 (\"MK28 ok\", D-20261030-083)."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its \"Two versions of this page arrived\" panel used to hide the review of the unsaved edits, and its Apply only said \"Resolve this page’s save conflict first\". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display (\"This page could not be displayed\") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH800-MERGE-UNIQUE-KEYS",
+        "REG-GH800-REVIEWED-MERGE-HELD-TEXT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH800-MERGE-UNIQUE-KEYS, REG-GH800-REVIEWED-MERGE-HELD-TEXT. Ported to stable as batch/fix-gh800-stable (17a201793), gated on master (Linux).",
+        "refs": [
+          "crates/tine-graph-features/tests/f8e_live_conflict.rs",
+          "src/document/host/client.test.ts",
+          "scripts/e2e-gh800-save-then-copy.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONFLICT-INVALIDINPUT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-CONFLICT-INVALIDINPUT. Ported to stable as batch/fix-gh800-stable (17a201793), gated on master (Linux).",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    }
+  ]
+}
