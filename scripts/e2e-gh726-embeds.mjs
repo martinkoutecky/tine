@@ -1,5 +1,8 @@
 // GH #726: routed-page host/source ownership, real cross-page cut/paste,
 // durable properties/identity/children/folds and undo through the native app.
+// D-20261030-EMB: a block embed has one bullet, the embedded root's, and it acts
+// on the host; so for EMBED_KIND=block the "host bullet" is that root row and the
+// source's own bullet is on the Source page. Page embeds keep both bullets.
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -44,6 +47,16 @@ const read = file => fs.readFileSync(file, "utf8");
 const sourceRow = `.main-content .embed-block .ls-block[data-block-ref="${S}"]`;
 const hostRow = `.main-content .ls-block[data-block-ref="${H}"]`;
 const ownBullet = row => `${row} > .block-main > .block-controls .bullet-container`;
+const hostBulletRow = kind === "block" ? sourceRow : hostRow;
+const sourcePageRow = `.main-content .ls-block[data-block-ref="${S}"]`;
+// The source block's own bullet: inside a page embed, or on its own page for a block embed.
+async function sourceMenu(label) {
+  if (kind === "page") return menu(sourceRow, label);
+  await openPageByName(browser, "Source");
+  await browser.$(ownBullet(sourcePageRow)).waitForExist({ timeout: 20000 });
+  await menu(sourcePageRow, label);
+  await openPageByName(browser, "Embed ownership");
+}
 const sourceVisible = () => browser.$(ownBullet(sourceRow)).waitForExist({ timeout: 20000 });
 
 async function menu(row, label) {
@@ -114,7 +127,7 @@ try {
   const originalOutline = await pageOutline("Source");
 
   stage = "host bullet cut and paste moves only the embed; undo restores it";
-  await menu(hostRow, "Cut block");
+  await menu(hostBulletRow, "Cut block");
   await waitForFileText(hostFile, text => !text.includes(`id:: ${H}`));
   assert.equal(read(sourceFile), originalSource);
   await pasteAtDestination();
@@ -129,7 +142,7 @@ try {
   stage = "source bullet copy preserves both source and embed";
   await openPageByName(browser, "Embed ownership");
   await sourceVisible();
-  await menu(sourceRow, "Copy block");
+  await sourceMenu("Copy block");
   const copied = await browser.execute(async () => window.__TAURI_INTERNALS__.invoke("plugin:clipboard-manager|read_text"));
   assert(String(copied).includes("Source root"));
   assert(!String(copied).includes("{{embed"));
@@ -138,7 +151,7 @@ try {
   pass();
 
   stage = "source bullet cut and paste really moves identity, properties, folded children; embeds and refs update";
-  await menu(sourceRow, "Cut block");
+  await sourceMenu("Cut block");
   await waitForFileText(sourceFile, text => !text.includes("Source root") && text.includes("Source survivor"));
   assert(read(hostFile).includes(`id:: ${H}`));
   await browser.waitUntil(() => browser.execute((selector) => !document.querySelector(selector), sourceRow), { timeout: 15000 });
@@ -167,7 +180,7 @@ try {
   pass();
 
   stage = "delete the source through its embed bullet; undo restores it";
-  await menu(sourceRow, "Delete block");
+  await sourceMenu("Delete block");
   await waitForFileText(sourceFile, text => !text.includes(`id:: ${S}`) && !text.includes("Hidden grandchild"));
   assert(read(hostFile).includes(`id:: ${H}`));
   await browser.waitUntil(() => browser.execute((selector) => !document.querySelector(selector), sourceRow), { timeout: 15000 });

@@ -1,6 +1,7 @@
-// Visual regression for GH #88: a whole-block `{{embed ((uuid))}}` presents the
-// host and source have their own interactive bullets (GH #726 supersedes the
-// former single-root rule), with a heavier source descendant guide.
+// Visual regression for GH #88: a whole-block `{{embed ((uuid))}}` presents ONE
+// bullet, the embedded root's, at the host's place (D-20261030-EMB restores 0.8's
+// single-root rule after beta.1's GH #726 host bullet), with a heavier source
+// descendant guide.
 // Usage: npm run build && node scripts/shot-block-embed.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -92,11 +93,11 @@ try {
     }
   }
 
-  if (bulletCount !== 4) {
-    // Host, source root, child and grandchild each own their handle.
-    throw new Error(`expected 4 outline bullets, got ${bulletCount}`);
+  if (bulletCount !== 3) {
+    // Source root (standing for the host), child and grandchild.
+    throw new Error(`expected 3 outline bullets, got ${bulletCount}`);
   }
-  if (hostControlCount !== 1) throw new Error(`macro host has ${hostControlCount} control column(s)`);
+  if (hostControlCount !== 0) throw new Error(`macro host has ${hostControlCount} control column(s)`);
   if (embeddedBulletCount !== 3) throw new Error(`embedded outline has ${embeddedBulletCount} bullets`);
   if (guideWidth !== "2px") throw new Error(`expected a 2px embedded-root guide, got ${guideWidth}`);
   if (rootToggleCount < 1) {

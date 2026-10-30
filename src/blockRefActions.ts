@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandSurface } from "./collapseCommandSurface";
+import { collapseCommandRow } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -165,7 +165,10 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     if (!pageRoots) return false;
     parents = [];
   }
-  const surface = parents.length ? collapseCommandSurface(parents[0]) : undefined;
+  const row = parents.length ? collapseCommandRow(parents[0]) : undefined;
+  const surface = row?.surface;
+  // A selected whole-block embed host folds its visible root row (D-20261030-EMB).
+  if (row) parents = parents.map((id, i) => i === 0 ? row.id : id);
   const isCollapsed = (id: string) => {
     const stored = docNode(id)?.collapsed ?? false;
     return surface?.collapsed(id, stored) ?? stored;
@@ -206,7 +209,8 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     for (const id of level) setFold(id, collapsed);
   };
   // Occurrence toggles own their persistence: an embed root saves its HOST
-  // property (with its own undo), descendants only change local presentation.
+  // property (with its own undo); below it a block embed saves the source's
+  // folds (D-20261030-EMB) and other surfaces change local presentation only.
   // A source-page undo snapshot would suppress and then lose that host undo.
   if (surface) apply();
   else withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, apply);

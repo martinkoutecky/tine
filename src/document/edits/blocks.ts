@@ -207,8 +207,9 @@ export function splitBlock(
  *  split/merge operations take it. Without it the caret leaves a block embed
  *  mid-keystroke: `editing()` in Block.tsx prefers the NON-embed rendering when
  *  no surface is named, so the editor remounts on the source copy of the same
- *  block further down the page (GH #477). */
-export function indentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null) {
+ *  block further down the page (GH #477). `editId` is the block whose editor
+ *  keeps the caret: a whole-block embed's root indents its host (D-20261030-EMB). */
+export function indentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null, editId = id) {
   if (!blockWritable(id)) return;
   const pageName = doc.byId[id].page;
   // The kernel refuses the first sibling, a page-header parent (GH #638) and
@@ -223,7 +224,7 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection, e
   // same reactive flush as the tree change, before the replacement can focus.
   reparentEditingBlock(change, () => {
     applyOutlineChange(change);
-    startEditing(id, caretOffset, null, editingSurface);
+    startEditing(editId, caretOffset, null, editingSurface);
   });
 }
 
@@ -250,8 +251,8 @@ function reparentEditingBlock(change: OutlineChange, update: () => void): void {
 }
 
 /** Shift+Tab: move the block out to be the next sibling of its parent.
- *  `editingSurface` as in `indentBlock` (GH #477). */
-export function outdentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null) {
+ *  `editingSurface` and `editId` as in `indentBlock`. */
+export function outdentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null, editId = id) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
   // Logical outdenting (OG `outliner/core.cljs:835-852` at `6e7afa8eb`) is a
@@ -261,7 +262,7 @@ export function outdentBlock(id: string, caretOffset: number | EditorSelection, 
   pushUndo("outdent", [node.page]);
   reparentEditingBlock(change, () => {
     applyOutlineChange(change);
-    startEditing(id, caretOffset, null, editingSurface);
+    startEditing(editId, caretOffset, null, editingSurface);
   });
 }
 

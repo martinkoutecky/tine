@@ -10,7 +10,11 @@ import { touchGestures } from "../inputCapability";
 import { openContextMenu } from "../ui";
 
 export interface BlockRowSwipeDeps {
+  /** The block the row's position belongs to: a whole-block embed's root row
+   *  stands for its host (D-20261030-EMB). */
   id: string;
+  /** The block whose editor this row mounts, when it differs from `id`. */
+  editorId?: string;
   scope: OutlineScope | null | undefined;
   editing(): boolean;
   readOnly(): boolean;
@@ -63,7 +67,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
       if (deps.readOnly()) return false;
       const block = docNode(deps.id);
       if (!block || pageByName(block.page)?.guide) return false;
-      if (deps.editing() && focusedEditorCommandBridge()?.blockId !== deps.id) return false;
+      if (deps.editing() && focusedEditorCommandBridge()?.blockId !== (deps.editorId ?? deps.id)) return false;
       if (action === "actions") return true;
       if (action === "outdent") return block.parent !== null && deps.scope?.forceExpandedRoot !== block.parent;
       const siblings = block.parent === null ? pageRoots(block.page) : childIds(block.parent);
@@ -74,7 +78,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
     run(action: BlockSwipeAction, x: number, y: number) {
       if (deps.readOnly()) return;
       if (deps.editing()) {
-        if (focusedEditorCommandBridge()?.blockId !== deps.id) return;
+        if (focusedEditorCommandBridge()?.blockId !== (deps.editorId ?? deps.id)) return;
         if (action === "indent") dispatchFocusedEditorCommand("editor/indent");
         else if (action === "outdent") dispatchFocusedEditorCommand("editor/outdent");
         // The action menu from an editing row opens on the same block; the

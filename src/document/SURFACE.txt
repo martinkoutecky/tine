@@ -168,6 +168,7 @@ selectionMarkdown
 selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty
 setCollapsed
+setCollapsedBlocks  # why: D-20261030-EMB block embed folds below the root save the source in one undo step; batch-fix-embed-look-08
 setCollapsedDeep
 setCollapsedDescendants
 setCollapsedTrees  # why: GH #785 batches page and selected subtree folding into one save notification per page; batch-sweep-nav

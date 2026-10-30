@@ -244,8 +244,14 @@
       "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-embed-look.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"One block embedded on two pages shows one bullet, at the host's place. Folding its root on page A saves collapsed:: on A's host only and page B stays open; after an app restart A is still folded and B open. Folding a block below the root saves the source's collapsed:: and shows on page B, page A and the source page. Tab and Shift+Tab on the edited root move the host on its page, and the bullet's Delete block removes only the host; Undo restores it (D-20261030-EMB, #417, #748).","blocking":true}],
+      "acceptableVariations":["Bullet styling, menu placement, the restored tab after restart and save latency may vary while the saved bytes and the visible folds agree."],
+      "nonRequirements":["Exact pixels, page-embed folds (unchanged), drag-and-drop (component tests cover the drag owner), or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh726-embeds.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed page, a block or page embed's host bullet cuts only its host; a source bullet copies, cuts and deletes its source. Cross-page paste retains source identity, properties and folded children, updates embeds and references, and Undo restores host and source changes (GH #726).","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed page, a page embed's host bullet, and a block embed's one bullet (D-20261030-EMB), cuts only its host; a source bullet (inside a page embed, or on a block embed source's own page) copies, cuts and deletes its source. Cross-page paste retains source identity, properties and folded children, updates embeds and references, and Undo restores host and source changes (GH #726).","blocking":true}],
       "acceptableVariations":["Bullet inset, menu placement, styling and save latency may vary while the selected block's identity and persisted outline match its visible handle."],
       "nonRequirements":["Exact pixels, a combined selection spanning host and source outlines (the scope refuses it), or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

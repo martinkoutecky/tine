@@ -2383,13 +2383,19 @@ mod i2_guide_sentence_tests {
     fn embed_host_and_source_bullet_ownership_is_documented() {
         let page = include_str!("templates/pages-links-references-search.md");
         for outcome in [
-            "Block and page embeds have their own host bullet",
-            "dragging that bullet act on the block containing `{{embed ...}}`",
-            "Every bullet inside the embed, including the source root, acts on its source block",
+            // D-20261030-EMB: a block embed's one bullet is the host's position.
+            "Where a block sits is per page; what it says is shared",
+            "A block embed shows one bullet, the embedded block's own",
+            "dragging that bullet, **Tab**/**Shift+Tab** and selecting it act on the block containing `{{embed ...}}`",
+            "its text and children are the source's, so editing them edits the source",
+            "A block that has its own text besides the embed keeps its own bullet",
+            "A page embed has its own host bullet",
+            "Every other bullet inside an embed acts on its source block",
+            "Folding a block further inside the embed folds that source block itself",
             "Cutting and pasting inside an embed really moves the source block",
             "Deleting inside an embed deletes the source",
             "**Undo** restores these changes",
-            "Clicking a source bullet zooms into the source block",
+            "Clicking an embedded bullet zooms into the source block",
             "extending it across the host/source boundary is refused",
         ] {
             assert!(

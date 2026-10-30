@@ -28,6 +28,7 @@ import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
+import { rowHostOf } from "./block/embedRowHost";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
@@ -60,10 +61,11 @@ export function beginDrag(id: string, e: MouseEvent) {
     const tid = el?.dataset.blockId;
     if (tid) {
       const main = el!.querySelector(".block-main")!.getBoundingClientRect();
-      setDropInd({
-        id: tid,
-        position: blockDropPosition(x, y, el!.getBoundingClientRect(), main),
-      });
+      const position = blockDropPosition(x, y, el!.getBoundingClientRect(), main);
+      // A whole-block embed's root row sits where its host does: a drop beside
+      // it lands beside the host; a child drop joins the source's children.
+      const host = position === "child" ? null : rowHostOf(el);
+      setDropInd({ id: host?.id ?? tid, position });
     } else {
       setDropInd(null);
     }
@@ -163,16 +165,13 @@ interface EditGesture {
   startX: number;
   startY: number;
   escalated: boolean;
-  outlineScope: OutlineScope | null;
   /** Caret stops of the mounted textarea, measured lazily on the first in-block
    *  drag move (undefined = not yet measured, null = no layout available). */
   caretPoints: Array<{ x: number; y: number }> | null | undefined;
 }
 
-function blockIdAtPoint(doc: Document, x: number, y: number): string | null {
-  const el = doc.elementFromPoint(x, y);
-  const row = el?.closest?.(".ls-block");
-  return row?.getAttribute("data-block-id") ?? null;
+function rowAtPoint(doc: Document, x: number, y: number): Element | null {
+  return doc.elementFromPoint(x, y)?.closest?.(".ls-block") ?? null;
 }
 
 export function beginEditGesture(
@@ -183,6 +182,11 @@ export function beginEditGesture(
   outlineScope: OutlineScope | null,
 ): void {
   const home = scrollHome(e.target); // before the press re-renders its target
+  // A selection over a whole-block embed's root row selects its host, and never
+  // extends from there into the source rows inside it (D-20261030-EMB).
+  const startRow = (e.target as Element | null)?.closest?.(".ls-block");
+  const startHost = rowHostOf(startRow);
+  const anchor = startHost ?? { id: blockId, scope: outlineScope };
   clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
   const g: EditGesture = {
     blockId,
@@ -191,7 +195,6 @@ export function beginEditGesture(
     startX: e.clientX,
     startY: e.clientY,
     escalated: false,
-    outlineScope,
     caretPoints: undefined,
   };
   // The old rendered target is replaced synchronously. Prevent its native
@@ -207,9 +210,11 @@ export function beginEditGesture(
   // under a still pointer.
   let autoscroll: EdgeAutoscroll | null = null;
   const step = (px: number, py: number) => {
-    const over = blockIdAtPoint(doc, px, py);
+    const row = rowAtPoint(doc, px, py);
+    const over = row?.getAttribute("data-block-id") ?? null;
+    const overSelection = startHost && row !== startRow && startRow?.contains(row) ? null : rowHostOf(row)?.id ?? over;
     if (g.escalated) {
-      if (over) extendSelectionTo(over, g.outlineScope);
+      if (overSelection) extendSelectionTo(overSelection, anchor.scope);
       return;
     }
     if (over === g.blockId) {
@@ -248,14 +253,14 @@ export function beginEditGesture(
       }
       return;
     }
-    if (over && over !== g.blockId) {
+    if (over && over !== g.blockId && overSelection) {
       // Crossed into another block: escalate to block selection for the rest of
       // the gesture (never de-escalate — flipping modes mid-drag is jarring).
       g.escalated = true;
       endEdit("select-block");
       doc.getSelection()?.removeAllRanges();
-      selectBlock(g.blockId, g.outlineScope);
-      extendSelectionTo(over, g.outlineScope);
+      selectBlock(anchor.id, anchor.scope);
+      extendSelectionTo(overSelection!, anchor.scope);
     }
   };
   const onMove = (ev: MouseEvent) => {
