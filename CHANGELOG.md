@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
+
 ## [0.9.0-beta.1] - 2026-10-29
 
 The first Tine 0.9 Beta. Git sync on phones and computers, with sign-in and automatic commits; "Changed since you last looked", which marks what other people or tools committed to a page, with buttons to step through each change; pages shared as encrypted links that open in the browser; margin comments with replies; a command line that can write, now also on Windows, for scripts and AI agents; tabs organized in the sidebar; theme fonts; the PDF viewer on pdf.js 5; and the 0.9 storage checks described below. It includes every fix in stable 0.8.2.
