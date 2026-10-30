@@ -150,6 +150,7 @@
   ];
   var state = "boot";
   var created = false;
+  var confirmed = false;
   var navTries = 0;
   var lastLog = 0;
 
@@ -224,6 +225,9 @@
       if (!created) {
         var b = clickByText(/Create a new graph/i);
         if (b) { created = true; log("CLICKED create-graph"); return; }
+      } else if (!confirmed) {
+        var b2 = clickByText(/^\s*Create graph\s*$/i);
+        if (b2) { confirmed = true; log("CLICKED confirm-create"); return; }
       }
       var m = scroller();
       if (m && document.querySelectorAll(".block-content").length > 5) {
