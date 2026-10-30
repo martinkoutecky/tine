@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-gh800-save-then-copy.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A routed page with both a refused save (its file changed on disk under unsaved input) and a sync conflict copy shows the save conflict's review first, then the copy's comparison; both Applies go through, never the save-conflict-first refusal, and the draft, the disk change and the copy all survive, the replaced versions recoverable.","blocking":false,"authority":"UI-CONFLICT-SAVE-THEN-COPY; GH #800"}],
+      "acceptableVariations": ["Page geometry, latency, the attempt that wins the save race, copy timestamp and recovery filenames may vary."],
+      "nonRequirements": ["No private graph or app data, exact pixels, other-platform certification or manager burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh524-new-page-sidebar.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A brand-new fileless page opened in the right sidebar through a link or page menu offers an editable first bullet; typing creates the page file and a dragged subtree moves from its source into the new page. Search-created pages remain editable there too (GH #524).","blocking":true}],
       "acceptableVariations": ["First-bullet styling, editor layout, menu placement and save latency."],
