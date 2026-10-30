@@ -1579,6 +1579,135 @@
       }
     },
     {
+      "section": "Added",
+      "text": "**Hidden Logseq metadata** (internal card PVTI_lAHOAAbLVc4BhPsyzhDCwFo): built-in and configured hidden properties stay out of the editor and rendered property lists, following Logseq's block/page rules; editing preserves the hidden lines, and Properties still lets you change or remove them.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Margin comments** (internal UI-MARGIN-POLISH, UI-MARGIN-R3-CARD, UI-MARGIN-R4-CARD, UI-MARGIN-R3-DRAFT, UI-MARGIN-R3-TOOLBAR): select words and click the rightmost **Comment** speech bubble in the desktop or touch toolbar. Cards and replies have **×** at the top right on their first content line, beside the author chip, without an empty action row (delete with replies, restored together by Undo). Threads offer an expanding **Reply…** draft at the bottom; abandoned empty drafts create no block or save. Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MARGIN-R3-CARD",
+        "UI-MARGIN-R4-CARD",
+        "UI-MARGIN-R3-DRAFT",
+        "UI-MARGIN-R3-TOOLBAR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. Named IDs absent from those inventories and therefore omitted: UI-MARGIN-POLISH.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Reference rows show code blocks and dates before their page loads** (UI-M19-REFERENCE-BODY): while a linked reference or block-reference row waits for its source page, it is now drawn by the same renderer as the page itself, so a code block appears as code instead of raw ``` lines, and SCHEDULED and DEADLINE dates show as on the page. Before, those rows only looked right once the source page had loaded.",
+      "userVisible": true,
+      "regressions": [
+        "UI-M19-REFERENCE-BODY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "The Hierarchy title folds and expands its section with pointer or keyboard activation and remembers the page's choice for the graph session (GH #738).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
       "section": "Changed",
       "text": "`:feature/enable-journals? false` in `logseq/config.edn` shows the configured home page in the sidebar in place of Journals, as in Logseq. Each comma item of a property listed in `:property/separated-by-commas` is now a page link in page and block properties.",
       "userVisible": true,
@@ -2361,6 +2490,164 @@
       "blog": {
         "status": "not-applicable",
         "reason": "Beta notes live in the changelog and prerelease; no blog post for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Long journal feeds retain fewer documents** (L10-03, development): offscreen days retire behind measured-height placeholders and reload when approached. Editing, unsaved and selected content stays loaded. Find searches loaded days and offers “search all journals” with the same query for older retired days.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Long sessions release unloaded block facets and obsolete block-reference answers, bound historical parse and inactive answer memory by bytes, and clear retained graph text on reset (audit L10-01, L10-02, L10-04 / L7-01).",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Soft Settings hierarchy** (GH #649, thanks @EllisMorrow): labels, descriptions and author/version/build details have distinct emphasis in light and dark mode, with quieter dividers and hover/selection borders; every text role keeps at least 4.5:1 contrast.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Block and page embeds keep their own bullet; Copy, Cut, Delete and drag on it act on the embed block, while every bullet inside acts on its source block. Cutting and pasting a source really moves it, and Undo restores it. This retires GH #514's source-root drag redirection to the host (GH #726).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**PDF reader: smoother scrolling and zooming** (internal UI-PDF-RENDER-QUEUE, UI-PDF-ZOOM-KEEPS-RASTER, UI-PDF-WHEEL-ZOOM): the page you stop on now paints first. Pages you scrolled past pause instead of holding it up, and the next one or two pages in the direction you are scrolling are prepared ahead. Zooming no longer flashes the page blank: the old image stays, stretched, until the sharp one is ready. Ctrl+wheel and touchpad pinch zoom smoothly around the pointer instead of jumping in 10% steps per event and sliding the page.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-RENDER-QUEUE",
+        "UI-PDF-ZOOM-KEEPS-RASTER",
+        "UI-PDF-WHEEL-ZOOM"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
         "refs": []
       }
     },
@@ -4012,6 +4299,2154 @@
       "blog": {
         "status": "not-applicable",
         "reason": "Beta notes live in the changelog and prerelease; no blog post is prepared by this lane.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A restore that clears an earlier read failure refreshes page names and icons even when the restored bytes are unchanged (GH #543).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Removing a duplicate journal's winning file keeps other pages usable when the promoted file cannot be parsed, reporting that file as unreadable (GH #644).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A duplicate journal file delivered or edited by sync contributes the same references and query results while Tine runs as after a restart; the existing duplicate-day resolver still lists both files (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A name claimed by two page files keeps the winning file's icon after a configuration reload, including while that page is open (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Deleting a conflicted page preserves the latest typing in its recovery copy. Quick Capture keeps a title with an empty body, offers a plain retry when saving takes too long, and reports previous-graph uncertainty only after a graph window accepted the capture (GH #254 capture family; L9 review FU1/FU2/H4).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Quick Capture removes the saved portion before filing later additions, preserves an unconfirmed capture on Escape, and prevents retries from inserting it again after a graph-window reload (GH #254 capture family; L9 review F1–F3).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block move that rolls back because of unfinished page-header input now explains why and keeps that input and the blocks (L9 review F4, card PVTI_lAHOAAbLVc4BhPsyzhC1syQ).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Files still arriving from another editor or sync service retry quietly; settled read failures avoid repeating full-graph checks, permission repairs recover without a content change, and unreadable files keep their last readable page. Saves racing an external append still report a conflict (GH #543).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing a property after body text keeps the editor text and caret in place while saving one property group; CLI identity checks accept the same UUID in either letter case and ignore body lookalikes (GH #684; GH #721).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Appending or pasting property text keeps hidden metadata in the group Logseq reads, and editing repairs earlier split groups; CLI edits refuse a supplied id that differs from the block's existing id (GH #684, GH #721).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Hidden properties keep their order during text edits, stay on a cleared first block, and avoid duplicate keys during sheet transfers and CLI read-then-edit; in-page replace handles these blocks again (GH #208; GH #338; internal card PVTI_lAHOAAbLVc4BhPsyzhDKQyY).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The title and Open source actions stay visible while scrolling a hover preview (GH #752).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "GH #741: accept case-equivalent properties when restoring clock history; keep a refused edit open with its typed text and a persistent error offering Copy recovery.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "GH #741: keep LOGBOOK drawers out of the task editor, preserve clocks when pressing Enter or merging blocks, and retain clock history during CLI edits (Tine 0.9 development).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "GH #741: retain opaque clocks during rich copy/cut and sheet transfers, protect clock-only paste targets, keep restored Org identities parser-owned, and let handwritten drawers finish in the active editor.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Hover previews share the source's fold** (GH #748): folding or unfolding a block in a page-link or block-reference preview now saves the source block's `collapsed::` property, with Undo. An open page and its preview follow each other's folds, and expanded blocks' arrows work too. A source that cannot be written keeps a local preview fold.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Editing a sheet row reuses other rows' formula results and table/board filter answers, reducing pauses in large sheets (audit L10-05; development only).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Saving a page with many reference targets avoids quadratic candidate-index diff work while preserving the same reference owners (audit L10-07; development only).",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Cycling selected task blocks with Ctrl/Cmd+Enter now opens clocks on DOING/NOW and closes them on DONE when time tracking is enabled, in one Undo step (internal UI-TASK-CYCLE-TIMETRACKING).",
+      "userVisible": true,
+      "regressions": [
+        "UI-TASK-CYCLE-TIMETRACKING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page file replaced by something larger than 64 MiB while open is now refused like every other read instead of being loaded whole into memory; unsaved typing stays (audit L6-02).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "CLI run edits refuse pages with Git content filters or encoding conversion before saving or creating raw Git objects, including in nested graph roots (L7s5-01). A concurrent branch checkout now leaves both branches and the checked-out index untouched by the commit, with an explicit saved-but-uncommitted warning (L7s5-02).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Logseq query answers and export notices** (audits L7s1-02, L7s1-03, L7s2-03): advanced property-map queries and self-page joins now visibly refuse instead of answering a guessed page relationship; quoted operands decode EDN escapes as Logseq does. Printed and published queries retain refusal explanations, including legacy scheduled/deadline conversion guidance, rather than claiming there are no matches.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**EDN characters in graph settings** (audit L7s1-01): character literals such as `\\}` and `\\]` no longer hide later `:hidden` exclusions or corrupt config.edn when Favorites are saved. Unrelated settings and comments keep their bytes.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Retrying Quick Capture after a save delay or acknowledgement timeout saves the same insertion instead of appending it twice (audit L9-08).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Moving blocks between pages refuses invalid page-header drafts and retains the blocks at their source instead of saving only one endpoint (audit L9-07).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Live conflict resolutions retain the reviewed external file in conflict trash before publication. Omitted merge choices keep both sides, and an unsuccessful conflicted-page delete retains local input (audits L9-04, L9-03, L2-04).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Slow asset, local-image, CSV, journal and conflict-diff reads now run off the UI thread (audit L7s4-03). Oversized iOS and Android share envelopes are refused before publication instead of reporting a share that cannot be ingested (L7s4-02). Macro rendering and Copy/Export check cumulative substitution size before allocating output (L7s8-02, macro half). Closing a PDF during loading now retires its loading worker, also on owner cancellation or failure (L7s6-01).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Org body text such as `Note:: see [[Foo]]` remains visible in references, breadcrumbs and export (audit L3-04, RN-C). Renaming pages recognizes `.ORG` and `.Org` referrers as Org, preserving inline code and updating Org file links (audit L7s4-01).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "CLI edits of an already running bare task use the editor's previous-marker rule, avoiding duplicate open clocks and closing the existing clock on completion when the replacement buffer retains its logbook (audit L3-07, RN-F).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Refuse page-host I/O through a folder moved outside the graph and replaced by a symlink, retaining queued and recovered text (audit L8-01).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Refuse a creating save when a new title claimant or possible unreadable owner arrives while the absent page is open; retain the text and name the claimant (audit L8-02).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Changing favorites, the journal template or display settings no longer re-reads and re-parses every graph page (audit L1-04).",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "In-page find stays responsive when a large block contains thousands of matches, using constant-time span deduplication per hit (audit L2-13).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Touchscreen pinch zooms the PDF around the midpoint between your fingers**, keeping the drawn pages visible while you pinch and sharpening them after release. One-finger scrolling and text selection remain available (GH #742).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Diagnostic reports now include bounded, memory-only renderer stalls while typing, with bundled script attribution where the WebView supports it (GH #746).",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page changes refuse while the graph is not open, instead of writing unguarded** (internal REG-HOST-OFF-PAGE-WRITERS-REFUSE, card g_-lnA): if Tine could not start, or restart after a backup restore, the part that guards a graph's pages (for example on a disk error), merging or rescuing pages, moving a journal to trash, renaming journal files, saving PDF highlights, resolving a sync conflict, duplicate journal day or merge conflict, and copying the Guide used to write the files anyway, beside any unsaved edits. They now say \"The graph isn't open right now. Reopen it, then try again.\" and change nothing.",
+      "userVisible": true,
+      "regressions": [
+        "REG-HOST-OFF-PAGE-WRITERS-REFUSE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A PDF in the dark reader theme no longer turns light when zoomed past 300% (internal UI-PDF-DARK-TILES): the sharper tiles drawn at high zoom are now darkened like the rest of the page.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-DARK-TILES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Property value suggestions and popup position** (GH #737): typing a property value no longer offers whole multi-value strings such as `[[a]], [[b]]`; a value holding several page references or tags is offered as its individual `[[a]]` and `[[b]]`, as in Logseq, while plain text (commas included), a single reference and a quoted value stay whole. The suggestion list now opens against the line you are typing on, instead of below the last row of a long property block (often past the bottom of the window), flips above that line near the bottom of the window, and stays inside its right edge. It applies to page properties and block properties, in the main pane and the sidebar.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Dragging a block selection or a block to the top or bottom edge now scrolls the page** (GH #731): while you drag-select blocks with the mouse (also with Shift), or move a block by its bullet, holding the pointer near the top or bottom edge of the pane, or beyond the window edge, scrolls it, faster the closer you get, so you can select or move across more than one screen. It works in the main pane, split panes and the right sidebar, and stops when you release the button, press Escape or leave the window. A plain click that wobbles a little near the edge does not scroll.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Hover previews of page links, tags and block references no longer grow as tall as the window (GH #735): a preview stops at 600 pixels (Logseq's cap) or half the window, whichever is taller, never more than the window, and scrolls inside. It also opens after Logseq's one-second pause and closes a tenth of a second after the pointer leaves, instead of opening almost at once. Code blocks, callouts, quotes and a page's existing folds now show in the preview as they do on the page (a folded block can be opened in the preview without changing the page). A setting for the delay is a feature request and is not part of this fix.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Chinese command input keeps the `/` and `<` pickers open and finds their localized labels (GH #107). Settings search now shows the matching text for hidden keywords, aliases and English labels too, including `父` for block embed breadcrumbs (GH #706).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Settings → Journals now shows the same unsupported journal date-pattern notes as today's journal, beside Journal date format, and updates them when the setting changes (GH #317).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page headers hide the linked-reference `filters` property while keeping it available for raw editing (GH #730).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Clicking into a block as soon as a large graph appears, then leaving it, no longer makes the launch slower than one without the launch checkpoint: closing the block re-read its page and then indexed the whole graph at once, ahead of the checkpoint, which was then thrown away after being read. The re-read now waits for the loaded graph like an early save, and the checkpoint stops being read as soon as such an action arrives. On a generated 10,000-page graph, Ready after a click at first paint went from about 2.2 s to about 1.6 s (a launch without the checkpoint takes about 1.1 s) (queue card hB0p3s, REG-HB0P3S-EARLY-EDIT-CHECKPOINT-RACE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-HB0P3S-EARLY-EDIT-CHECKPOINT-RACE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Changing **Pinyin matching** in one window while another window changes it at the same moment no longer leaves the first window on the value it tried to save: once its own save finishes or fails, it reads the setting again, so every window ends on what is stored. Closing a page-name completion also releases its Pinyin keys from views taken before a config change or Rescan (GH #151, queue card hApslk).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A command-line `tine serve` now takes the same launch snapshot as the app (Settings → **Backups & recovery**) when it opens a graph; before, a graph edited only through the command line was never backed up. A failure is reported on serve's stderr (REG-OG-SERVE-LAUNCH-BACKUP).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-SERVE-LAUNCH-BACKUP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The published Guide and HTML exports on a phone**: below 720 px wide, the page list now folds behind a **Pages** button, so a page opens with its content at the top instead of below a screen-long list of pages. Search and **All pages** stay where they were; wide screens are unchanged (UI-PUBLISH-NARROW-SIDEBAR-FOLDS-PAGE-LIST).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PUBLISH-NARROW-SIDEBAR-FOLDS-PAGE-LIST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Queries follow the date** (hB3Lv8): a query whose dates count from today (`{{tine-query any(direct_refs, day > today)}}`, `scheduled between today and '+7d'`, `(between -7d today)`, an advanced query's `:today` or `:+7d` input, the Scheduled and deadline list on today's journal) used to keep yesterday's results in a window left open past midnight until something was edited. It now runs again when the local date changes, or, after the computer slept through midnight, when you return to the window. Queries with no relative date are not run again. Logseq keeps such a query's old dates until the page re-renders; Tine differs on purpose.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "One page Tine's parser chokes on no longer stops the whole graph from loading. The graph opens, every other page works, and that one file is listed as unreadable. Opening such a page, changing it in another app, or renaming it now affects only that page; before, it could leave every later save failing until Tine restarted. A rename of such a page is refused with the file left as it was.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Adding a property or a schedule to a Markdown block that starts with a `:LOGBOOK:` drawer (no text before it) now writes it above the drawer instead of inside the logbook, where neither app read it. For properties this is what Logseq does; for SCHEDULED and DEADLINE, Logseq still writes inside the logbook, and Tine deliberately puts them above it so the date is read. Leaving the editor also moves a SCHEDULED line found below such a logbook to above it.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "An advanced query with `:remove-block-children? false` now lists every matching block, including children of matching parents, as Logseq does (OG `components/query/result.cljs` `get-query-result`); without the option, or with `true`, a match directly under another match still shows only inside its parent. The simple `{{query}}` text keeps that rule. Saved query answers from earlier builds are rebuilt once.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Editing a Markdown page no longer rewrites lines you did not touch in two rare layouts (GH #110): a file with mixed line endings (some CRLF, some LF, as a Windows editor can leave it) keeps each untouched line's own ending, and a page indented with a form feed keeps it instead of having every line re-indented.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Moving a block above a page's properties (Alt+Shift+Up on the first block, a drag-and-drop above them, or a block inserted above them) or pressing Tab on the block right under them used to do nothing without saying why. The move is still refused, because Tine could not save such a page, and now shows a short notice, \"Page properties stay at the top of the page\"; nothing in the page changes (GH #210, D-20261019-H210F2).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Block context menu** (GH #725): a block that is already a favorite now offers **Unfavourite block** instead of adding it again, removing its row from Favorites like any other edit of the list; and **Copy block ref**, **Copy block embed** and **Copy link** are top-level rows again, as in Logseq, instead of living behind **Copy as ▸**. The page menu keeps its **Copy as ▸** submenu.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On a touch laptop or convertible that gains or loses its touch input while Tine is open, block swipes, touch text selection in a PDF and the touch styling of block rows now switch on and off with it, instead of keeping the state they had when the page or PDF was opened (follow-up to D-20261018-W1).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Creating a page while a large graph is still loading (for example today's journal filled from the daily template) saves at once instead of waiting seconds for the whole graph to be indexed, and the loaded graph shows the page once with what was saved. Opening a page during loading no longer makes the launch index the graph a second time. A daily template name in `config.edn` with surrounding spaces now matches the template, as in Logseq (BqbeQ, REG-BQBEQ-LOADING-OWN-SAVE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-BQBEQ-LOADING-OWN-SAVE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A multi-page save that was refused because another program changed one of the pages at the same moment could leave the running app showing that page's old aliases, links and references until the next restart; every published view now reflects every page the save touched or found changed (D-20261018-M2c review).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Enter on the PDF export dialog's Cancel button cancels** instead of exporting; Enter elsewhere in the dialog still exports. On a narrow phone window, Cancel and the confirming button stay together on one row (the helper buttons wrap above them) instead of splitting across two rows.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Starting on a phone or in a narrow touch window shows one pane but no longer discards the other saved panes, their tabs and the workspace windows: they are kept in the session file and come back on a wider screen (D-20261018-W1). A PDF opens in place, not in a 195 px companion pane, in any window under 640 px.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On iOS, a back swipe now slides the page fully off to the right before the previous page appears, like the native back gesture, instead of stopping partway (GH #501).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The `((` block picker matches like Logseq: a block is listed when each space-separated piece of what you typed occurs in its text, in that order, ignoring case and accents. Before, any block containing your letters in order matched, however far apart (`fdr` found \"foo draft\"), which made results feel scattered. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FRAGMENTS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-PICKER-OG-FRAGMENTS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The `((` block picker also finds a block that holds every word you typed as a whole word in any order, as Logseq does (`draft foo` finds \"foo draft\"); those blocks are listed first, then the ones where your pieces occur in order. A word must be a whole word here (`dra foo` does not find \"foo draft\" out of order), and punctuation in what you typed (`foo-bar`, `don't`) turns it into one phrase that must appear in that order, as in Logseq. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FULLTEXT).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-PICKER-OG-FULLTEXT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane.",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Added after the fact by the CHANGELOG repair; this entry was written when the change landed on development. Catalog inventory only; not rerun in this lane. No catalog ID named in this entry was found in the UI or non-UI inventories; no substitute test evidence is claimed.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing development release note is now recorded under the correct Beta release in CHANGELOG.md. This retrospective metadata repair adds no new instructions; Guide accuracy was not re-audited in this lane.",
+        "refs": [
+          "CHANGELOG.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); this retrospective Beta CHANGELOG repair requires no website output.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta; this record is a retrospective CHANGELOG repair.",
         "refs": []
       }
     }
