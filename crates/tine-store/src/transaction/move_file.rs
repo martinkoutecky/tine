@@ -279,6 +279,15 @@ impl PagePlan<'_> {
             self.spelling_entries
                 .borrow_mut()
                 .remove(src.parent().unwrap());
+            if self.listed_path(dst)?.is_none() && self.listed_path(src)?.is_some() {
+                // The provider returned success but kept the source's case
+                // (Android shared storage, GS1): move through a name that
+                // differs by more than case.
+                self.respell_through_temporary(src, dst)?;
+                self.spelling_entries
+                    .borrow_mut()
+                    .remove(src.parent().unwrap());
+            }
             if self.listed_path(dst)?.is_none() || self.listed_path(src)?.is_some() {
                 return Err(io::Error::other(
                     "case rename did not publish the destination spelling",
@@ -295,6 +304,181 @@ impl PagePlan<'_> {
             std::process::abort();
         }
         Ok(())
+    }
+
+    /// The two halves of a case move on a provider that keeps the old case
+    /// (GS1): `src` to its temporary entry `logseq/.tine-respell/<dst's
+    /// graph-relative path>`, then to `dst`, each a no-replace move with its
+    /// directories synced. A failed second half moves the entry back; if that
+    /// fails too, the bytes stay at the temporary entry and the next host
+    /// launch finishes the move ([`Store::complete_case_moves`]). An existing
+    /// temporary entry (an earlier unfinished move) refuses, moving nothing.
+    fn respell_through_temporary(&self, src: &Path, dst: &Path) -> io::Result<()> {
+        let temp = case_move_temporary(&self.store.graph.root, dst)?;
+        let parent = temp.parent().unwrap();
+        crate::directory_durability::create_dir_all_durable(
+            parent,
+            self.store.graph.creation_bound(parent),
+            &self.store.graph.root_binding,
+        )?;
+        self.check_write_target(&temp)?;
+        move_file_noreplace(src, &temp)?;
+        sync_move_dirs(self.store, src, &temp)?;
+        #[cfg(feature = "test-faults")]
+        if fault(self.store, FaultPoint::AbortBetweenCaseMoveSteps) {
+            std::process::abort();
+        }
+        let second = self.check_write_target(dst).and_then(|()| {
+            if fault(self.store, FaultPoint::CaseMoveTemporaryIo) {
+                Err(io::Error::other("injected case move temporary failure"))
+            } else {
+                move_file_noreplace(&temp, dst)
+            }
+        });
+        match second {
+            Ok(()) => sync_move_dirs(self.store, &temp, dst),
+            Err(error) => {
+                if self.check_write_target(src).is_ok() && move_file_noreplace(&temp, src).is_ok() {
+                    let _ = sync_move_dirs(self.store, &temp, src);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Finish case moves a stopped process left at their temporary entry
+    /// (GS1). The caller holds the store writer, before any host page is
+    /// registered. Each regular file `logseq/.tine-respell/<rel>` moves to
+    /// `<rel>` when no entry of that folder spells `<rel>`'s name (exactly or
+    /// folded), and is published at once; otherwise it moves into page trash
+    /// as `<stamp>__respell__<name>`, never over the listed file. Failures
+    /// leave the entry for the next launch; none stops the launch.
+    pub(crate) fn complete_case_moves(&self) {
+        let root = self.store.graph.root.clone();
+        let base = root.join(CASE_MOVE_DIR);
+        if !fs::symlink_metadata(&base).is_ok_and(|meta| meta.is_dir()) {
+            return;
+        }
+        let mut pending = vec![base.clone()];
+        let mut found = Vec::new();
+        while let Some(dir) = pending.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => pending.push(entry.path()),
+                    Ok(kind) if kind.is_file() => found.push(entry.path()),
+                    _ => {}
+                }
+            }
+        }
+        found.sort();
+        for temp in found {
+            let rel = temp.strip_prefix(&base).unwrap().to_path_buf();
+            let Some(rel_str) = rel.to_str().map(|rel| rel.replace('\\', "/")) else {
+                continue;
+            };
+            let dst = root.join(&rel);
+            match self.complete_case_move(&temp, &dst, &FileId::from(rel_str)) {
+                Ok(true) => {
+                    self.store
+                        .graph
+                        .storage_diag
+                        .case_moves_completed
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Ok(false) => {
+                    self.store
+                        .graph
+                        .storage_diag
+                        .case_moves_kept_in_trash
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(_) => {}
+            }
+        }
+        // Empty folders are left from finished moves; a non-empty one keeps
+        // an entry for the next launch and refuses removal.
+        let mut dirs = vec![base];
+        let mut all = Vec::new();
+        while let Some(dir) = dirs.pop() {
+            if let Ok(entries) = fs::read_dir(&dir) {
+                dirs.extend(
+                    entries
+                        .flatten()
+                        .filter(|e| e.file_type().is_ok_and(|kind| kind.is_dir()))
+                        .map(|e| e.path()),
+                );
+            }
+            all.push(dir);
+        }
+        for dir in all.into_iter().rev() {
+            if self.check_write_target(&dir).is_ok() {
+                let _ = crate::model::remove_graph_dir(&dir);
+            }
+        }
+    }
+
+    /// One temporary entry: `Ok(true)` moved to `dst` and published,
+    /// `Ok(false)` kept in trash because `dst`'s spelling is taken.
+    fn complete_case_move(&self, temp: &Path, dst: &Path, id: &FileId) -> io::Result<bool> {
+        self.check_write_target(temp)?;
+        let parent = dst.parent().unwrap();
+        let leaf = dst.file_name().unwrap();
+        let taken = self.check_write_target(parent).is_err()
+            || !fs::symlink_metadata(parent).is_ok_and(|meta| meta.is_dir())
+            || fs::read_dir(parent)?.flatten().any(|entry| {
+                let name = entry.file_name();
+                name == leaf || case_only(Path::new(&name), Path::new(leaf))
+            });
+        if !taken {
+            self.check_write_target(dst)?;
+            move_file_noreplace(temp, dst)?;
+            sync_move_dirs(self.store, temp, dst)?;
+            let bytes = fs::read(dst)?;
+            let plan = Prepared {
+                src: id.clone(),
+                dst: None,
+                old: None,
+                new: Some(bytes),
+                saved_page: None,
+                opaque_rev: None,
+            };
+            let before = BTreeMap::from([(id.as_str().to_owned(), None)]);
+            let starting = self.store.graph.cache_generation();
+            let publication = self.publish_final_files(
+                &[plan],
+                &[],
+                &before,
+                false,
+                &mut Rollback::default(),
+                &[],
+                &[],
+            );
+            if publication.changed_any && self.store.graph.cache_generation() == starting {
+                self.store.graph.transaction_bump_generation(&[dst]);
+            }
+            self.store
+                .publish_own(publication.published_own, publication.observations);
+            return Ok(true);
+        }
+        let name = leaf.to_string_lossy();
+        let trash = crate::model::trash_root(&self.store.graph.root)
+            .join("pages")
+            .join(crate::atomic_file::prefixed_name(
+                &format!("{}__respell__", crate::model::trash_stamp()),
+                &name,
+            ));
+        crate::directory_durability::create_dir_all_durable(
+            trash.parent().unwrap(),
+            self.store.graph.creation_bound(trash.parent().unwrap()),
+            &self.store.graph.root_binding,
+        )?;
+        self.check_write_target(&trash)?;
+        move_file_noreplace(temp, &trash)?;
+        sync_move_dirs(self.store, temp, &trash)?;
+        Ok(false)
     }
 
     pub(super) fn undo_opaque_move(
@@ -484,6 +668,18 @@ fn rename_spelling_replace(src: &Path, dst: &Path) -> io::Result<()> {
 
 pub(super) use crate::file_kind::case_only_paths as case_only;
 
+/// Tine's per-device folder for case moves in progress (GS1): never staged by
+/// git, pulled, indexed or watched as pages (`logseq/.tine-*`).
+pub(crate) const CASE_MOVE_DIR: &str = "logseq/.tine-respell";
+
+/// A case move's temporary entry for destination `dst` inside `root`.
+pub(crate) fn case_move_temporary(root: &Path, dst: &Path) -> io::Result<PathBuf> {
+    let rel = dst
+        .strip_prefix(root)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "case move outside the graph"))?;
+    Ok(root.join(CASE_MOVE_DIR).join(rel))
+}
+
 #[cfg(test)]
 mod spelling_tests {
     use super::*;
@@ -545,8 +741,7 @@ mod spelling_tests {
         assert_eq!(tx.listed_path(&dst).unwrap(), Some(dst));
     }
 
-    #[test]
-    fn a_provider_accepting_rename_without_changing_case_does_not_move_the_host() {
+    fn noop_case_move(temp_fails: bool) {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/old.md"), "- body\n").unwrap();
@@ -568,21 +763,118 @@ mod spelling_tests {
         };
         store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
         store.inject_fault(FaultPoint::CaseMoveAliasNoop);
+        if temp_fails {
+            store.inject_fault(FaultPoint::CaseMoveTemporaryIo);
+        }
         // The store's canonical root, as production passes it: on Windows the
         // tempdir path can be an 8.3 short name (`RUNNER~1`) outside the binding.
         let src = store.graph.root.join(from.as_str());
         let dst = store.graph.root.join(to.as_str());
         let published = tx.publish_move(&mut undo, &src, &dst);
-        assert!(published.is_err());
         assert!(
             undo.created,
             "the provider returned success from rename_replace; publish_move: {published:?}"
         );
+        let temporary = store.graph.root.join("logseq/.tine-respell/pages/Old.md");
+        assert!(!temporary.exists());
         // Exercise the same post-call observation used by respell_entry.
-        assert!(!tx.spelling_moved(&from, &to));
-        assert!(tx.listed_path(&src).unwrap().is_some());
-        assert!(tx.listed_path(&dst).unwrap().is_none());
+        if temp_fails {
+            assert!(published.is_err());
+            assert!(!tx.spelling_moved(&from, &to));
+            assert!(tx.listed_path(&src).unwrap().is_some());
+            assert!(tx.listed_path(&dst).unwrap().is_none());
+            assert_eq!(fs::read(&src).unwrap(), b"- body\n");
+        } else {
+            published.unwrap();
+            assert!(tx.spelling_moved(&from, &to));
+            assert_eq!(fs::read(&dst).unwrap(), b"- body\n");
+        }
         store.close();
+    }
+
+    /// GS1: Android shared storage returns success from a case-only rename
+    /// and keeps the old name; the move goes through a temporary entry.
+    #[test]
+    fn a_provider_keeping_the_old_case_moves_through_a_temporary_entry() {
+        noop_case_move(false);
+    }
+
+    /// A failed second half moves the entry back: the host keeps the source.
+    #[test]
+    fn a_failed_temporary_case_move_puts_the_source_back() {
+        noop_case_move(true);
+    }
+
+    fn launched(files: &[(&str, &str)]) -> (tempfile::TempDir, std::sync::Arc<Store>) {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let app_data = tempfile::tempdir().unwrap();
+        let host = crate::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        drop(host);
+        (dir, store)
+    }
+
+    fn listed(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .map(|e| e.unwrap().file_name().into_string().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    /// GS1: a process stopped between the two halves left the page at its
+    /// temporary entry; the next host launch finishes the move and indexes it.
+    #[test]
+    fn a_launch_finishes_a_case_move_left_at_its_temporary_entry() {
+        let (dir, store) = launched(&[
+            ("pages/Ref.md", "- [[Old]]\n"),
+            ("logseq/.tine-respell/pages/Old.md", "- body\n"),
+        ]);
+        assert_eq!(listed(&dir.path().join("pages")), ["Old.md", "Ref.md"]);
+        assert_eq!(
+            fs::read(dir.path().join("pages/Old.md")).unwrap(),
+            b"- body\n"
+        );
+        assert!(!dir.path().join("logseq/.tine-respell").exists());
+        assert!(store.snapshot_knows(&store.graph.root.join("pages/Old.md")));
+        assert_eq!(
+            store.graph.storage_diag.snapshot()["caseMovesFinishedAtLaunch"]["completed"],
+            1
+        );
+        store.close();
+    }
+
+    /// A launch never writes over a listed file: when the destination name
+    /// (or its case fold) is taken, the temporary entry goes to page trash.
+    #[test]
+    fn a_launch_keeps_a_temporary_entry_in_trash_when_its_name_is_taken() {
+        for taken in ["Old.md", "old.md"] {
+            let (dir, store) = launched(&[
+                (&format!("pages/{taken}"), "- other\n"),
+                ("logseq/.tine-respell/pages/Old.md", "- body\n"),
+            ]);
+            assert_eq!(listed(&dir.path().join("pages")), [taken]);
+            assert_eq!(
+                fs::read(dir.path().join("pages").join(taken)).unwrap(),
+                b"- other\n"
+            );
+            let trash = dir.path().join("logseq/.tine-trash/pages");
+            let kept = listed(&trash);
+            assert_eq!(kept.len(), 1, "{kept:?}");
+            assert!(kept[0].ends_with("__respell__Old.md"), "{kept:?}");
+            assert_eq!(fs::read(trash.join(&kept[0])).unwrap(), b"- body\n");
+            assert!(!dir.path().join("logseq/.tine-respell").exists());
+            store.close();
+        }
     }
 
     #[test]

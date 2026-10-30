@@ -671,6 +671,9 @@ fn a_failed_folded_entry_move_keeps_old_text_and_can_be_retried() {
         .inject_fault(crate::FaultPoint::CaseMoveAliasRefusal);
     live.store
         .inject_fault(crate::FaultPoint::CaseMoveAliasNoop);
+    // ... and the move through the temporary entry fails too (GS1).
+    live.store
+        .inject_fault(crate::FaultPoint::CaseMoveTemporaryIo);
     assert_eq!(
         live.host.apply(folded_op("title:: old\n- [[old]]\n")),
         Err(ApplyRefusal::SpellingIncomplete)
