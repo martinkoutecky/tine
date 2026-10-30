@@ -182,12 +182,12 @@
   ];
   var mediaPlan = [
     { find: "Kitchen", f: 0.12 },
-    { find: "Counter", jump: 0.55, f: 0.12 },
-    { find: "Between the dishwasher", jump: 0.55, f: 0.15 },
-    { find: "Cabinets", jump: 0.8, f: 0.12 },
-    { find: "Right of the stove", jump: 0.8, f: 0.30 },
-    { find: "Counter", jump: 0.95, f: 0.15 },
-    { find: "Cabinets", jump: 0.3, f: 0.2 },
+    { find: "Cabinets", jump: 0.02, f: 0.20, keep: true },
+    { find: "Between the dishwasher", jump: 0.02, f: 0.12, keep: true },
+    { find: "Counter", jump: 0.3, f: 0.12, keep: true },
+    { find: "Right of the stove", jump: 0.3, f: 0.30, keep: true },
+    { find: "Cabinets", jump: 0.55, f: 0.15, keep: true },
+    { find: "Counter", jump: 0.55, f: 0.12, keep: true },
   ];
   var state = "boot";
   var created = false;
@@ -292,7 +292,7 @@
           setTimeout(function () {
             log("TRIAL-DONE trial=" + trial);
             tFocus = null;
-            try { document.activeElement.blur(); } catch (e) {}
+            if (!p.keep) { try { document.activeElement.blur(); } catch (e) {} }
             setTimeout(startTrial, 3500);
           }, 6500);
         } else if (waited > 25000) {
