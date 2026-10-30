@@ -182,11 +182,11 @@
   ];
   var mediaPlan = [
     { find: "Kitchen", f: 0.12 },
-    { find: "Bedroom", jump: 0.55, f: 0.12 },
+    { find: "Counter", jump: 0.55, f: 0.12 },
     { find: "Between the dishwasher", jump: 0.55, f: 0.15 },
-    { find: "Balcony", jump: 0.8, f: 0.12 },
-    { find: "Between the dishwasher", jump: 0.8, f: 0.35 },
-    { find: "Study", jump: 0.95, f: 0.15 },
+    { find: "Cabinets", jump: 0.8, f: 0.12 },
+    { find: "Right of the stove", jump: 0.8, f: 0.30 },
+    { find: "Counter", jump: 0.95, f: 0.15 },
     { find: "Cabinets", jump: 0.3, f: 0.2 },
   ];
   var state = "boot";
@@ -325,7 +325,7 @@
       var tall = m2 && (m2.scrollHeight - m2.clientHeight);
       if (tall >= 900) { state = "running"; log("TALL-OK", "scrollable=" + tall, "ch=" + m2.clientHeight); startTrial(); return; }
       if (navTries++ > 6) { state = "running"; log("TALL-FAIL scrollable=" + tall); startTrial(); return; }
-      var l = clickByText(/Tips|Queries|Roadmap|Guide|showcase/i, "a");
+      var l = clickByText(/^Home$|Tips|Queries|Roadmap|Guide|showcase/i, "a");
       log("NAV try " + navTries, l ? "clicked " + (l.textContent || "").slice(0, 40) : "no link", "scrollable=" + tall);
       state = "navwait";
       setTimeout(function () { state = "tall"; }, 3500);

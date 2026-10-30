@@ -63,7 +63,8 @@ day=$(adb shell date +%Y_%m_%d | tr -d '\r')
 adb shell run-as "$pkg" find . -type d -name journals > "$out/journals-dirs.txt" 2>&1 || true
 jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1 | tr -d '\r')
 echo "journals dir: $jdir day: $day" | tee -a "$out/taps.txt"
-if [ "${SEED:-plain}" = "media" ]; then
+case "${SEED:-plain}" in media|media-page) MEDIA=1;; *) MEDIA=0;; esac
+if [ "$MEDIA" = 1 ]; then
 python3 -I - > "$out/journal.md" <<'PY'
 def grp(a, b):
     print("\t\t- " + a)
@@ -95,8 +96,15 @@ for i in range(1, 91):
 PY
 
 fi
+if [ "${SEED:-plain}" = "media-page" ]; then
+  pdir=$(dirname "$jdir")/pages
+  adb shell run-as "$pkg" mkdir -p "$pdir"
+  adb shell "run-as $pkg sh -c 'cat > $pdir/Home.md'" < "$out/journal.md"
+  printf -- '- Notes for [[Home]]\n' > "$out/journal.md"
+  adb shell run-as "$pkg" ls -l "$pdir" > "$out/pages-ls.txt" 2>&1 || true
+fi
 adb shell "run-as $pkg sh -c 'cat > $jdir/$day.md'" < "$out/journal.md"
-if [ "${SEED:-plain}" = "media" ]; then
+if [ "$MEDIA" = 1 ]; then
   adbdir=$(dirname "$jdir")/assets
   python3 -I - "$out/photo.png" <<'PY'
 import struct, sys, zlib
