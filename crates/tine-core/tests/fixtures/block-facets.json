@@ -115,7 +115,7 @@
   },
   {
     "expected": {
-      "deadline": null,
+      "deadline": "2026-07-01 Wed",
       "heading": null,
       "marker": null,
       "priority": null,
