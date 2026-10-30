@@ -4,11 +4,24 @@ icon:: ⚡
 	- A passing thought shouldn't make you switch windows. Bind a desktop shortcut and a small always-on-top capture box pops up over **any** app — with the full Tine editor — and files what you type straight into your graph. Tine doesn't even need to be focused.
 - ## What it looks like
 	- ![The quick-capture window — note the optional page-title field at the top](../assets/quick-capture.png)
-- ## Set it up (Linux, one time)
-	- Tine listens for a launch with the `--capture` flag, so bind a global keyboard shortcut in your desktop environment to run **`tine --capture`**:
+- ## Set it up (one time)
+	- **Tine does not register a system-wide hotkey itself.** The shortcut belongs to your operating system, and it only has to run one command: **`tine --capture`** (or `tine capture`). If Tine is already running, that command opens the capture box in the running instance; if not, Tine starts and opens it. This is also why pressing **Ctrl+Shift+Enter** (**Cmd+Shift+Enter** on a Mac) in another app does nothing: that key is **Quick-capture: file to today's journal** under Keyboard shortcuts, and it works *inside* the capture box to file what you typed.
+	- **Linux** — bind a custom keyboard shortcut in your desktop environment that runs `tine --capture`:
 		- **GNOME** — Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → **+**. Command: `tine --capture`. Pick a key like **Super+N**.
 		- **KDE** — System Settings → Shortcuts → Add → Command/URL. Command: `tine --capture`.
 		- **Other desktops** — add a custom keyboard shortcut that runs `tine --capture`. Use the binary's full path if it isn't on your `PATH`.
+		- The shortcut only runs a command, so it does not depend on X11 or Wayland global-shortcut support.
+	- **Windows** — give a shortcut to Tine a hotkey:
+		- 1. Open the Start menu, right-click **Tine**, choose **Open file location**. A folder with the Tine shortcut opens.
+		- 2. Copy that shortcut and paste it in the same folder (or on your Desktop). Rename the copy, say **Tine Quick Capture**.
+		- 3. Right-click the copy → **Properties**. In **Target**, add ` --capture` after the closing quote, for example `"C:\…\Tine.exe" --capture`.
+		- 4. Click in **Shortcut key** and press the key you want. Windows makes it **Ctrl+Alt+**_key_, for example **Ctrl+Alt+N**. Click **OK**.
+		- Windows honours the **Shortcut key** only for shortcuts that are in the Start menu or on the Desktop.
+	- **macOS** — make a Shortcut that runs Tine's program with `--capture`, and give it a key:
+		- 1. In Finder, right-click **Tine** in Applications → **Show Package Contents** → **Contents** → **MacOS**. The program in that folder is what you run; note its full path.
+		- 2. Open the **Shortcuts** app, create a new shortcut, and add the **Run Shell Script** action with that path followed by ` --capture`, for example `"/Applications/Tine.app/Contents/MacOS/tine" --capture` (use the path you noted).
+		- 3. Open the shortcut's details (the **i** button) and use **Add Keyboard Shortcut**. Press a combination that uses **Control**, **Option** or **Command**, and one that no other app already uses.
+	- **Without any shortcut** — turn on **Show Tine in the system tray** (Settings → Appearance) and choose **Quick Capture** from the tray or menu-bar icon.
 	- Now press your shortcut from anywhere — the box appears, you type, and it's saved.
 - ## Where your capture goes
 	- If saving takes too long, your text stays in the capture box with a plain retry. Retry **File capture** to finish the same capture without adding it twice. Once that snapshot saves, its unchanged text is removed; additions stay for your next capture. If you rewrote earlier text, the message reminds you that the earlier capture is already saved. A changed title with no remaining body stays in the box with an **Add text** reminder; it is not silently cleared.
@@ -17,8 +30,8 @@ icon:: ⚡
 	- **Type a page title** (the field at the top of the window) → it's filed to that **page** instead, created if it doesn't exist yet. Perfect for "add this to my Reading notes" without leaving what you're doing.
 	- It's the real editor in there: `[[` page links, `#` tags, `/` slash commands, and nested bullets all work.
 - ## Create one yourself
-	- 1. Open your desktop environment's keyboard-shortcut settings.
-	- 2. Add a custom shortcut whose command is `tine --capture`.
+	- 1. Open your system's keyboard-shortcut settings (Linux), or make a shortcut with a hotkey (Windows) or a Shortcut (macOS), as above.
+	- 2. Make it run `tine --capture`.
 	- 3. Press the shortcut while another app is focused, then type a quick note.
 	- 4. Leave the title empty for today's journal, or type a page title to file it there.
 	- 5. What you should see: the capture box saves real Logseq bullets into your graph without switching windows.

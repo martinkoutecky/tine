@@ -10,10 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- The Quick capture Guide page now says Tine has no built-in system-wide hotkey (the **Quick-capture: file to today's journal** key, Ctrl+Shift+Enter by default, files what you typed inside the capture box) and gives the setup for Linux, Windows and macOS, plus the tray menu as a no-shortcut way in (GH #807).
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
 
 ### Fixed
 
+- Settings → Journals: with a Journal sections page, the note under **Agenda window** no longer runs off the right edge of the Settings pane and clips **Open page**. It now wraps inside the pane, on desktop and phone widths (GH #808).
 - On Android shared storage, renaming a page by capitalization alone now works, on the phone and in a git pull: Tine moves it through a temporary name and finishes the rename at the next open if it is stopped in between. Before, such a pull stopped git sync ("pull incomplete") and such a rename was refused (GS1).
 - Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).
 - Fast scrolling through a PDF no longer leaves pages blank for up to a second behind the scroll, a regression in 0.9.0-beta.1 from the pdf.js 5 upgrade. pdf.js 5 gave every glyph of the hidden selectable-text layer its own transformed layer, which the webview repainted on every scroll frame; glyphs that need no stretching or rotation are now drawn untransformed again, as with pdf.js 4, with text selection unchanged (PDF5-SCROLL).

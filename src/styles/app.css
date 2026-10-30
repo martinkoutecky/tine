@@ -2084,6 +2084,11 @@ html[data-system-insets="native-viewport"] {
   line-height: 1.5;
   max-width: 62ch;
 }
+/* The "today's sections live on page X" note under the Agenda window setting (GH #808). */
+.settings-sections-note {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
 .plugin-safety-row {
   display: flex;
   align-items: center;
