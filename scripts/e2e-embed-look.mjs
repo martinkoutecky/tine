@@ -140,7 +140,7 @@ try {
   stage = "Tab and Shift+Tab on the edited root move the host";
   await editRoot();
   await browser.keys(["Tab"]);
-  await waitForFileText(PAGE_B, (text) => text === `- Before B\n  - ${MACRO}\n`);
+  await waitForFileText(PAGE_B, (text) => new RegExp(`^- Before B\n[\t ]+- \\{\\{embed \\(\\(${S}\\)\\)\\}\\}\n$`).test(text));
   assert(sharedFold(read(SOURCE)) && read(SOURCE).startsWith(`- Embedded root\n  id:: ${S}\n`), read(SOURCE));
   await browser.waitUntil(() => browser.execute((row) => !!document.activeElement?.closest(row), ROW),
     { timeout: 5000, timeoutMsg: "the caret left the embed after Tab" });

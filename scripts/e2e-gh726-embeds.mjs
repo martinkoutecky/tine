@@ -175,16 +175,18 @@ try {
   stage = "undo source paste and cut restores source and every embed";
   await undoUntil(targetFile, text => !text.includes(`id:: ${S}`));
   await undoUntil(sourceFile, text => text.includes(`id:: ${S}`) && text.includes("Hidden grandchild"));
+  await openPageByName(browser, "Embed ownership"); // Undo of a cut made on Source returns there
   await sourceVisible();
   assert.deepEqual(await pageOutline("Source"), originalOutline);
   pass();
 
-  stage = "delete the source through its embed bullet; undo restores it";
+  stage = `delete the source through its ${kind === "block" ? "own" : "embed"} bullet; undo restores it`;
   await sourceMenu("Delete block");
   await waitForFileText(sourceFile, text => !text.includes(`id:: ${S}`) && !text.includes("Hidden grandchild"));
   assert(read(hostFile).includes(`id:: ${H}`));
   await browser.waitUntil(() => browser.execute((selector) => !document.querySelector(selector), sourceRow), { timeout: 15000 });
   await undoUntil(sourceFile, text => text.includes(`id:: ${S}`));
+  await openPageByName(browser, "Embed ownership");
   await sourceVisible();
   assert.deepEqual(await pageOutline("Source"), originalOutline);
   assert(read(hostFile).includes(macro));
