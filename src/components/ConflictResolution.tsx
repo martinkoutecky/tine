@@ -210,6 +210,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const next: Record<string, MergeDecision> = {};
     for (const { id } of pending()) next[id] = d;
     setDecisions(next);
+    setPreChoice(d === "mine" || d === "theirs" ? d : "union");
   };
   const applyAllSuggested = () => {
     const current = diffValue();
@@ -304,12 +305,23 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       // A day with three files still has one to reconcile after this fold.
       if (source === "duplicate-journal") void refreshJournalConflicts();
     } catch (e) {
-      if (owner() && errorFamily(e) === "conflict") {
+      if (!owner()) return;
+      if (source === "sync-copy" && errorFamily(e) === "conflict-copy-gone") {
+        settleArtifactConflict(id);
+        pushToast(msg("conflict-resolution-copy-gone"), "info");
+        void refreshSyncConflicts();
+      } else if (errorFamily(e) === "conflict") {
         pushToast(msg("conflict-resolution-the-file-changed-on-disk-re-reading-it"), "error");
         alignment = undefined;
         void refetch();
       } else {
         pushToast(msg("conflict-resolution-couldn-t-resolve-it", { error: String(errorDetail(e)) }), "error");
+        // A replaced copy can also have become unreadable (encoding, size or
+        // permissions). Stop presenting the old actionable comparison.
+        if (source === "sync-copy") {
+          alignment = undefined;
+          void refetch();
+        }
       }
     } finally {
       if (owner()) setBusy(false);

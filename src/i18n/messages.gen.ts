@@ -353,6 +353,7 @@ export interface MessageArgs {
   "conflict-resolution-both-merge": {};
   "conflict-resolution-choosing-below-folds-the-other-file-into-this": {};
   "conflict-resolution-conflict-unavailable": {};
+  "conflict-resolution-copy-gone": {};
   "conflict-resolution-couldn-t-do-that": { "error": string | number };
   "conflict-resolution-couldn-t-read-this-conflict": { "error": string | number };
   "conflict-resolution-couldn-t-resolve-it": { "error": string | number };

@@ -100,6 +100,68 @@ afterEach(() => {
 });
 
 describe("in-page conflict resolution", () => {
+  it.each(["mine", "theirs", "both"] as const)("whole-side %s includes the page properties", async (choice) => {
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([threeWayRows[1]]), mine_pre: "status:: local", theirs_pre: "status:: remote", pre_differs: true });
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    const label = choice === "both" ? "Keep both everywhere" : choice === "mine" ? "Keep This device" : "Keep Sync copy";
+    button(host, label).click();
+    expect((host.querySelector("select") as HTMLSelectElement).value).toBe(choice === "both" ? "union" : choice);
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync.mock.calls[0][6]).toBe(choice === "both" ? "union" : choice);
+    dispose();
+  });
+
+  it("settles a vanished sync copy without replacing or reloading the page", async () => {
+    setConflictInventory(inventoryWith(copyConflict));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]]));
+    vi.spyOn(backend(), "resolveSyncConflict").mockRejectedValue("conflict-copy-gone");
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(conflictQueue()).toEqual([]);
+    expect(doc.applyGraphChange).not.toHaveBeenCalled();
+    expect(toasts().some((t) => t.message.includes("copy is no longer on disk"))).toBe(true);
+    dispose();
+  });
+
+  it("re-reviews a replaced sync copy and resets whole-side choices", async () => {
+    setConflictInventory(inventoryWith(copyConflict));
+    const read = vi.spyOn(backend(), "syncConflictDiff").mockResolvedValueOnce(diff([threeWayRows[1]]))
+      .mockResolvedValue({ ...diff([threeWayRows[1]]), conflict_rev: "replacement" });
+    vi.spyOn(backend(), "resolveSyncConflict").mockRejectedValue("conflict");
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Keep Sync copy").click();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[data-decision="both"].active')).not.toBeNull();
+    expect(conflictQueue().map(c => c.id)).toEqual([copyConflict.id]);
+    expect(doc.applyGraphChange).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("re-reads an unreadable replacement and displays its explanation", async () => {
+    const read = vi.spyOn(backend(), "syncConflictDiff").mockResolvedValueOnce(diff([threeWayRows[1]]))
+      .mockRejectedValue("file is not UTF-8");
+    vi.spyOn(backend(), "resolveSyncConflict").mockRejectedValue("file is not UTF-8");
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain("file is not UTF-8");
+    expect(button(host, "Apply resolution")).toBeUndefined();
+    expect(doc.applyGraphChange).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("names the sides the marker file itself named and says why saves are refused", async () => {
     vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
     const { host, dispose } = mount(markerConflict);
