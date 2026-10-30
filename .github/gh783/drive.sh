@@ -62,7 +62,7 @@ for i in range(1, 91):
     n = 6 + (i * 7) % 18
     print("- Block %02d: %s" % (i, " ".join(words[(i + k) % len(words)] for k in range(n))))
 PY
-adb shell run-as "$pkg" sh -c "cat > $jdir/$day.md" < "$out/journal.md"
+adb shell "run-as $pkg sh -c 'cat > $jdir/$day.md'" < "$out/journal.md"
 adb shell run-as "$pkg" ls -l "$jdir" > "$out/journals-ls.txt" 2>&1 || true
 
 # Phase B: relaunch; the graph (with the long journal) loads.
