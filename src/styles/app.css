@@ -1416,6 +1416,22 @@ html[data-system-insets="native-viewport"] {
   vertical-align: -0.04em;
 }
 
+/* Title-row hover reveals (carry buttons, star, share, actions, tag-table toggle) fade by
+   transitioning this registered custom property, with `opacity: var(--reveal, 0)` on the
+   element. A transition on `opacity` itself is an accelerated (compositor) animation; on
+   WebKitGTK with GPU compositing (DMABUF) the frame that ends such an animation is
+   presented wrongly (controls flashed back to full opacity for a frame after the fade-out;
+   gone with TINE_GPU=0; will-change: opacity did not cure it on the reporter's GPU).
+   A custom-property transition runs on the main thread and the element is repainted every
+   frame, so no compositor animation or layer is involved. Where @property is unsupported
+   the value flips at once (no fade, no flicker). The reveal rules set `--reveal: 1`, never
+   `opacity`. Guard: src/styles/titleRowReveal.test.ts. */
+@property --reveal {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
 .fav-star {
   background: none;
   border: none;
@@ -1424,9 +1440,8 @@ html[data-system-insets="native-viewport"] {
   display: flex;
   align-items: center;
   color: var(--text-muted);
-  opacity: 0;
-  will-change: opacity;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
 }
 .star-icon {
   width: 18px;
@@ -1435,7 +1450,7 @@ html[data-system-insets="native-viewport"] {
 
 .page-title-row:hover .fav-star,
 .fav-star.active {
-  opacity: 1;
+  --reveal: 1;
 }
 
 /* The title's Share button: the star's hover pair, visible without hover on coarse pointers. */
@@ -1447,9 +1462,8 @@ html[data-system-insets="native-viewport"] {
   display: flex;
   align-items: center;
   color: var(--text-muted);
-  opacity: 0;
-  will-change: opacity;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
 }
 .share-icon {
   width: 18px;
@@ -1457,7 +1471,7 @@ html[data-system-insets="native-viewport"] {
 }
 .page-title-row:hover .page-share-btn,
 .page-share-btn:focus-visible {
-  opacity: 1;
+  --reveal: 1;
 }
 .page-share-btn:hover,
 .page-share-btn:focus-visible {
@@ -1468,7 +1482,7 @@ html[data-system-insets="native-viewport"] {
     min-width: 36px;
     min-height: 36px;
     justify-content: center;
-    opacity: 1;
+    --reveal: 1;
   }
 }
 
@@ -1483,9 +1497,8 @@ html[data-system-insets="native-viewport"] {
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
-  opacity: 0;
-  will-change: opacity;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
   font: inherit;
   font-size: 20px;
   line-height: 1;
@@ -1495,7 +1508,7 @@ html[data-system-insets="native-viewport"] {
 .page-title-row:hover .page-actions-trigger,
 .page-actions-trigger:focus-visible,
 .page-actions-trigger[aria-expanded="true"] {
-  opacity: 1;
+  --reveal: 1;
 }
 .page-actions-trigger:hover,
 .page-actions-trigger:focus-visible {
@@ -1505,7 +1518,7 @@ html[data-system-insets="native-viewport"] {
   .page-actions-trigger {
     min-width: 36px;
     min-height: 36px;
-    opacity: 1;
+    --reveal: 1;
   }
 }
 .tag-table-toggle {
@@ -1516,15 +1529,14 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
-  opacity: 0;
-  will-change: opacity;
-  transition: opacity 0.1s, background 0.1s, color 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s, background 0.1s, color 0.1s;
   -webkit-user-select: none;
   user-select: none;
 }
 .page-title-row:hover .tag-table-toggle,
 .tag-table-toggle.active {
-  opacity: 1;
+  --reveal: 1;
 }
 .tag-table-toggle:hover,
 .tag-table-toggle.active {
@@ -2668,15 +2680,11 @@ html[data-system-insets="native-viewport"] {
   margin: 0 4px;
 }
 /* Carry-over action buttons, right-aligned next to a journal title. Like the other
-   title-row hover reveals (star, share, actions, tag table) they keep a 0.1s fade and
-   a standing compositing layer (will-change): on WebKitGTK with GPU compositing the
-   layer a running opacity transition creates and removes flashed the old opacity for a
-   frame or two when the fade ended (internal report 2026-10-29; gone with TINE_GPU=0).
-   Keep the layer on the small fading element, never on the title row. */
+   title-row hover reveals (star, share, actions, tag table) they fade in 0.1s through
+   --reveal (see @property --reveal above), never through a transition on `opacity`. */
 .page-carry-actions {
-  opacity: 0;
-  will-change: opacity;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -2697,11 +2705,11 @@ html[data-system-insets="native-viewport"] {
 }
 .page-title-row:hover .page-carry-actions,
 .page-title-row:focus-within .page-carry-actions {
-  opacity: 1;
+  --reveal: 1;
 }
 @media (hover: none) {
   .page-carry-actions {
-    opacity: 1;
+    --reveal: 1;
   }
 }
 .carry-btn:hover {
