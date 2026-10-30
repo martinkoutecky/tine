@@ -53,7 +53,7 @@ adb shell am force-stop "$pkg"; sleep 2
 # Write a long journal for today into the new graph (app-private dir, debug APK).
 day=$(adb shell date +%Y_%m_%d | tr -d '\r')
 adb shell run-as "$pkg" find . -type d -name journals > "$out/journals-dirs.txt" 2>&1 || true
-jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1)
+jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1 | tr -d '\r')
 echo "journals dir: $jdir day: $day" | tee -a "$out/taps.txt"
 python3 -I - > "$out/journal.md" <<'PY'
 import textwrap
