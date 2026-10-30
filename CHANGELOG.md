@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Zoom in on block** and **Zoom out one level** commands (#799). Both are in the command palette and in Settings → Keyboard shortcuts, and start unbound so you choose the keys (OG's own keys are Tine's Back / Forward). Zoom in acts on the selected block or the block you are editing and keeps the caret in it; Zoom out steps from a zoomed block to its parent, then to the page, and does nothing on the page itself, so it can be pressed repeatedly. Each works in the pane you are in, including a split pane.
+- A **Reload window** command, unbound, for reloading the app on purpose (#797).
+
 ### Changed
 
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
@@ -16,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its "Two versions of this page arrived" panel used to hide the review of the unsaved edits, and its Apply only said "Resolve this page’s save conflict first". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display ("This page could not be displayed") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).
+- Ctrl/Cmd+R and F5 no longer reload the whole app on Windows (#797). The webview's built-in reload ran on a stray Ctrl+R, discarded the screen state, and could not be changed in Settings → Keyboard shortcuts. Tine now consumes these keys; while editing, Ctrl/Cmd+R is **Comment on selected text**, which is listed there and can be rebound or cleared, and **Reload window** reloads on request.
 - On Android shared storage, renaming a page by capitalization alone now works, on the phone and in a git pull: Tine moves it through a temporary name and finishes the rename at the next open if it is stopped in between. Before, such a pull stopped git sync ("pull incomplete") and such a rename was refused (GS1).
 - Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).
 - Android: tapping a line of a block taller than the space above the keyboard no longer scrolls that line above the top of the screen when the keyboard opens, and after the keyboard resizes the view the edited line is brought back on screen if anything has moved it off (#783). The jump reported with headings between tall photos and videos could not be reproduced on an emulator, so this is not yet confirmed as the whole fix.
