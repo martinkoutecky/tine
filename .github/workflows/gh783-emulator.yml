@@ -29,7 +29,7 @@ jobs:
 
   probe:
     needs: plan
-    name: probe ${{ matrix.ref }} ${{ matrix.nav }} ${{ matrix.profile }} ${{ matrix.ime }}
+    name: probe ${{ matrix.ref }} ${{ matrix.nav }} ${{ matrix.ime }} api${{ matrix.api }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     strategy:
@@ -123,9 +123,9 @@ jobs:
           NAV: ${{ matrix.nav }}
           IME: ${{ matrix.ime }}
         with:
-          api-level: ${{ needs.plan.outputs.api }}
+          api-level: ${{ matrix.api }}
           arch: x86_64
-          target: default
+          target: ${{ matrix.target }}
           profile: ${{ matrix.profile }}
           ram-size: 4096M
           emulator-boot-timeout: 400
@@ -137,7 +137,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gh783-${{ strategy.job-index }}-${{ matrix.nav }}-${{ matrix.ime }}-api${{ needs.plan.outputs.api }}
+          name: gh783-${{ strategy.job-index }}-${{ matrix.nav }}-${{ matrix.ime }}-api${{ matrix.api }}-${{ matrix.target }}
           path: gh783-out
           if-no-files-found: warn
           retention-days: 14
