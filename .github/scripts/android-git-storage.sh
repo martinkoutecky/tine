@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Runs the app crate's git tests on a booted emulator (ci.yml,
-# android-git-storage): first with the graph on shared storage, then the
-# autocommit and seen suites on app-private storage. Each run must print its
+# Runs the page host's save cases (tine-store, GH #811) and the app crate's
+# git tests on a booted emulator (ci.yml, android-git-storage): first with the
+# graph on shared storage, then the autocommit and seen suites on app-private
+# storage. Each run must print its
 # libtest success line; a missing or crashed run fails the job after every
 # run has had its turn.
 set -euo pipefail
 
 bin="$1"
+store_bin="$2"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="$repo_root/artifacts/android-git-storage"
 mkdir -p "$out"
@@ -15,7 +17,8 @@ trap 'adb logcat -d -v threadtime > "$out/logcat.txt" 2>&1 || true' EXIT
 device=/data/local/tmp/tine-git-tests
 shared=/sdcard/Documents/tine-git-storage
 adb push "$bin" "$device/tine_lib_tests" > /dev/null
-adb shell "chmod 755 $device/tine_lib_tests && mkdir -p $device/tmp $shared"
+adb push "$store_bin" "$device/tine_store_integration" > /dev/null
+adb shell "chmod 755 $device/tine_lib_tests $device/tine_store_integration && mkdir -p $device/tmp $shared"
 # Just after boot MediaProvider may still refuse writes in shared storage
 # (EPERM on the first file, run 40762656695 API 33): wait until a file of the
 # kinds the tests write can be created and removed.
@@ -38,8 +41,13 @@ cat "$out/owners.txt"
 run() {
   local name="$1" env="$2"
   shift 2
+  run_bin tine_lib_tests "$name" "$env" "$@"
+}
+run_bin() {
+  local exe="$1" name="$2" env="$3"
+  shift 3
   set +e
-  timeout 1200s adb shell "cd $device && env TMPDIR=$device/tmp $env ./tine_lib_tests $* --test-threads=1 --nocapture" \
+  timeout 1200s adb shell "cd $device && env TMPDIR=$device/tmp $env ./$exe $* --test-threads=1 --nocapture" \
     2>&1 | tee "$out/$name.txt"
   set -e
   if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed' "$out/$name.txt"; then
@@ -49,6 +57,9 @@ run() {
 }
 failed=0
 
+# Page saves through the page host publish on shared storage (GH #811): the
+# app data stays app-private, as on a phone.
+run_bin tine_store_integration store-shared-storage "TINE_HOST_FS_ROOT=$shared" gh811_graph_volume_save
 run shared-storage "TINE_HOST_FS_ROOT=$shared TINE_EXPECT_FUSE=1" owner::git_autocommit::mobile_tests
 for line in 'GIT-STORAGE result=PASS' 'GIT-KILL result=PASS'; do
   grep -q "$line" "$out/shared-storage.txt" || { echo "missing: $line" >&2; failed=1; }
