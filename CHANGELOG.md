@@ -13,6 +13,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
 - The experimental CodeMirror editor uses the block's own line height and padding, so entering edit mode no longer nudges wrapped lines and the blocks below (UI-CM6-LINEHEIGHT).
 - In the experimental CodeMirror editor a SCHEDULED/DEADLINE line shows as the same date chip as the view while the caret is elsewhere, and as its source only while the caret is in that line (UI-CM6-PLANNING).
+- In the experimental CodeMirror editor a heading block (`#` headings, `heading:: N`, `heading:: true`) is drawn at the heading size of the view while it is edited, so entering edit no longer shrinks it and moves the blocks below (UI-CM6-HEADING).
+- The editor of a single-line block with `heading:: N` or `heading:: true` keeps the heading size while editing, as in Logseq; before, only a `#` heading did (UI-EDITOR-HEADING-PROP).
+- In the experimental CodeMirror editor a code or calculator block no longer shows its fence lines, and its line numbers and language label are visible, so it is as tall as in the view and the textarea editor (UI-CM6-CODEJUMP).
+- `SCHEDULED:` and `DEADLINE:` written on one line show as two date chips with no stray `<date>` text left in the block, in the view and in the experimental CodeMirror editor (UI-CM6-SAMELINE).
 
 ### Fixed
 

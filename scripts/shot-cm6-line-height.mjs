@@ -78,7 +78,7 @@ try {
   // What must hold. `lineChecks`: the CM6 text lines sit where the rendered ones do (only meaningful when both are plain
   // text lines); `boxOnly`: the construct is a card/widget, so only the block height and the next block's y are compared.
   // `E` is the same with the caret at the end of the text (constructs concealed unless the caret is on them).
-  const boxOnly = new Set(["code", "calc"]);
+  const boxOnly = new Set(["code", "calc", "props2"]);
   const cm6Gated = ["plain", "martin", "cjk", "emoji", "multiline", "empty", "deadline", "scheduled", "repeater", "both", "sameline",
     "h1", "h2", "h3", "h4", "h5", "h6", "mdh1", "mdh1body", "h2body", "hauto", "code", "calc",
     "inline", "list", "quote2", "table2", "math2", "image2", "olist2", "props2", "hr"];
@@ -100,6 +100,13 @@ try {
       if (Math.abs(pitch(cl) - pitch(dl)) > 0.1) bad.push(`${id}: ${label} line pitch ${pitch(cl)} vs rendered ${pitch(dl)}`);
     }
   };
+  // A planning line is chips, never `<date>` text, in the view and in the editor (CM6 with the caret away from it).
+  for (const id of ["deadline", "scheduled", "repeater", "both", "sameline"]) {
+    for (const kind of ["rendered", "cm6"]) {
+      if (results[id][kind].missing) continue;
+      if (/<\d{4}-/.test(results[id][kind].val)) bad.push(`${id}: ${kind} body shows a stray <date>: ${JSON.stringify(results[id][kind].val)}`);
+    }
+  }
   for (const id of cm6Gated) compare(id, "cm6", "CM6");
   for (const id of cm6EndGated) compare(id, "cm6end", "CM6 (caret at end)");
   for (const id of textareaGated) {
