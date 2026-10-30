@@ -86,7 +86,9 @@ describe("batch 11e page identity and journal continuity", () => {
     } finally { mounted.dispose(); uninstallKeys(); vi.unstubAllGlobals(); }
   });
 
-  it("keeps the old feed and surfaces a template read failure before retrying", async () => {
+  // GH #811: a failed template step no longer withholds the feed; it is
+  // surfaced and retried while the journals are shown without it.
+  it("shows the feed, surfaces a template read failure and retries the template", async () => {
     setGraphMeta({ root: "/tmp/template-read-failure", default_journal_template: "Daily" } as GraphMeta);
     setDoc({ byId: { old: node("old", "Old feed", "Yesterday") }, pages: [page("Yesterday", "journal", ["old"])], feed: ["Yesterday"] });
     const failure = new Error("template page unreadable");
@@ -95,12 +97,13 @@ describe("batch 11e page identity and journal continuity", () => {
     const feedRead = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("Today", "New feed")]));
     const owner = { graphEpoch: graphEpoch(), isLive: () => true };
     await reloadJournalsFeedFromStart(owner);
-    expect(feedNames()).toContain("Yesterday");
-    expect(feedRead).not.toHaveBeenCalled();
-    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("journal feed"))).toBe(true);
+    expect(feedRead).toHaveBeenCalledTimes(1);
+    expect(feedNames()).toContain("Today");
+    expect(toasts().some((toast) => toast.kind === "error"
+      && toast.message.includes("Couldn't add the journal template") && toast.message.includes("template page unreadable"))).toBe(true);
     await reloadJournalsFeedFromStart(owner);
     expect(dayRead).toHaveBeenCalledTimes(2);
-    expect(feedRead).toHaveBeenCalledTimes(1);
+    expect(feedRead).toHaveBeenCalledTimes(2);
     expect(feedNames()).toContain("Today");
   });
 

@@ -202,14 +202,16 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
       && !pageHasActiveEdit(journalTitle(date)) && (rollover || !feedHasActiveEdit()));
     const liveOwner = flight.owner;
     if (typeof ensured === "object") {
+      // One day's template step never blanks the feed (GH #811): say that the
+      // template was not applied, then show the journals without it. The next
+      // refresh (reopening Journals, a watcher change, day rollover) tries it
+      // again. No retry is armed here: a retry that fails on every feed change
+      // would rewrite today's page in a loop.
       recordFeedReason("template-error", ensured.error);
       if (ownerIsLive(liveOwner)) {
-        pendingFeedRestart = true;
-        pushToast(msg("page-ui-could-not-load-journal-feed-it-will-retry-when"), "error");
+        pushToast(msg("page-ui-journal-template-not-applied", { error: String(ensured.error) }), "error");
       }
-      return ensured.error;
-    }
-    if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
+    } else if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
       recordFeedReason(localDayKey() !== day ? "template-day-changed"
         : ensured !== "ready" ? `template-${ensured}` : "owner-retired");
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
@@ -380,9 +382,11 @@ export { withToday, toLoadablePage } from "../document";
  * feed edit leaves the visible feed unchanged, except that the initial
  * referenced-day merge adds days while preserving all existing bodies.
  * A deferred/stale template attempt
- * postpones the feed read; a template or feed failure keeps the old feed,
- * schedules retry on edit release, focus/visibility or day rollover, and
- * shows an error toast. This call does not schedule an immediate retry. */
+ * postpones the feed read. A template failure shows an error toast and reads
+ * the feed without the template (GH #811), retried by the next refresh. A feed
+ * failure keeps the old feed, schedules retry on edit release, focus/visibility
+ * or day rollover, and shows an error toast. This call does not schedule an
+ * immediate retry. */
 export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
   await refreshJournalFeedForCurrentDay(owner);
 }
