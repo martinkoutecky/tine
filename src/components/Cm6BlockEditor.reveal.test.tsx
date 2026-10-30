@@ -114,3 +114,23 @@ it("removes projected source wrappers when the caret leaves a mixed fence", () =
   expect(root.querySelector('[data-cm6-construct="src"]')).not.toBeNull();
   expect(node("reveal").raw).toBe(raw);
 });
+
+// CM6-DEADLINE: the planning line is the view's date chip while the caret is elsewhere, and its source otherwise.
+it("renders a DEADLINE line as the view's date chip and reveals its source only inside the line", async () => {
+  const raw = "Pay the invoice\nDEADLINE: <2026-10-31 Fri +1w>";
+  const { root, editor } = mount(raw);
+  const chip = () => root.querySelector('[data-cm6-construct="planning"] .date-chip.deadline');
+  editor.select(0);
+  await vi.waitFor(() => expect(chip()).not.toBeNull());
+  expect(chip()!.textContent!.trim()).toBe("2026-10-31 Fri +1w"); // the text Rendered.tsx puts in its chip
+  expect(root.querySelectorAll(".cm-line")).toHaveLength(1); // the chip joins the header line, as in the view
+  expect(editor.value()).toBe(raw);
+  editor.select(15); // end of the header line: the usual place to keep typing a title
+  expect(chip(), "the end of the header line is not inside the planning line").not.toBeNull();
+  editor.select(16);
+  expect(chip(), "the start of the planning line reveals its source").toBeNull();
+  expect(root.querySelectorAll(".cm-line")).toHaveLength(2);
+  editor.select(raw.length);
+  expect(chip()).toBeNull();
+  expect(node("reveal").raw).toBe(raw);
+});
