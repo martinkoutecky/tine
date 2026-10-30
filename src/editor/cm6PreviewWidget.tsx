@@ -4,6 +4,7 @@ import { EditorView, WidgetType } from "@codemirror/view";
 import { PageRef, renderInlines } from "../render/inline";
 import { renderBlocks } from "../render/body";
 import { renderedClickOffset } from "../components/blockGestures";
+import { CalGlyph } from "../components/blockParts";
 import type { PreviewSpan } from "./cm6Preview";
 
 /** Reuse the read renderer, with a disposable Solid owner for each CM widget.
@@ -22,6 +23,8 @@ export class PreviewWidget extends WidgetType {
     el.dataset.cm6Construct = this.span.kind;
     const { span, format, blockId } = this;
     this.dispose = runWithOwner(this.owner, () => render(() => {
+      // The view's own date chip (Rendered.tsx). The pointer reveals the source instead of opening the date picker.
+      if (span.planning) return <span class={`date-chip ${span.planning.ts === "Deadline" ? "deadline" : "scheduled"}`}><CalGlyph /> {span.planning.value}</span>;
       if (span.inline) return renderInlines([span.inline], blockId, true, false, format);
       if (span.block) {
         const header = span.block.kind === "bullet" || span.block.kind === "heading" ? span.block : null;
@@ -40,8 +43,9 @@ export class PreviewWidget extends WidgetType {
     }, el));
     const reveal = (event: MouseEvent | PointerEvent) => {
       if (event.button !== 0) return;
-      const offset = renderedClickOffset(el, this.raw, format, event) ?? span.from;
-      const head = Math.max(span.from, Math.min(span.to, offset));
+      const lo = span.revealFrom ?? span.from;
+      const offset = renderedClickOffset(el, this.raw, format, event) ?? lo;
+      const head = Math.max(lo, Math.min(span.to, offset));
       event.preventDefault(); event.stopPropagation();
       view.dispatch({ selection: { anchor: event.shiftKey ? view.state.selection.main.anchor : head, head }, scrollIntoView: true });
       view.focus();

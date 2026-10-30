@@ -32,7 +32,7 @@ try {
     await page.goto(url, { timeout: 120_000 });
     await page.waitForSelector('[data-block-id="plain"] .block-content');
     results = await page.evaluate(o => window.measureAll(o), opts);
-    for (const id of ["martin", "h1", "inline", "code", "calc"]) {
+    for (const id of ["martin", "h1", "inline", "code", "calc", "deadline", "scheduled", "repeater", "both"]) {
       const shot = kind => page.locator(`[data-block-id="${id}"]`).first().screenshot({ path: `${out}/${which}-${id}-${kind}.png` });
       await page.evaluate(() => window.closeEditor()); await shot("rendered");
       for (const [kind, on] of [["textarea", false], ["cm6", true]]) { await page.evaluate(([i, o]) => window.openEditor(i, o), [id, on]); await shot(kind); }
@@ -71,7 +71,7 @@ try {
     console.log(id.padEnd(9), "R:", f("rendered")); console.log("".padEnd(9), "T:", f("textarea")); console.log("".padEnd(9), "C:", f("cm6"));
   }
   const bad = [];
-  for (const id of ["plain", "martin", "cjk", "emoji", "multiline", "empty"]) {
+  for (const id of ["plain", "martin", "cjk", "emoji", "multiline", "empty", "deadline", "scheduled", "repeater", "both"]) {
     const r = results[id]; const c = r.cm6, d = r.rendered;
     if (c.missing || d.missing) { bad.push(`${id}: missing editor`); continue; }
     const cl = lines(r, "cm6"), dl = lines(r, "rendered");

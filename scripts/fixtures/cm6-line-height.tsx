@@ -28,11 +28,16 @@ export const CASES: Record<string, string> = {
   multiline: "first line\nsecond line\n\nfourth after empty",
   code: "```js\nconst a = 1;\nconst b = 2;\n```",
   calc: "```calc\n1+1\n2*3\n```",
+  deadline: "Pay the invoice\nDEADLINE: <2026-10-31 Fri>",
+  scheduled: "Write the report\nSCHEDULED: <2026-10-31 Fri>",
+  repeater: "Water plants\nDEADLINE: <2026-10-31 Fri 14:00 +1w>",
+  both: "Review\nSCHEDULED: <2026-10-30 Thu>\nDEADLINE: <2026-11-02 Mon .+2d>",
+  sameline: "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon .+2d>",
   empty: "",
 };
 await initParser();
 loadSingle({ name: "LH", title: "LH", kind: "page", pre_block: null, format: "md",
-  blocks: Object.entries(CASES).map(([id, raw]) => ({ id, raw, collapsed: false, properties: raw.match(/\nheading:: (\w+)$/) ? [["heading", raw.match(/\nheading:: (\w+)$/)![1]]] : [], children: [{ id: `${id}-child`, raw: "child", collapsed: false, children: [] }] })) });
+  blocks: Object.entries(CASES).map(([id, raw]) => ({ id, raw, collapsed: false, scheduled: raw.match(/SCHEDULED: <([^>]*)>/)?.[1], deadline: raw.match(/DEADLINE: <([^>]*)>/)?.[1], properties: raw.match(/\nheading:: (\w+)$/) ? [["heading", raw.match(/\nheading:: (\w+)$/)![1]]] : [], children: [{ id: `${id}-child`, raw: "child", collapsed: false, children: [] }] })) });
 Object.assign(window, { startEditing, endEdit, setCm6EditorEnabled, CASES });
 render(() => <main class="main-content" style={{ padding: "40px", width: "640px" }}>
   <For each={pageByName("LH")!.roots}>{id => <Block id={id} />}</For>
@@ -74,6 +79,8 @@ Object.assign(window, {
     for (const id of Object.keys(CASES)) {
       results[id] = {};
       endEdit("page-navigation"); await wait(50);
+      // Blocks far from the viewport render a placeholder until they are near; measure the real render.
+      document.querySelector(`[data-block-id="${id}"]`)!.scrollIntoView({ block: "center" }); await wait(150);
       results[id].rendered = probe(id, "rendered");
       for (const [kind, on] of [["textarea", false], ["cm6", true]] as const) {
         setCm6EditorEnabled(on); await wait(50);

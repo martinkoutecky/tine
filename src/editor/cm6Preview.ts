@@ -1,6 +1,7 @@
 import { blockRegions, parseBlock } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline } from "../render/ast";
+import { planningChipOf } from "../render/facets";
 
 export interface PreviewSpan {
   from: number;
@@ -10,12 +11,19 @@ export interface PreviewSpan {
   block?: Block;
   headerTags?: string[];
   label?: string;
+  /** A standalone SCHEDULED/DEADLINE line, drawn as the view's date chip. */
+  planning?: { ts: "Scheduled" | "Deadline"; value: string };
+  /** Where the reveal test starts when it differs from `from`: the planning span also replaces the line break
+   * before its line (so the chip sits at the end of the header line, as in the view), which must not reveal the
+   * source when the caret is merely at the end of that header line. */
+  revealFrom?: number;
 }
 
 const cache = new WeakMap<Block[], PreviewSpan[]>();
 
-export function constructRevealed(span: { from: number; to: number }, selections: readonly { from: number; to: number }[]): boolean {
-  return selections.some(r => r.from <= span.to && r.to >= span.from);
+export function constructRevealed(span: { from: number; to: number; revealFrom?: number }, selections: readonly { from: number; to: number }[]): boolean {
+  const from = span.revealFrom ?? span.from;
+  return selections.some(r => r.from <= span.to && r.to >= from);
 }
 
 /** lsdoc is the sole syntax authority. CM6 receives UTF-16 ranges. Containers
@@ -48,7 +56,21 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
     if (n.span) {
       const from = cursor(n.span[0] - 2 + lead);
       let to = cursor(n.span[1] - 2 + lead);
-      if ("k" in n) {
+      const chip = "k" in n && n.k === "timestamp" ? planningChipOf(n, raw) : null;
+      if (chip?.value) {
+        // The view draws a standalone planning line as a date chip after the first line, not as body text.
+        // Take the line break (and indentation) before the line too, so edit mode keeps the chip there; a
+        // line with trailing body text keeps its own line.
+        let start = from, lineStart = from, end = to;
+        if (!chip.hasTrailingBody) {
+          let k = from;
+          while (k > 0 && (raw[k - 1] === " " || raw[k - 1] === "\t")) k--;
+          if (k > 0 && raw[k - 1] === "\n") { start = raw[k - 2] === "\r" ? k - 2 : k - 1; lineStart = k; }
+          while (end < raw.length && (raw[end] === " " || raw[end] === "\t")) end++;
+        }
+        to = end;
+        add({ from: start, to, kind: "planning", planning: { ts: chip.ts, value: chip.value }, ...(start < from ? { revealFrom: lineStart } : {}) });
+      } else if ("k" in n) {
         // Plain runs can own escapes. Only byte-identical plain text and
         // ordinary line breaks have nothing to conceal.
         if (n.k !== "break" && !(n.k === "plain" && raw.slice(from, to) === n.text)) {
