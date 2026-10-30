@@ -102,7 +102,7 @@
         var rr = el.getBoundingClientRect();
         if (rr.height > 20 && rr.bottom > mt - 50 && rr.top < mt + m.clientHeight + 50 && ml.length < 4) ml.push({ g: el.tagName[0], t: r1(rr.top - mt), h: r1(rr.height), w: r1(rr.width) });
       });
-      o.media = ml;
+      o.media = ml; o.nb = m.querySelectorAll(".block-content").length;
       var pins = document.querySelectorAll("[data-sticky-parent]"), pn = 0;
       o.pinsN = pins.length;
     }
@@ -182,12 +182,12 @@
   ];
   var mediaPlan = [
     { find: "Kitchen", f: 0.12 },
-    { find: "Cabinets", f: 0.20 },
-    { find: "Between the dishwasher", f: 0.12 },
-    { find: "Between the dishwasher", f: 0.40 },
-    { find: "Kitchen", f: 0.30 },
-    { find: "Right of the stove", f: 0.10 },
-    { find: "Cabinets", f: 0.08 },
+    { find: "Bedroom", jump: 0.55, f: 0.12 },
+    { find: "Between the dishwasher", jump: 0.55, f: 0.15 },
+    { find: "Balcony", jump: 0.8, f: 0.12 },
+    { find: "Between the dishwasher", jump: 0.8, f: 0.35 },
+    { find: "Study", jump: 0.95, f: 0.15 },
+    { find: "Cabinets", jump: 0.3, f: 0.2 },
   ];
   var state = "boot";
   var created = false;
@@ -249,7 +249,8 @@
     var m = scroller();
     var mr = m.getBoundingClientRect();
     var blocks = [].filter.call(m.querySelectorAll(".block-content"), function (b) { return (b.textContent || "").trim().indexOf(p.find) === 0; });
-    var b = blocks[0];
+    var inView = blocks.filter(function (b) { var r0 = b.getBoundingClientRect(); return r0.top >= mr.top && r0.bottom <= mr.bottom; });
+    var b = inView[0] || blocks[0];
     if (!b) return null;
     var r = b.getBoundingClientRect();
     quiet = true; m.scrollTop += r.top - (mr.top + p.f * m.clientHeight); quiet = false;
@@ -273,6 +274,7 @@
     if (!p) { state = "finished"; log("ALLDONE"); return; }
     trial += 1;
     var m = scroller();
+    if (p.jump !== undefined) { quiet = true; m.scrollTop = p.jump * (m.scrollHeight - m.clientHeight); quiet = false; }
     if (p.top) { quiet = true; m.scrollTop = 0; quiet = false; }
     setTimeout(function () {
       var tg = p.find ? pickFind(p) : (p.tall !== undefined ? pickTall(p) : pickTarget(p.f));

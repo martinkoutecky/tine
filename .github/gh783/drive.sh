@@ -72,15 +72,12 @@ def grp(a, b):
     print("\t\t- ![photo](../assets/photo.png)")
 for h in ("Hall", "Living room", "Dining room"):
     print("- # " + h)
-print("- # Kitchen")
-print("\t- ## Cabinets")
-grp("Right of the stove, make a spice drawer", "Between the dishwasher and the counter, a thin drawer for utensils and small tools.")
-grp("Pull-out shelf for the pans, with a soft close", "A tall cabinet for the brooms and the mop, with hooks on the inside of the door.")
-print("\t- ## Counter")
-grp("Corner unit with a rotating tray", "The fridge goes next to the window, with a cabinet above it for the cereal.")
-print("- # Bathroom")
-print("\t- ## Storage")
-grp("Mirror cabinet with a socket inside", "Two towel rails on the wall behind the door.")
+for sec in ("Kitchen", "Bathroom", "Bedroom", "Balcony", "Study"):
+    print("- # " + sec)
+    for sub in ("Cabinets", "Counter"):
+        print("\t- ## " + sub)
+        grp("Right of the stove, make a spice drawer (%s)" % sec, "Between the dishwasher and the counter, a thin drawer for utensils and small tools.")
+        grp("Pull-out shelf for the pans, with a soft close", "A tall cabinet for the brooms and the mop, with hooks on the inside of the door.")
 PY
 
 else
