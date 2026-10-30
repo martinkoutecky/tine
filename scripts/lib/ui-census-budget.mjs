@@ -33,9 +33,9 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 /** @type {Readonly<Record<string, Surface>>} */
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
-  "commands.registry": { env: "desktop", budget: 131, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
+  "commands.registry": { env: "desktop", budget: 134, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 26, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 74, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
+  "commands.palette": { env: "desktop", budget: 77, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
@@ -68,7 +68,7 @@ export const SURFACES = Object.freeze({
   "menu.block.readonly": { env: "desktop", budget: 6, what: "text rows, block menu on a block of a read-only page", source: "ContextMenu on a read-only page" },
   "menu.page.link": { env: "desktop", budget: 14, what: "rows, page menu from a link, sidebar row or title (no file actions)", source: "ContextMenu page kind, fileActions false, icon set so Remove page icon is present" },
   "menu.page.header.page": { env: "desktop", budget: 16, what: "rows, page header menu of an ordinary page (file actions, icon, rename, delete)", source: "ContextMenu page kind, fileActions true" },
-  "menu.page.header.nested": { env: "desktop", budget: 2, what: "submenu entries inside the page header menu (Copy as)", source: "ContextMenu .ctx-submenu-menu rows" },
+  "menu.page.header.nested": { env: "desktop", budget: 3, what: "submenu entries inside the page header menu (Copy as)", source: "ContextMenu .ctx-submenu-menu rows" },
   "menu.page.header.journal": { env: "desktop", budget: 16, what: "rows, page header menu of a past journal day (carry, delete journal)", source: "ContextMenu journal kind, fileActions true, a day that is not today" },
   "menu.blockref": { env: "desktop", budget: 9, what: "rows, block-reference menu on a reference occurrence", source: "ContextMenu blockref kind with an occurrence (edit, remove-reference, replace-with-text and replace-with-embed rows; +2 OG Replace with text / embed, D-20261019-QC(5))" },
   "menu.query": { env: "desktop", budget: 8, what: "rows, query block menu (editable, with results and fold)", source: "QueryActions disclosure opened with every action offered" },
@@ -96,7 +96,7 @@ export const SURFACES = Object.freeze({
   "mobile.menu.block.readonly": mobileMenu("block.readonly", 6), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.link": mobileMenu("page.link", 12), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.header.page": mobileMenu("page.header.page", 15), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.page.header.nested": mobileMenu("page.header.nested", 2),
+  "mobile.menu.page.header.nested": mobileMenu("page.header.nested", 3), // +1 Copy page embed, D-20261030-PE
   "mobile.menu.page.header.journal": mobileMenu("page.header.journal", 15), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.blockref": mobileMenu("blockref", 9), // +2 Replace with text / embed, D-20261019-QC(5)
 });

@@ -616,6 +616,47 @@ fn publish_begin_query_renders_authored_title_and_results() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// GH #651 follow-up: the publication builds the same macro text as the live view, so a BEGIN_QUERY map's
+/// `:remove-block-children? false` counts a child of a matching parent as its own result in the export too.
+#[test]
+fn publish_begin_query_honours_remove_block_children_false() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("pages")).unwrap();
+    fs::create_dir_all(dir.path().join("logseq")).unwrap();
+    fs::write(
+        dir.path().join("logseq/config.edn"),
+        "{:publishing/all-pages-public? true}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("pages/Tasks.md"),
+        "- TODO PARENT_ROW_MARK\n\t- TODO CHILD_ROW_MARK\n",
+    )
+    .unwrap();
+    for (page, option) in [("Kept", " :remove-block-children? false"), ("Folded", "")] {
+        fs::write(
+            dir.path().join(format!("pages/{page}.md")),
+            format!("- #+BEGIN_QUERY\n  {{:query (task TODO){option}}}\n  #+END_QUERY\n"),
+        )
+        .unwrap();
+    }
+    let graph = Store::open(dir.path(), Default::default()).unwrap().0;
+    let (outdir, _) = publish_graph(&graph).unwrap();
+    let read = |name: &str| {
+        fs::read_to_string(std::path::Path::new(&outdir).join(format!("{name}.html"))).unwrap()
+    };
+    // The publication lists a result's subtree under it (as the List does), so the child shows either
+    // way; what the option changes is the result count: the child is its own result, or absorbed.
+    let count = |html: &str| {
+        let at = html.find("class=\"query-count\">").expect("a query head")
+            + "class=\"query-count\">".len();
+        html[at..html[at..].find('<').map(|n| at + n).unwrap()].to_string()
+    };
+    assert_eq!(count(&read("kept")), "2");
+    assert_eq!(count(&read("folded")), "1");
+}
+
 #[test]
 fn publish_begin_query_preserves_decoded_title_inputs_and_discards() {
     let _integration_guard = crate::integration_lock();

@@ -64,7 +64,7 @@ conflict-resolution-resolved-the-conflict-in = Resolved the conflict in “{ $pa
 
 conflict-resolution-applied-the-resolution-to-but-it-is-not = Applied the resolution to “{ $page_name }”, but it is not saved yet. Tine keeps trying to save it.
 
-conflict-resolution-resolve-this-page-s-save-conflict-first-then = Resolve this page’s save conflict first, then apply this resolution.
+conflict-resolution-resolve-this-page-s-save-conflict-first-then = Resolve this page’s save conflict first with the choice in the red bar, then apply this resolution.
 
 conflict-resolution-the-file-changed-on-disk-re-reading-it = The file changed on disk — re-reading it, please redo your choices.
 

@@ -446,6 +446,20 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  // GH #418 follow-up: block menus offer "Copy block embed", but a page's "···" menu had no way to get
+  // `{{embed [[PAGE]]}}` onto the clipboard. Copying only reads: it never changes the page.
+  it("offers Copy page embed in the page menu's Copy as and copies {{embed [[PAGE]]}}", async () => {
+    load();
+    const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page");
+    const item = document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-as"] [data-page-action-id="copy-page-embed"]')!;
+    expect(item.textContent).toBe("Copy page embed");
+    item.click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("{{embed [[P]]}}"));
+    dispose();
+  });
+
   it("offers 'Show children as →' on a bullet WITH children and flips tine.view to grid", () => {
     load();
     const dispose = mount(() => <ContextMenu />);
@@ -494,7 +508,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link",
+      "copy-as", "copy-page-ref", "copy-page-embed", "copy-link",
       "copy-export",
       "share",
       "export-pdf",
@@ -532,6 +546,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     menu.querySelector<HTMLElement>('[data-page-action-id="copy-as"]')!.focus();
     press("ArrowDown");
     expect(activeId()).toBe("copy-page-ref");
+    press("ArrowDown");
+    expect(activeId()).toBe("copy-page-embed");
     press("ArrowDown");
     expect(activeId()).toBe("copy-link");
     dispose();
@@ -634,7 +650,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link", "copy-export", "share", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
@@ -646,7 +662,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link", "copy-export", "share", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "set-page-icon",
       "carry-unfinished", "delete-journal",

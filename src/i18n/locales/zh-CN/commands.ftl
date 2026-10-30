@@ -106,6 +106,7 @@ command-pane-move-tab-down = 将标签页移到下方窗格
 command-ui-toggle-theme = 切换深色 / 浅色
 
 command-ui-reset-zoom = 重置界面缩放
+command-ui-reload-window = 重新加载窗口
 
 command-ui-toggle-brackets = 切换引用括号
 
@@ -209,12 +210,15 @@ command-editor-collapse-children = 折叠（一层）
 command-editor-expand-children = 展开（一层）
 
 command-editor-paste-as-link = 粘贴为链接
+command-editor-zoom-in = 放大到块
+command-editor-zoom-out = 缩小一级
 
 commands-open-a-page-first-to-export-it = 请先打开页面，再导出为 PDF
 
 commands-undo-redo-mode = 撤销/重做模式：{ $mode }
 
 commands-select-text-in-a-block-then-use = 请先选中块内文本，再使用“粘贴为链接”
+commands-select-a-block-or-edit-one-to-zoom-in = 请先选中一个块或编辑一个块，再放大到它
 
 command-builtin-global-escape = 关闭浮层或退出专注模式
 

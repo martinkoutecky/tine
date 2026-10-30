@@ -57,6 +57,11 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-30, keys dossier / GH #797, #799: `commands.registry` 131→134 and
+  `commands.palette` 74→77 for the explicitly requested **Zoom in on block** and
+  **Zoom out one level** (both unbound), plus **Reload window** (unbound), the one
+  explicit way to reload now that the webview's Ctrl/Cmd+R and F5 are consumed. No
+  new topbar control.
 - 2026-10-29, D-20261029-ST (GH #796): `settings.editor.advanced` 10→11 for the explicitly
   decided **Search results open in** (New tab / This tab) setting. It sits behind the Advanced
   disclosure beside "Switch to an already-open tab", so `settings.editor.open` stays 9.
@@ -101,3 +106,6 @@ journey (`scripts/e2e-*.mjs`), not here.
   menu rows `menu.block.plain` 15→17, `block.full` 19→21, `block.multi` 14→16 and the mobile twins likewise (Copy block
   ref, Copy block embed and Copy link left the Copy as submenu, net +2 rows each); `block.full.nested` 6→3 (Copy as left
   the block menu; the page menu keeps its Copy as). Approved by Martin 2026-10-19 (D-20261019-UC1, option a: all three top-level, as in OG).
+- 2026-10-30, D-20261030-PE (GH #418, Ellis): `menu.page.header.nested` 2→3 and `mobile.menu.page.header.nested` 2→3:
+  **Copy as ▸ → Copy page embed** (`{{embed [[Page]]}}`) joins Copy page ref and Copy link. OG's page menu has no such row;
+  approved by Martin 2026-10-30 ("Mk21 yes").

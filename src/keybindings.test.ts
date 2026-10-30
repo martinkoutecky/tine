@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// The reload-chord tests flip this; every other test sees the real isTauri().
+const desktopApp = vi.hoisted(() => ({ on: null as boolean | null }));
+vi.mock("./backend", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./backend")>();
+  return { ...real, isTauri: () => desktopApp.on ?? real.isTauri() };
+});
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
@@ -255,6 +262,7 @@ it("GH #587 activates visible tab slots in the focused pane, with slot nine mean
 });
 
 afterEach(() => {
+  desktopApp.on = null;
   vi.restoreAllMocks();
   clearClipboardPayload();
   endEdit("blur");
@@ -1249,5 +1257,54 @@ describe("secondary default chords (aliases)", () => {
     // Exactly one Redo row — an alias must not become a second command.
     expect(commandDefaults().filter((c) => c.label === "Redo")).toHaveLength(1);
     expect(paletteCommands().filter((c) => c.id === "editor/redo")).toHaveLength(1);
+  });
+});
+
+// GH #797: WebView2 reloads the whole app on Ctrl+R / F5. A stray press while
+// using other hotkeys threw the UI state away, and Settings offered no way to
+// change it.
+describe("webview reload chords (GH #797)", () => {
+  const press = (init: Partial<KeyboardEvent>, tauri = true) => {
+    const fake = installFakeWindow();
+    desktopApp.on = tauri;
+    const dispose = installKeybindings();
+    const tracked = trackedKeyEvent(init);
+    fake.dispatchCaptureKeydown(tracked.event);
+    dispose();
+    return tracked.prevented();
+  };
+
+  it("consumes Ctrl/Cmd+R, Ctrl/Cmd+Shift+R and F5 in the desktop app, outside any editor", () => {
+    expect(press({ key: "r", code: "KeyR", ctrlKey: true })).toBe(true);
+    expect(press({ key: "r", code: "KeyR", metaKey: true })).toBe(true);
+    expect(press({ key: "R", code: "KeyR", ctrlKey: true, shiftKey: true })).toBe(true);
+    expect(press({ key: "F5", code: "F5" })).toBe(true);
+    expect(press({ key: "к", code: "KeyR", ctrlKey: true })).toBe(true); // Cyrillic layout
+  });
+
+  it("leaves other chords, and every chord in a plain browser, alone", () => {
+    expect(press({ key: "r", code: "KeyR" })).toBe(false);
+    expect(press({ key: "r", code: "KeyR", ctrlKey: true, altKey: true })).toBe(false);
+    expect(press({ key: "t", code: "KeyT", ctrlKey: true })).toBe(false);
+    expect(press({ key: "r", code: "KeyR", ctrlKey: true }, false)).toBe(false);
+  });
+
+  it("lists a bindable Reload window command, unbound by default, that reloads on its chord", () => {
+    const row = commandDefaults().find((c) => c.id === "ui/reload-window");
+    expect(row).toMatchObject({ english: "Reload window", binding: "", scope: "global" });
+    const reload = vi.fn();
+    const fake = installFakeWindow();
+    desktopApp.on = true;
+    Object.assign(window, { location: { reload } });
+    const dispose = installKeybindings({ "ui/reload-window": "mod+shift+u" });
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "u", code: "KeyU", ctrlKey: true, shiftKey: true }).event);
+    expect(reload).toHaveBeenCalledTimes(1);
+    // The user may even give it the old chord; it then reloads on purpose.
+    dispose();
+    const again = installKeybindings({ "ui/reload-window": "mod+r" });
+    const tracked = trackedKeyEvent({ key: "r", code: "KeyR", ctrlKey: true });
+    fake.dispatchCaptureKeydown(tracked.event);
+    expect(reload).toHaveBeenCalledTimes(2);
+    again();
   });
 });

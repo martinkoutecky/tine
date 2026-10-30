@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandSurface } from "./collapseCommandSurface";
+import { collapseCommandSurface, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -17,6 +17,7 @@ import {
   pasteClipboardPayload,
   selectedIds,
   setCollapsed,
+  storedFold,
   withUndoUnit,
   node as docNode,
 } from "./document";
@@ -155,7 +156,9 @@ export function insertChildIntoTarget(): string | null {
 
 /** GH #525 / #696: collapse immediate children; expand the first level with
  *  folded non-leaves, starting at the immediate children. The target opens so
- *  the result shows. Without a target, start at the page's top-level blocks. */
+ *  the result shows. Without a target, start at the page's top-level blocks.
+ *  GH #792: a query block's children are its result rows (and any outline
+ *  children); the rows fold through their group's local surface, never the file. */
 export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   let parents: string[] = commandTargetIds();
   let pageRoots: string[] | null = null;
@@ -166,15 +169,33 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     parents = [];
   }
   const surface = parents.length ? collapseCommandSurface(parents[0]) : undefined;
+  // Result rows answer to the group that shows them, and so do their descendants.
+  const rowSurface = new Map<string, CommandCollapseSurface>();
+  const surfaceOf = (id: string): CommandCollapseSurface | undefined => rowSurface.get(id) ?? surface;
   const isCollapsed = (id: string) => {
-    const stored = docNode(id)?.collapsed ?? false;
-    return surface?.collapsed(id, stored) ?? stored;
+    const stored = storedFold(id); // `collapsed::`, else a query's authored `:collapsed? true`
+    return surfaceOf(id)?.collapsed(id, stored) ?? stored;
   };
   const folded = (id: string) => {
     const n = docNode(id);
     return !!n && blockHasFoldableBody(id) && isCollapsed(id);
   };
-  const children = (ids: string[]) => ids.flatMap((id) => docNode(id)?.children ?? []);
+  const children = (ids: string[]) => {
+    const out = new Set<string>();
+    for (const id of ids) {
+      const own = rowSurface.get(id);
+      for (const child of docNode(id)?.children ?? []) {
+        if (own && !rowSurface.has(child)) rowSurface.set(child, own);
+        out.add(child);
+      }
+      for (const group of queryResultFolds(id)) for (const row of group.roots()) {
+        if (!docNode(row)) continue;
+        if (!rowSurface.has(row)) rowSurface.set(row, group.surface);
+        out.add(row);
+      }
+    }
+    return [...out];
+  };
   // GH #696: one level includes the targets themselves. Collapse folds the
   // children first and the targets once no child is left open; it never opens
   // a target. Expand opens a folded target alone before reaching its children.
@@ -194,12 +215,14 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     // never stop the search; all changes still use the existing undo/save path.
     while (level.length && !level.some(folded)) level = children(level);
   }
-  const pages = [...new Set([...opened, ...level].map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
+  const touched = [...opened, ...level];
+  const pages = [...new Set(touched.map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
   if (!pages.length) return false;
   const apply = () => {
     const setFold = (id: string, value: boolean) => {
       if (!blockHasFoldableBody(id) || isCollapsed(id) === value) return;
-      if (surface) surface.toggle(id, isCollapsed(id));
+      const own = surfaceOf(id);
+      if (own) own.toggle(id, isCollapsed(id));
       else setCollapsed(id, value);
     };
     for (const id of opened) setFold(id, false);
@@ -208,8 +231,9 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   // Occurrence toggles own their persistence: an embed root saves its HOST
   // property (with its own undo), descendants only change local presentation.
   // A source-page undo snapshot would suppress and then lose that host undo.
-  if (surface) apply();
-  else withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, apply);
+  const written = [...new Set(touched.filter((id) => !surfaceOf(id)).map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
+  if (!written.length) apply();
+  else withUndoUnit(collapsed ? "collapse-children" : "expand-children", written, apply);
   return true;
 }
 

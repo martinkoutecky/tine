@@ -410,3 +410,64 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
     assert!(resolved.rev.is_some());
     let _ = fs::remove_dir_all(root);
 }
+
+/// GH #800: keeping both sides of a row puts a freshly parsed disk block next
+/// to the draft's blocks, which keep their live keys. The disk block's
+/// positional key must not equal a draft block's key at another position, or
+/// the window holds two blocks under one key and its next save writes one
+/// block's text twice, losing the other.
+#[test]
+fn keep_both_never_hands_the_window_two_blocks_under_one_key() {
+    let root = scratch("unique-keys");
+    fs::write(root.join(PAGE), "- alpha\n- beta\n- gamma\n").unwrap();
+    let store = open(&root);
+    let (page, base_rev) = draft(&store, 0, "alpha MINE");
+    external(&root, "- alpha\n- beta\n- gamma DISK\n");
+    let diff = live_conflict_diff(&store, PAGE, &page, Some(&base_rev), &[]).unwrap();
+    let mut chosen = HashMap::new();
+    fn all_both(rows: &[DiffRow], out: &mut HashMap<String, String>) {
+        for row in rows {
+            out.insert(row.id.clone(), "both".to_owned());
+            all_both(&row.children, out);
+        }
+    }
+    all_both(&diff.rows, &mut chosen);
+    let merged = merge_live_conflict(
+        &store,
+        PAGE,
+        &page,
+        &diff.conflict_rev,
+        None,
+        &[],
+        &chosen,
+        "union",
+    )
+    .unwrap();
+    let raws: Vec<&str> = merged.blocks.iter().map(|b| b.raw.as_str()).collect();
+    assert!(raws.contains(&"alpha MINE") && raws.contains(&"alpha") && raws.contains(&"beta"));
+    let mut keys: Vec<&str> = merged.blocks.iter().map(|b| b.id.as_str()).collect();
+    assert!(keys.iter().all(|k| !k.is_empty()));
+    // The draft's own blocks keep their live keys.
+    for kept in &page.blocks {
+        if let Some(block) = merged
+            .blocks
+            .iter()
+            .find(|b| b.raw == kept.raw && kept.raw != "alpha")
+        {
+            assert_eq!(block.id, kept.id, "{}", kept.raw);
+        }
+    }
+    let total = keys.len();
+    keys.sort_unstable();
+    keys.dedup();
+    assert_eq!(
+        keys.len(),
+        total,
+        "duplicate block keys: {:?}",
+        merged
+            .blocks
+            .iter()
+            .map(|b| (&b.id, &b.raw))
+            .collect::<Vec<_>>()
+    );
+}

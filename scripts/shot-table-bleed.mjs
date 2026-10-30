@@ -7,6 +7,8 @@ import fs from 'node:fs';
 const port = Number(process.env.QBG_PORT || 5319);
 const origin = `http://127.0.0.1:${port}`;
 const out = process.env.QBG_OUT || '/tmp/qbg-after';
+// The query-box cases (GH #651 follow-up, D-20261028-UILP): a result table never leaves its query box.
+const words = Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ');
 fs.mkdirSync(out, { recursive: true });
 const buildDir = `/tmp/qbg-shot-build-${process.pid}`;
 await build({ configFile: false, define: { __BUILD_TIME__: JSON.stringify('fixture'), __GIT_COMMIT__: JSON.stringify('fixture'), __TINE_COMMUNITY_REGISTRY__: 'false' }, plugins: [solid()], build: { outDir: buildDir, copyPublicDir: false, rollupOptions: { input: 'scripts/fixtures/table-bleed.html' } } });
@@ -20,15 +22,15 @@ try {
     ['overflow', 1600, 1400, 0, 130], ['nested', 1600, 1400, 3, 65],
     ['split', 1400, 680, 3, 65], ['mobile', 390, 390, 3, 65],
     ['org', 1600, 1400, 3, 65], ['query', 1600, 1400, 0, 65],
-    ['sheet', 1600, 1400, 0, 65], ['sidebar', 600, 500, 3, 65], ['embed', 1600, 1400, 3, 65],
+    ['sheet', 1600, 1400, 0, 65], ['query-words', 1600, 1400, 0, 0, words], ['query-words-narrow', 1000, 560, 0, 0, words], ['sidebar', 600, 500, 3, 65], ['embed', 1600, 1400, 3, 65],
   ];
-  for (const [name, viewport, pane, depth, length] of cases) {
+  for (const [name, viewport, pane, depth, length, cell] of cases) {
     const page = await browser.newPage({ viewport: { width: viewport, height: 700 } });
     page.on("pageerror", error => console.error("PAGE ERROR", error));
     page.setDefaultTimeout(120000);
     await page.goto(`${origin}/scripts/fixtures/table-bleed.html`, { waitUntil: 'domcontentloaded', timeout: 120000 });
     const raw = `| First | Second |\n${name === 'org' ? '|-------+--------|' : '| --- | --- |'}\n| ${'a'.repeat(length)} | ${'b'.repeat(length)} |`;
-    await page.evaluate(async ({ raw, depth, pane, format, surface }) => { await window.qbgMount(raw, depth, pane, format, surface); }, { raw, depth, pane, format: name === 'org' ? 'org' : 'md', surface: name });
+    await page.evaluate(async ({ raw, depth, pane, format, surface, cell }) => { await window.qbgMount(raw, depth, pane, format, surface, cell); }, { raw, depth, pane, format: name === 'org' ? 'org' : 'md', surface: name, cell: cell ?? 'a'.repeat(length) });
     await page.locator(name === 'sheet' ? '.sheet-table' : '.md-table').waitFor();
     await sleep(600);
     const geometry = await page.evaluate(() => {
@@ -37,7 +39,8 @@ try {
       const pane = wrap.closest('.rs-item-body, .right-sidebar-body, .main-content');
       const column = wrap.closest('.main-content-inner');
       const r = wrap.getBoundingClientRect(), p = pane.getBoundingClientRect(), c = column.getBoundingClientRect();
-      return { left: r.left, right: r.right, width: r.width, paneLeft: p.left, paneRight: p.left + pane.clientWidth, center: (c.left + c.right) / 2, scroll: wrap.scrollWidth - wrap.clientWidth, tableWidth: table.getBoundingClientRect().width, paneScroll: pane.scrollWidth - pane.clientWidth };
+      const b = wrap.closest('.query-block')?.getBoundingClientRect();
+      return { boxLeft: b?.left, boxRight: b?.right, left: r.left, right: r.right, width: r.width, paneLeft: p.left, paneRight: p.left + pane.clientWidth, center: (c.left + c.right) / 2, scroll: wrap.scrollWidth - wrap.clientWidth, tableWidth: table.getBoundingClientRect().width, paneScroll: pane.scrollWidth - pane.clientWidth };
     });
     await page.screenshot({ path: `${out}/${name}.png` });
     if (name === 'narrow') {
@@ -48,7 +51,13 @@ try {
     }
     console.log(name, geometry);
     if (geometry.left < geometry.paneLeft - 1 || geometry.right > geometry.paneRight + 1 || geometry.paneScroll > 1) failures.push(`${name}: escaped pane`);
-    if (['wide', 'nested', 'org', 'query', 'sheet', 'embed'].includes(name) && (geometry.scroll > 1 || Math.abs((geometry.left + geometry.right) / 2 - geometry.center) > 2)) failures.push(`${name}: not centered and freely bleeding`);
+    if (name.startsWith('query')) {
+      // A table in a query box is bounded by the box: it never bleeds, and a row wider than the box scrolls inside it.
+      if (geometry.left < geometry.boxLeft - 1 || geometry.right > geometry.boxRight + 1) failures.push(`${name}: table leaves its query box`);
+      if (name === 'query' && geometry.scroll < 1) failures.push('query: an unbreakable wide row does not scroll inside its box');
+      if (name.startsWith('query-words') && geometry.scroll > 1) failures.push(`${name}: text with spaces should wrap inside the box, not scroll`);
+    }
+    if (['wide', 'nested', 'org', 'sheet', 'embed'].includes(name) && (geometry.scroll > 1 || Math.abs((geometry.left + geometry.right) / 2 - geometry.center) > 2)) failures.push(`${name}: not centered and freely bleeding`);
     if (['overflow', 'split', 'mobile', 'sidebar'].includes(name) && geometry.scroll < 1) failures.push(`${name}: no horizontal scrolling`);
     if (name === 'sheet') {
       const before = await page.locator('.sheet-scroll').boundingBox();

@@ -29,3 +29,25 @@ export function bindCollapseCommandSurface(id: string, surface: CommandCollapseS
     surface,
   }));
 }
+
+/** A mounted query-result group, registered under the query block that owns it. A query block's
+ * body is its RESULT rows (they are not outline children of the host), so the one-level fold
+ * commands read them here and fold them through the group's own local surface (GH #792). */
+export interface QueryResultFold {
+  hostId: () => string | undefined;
+  /** The group's live result roots, in display order. */
+  roots: () => string[];
+  surface: CommandCollapseSurface;
+}
+const resultFolds = new Set<QueryResultFold>();
+clearOnBindingInvalidated(() => resultFolds.clear());
+
+export function registerQueryResultFold(group: QueryResultFold): () => void {
+  resultFolds.add(group);
+  return () => { resultFolds.delete(group); };
+}
+
+/** The mounted result groups of query block `hostId`. O(registered groups), once per command. */
+export function queryResultFolds(hostId: string): QueryResultFold[] {
+  return [...resultFolds].filter((group) => group.hostId() === hostId);
+}

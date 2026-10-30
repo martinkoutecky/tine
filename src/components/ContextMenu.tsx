@@ -895,6 +895,8 @@ function PageMenu(props: {
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
       { id: "copy-page-ref", label: msg("context-menu-ui-copy-page-ref"), run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), msg("context-menu-ui-copied-page-ref")) },
+      // GH #418: the page-level counterpart of "Copy block embed"; Logseq spells a page embed {{embed [[PAGE]]}}.
+      { id: "copy-page-embed", label: msg("context-menu-ui-copy-page-embed"), run: () => reportCopy(writeClipboardText(`{{embed [[${props.name}]]}}`), msg("context-menu-ui-copied-page-embed")) },
       { id: "copy-link", label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ page: props.name }) },
     ] },
     {

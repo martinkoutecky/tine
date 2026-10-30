@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-gh800-save-then-copy.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A routed page with both a refused save (its file changed on disk under unsaved input) and a sync conflict copy shows the save conflict's review first, then the copy's comparison; both Applies go through, never the save-conflict-first refusal, and the draft, the disk change and the copy all survive, the replaced versions recoverable.","blocking":false,"authority":"UI-CONFLICT-SAVE-THEN-COPY; GH #800"}],
+      "acceptableVariations": ["Page geometry, latency, the attempt that wins the save race, copy timestamp and recovery filenames may vary."],
+      "nonRequirements": ["No private graph or app data, exact pixels, other-platform certification or manager burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-conflict-invalidinput.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A routed page's scalar property conflict explains the needed choice while preserving both files. Keep sync copy applies that side's blocks and page properties, retires the conflict and keeps the copy recoverable.","blocking":false,"authority":"UI-CONFLICT-INVALIDINPUT; Martin 2026-10-30"}],
       "acceptableVariations": ["Page geometry, latency, copy timestamp and recovery filename may vary."],
@@ -159,6 +165,12 @@
       "contracts":[{"class":"core-operation","userOutcome":"On a long page with loaded images above the caret, outdenting a level-two block to level one and indenting it back keeps the block visible without a large viewport jump (GH #745, reopened on Beta 9).","blocking":true}],
       "acceptableVariations":["Small adjustments to show the caret and platform-dependent line geometry are allowed; an already-visible caret must not be thrown outside the viewport."],
       "nonRequirements":["Exact pixels, timing, display scaling, and certification on the reporter's Windows 10/WebView2 153 device."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-gh810-embed-scroll.mjs": {
+      "contracts":[{"class":"core-operation","userOutcome":"On a long page with several expanded block embeds, scrolling down and back up with the wheel does not move the blocks in view: no visible block jumps by a large amount when an outline window holding an embed scrolls back into view (GH #810).","blocking":true}],
+      "acceptableVariations":["Small settling shifts of a few pixels while rows are first measured and the exact frame timing may vary; the jump measured is a visible block moving by 40 px or more between consecutive frames."],
+      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 (Chromium scroll anchoring); estimates for outline windows or embeds never seen before."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {

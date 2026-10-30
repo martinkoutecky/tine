@@ -1011,7 +1011,10 @@ function JournalsTab(props: { search: string }): JSX.Element {
       <Field
         label={t("settings-ui-agenda-window")}
         hint={
-          <>{t("settings-ui-today-s-scheduled-deadline-list-shows-items-whose-scheduled")}</>
+          <>
+            {t("settings-ui-today-s-scheduled-deadline-list-shows-items-whose-scheduled")}
+            <SectionsPageNote />
+          </>
         }
       >
         <input
@@ -1033,14 +1036,15 @@ function JournalsTab(props: { search: string }): JSX.Element {
           onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
         />
         <span class="settings-hint">{t("settings-agenda-days-ahead", { source: graphMeta()?.scheduled_future_days != null ? "graph" : "device" })}</span>
-        <SectionsPageNote />
       </Field>
     </>
   );
 }
 
 /** GH #605: with a sections page, today's sections (agenda included) are the
- *  queries written on it, so this window no longer applies. Say where they live. */
+ *  queries written on it, so this window no longer applies. Say where they live.
+ *  It goes in the setting's full-width hint, never its control column: that column
+ *  does not shrink, so a sentence there ran off the pane and clipped "Open page" (GH #808). */
 function SectionsPageNote(): JSX.Element {
   // Keep the optional note empty while loading: an undefined first value must
   // neither crash its index lookup nor suspend the entire Settings dialog.
@@ -1048,7 +1052,7 @@ function SectionsPageNote(): JSX.Element {
   const page = () => readOr(pages, [] as string[], "sections page note")[0];
   return (
     <Show when={page()}>
-      {(name) => <div class="settings-hint">
+      {(name) => <div class="settings-sections-note">
         {render(msg("settings-sections-page", { page: name() }))}{" "}
         <button type="button" class="settings-link" onClick={() => { closeSettings(); openPage(name()); }}>{render(msg("settings-sections-open"))}</button>
       </div>}

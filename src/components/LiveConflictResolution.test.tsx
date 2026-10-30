@@ -16,7 +16,8 @@ import { ConflictOverview } from "./ConflictOverview";
 import { ConflictQueueBadge } from "./Sidebar";
 import type { PaneRouter } from "../router";
 import { setToasts, toasts } from "../toasts";
-import { PageConflictResolution } from "./ConflictResolution";
+import { PageConflictPanel, PageConflictResolution } from "./ConflictResolution";
+import { setConflictInventory } from "../conflictQueue";
 import type { BlockDto, ConflictObject, DiffRow, PageDto, SyncConflictDiff } from "../types";
 
 const PATH = "pages/P.md";
@@ -271,5 +272,49 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     (group.querySelector(".conflict-overview-open") as HTMLButtonElement).click();
     expect(opened).toEqual([{ name: "P", pageKind: "page", path: PATH }]);
     dispose();
+  });
+
+  it("GH #800: a page with a save conflict AND a sync copy resolves both, in order, losing no version", async () => {
+    // The reporter's state: this window's draft was refused (the file changed on
+    // disk) and a sync tool's conflict copy of the same page arrived as well.
+    const COPY = "pages/P.sync-conflict-20261028-222343-ABCDEFG.md";
+    const copy: ConflictObject = {
+      id: `copy:${COPY}`, source: "sync-copy", page_name: "P", page_path: PATH, kind: "page",
+      sides: [{ role: "mine", label: "This device", path: PATH }, { role: "theirs", label: "sync-conflict-20261028-222343-ABCDEFG", path: COPY }],
+      block_conflicts: 1,
+    };
+    await conflictedDraft();
+    setConflictInventory({ sync_conflicts: [{ path: COPY, base_name: "P", base_path: PATH, kind: "page", tag: "sync-conflict-20261028-222343-ABCDEFG", preview: "" }], vcs_markers: [], queue: [copy] });
+    vi.spyOn(api, "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(api, "listSyncConflicts").mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(api, "mergeLiveConflict").mockImplementation(async (_p, draft) => ({ ...draft, blocks: [block("p1", "mine + theirs")] }));
+    const copyDiff = vi.spyOn(api, "syncConflictDiff").mockImplementation(async () =>
+      ({ base_rev: disk.rev, conflict_rev: "copy-rev", rows: [{ id: "0", kind: "modified", mine: view("mine + theirs"), theirs: view("copy"), children: [] }],
+        mine_pre: null, theirs_pre: null, pre_differs: false, blocks_identical: false }));
+    const fold = vi.spyOn(api, "resolveSyncConflict").mockResolvedValue();
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <PageConflictPanel name="P" path={PATH} />, root);
+    await tick();
+    const panel = () => root.querySelector(".page-conflict") as HTMLElement | null;
+    // 1. The save conflict's review comes first, and says the copy comes next.
+    expect(panel()?.dataset.source).toBe("live-save");
+    expect(root.textContent).toContain("Another version of this page also arrived");
+    apply(root);
+    await tick();
+    expect(disk.dto.blocks[0].raw).toBe("mine + theirs");
+    expect(isConflicted("P")).toBe(false);
+    // 2. Then the copy's comparison, against the page as just resolved; its
+    //    Apply goes through the guarded fold instead of refusing.
+    await tick();
+    expect(panel()?.dataset.source).toBe("sync-copy");
+    expect(copyDiff).toHaveBeenCalledWith(PATH, COPY);
+    apply(root);
+    await tick();
+    expect(toasts().map((t) => t.message)).not.toContain("Resolve this page’s save conflict first with the choice in the red bar, then apply this resolution.");
+    expect(fold).toHaveBeenCalledTimes(1);
+    expect(fold.mock.calls[0].slice(0, 5)).toEqual([PATH, COPY, { "0": "both" }, disk.rev, "copy-rev"]);
+    dispose();
+    setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
   });
 });
