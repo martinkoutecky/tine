@@ -1123,8 +1123,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                           // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
                             <Switch fallback={
-                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />}>
-                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
                               </Show>
                             }>
                               <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
@@ -1255,11 +1255,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         <Show
                           when={globalSort()}
                           fallback={
-                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />
+                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
                           }
                         >
                           {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
+                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
                         </Show>
                       }
                     >
