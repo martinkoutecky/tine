@@ -27,6 +27,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
+
+## [0.9.0-beta.2] - 2026-10-30
+
+### Fixed
+
 - Scrolling a long page with an expanded block embed no longer makes the page jump (#810). Scrolling back up past an embed made everything below it jump up by the height of the embed's rows, and jump back when the embed's rows appeared; the embed now keeps the height it had when it scrolled out of view.
 - A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its "Two versions of this page arrived" panel used to hide the review of the unsaved edits, and its Apply only said "Resolve this page’s save conflict first". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display ("This page could not be displayed") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).
 - Ctrl/Cmd+R and F5 no longer reload the whole app on Windows (#797). The webview's built-in reload ran on a stray Ctrl+R, discarded the screen state, and could not be changed in Settings → Keyboard shortcuts. Tine now consumes these keys; while editing, Ctrl/Cmd+R is **Comment on selected text**, which is listed there and can be rebound or cleared, and **Reload window** reloads on request.
@@ -38,7 +44,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Android: tapping a line of a block taller than the space above the keyboard no longer scrolls that line above the top of the screen when the keyboard opens, and after the keyboard resizes the view the edited line is brought back on screen if anything has moved it off (#783). The jump reported with headings between tall photos and videos could not be reproduced on an emulator, so this is not yet confirmed as the whole fix.
 - Fast scrolling through a PDF no longer leaves pages blank for up to a second behind the scroll, a regression in 0.9.0-beta.1 from the pdf.js 5 upgrade. pdf.js 5 gave every glyph of the hidden selectable-text layer its own transformed layer, which the webview repainted on every scroll frame; glyphs that need no stretching or rotation are now drawn untransformed again, as with pdf.js 4, with text selection unchanged (PDF5-SCROLL).
 - The Journals feed opens even when today's journal cannot be created from the default journal template (#811). The feed used to fail as a whole ("Could not load journal feed"), as on Android in 0.9.0-beta.1; now an error says the template was not added and the journals are shown without it.
-- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
+- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it). The 0.1 s fade is kept, but it now runs as an ordinary page animation instead of a compositor opacity animation (an earlier attempt that kept a standing compositing layer did not help on every GPU, so that layer is gone again). Not yet confirmed on the reporter's GPU.
 - PDF pages are now set off by a thin edge line instead of a soft drop shadow. On HiDPI screens without GPU compositing the shadow was re-blurred on every scrolled frame, making scrolling sluggish and leaving pages blank for a second or two during fast scrolling (PDF9-5).
 
 ## [0.9.0-beta.1] - 2026-10-29
