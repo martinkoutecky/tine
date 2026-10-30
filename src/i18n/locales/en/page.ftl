@@ -7,6 +7,7 @@ page-no-journals = No journal entries found in this graph.
 page-no-journals-hint = Make sure you opened a Logseq graph (a folder with <code>journals/</code> + <code>pages/</code>). Use <a>{ page-ui-open-graph }</a>
 page-guide-read-only = Bundled Guide page - read-only and not written to your graph.
 page-ui-could-not-load-journal-feed-it-will-retry-when = Could not load journal feed. It will retry when the view refreshes.
+page-ui-journal-template-not-applied = Couldn't add the journal template to today's page: { $error } Your journals are shown without it; Tine tries again when the journals refresh.
 page-ui-tine-did-not-modify-the-file-try-reopening-or = Tine did not modify the file. Try reopening, or check the file on disk.
 page-ui-loading-page = Loading page…
 page-ui-open-graph = Open graph…

@@ -187,6 +187,9 @@ mod og_differential_rename_merge;
 #[path = "og_gh609_case_rename.rs"]
 mod og_gh609_case_rename;
 
+#[path = "gh811_graph_volume_save.rs"]
+mod gh811_graph_volume_save;
+
 #[path = "og_gh651_nested_task_rows.rs"]
 mod og_gh651_nested_task_rows;
 
