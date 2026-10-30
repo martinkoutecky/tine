@@ -126,8 +126,12 @@ function probe(id: string, kind: Kind) {
     return { el: el.tagName.toLowerCase() + "." + [...el.classList].filter(k => !k.startsWith("cm-")).join("."), x: +(q.left - r.left).toFixed(2), y: +(q.top - rowRect.top).toFixed(2), w: +q.width.toFixed(2), h: +q.height.toFixed(2),
       text: (el.textContent || "").slice(0, 30), color: c.color, bg: c.backgroundColor, fontSize: c.fontSize, fontWeight: c.fontWeight, fontStyle: c.fontStyle, deco: c.textDecorationLine, border: c.borderTopWidth + " " + c.borderTopColor, radius: c.borderTopLeftRadius, pad: c.paddingLeft + "/" + c.paddingTop, family: c.fontFamily.slice(0, 24), display: c.display };
   });
+  // CM6's own caret of an EMPTY document (CM6-EMPTYCARET): present, shown and as tall as text, left edge on the line.
+  const dc = kind === "cm6" || kind === "cm6end" ? row.querySelector(".cm6-empty-caret") as HTMLElement | null : null;
+  const drawnCaret = dc ? (q => ({ x: +(q.left - r.left).toFixed(2), y: +(q.top - rowRect.top).toFixed(2), w: +q.width.toFixed(2), h: +q.height.toFixed(2),
+    shown: getComputedStyle(dc.parentElement!).display !== "none", native: getComputedStyle(box).caretColor }))(dc.getBoundingClientRect()) : null;
   return {
-    chips, inl,
+    chips, inl, drawnCaret,
     boxH: +r.height.toFixed(2), hostH: +hostRect.height.toFixed(2), childY: +(child.getBoundingClientRect().top - rowRect.top).toFixed(2),
     lineHeight: cs.lineHeight, fontSize: cs.fontSize, cls: box.className, val: (box as HTMLTextAreaElement).value ?? box.textContent!.slice(0, 120),
     lines: [...new Map(lines.map(t => [t.top, t])).values()].sort((a, b) => a.top - b.top),
@@ -163,6 +167,25 @@ Object.assign(window, {
     endEdit("page-navigation"); setCm6EditorEnabled(on); await wait(50);
     startEditing(id, caret);
     await until(on ? `[data-block-id="${id}"] .cm-content` : `[data-block-id="${id}"] textarea.block-editor`); await wait(150);
+  },
+  // The caret of the open editor (CM6-EMPTYCARET): where the browser would paint it, and whether anything could hide it.
+  caretProbe: (id: string) => {
+    const row = document.querySelector(`[data-block-id="${id}"]`)!;
+    const content = row.querySelector(".cm-content") as HTMLElement | null;
+    const sel = window.getSelection();
+    let rect: { x: number; y: number; w: number; h: number } | null = null;
+    if (sel && sel.rangeCount) {
+      const rg = sel.getRangeAt(0).cloneRange();
+      const q = Array.from(rg.getClientRects())[0] ?? rg.getBoundingClientRect();
+      rect = { x: +q.left.toFixed(2), y: +q.top.toFixed(2), w: +q.width.toFixed(2), h: +q.height.toFixed(2) };
+    }
+    const a = document.activeElement as HTMLElement | null;
+    return {
+      focused: !!content && (a === content || content.contains(a)), active: a ? a.tagName + "." + a.className : null,
+      html: content?.outerHTML.slice(0, 400) ?? null, rect, caretColor: content ? getComputedStyle(content).caretColor : null,
+      selInContent: !!(sel && sel.anchorNode && content?.contains(sel.anchorNode)), collapsed: sel?.isCollapsed ?? null,
+      contentRect: content ? (({ left: x, top: y, width: w, height: h }) => ({ x, y, w, h }))(content.getBoundingClientRect()) : null,
+    };
   },
   closeEditor: async () => { endEdit("page-navigation"); await wait(50); },
 });

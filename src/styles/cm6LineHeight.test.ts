@@ -71,3 +71,15 @@ describe("CM6 concealed constructs keep the view's look", () => {
     expect(decl(ruleBody(cm6, ".cm6-preview .block-task-checkbox"), "cursor")).toBe("text");
   });
 });
+
+// CM6-EMPTYCARET: the empty document's own caret is shown (and the native one hidden) only while the document is empty and focused.
+describe("CM6 empty-block caret", () => {
+  it("hides the native caret only while the document is empty", () => {
+    expect(decl(ruleBody(cm6, ".cm6-block-editor .cm-editor.cm6-empty-doc .cm-content"), "caret-color")).toBe("transparent");
+    expect(cm6).toMatch(/\.cm6-empty-doc\.cm-focused \.cm6-empty-caret-layer\s*\{[^}]*display\s*:\s*block/);
+  });
+  it("draws the caret as a left border in the text colour", () => {
+    const caret = ruleBody(cm6, ".cm6-block-editor .cm-editor .cm6-empty-caret");
+    expect(decl(caret, "border-left")).toContain("currentColor");
+  });
+});

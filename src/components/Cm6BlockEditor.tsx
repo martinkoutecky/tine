@@ -7,6 +7,7 @@ import { blockWritable, depthOf, isBlockMoving, node, pageByName, setRaw, type O
 import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { cm6CaretReveal } from "../editor/cm6CaretReveal";
+import { cm6EmptyCaret } from "../editor/cm6EmptyCaret";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
@@ -235,7 +236,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         spellcheck.of(EditorView.contentAttributes.of({ spellcheck: String(spellcheckEnabled()) })),
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
-        keymap.of(defaultKeymap),
+        keymap.of(defaultKeymap), cm6EmptyCaret(),
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); return false; },
           blur: (event, v) => {

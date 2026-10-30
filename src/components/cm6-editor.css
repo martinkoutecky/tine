@@ -38,3 +38,12 @@
    toggle), so it keeps the text cursor and shows no hover tint. */
 .cm6-preview .block-task-checkbox { cursor: text; }
 .cm6-preview .block-task-checkbox:not(.checked):hover { background: none; }
+
+/* Empty document: the caret is drawn by src/editor/cm6EmptyCaret.ts (WebKitGTK paints no native caret in an empty
+   line). The native caret is hidden meanwhile so only one is ever visible; with text it is the native one again. */
+.cm6-block-editor .cm-editor.cm6-empty-doc .cm-content { caret-color: transparent; }
+.cm6-block-editor .cm-editor .cm6-empty-caret-layer { pointer-events: none; display: none; }
+.cm6-block-editor .cm-editor.cm6-empty-doc.cm-focused .cm6-empty-caret-layer { display: block; animation: cm6-caret-blink 1.06s steps(1) infinite; }
+.cm6-block-editor .cm-editor .cm6-empty-caret { position: absolute; border-left: 1px solid currentColor; pointer-events: none; }
+@keyframes cm6-caret-blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes cm6-caret-blink2 { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }

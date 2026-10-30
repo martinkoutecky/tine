@@ -174,3 +174,20 @@ it("renders SCHEDULED and DEADLINE sharing a source line as two chips on the hea
   expect(editor.value()).toBe(raw);
   expect(node("reveal").raw).toBe(raw);
 });
+
+// CM6-EMPTYCARET: WebKitGTK paints no native caret in an empty line, so an empty document gets CM's own caret layer and
+// the native caret is hidden meanwhile; with text the native caret is the only one.
+it("marks an empty document so its own caret layer shows, and unmarks it once there is text", () => {
+  const { root, editor } = mount("");
+  const cm = () => root.querySelector(".cm-editor")!;
+  expect(cm().classList.contains("cm6-empty-doc")).toBe(true);
+  expect(root.querySelector(".cm6-empty-caret-layer"), "the layer exists in the editor").not.toBeNull();
+  editor.type("x");
+  expect(cm().classList.contains("cm6-empty-doc")).toBe(false);
+  expect(editor.value()).toBe("x");
+});
+
+it("does not mark a block that has text", () => {
+  const { root } = mount("text");
+  expect(root.querySelector(".cm-editor")!.classList.contains("cm6-empty-doc")).toBe(false);
+});

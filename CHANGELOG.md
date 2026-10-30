@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - In the experimental CodeMirror editor a code or calculator block no longer shows its fence lines, and its line numbers and language label are visible, so it is as tall as in the view and the textarea editor (UI-CM6-CODEJUMP).
 - `SCHEDULED:` and `DEADLINE:` written on one line show as two date chips with no stray `<date>` text left in the block, in the view and in the experimental CodeMirror editor (UI-CM6-SAMELINE).
 - In the experimental CodeMirror editor a TODO, DOING, NOW, LATER or DONE marker (with or without a `[#A]` priority) is drawn exactly as in the view while the caret is elsewhere: the checkbox keeps its size, border and state colour, the marker chip its place and the gap before it, CANCELED has no box, and the priority reads `[#A]`. A `[[page reference]]` keeps its brackets like the view, so the line no longer narrows when the caret leaves it (UI-CM6-TASKMARKER).
+- In the experimental CodeMirror editor, an empty block (a new block, or one you click into) now shows a blinking caret before you type the first character; on Linux the native caret of an empty CodeMirror line was not painted at some positions on the page, so the editor looked unfocused until a character appeared. The caret of an empty block is now drawn by the editor itself, and the native one takes over as soon as there is text (UI-CM6-EMPTYCARET).
 
 ### Fixed
 

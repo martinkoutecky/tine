@@ -126,6 +126,19 @@ try {
   for (const id of markerIds) { sameChips(id, "cm6end", "CM6 (caret at end)"); compare(id, "cm6end", "CM6 (caret at end)"); }
   // A caret at 0 sits on the marker: its source is shown (D-20261025-CR), so only a priority chip after it is compared (by look, not place).
   for (const id of ["todop", "doingp", "donep"]) sameChips(id, "cm6", "CM6 (caret on the marker)", ["block-task-checkbox", "block-marker"]);
+  // An empty block in CM6 shows a caret (CM6-EMPTYCARET): WebKitGTK paints no native one in an empty line, so CM draws its own, as tall
+  // as text, on the line's left edge, and hides the native one meanwhile. A block with text never draws one.
+  for (const kind of ["cm6", "cm6end"]) {
+    const d = results.empty[kind].drawnCaret;
+    if (!d) bad.push(`empty: ${kind} draws no caret of its own (an empty block would show none in WebKitGTK)`);
+    else {
+      if (!d.shown) bad.push(`empty: ${kind} caret layer is not displayed`);
+      if (d.h < 12) bad.push(`empty: ${kind} caret height ${d.h}`);
+      if (Math.abs(d.x) > 2) bad.push(`empty: ${kind} caret x ${d.x} from the line's left edge`);
+      if (!/rgba?\(0, 0, 0, 0\)|transparent/.test(d.native)) bad.push(`empty: ${kind} native caret is not hidden (${d.native}) while the drawn one shows`);
+    }
+    for (const id of ["plain", "multiline", "todo"]) if (results[id][kind].drawnCaret) bad.push(`${id}: ${kind} draws an empty-block caret in a block with text`);
+  }
   // Every inline element (tags, page refs, links, code, highlights, math, ...) sits and looks the same in CM6 with the caret away.
   for (const id of Object.keys(results).filter(i => i.startsWith("i_"))) {
     compare(id, "cm6end", "CM6 (caret at end)");
