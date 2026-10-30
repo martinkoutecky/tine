@@ -24,7 +24,9 @@ import { pushToast } from "./toasts";
 import { msg, render, renderEnglish, type UiText, type Msg } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
 import { restoreDrawerFocus } from "./mobileDrawers";
+import { isTauri } from "./backend";
 import { zoomReset } from "./zoom";
+import { zoomInOnTarget, zoomOutOneLevel } from "./zoomCommands";
 import { activeWindowId, MAIN_WINDOW_ID, onEachWindow, queryAllWindows } from "./windowRealm";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
@@ -403,6 +405,10 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: msg("command-pane-move-tab-down"), scope: "global", run: () => moveActiveTab("down"), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: msg("command-ui-toggle-theme"), scope: "global", run: toggleTheme },
   { id: "ui/reset-zoom", binding: "", label: msg("command-ui-reset-zoom"), scope: "global", run: zoomReset, global: true },
+  // GH #797: the native webview reload (Ctrl/Cmd+R, F5) is consumed in the app
+  // (see isWebviewReloadChord), so a stray key never reloads Tine.
+  // This is the explicit way to reload, unbound; bind it here to get a reload key.
+  { id: "ui/reload-window", binding: "", label: msg("command-ui-reload-window"), scope: "global", available: () => activeWindowId() === MAIN_WINDOW_ID, run: () => window.location.reload(), global: true },
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: msg("command-ui-toggle-brackets"), scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
@@ -463,6 +469,11 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
+  // GH #799 (OG `:editor/zoom-in` / `:editor/zoom-out`, config.cljs:349-353). Unbound:
+  // OG's non-Mac chords alt+right / alt+left are Tine's Forward / Back, and its Mac
+  // mod+, is Settings. Both go through the router's one zoom path (zoomCommands.ts).
+  { id: "editor/zoom-in", binding: "", label: msg("command-editor-zoom-in"), scope: "global", run: () => { zoomInOnTarget(); }, global: true },
+  { id: "editor/zoom-out", binding: "", label: msg("command-editor-zoom-out"), scope: "global", run: () => { zoomOutOneLevel(); }, global: true },
   { id: "editor/toggle-open-blocks", binding: "t o", label: msg("command-editor-toggle-open-blocks"), scope: "global", run: toggleCurrentPageCollapsed },
   { id: "editor/collapse-all", binding: "", label: msg("command-editor-collapse-all"), scope: "global", run: () => setCurrentPageCollapsed(true), global: true },
   { id: "editor/expand-all", binding: "", label: msg("command-editor-expand-all"), scope: "global", run: () => setCurrentPageCollapsed(false), global: true },
@@ -978,6 +989,16 @@ export interface Command {
   global?: boolean;
 }
 
+/** The webview's own reload chords: Ctrl/Cmd+R, Ctrl/Cmd+Shift+R and F5 (any
+ *  modifier but Alt). WebView2 on Windows reloads the whole app on them, so a stray
+ *  press while using other hotkeys discarded the UI state (GH #797). Tine consumes
+ *  them in the Tauri app and offers the explicit `ui/reload-window` command. */
+export function isWebviewReloadChord(e: KeyboardEvent): boolean {
+  if (e.altKey) return false;
+  if (e.key === "F5" || e.code === "F5") return true;
+  return (e.ctrlKey || e.metaKey) && (e.code === "KeyR" || e.key.toLowerCase() === "r");
+}
+
 /** Install the global shortcut handler, merging config overrides over defaults.
  *  Returns a disposer. */
 export function installKeybindings(overrides: Record<string, string> = {}): () => void {
@@ -1018,6 +1039,10 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     // IME composition owns Escape.  It must not fall through to a transient,
     // shortcut recorder, editor, or pane handler.
     if (e.isComposing || e.keyCode === 229) return;
+    // GH #797: never let the webview reload the app on a stray key. The key still
+    // dispatches below, so a command the user bound to it (the editor's
+    // Comment, or Reload window) runs; with nothing bound it does nothing.
+    if (isTauri() && isWebviewReloadChord(e)) e.preventDefault();
     // Ignore bare modifier presses (incl. Super/Windows).
     if (isModifierKey(e)) return;
 

@@ -2486,6 +2486,29 @@ mod asset_manifest_tests {
         assert!(guide.contains("does not survive quitting"));
     }
 
+    /// GH #807: a reader pressed the filing key (Ctrl+Shift+Enter) in another app and
+    /// expected a capture box. Tine registers no system-wide hotkey; the Guide must say
+    /// so, say what that key is, and give the OS-side setup on every desktop platform.
+    #[test]
+    fn capture_guide_says_there_is_no_builtin_hotkey_and_covers_every_desktop_setup() {
+        let guide = GUIDE_TEMPLATES
+            .iter()
+            .find(|page| page.title == "Features/Quick capture")
+            .unwrap()
+            .markdown;
+        assert!(guide.contains("Tine does not register a system-wide hotkey itself"));
+        assert!(guide.contains("does nothing"));
+        assert!(guide.contains("works *inside* the capture box"));
+        for platform in ["**Linux**", "**Windows**", "**macOS**"] {
+            assert!(guide.contains(platform), "missing setup for {platform}");
+        }
+        assert!(!guide.contains("Set it up (Linux"));
+        assert!(guide.contains("**Shortcut key**"));
+        assert!(guide.contains("` --capture` after the closing quote"));
+        assert!(guide.contains("**Run Shell Script**"));
+        assert!(guide.contains("Show Tine in the system tray"));
+    }
+
     fn collect_guide_asset_refs(markdown: &str, into: &mut std::collections::HashSet<String>) {
         let mut rest = markdown;
         while let Some(i) = rest.find("../assets/") {
