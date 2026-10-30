@@ -3,9 +3,9 @@
 // otherwise make the margin read every block (the GH #248 shape, caught by
 // keystrokeScaling.guard). A comment arrives as a new child block.
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createMemo, createRoot } from "solid-js";
+import { createMemo, createRoot, getOwner } from "solid-js";
 import { initParser, blockRegions } from "./render/parse";
-import { resetStore, setRaw, insertEmptyChildBlock } from "./document";
+import { resetStore, setRaw, insertEmptyChildBlock, indentBlock } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { pageByName } from "./document/model";
 import { commentsWritten, pageHasComment, watchCommentsWritten } from "./margin";
@@ -57,6 +57,34 @@ describe("pageHasComment is structural", () => {
   it("still finds a comment already on the page when it loads", () => {
     loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks: [block("a", "first words", [block("k", "\nquote:: first")])] });
     const w = watch();
+    expect(w.has()).toBe(true);
+    w.dispose();
+  });
+});
+
+describe("pageHasComment at open (BIGLOAD-090b)", () => {
+  it("subscribes to O(1) sources on a 2,000-block page, not one per block", () => {
+    const blocks = Array.from({ length: 1000 }, (_, i) => block(`p${i}`, `parent ${i}`, [block(`c${i}`, `child ${i}`)]));
+    loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks });
+    const page = pageByName("M")!;
+    let owner!: { sources: unknown[] | null };
+    createRoot((dispose) => {
+      const has = createMemo(() => {
+        owner = getOwner() as unknown as { sources: unknown[] | null };
+        watchCommentsWritten();
+        return pageHasComment(page.roots, "md");
+      });
+      expect(has()).toBe(false);
+      expect(owner.sources?.length ?? 0).toBeLessThan(10);
+      dispose();
+    });
+  });
+
+  it("re-asks when the page's structure changes", () => {
+    loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks: [block("a", "first"), block("k", "\nquote:: first")] });
+    const w = watch();
+    expect(w.has()).toBe(false);
+    indentBlock("k", 0);
     expect(w.has()).toBe(true);
     w.dispose();
   });

@@ -1,5 +1,5 @@
 import { type PageKind, type Format } from "../types";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, unwrap } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
@@ -70,17 +70,39 @@ export function hydrateWorkingSet<T>(write: () => T): T {
   hydrating++;
   try { return write(); } finally { hydrating--; }
 }
+// BIGLOAD-090b: the one per-block raw-change notification. A block's raw
+// changes only through setDoc's field form or `writeRaw` inside a producer
+// (rawFunnel.guard.test.ts), so an outline window keeps one listener, not one
+// tracked computation per row. Replacing or removing a node is structure, which
+// readers observe through `node(id)`.
+const rawListeners = new Set<(id: string) => void>();
+let producedRaw: string[] = [];
+/** Calls `fn(id)` after each committed raw write; returns the unsubscribe. */
+export function onBlockRawChanged(fn: (id: string) => void): () => void {
+  rawListeners.add(fn);
+  return () => { rawListeners.delete(fn); };
+}
+/** The only in-place raw assignment, for `setDoc(produce(...))` drafts. */
+export function writeRaw(state: DocState, id: string, raw: string): void {
+  state.byId[id].raw = raw;
+  producedRaw.push(id);
+}
 export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
   const fieldOnly = args.length === 4 && ((args[0] === "byId" && ["raw", "loadedRaw", "collapsed"].includes(String(args[2])))
     || (args[0] === "pages" && ["preBlock", "title"].includes(String(args[2]))));
   batch(() => {
     const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
     try {
+      producedRaw = [];
       (writeDoc as (...args: unknown[]) => void)(...args);
       flushFacetOwners();
+      const rawField = args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string";
+      const changedRaw = rawField ? [args[1] as string] : producedRaw;
+      producedRaw = [];
       untrack(() => {
-        if (args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string") {
-          updateAuthoredIdentity(args[1]);
+        for (const id of changedRaw) for (const listener of rawListeners) listener(id);
+        if (rawField) {
+          updateAuthoredIdentity(args[1] as string);
         } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {
           // Producers can replace/reparent/remove arbitrary nodes. Rebuild on
           // the next lookup, never on ordinary raw-only typing or folding.
@@ -136,6 +158,27 @@ interface AuthoredIdentityPage {
 const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
 clearOnBindingInvalidated(() => authoredIdentityPages.clear());
 const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0);
+/** Moves on every write that can change any page's structure (each setDoc write
+ * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded).
+ * A whole-document question can read nodes untracked and depend on this alone. */
+export const structureRevision = (): number => identityStructureRevision();
+/** Whether `test` holds for some block in the trees under `roots`; stops at the
+ * first. Reads plain nodes untracked and depends on structureRevision alone, so
+ * a whole-page question at open subscribes to nothing per block (BIGLOAD-090b). */
+export function someBlockInTrees(roots: readonly string[], test: (n: ReadonlyNode) => boolean): boolean {
+  structureRevision();
+  return untrack(() => {
+    const byId = unwrap(doc.byId);
+    const visit = (ids: readonly string[]): boolean => {
+      for (const id of ids) {
+        const n = byId[id];
+        if (n && (test(n) || visit(n.children))) return true;
+      }
+      return false;
+    };
+    return visit(roots);
+  });
+}
 
 function updateAuthoredIdentity(id: string): void {
   const node = doc.byId[id];

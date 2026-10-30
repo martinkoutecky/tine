@@ -2,7 +2,7 @@ import { msg } from "../../i18n";
 import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
-import { doc, setDoc, bumpCollapseEpochs } from "../model";
+import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
 import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
@@ -222,9 +222,9 @@ export function cycleSelectionTasks(): boolean {
         // OG cycle-todos! saves through with-timetracking. Reuse the shared
         // old/new-raw transition without adding per-block undo or save work.
         const format = formatForBlock(id);
-        node.raw = cycleMarkerSmart(node.raw, workflow(), format, {
+        writeRaw(state, id, cycleMarkerSmart(node.raw, workflow(), format, {
           format, enabled: timetrackingEnabled(), withSeconds: logbookWithSecondSupport(),
-        }).raw;
+        }).raw);
       }
     })
   );
@@ -375,7 +375,7 @@ export function setSelectionHeading(pointerId: string, state: HeadingState): boo
   const pages = [...new Set(changes.map((change) => change.page))];
   pushUndo("heading-selection", pages);
   setDoc(produce((stateDoc) => {
-    for (const change of changes) stateDoc.byId[change.id].raw = change.raw;
+    for (const change of changes) writeRaw(stateDoc, change.id, change.raw);
   }));
   // No block changes page: one independent edit per page (STEP3 §8).
   for (const page of pages) markDirty(page, "save-block");

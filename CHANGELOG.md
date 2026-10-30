@@ -102,6 +102,9 @@ Outside the model: torn reads while another program writes; other programs' in-p
 
 ### Fixed
 
+- Opening a large page no longer sets up one height observer per block; each outline window keeps one, so large pages open faster (development-only regression; REG-BIGLOAD-090B-WINDOW-RAW-FUNNEL).
+- Opening a large page no longer makes the comment margin watch every block to decide whether the page has comments (development-only regression; REG-BIGLOAD-090B-MARGIN-SCAN-UNTRACKED).
+- Settings opens with its full tab list: the Sharing tab no longer appears a moment later and pushes Plugins and the tabs below it down under the pointer, so a quick click no longer opens the tab above the one aimed at (UI-SETTINGS-SHARING-TAB-SHIFT).
 - Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
 - The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
@@ -152,6 +155,7 @@ Development-only fixes (not shipped in a release):
 
 - Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
 - **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
+- Opening a large page no longer asks each of its blocks whether the page is read-only; window sizing asks once per page (development-only regression; REG-BIGLOAD-090-READONLY-PER-PAGE).
 
 ## [0.8.2] - 2026-10-29
 

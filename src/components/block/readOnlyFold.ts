@@ -24,6 +24,18 @@ export const readOnlyFold: CollapseSurfaceApi = {
 export const viewFoldSurface = (id: string, inherited: CollapseSurfaceApi | null) =>
   blockPageReadOnly(id) ? readOnlyFold : inherited;
 
+/** `viewFoldSurface` for one pass over an outline (window sizing, height
+ * estimates): read-only belongs to the page, so a pass asks it once per page,
+ * not once per block of a 2000-block page (BIGLOAD-090). Make one per pass. */
+export function pageFoldSurfaces(inherited: CollapseSurfaceApi | null): (id: string, page: string) => CollapseSurfaceApi | null {
+  const byPage = new Map<string, CollapseSurfaceApi | null>();
+  return (id, page) => {
+    let surface = byPage.get(page);
+    if (surface === undefined) byPage.set(page, surface = viewFoldSurface(id, inherited));
+    return surface;
+  };
+}
+
 export function toggleViewFold(id: string, surface: CollapseSurfaceApi | null, current: boolean) {
   if (surface) surface.toggle(id, current);
   else toggleCollapse(id);

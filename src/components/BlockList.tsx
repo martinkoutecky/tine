@@ -11,8 +11,8 @@
  * descendant ids for model-driven reveal; callers provide only ids.
  */
 import { For, Show, batch, createEffect, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, node } from "../document";
-import { readOnlyFold } from "./block/readOnlyFold";
+import { node } from "../document";
+import { pageFoldSurfaces } from "./block/readOnlyFold";
 import { editingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
@@ -116,10 +116,11 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
     if (ids.length <= 1) return plain(ids);
     // A shallow list can still own thousands of expanded descendants. Weight
     // groups by rendered subtree size, capped at the small-list threshold.
+    const foldSurface = pageFoldSurfaces(collapseSurface);
     const size = (id: string): number => {
       const n = node(id);
       let count = 1;
-      if (n && !((blockPageReadOnly(id) ? readOnlyFold : collapseSurface)?.collapsed(id, n.collapsed) ?? n.collapsed)) for (const child of n.children) {
+      if (n && !(foldSurface(id, n.page)?.collapsed(id, n.collapsed) ?? n.collapsed)) for (const child of n.children) {
         count += size(child);
         if (count > WINDOW_AT) break;
       }
@@ -188,14 +189,16 @@ function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
 function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (near: boolean) => void) => () => void }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
-  const collapsed = (id: string, stored: boolean) =>
-    (blockPageReadOnly(id) ? readOnlyFold : collapseSurface)?.collapsed(id, stored) ?? stored;
+  const folds = () => {
+    const foldSurface = pageFoldSurfaces(collapseSurface);
+    return (id: string, page: string, stored: boolean) => foldSurface(id, page)?.collapsed(id, stored) ?? stored;
+  };
   const cacheKey = () => `${surface}\0${props.width}\0${props.font}\0${props.ids()[0]}`;
   let host!: HTMLDivElement;
   const [near, setNear] = createSignal(props.first || typeof IntersectionObserver === "undefined");
   const [forced, setForced] = createSignal(false);
   const [height, setHeight] = createSignal(0);
-  const model = createOutlineWindowModel(props.ids, collapsed);
+  const model = createOutlineWindowModel(props.ids, folds);
   const geometry = createOutlineWindowGeometry(model, () => props.width, () => props.font);
   const active = () => {
     const id = editingId();
