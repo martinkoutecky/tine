@@ -473,9 +473,17 @@ export class HostClient {
     const page = this.pages.get(ticket.name);
     if (!page?.on || page.editSeq !== ticket.editSeq || page.version !== ticket.version
       || this.doc.facts(ticket.name)?.instance !== ticket.instance || this.session !== ticket.session) return "review-stale";
-    this.doc.install(page.name, { kind: "page", dto: merged });
+    // Host text held back during the conflict is the disk the user just
+    // reviewed (or older): the merge supersedes it. Drop it and count the merge
+    // as input BEFORE installing, so a hold released while the page re-renders
+    // (a draft pin's cleanup) cannot put that text back over the merge (GH #800:
+    // the window showed the pre-merge file while the host wrote the merge). A
+    // disk that moved since the review refuses this submit; the conflict stays
+    // and the next review reads the disk afresh.
+    page.held = null;
     page.editSeq += 1;
     this.editClock += 1;
+    this.doc.install(page.name, { kind: "page", dto: merged });
     return this.request(page, "submit", (id) =>
       this.host.submit(this.session, id, page.key!, merged, ticket.version ?? STALE_VERSION, ticket.disk, ["replace-page"]));
   }
