@@ -245,6 +245,12 @@ mod journal_guide_tests {
         assert!(reference.contains("Page results offer the same right-click menu"));
         assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
         assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+        // GH #796: where a plain click or Enter opens a Search-tab result is a setting.
+        assert!(reference.contains("**Settings → Editor → Advanced → Search results open in**"));
+        assert!(reference.contains("**New tab** is the default"));
+        assert!(
+            tips.contains("**Settings → Editor → Advanced → Search results open in → This tab**")
+        );
     }
 
     #[test]
@@ -937,7 +943,7 @@ mod rename_guide_tests {
             "Tine pushes and pulls only with a sync option",
             "**Commit and sync on demand** and **Commit and sync automatically**",
             "press **Sync now**",
-            "**Diverged** means this device and the remote both have commits",
+            "When this device and the remote **both have new commits**",
             "Tine then stops syncing and changes nothing",
             "Merging inside Tine comes later",
             "press **Sign in**",
@@ -949,14 +955,20 @@ mod rename_guide_tests {
             "When you come back to Tine, **Commit and sync automatically** syncs at once",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
+            "Tine offers **Remove the stale lock**",
+            "a notice (and Settings) offers **Remove the stale lock**",
+            "never removes a lock by itself",
             "from 1 to 1440 minutes",
             "run `git init` on a computer, or use a git app on a phone",
             "Tine never creates or clones a repository",
             "the branch Tine commits to and the last commit",
             "Last attempt failed",
             "Git cleanup is waiting; commits continue. Tine will retry automatically.",
-            "adds `.syncthing.*` to the graph folder's `.gitignore` once",
-            "You can remove the line; Tine will not add it again",
+            "`.syncthing.*` for Syncthing's temporary files, and `logseq/.tine-*` for Tine's own files for this device",
+            "You can remove a line; Tine will not add it again",
+            "Tine's commits always exclude Syncthing temporary files and Tine's own files",
+            "removes them from git (not from disk) in a separate commit",
+            "a sync never writes another device's copies",
             "conflict copies (`*.sync-conflict-*`) are still committed",
         ] {
             assert!(
@@ -977,6 +989,11 @@ mod rename_guide_tests {
             "invisible until it is committed",
             "Your own commits never count",
             "A block was removed here",
+            "**Previous change** and **Next change**",
+            "step through them in page order",
+            "“3 of 12”",
+            "never put a block into edit mode",
+            "**Next change since you last looked**",
             "**Mark page seen**",
             "**Mark whole graph seen**",
             "**Forget seen state**",

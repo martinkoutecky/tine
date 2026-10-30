@@ -39,9 +39,8 @@ fn prepare_ignore(app: &tauri::AppHandle, slot: &GraphSlot, settings: GitSetting
     if !settings.policy.commits() {
         return;
     }
-    let result = crate::graph::checkpoint_app_data(app)
-        .ok_or_else(|| "no app-data directory for remembering the attempt".to_owned())
-        .and_then(|dir| autocommit::prepare_syncthing_ignore(&slot.store, &slot.root_key, &dir));
+    let app_data = crate::graph::checkpoint_app_data(app);
+    let result = autocommit::prepare_git_ignore(&slot.store, &slot.root_key, app_data.as_deref());
     autocommit::report_ignore_setup(&slot.root_key, result);
 }
 
@@ -60,10 +59,31 @@ pub(crate) fn autocommit_status(app: &tauri::AppHandle, slot: &GraphSlot) -> Git
 /// persists, and only while a sync option is chosen. Reads the worker's
 /// state, never the repository, so every window may poll it.
 pub(crate) fn sync_notice(app: &tauri::AppHandle, slot: &GraphSlot) -> Option<SyncStatus> {
-    if !read(app, &slot.root_key).policy.syncs() {
+    notice_for(read(app, &slot.root_key).policy, &slot.root_key)
+}
+
+/// [`sync_notice`] for a policy. A stale `index.lock` Tine offers to remove
+/// (row `stale-lock`) shows under every committing policy, since commits
+/// wait on it too, and before any sync row (a `busy` row has the same cause).
+pub(crate) fn notice_for(policy: Policy, root: &Path) -> Option<SyncStatus> {
+    let last = autocommit::last_attempt(root);
+    if policy.commits() {
+        if let Some(offer) = last.stale_lock_offer {
+            return Some(SyncStatus {
+                code: Some("stale-lock".into()),
+                message: None,
+                path: Some(offer.path.clone()),
+                persistent: true,
+                line_endings: None,
+                stale_lock: Some(offer),
+                ..last.sync
+            });
+        }
+    }
+    if !policy.syncs() {
         return None;
     }
-    Some(autocommit::last_attempt(&slot.root_key).sync).filter(|s| s.persistent)
+    Some(last.sync).filter(|s| s.persistent)
 }
 
 /// "Sync now": commit pending changes, then one sync cycle, on the graph's
@@ -91,6 +111,23 @@ pub(crate) fn disable_line_endings(
     if settings.policy.syncs() {
         autocommit::request_sync(&slot.root_key);
     }
+    Ok(status(app, &slot.root_key, settings))
+}
+
+/// "Remove the stale lock" (GS-LOCK): remove the `index.lock` offered as
+/// `token` after rechecking it ([`crate::owner::git_stale_lock::remove`]),
+/// then let the worker commit (and sync) at once.
+pub(crate) fn remove_stale_lock(
+    app: &tauri::AppHandle,
+    slot: &GraphSlot,
+    token: &str,
+) -> Result<GitStatus, String> {
+    slot.store
+        .check_graph_root()
+        .map_err(|e| format!("{e:?}"))?;
+    crate::owner::git_stale_lock::remove(&slot.root_key, token).map_err(|why| why.message())?;
+    let settings = read(app, &slot.root_key);
+    autocommit::lock_removed(&slot.root_key, settings.policy.syncs());
     Ok(status(app, &slot.root_key, settings))
 }
 
@@ -205,6 +242,16 @@ pub(crate) async fn git_disable_line_endings(
 }
 
 #[tauri::command]
+pub(crate) async fn git_remove_stale_lock(
+    token: String,
+    app: tauri::AppHandle,
+    state: crate::state::GraphContext<'_>,
+) -> Result<GitStatus, String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    crate::state::off_ui(move || remove_stale_lock(&app, &slot, &token)).await
+}
+
+#[tauri::command]
 pub(crate) async fn git_sync_notice(
     app: tauri::AppHandle,
     state: crate::state::GraphContext<'_>,
@@ -271,6 +318,7 @@ mod tests {
             "git_identity",
             "git_pull",
             "git_run",
+            "git_stale_lock",
             "git_sync",
             "git_sync_cycle",
             "seen",

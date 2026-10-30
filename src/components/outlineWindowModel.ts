@@ -1,20 +1,22 @@
-import { createComputed, createMemo, createSignal } from "solid-js";
-import { node } from "../document";
+import { createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import { node, onBlockRawChanged } from "../document";
 import { clearOnBindingInvalidated } from "../binding";
 
-type Collapsed = (id: string, stored: boolean) => boolean;
+/** Makes one pass's fold answer: `(id, page, stored) => folded`. */
+type Folds = () => (id: string, page: string, stored: boolean) => boolean;
 
 /** Membership observes structure alone. Hidden descendants still participate in
  * reveal registration, but never contribute to the spacer's estimated height. */
-export function createOutlineWindowModel(ids: () => readonly string[], collapsed: Collapsed) {
+export function createOutlineWindowModel(ids: () => readonly string[], folds: Folds) {
   return createMemo(() => {
+    const collapsed = folds();
     const all: string[] = [];
     const rows: { id: string; depth: number; visible: boolean }[] = [];
     const structure: string[] = [];
     const visit = (id: string, depth: number, visible: boolean) => {
       const n = node(id);
       if (!n) return;
-      const folded = collapsed(id, n.collapsed);
+      const folded = collapsed(id, n.page, n.collapsed);
       all.push(id);
       rows.push({ id, depth, visible });
       structure.push(id, String(depth), String(folded));
@@ -38,30 +40,38 @@ function contentVersion(n: object, raw: string): number {
   return next;
 }
 
-/** One observer per member; an edit adjusts one height contribution and one
- * version. Work scales with the edited text, never the number of descendants.
- * Structure/font/width changes rebuild contributions under this memo's owner;
- * Solid disposes the old observers with it. No document writes. */
+/** One pass per structure/font/width change, then one raw-change listener per
+ * window (BIGLOAD-090b): an edit adjusts one height contribution and one
+ * version, so work scales with the edited text, never the number of rows.
+ * The listener goes with this memo's owner, so stale geometry stops updating.
+ * No document writes. */
 export function createOutlineWindowGeometry(
   model: ReturnType<typeof createOutlineWindowModel>, width: () => number, font: () => string,
 ) {
   return createMemo(() => {
     const current = model(), w = width(), f = font();
-    const [estimate, setEstimate] = createSignal(0);
-    const [version, setVersion] = createSignal(0);
-    for (const row of current.rows) {
-      let previousHeight = 0;
-      createComputed(() => {
-        const n = node(row.id);
-        if (!n) return;
-        const raw = n.raw;
-        const nextHeight = row.visible ? estimateRowHeight(raw, w - row.depth * 20, f) : 0;
-        setEstimate(total => total + nextHeight - previousHeight);
-        previousHeight = nextHeight;
-        const nextVersion = contentVersion(n, raw);
-        setVersion(value => Math.max(value, nextVersion));
-      });
-    }
+    const rowOf = new Map<string, number>();
+    const heights: number[] = [];
+    const height = (i: number, raw: string) => current.rows[i].visible ? estimateRowHeight(raw, w - current.rows[i].depth * 20, f) : 0;
+    let total = 0, top = 0;
+    untrack(() => current.rows.forEach((row, i) => {
+      rowOf.set(row.id, i);
+      const n = node(row.id);
+      heights[i] = n ? height(i, n.raw) : 0;
+      total += heights[i];
+      if (n) top = Math.max(top, contentVersion(n, n.raw));
+    }));
+    const [estimate, setEstimate] = createSignal(total);
+    const [version, setVersion] = createSignal(top);
+    onCleanup(onBlockRawChanged((id) => {
+      const i = rowOf.get(id), n = node(id);
+      if (i === undefined || !n) return;
+      const next = height(i, n.raw);
+      if (next !== heights[i]) setEstimate(value => value + next - heights[i]);
+      heights[i] = next;
+      const nextVersion = contentVersion(n, n.raw);
+      setVersion(value => Math.max(value, nextVersion));
+    }));
     return { estimate, version };
   });
 }

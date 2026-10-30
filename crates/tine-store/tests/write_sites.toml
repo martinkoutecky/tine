@@ -83,13 +83,13 @@ note = "Only publish_move's source-identity/parent checks plus the unlisted same
 mutations = "atomic_file::rename_replace=1"
 
 [[site]]
-file = "src-tauri/src/owner/git_autocommit.rs"
-fn = "append_syncthing_ignore"
+file = "src-tauri/src/owner/git_ignore_setup.rs"
+fn = "append_git_ignore"
 domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
 oracle = false
-note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
+note = "D-20261026-GI, D-20261029-GT: fixed root .gitignore only (appends .syncthing.* and logseq/.tine-*, each once per device, in one write), through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
 mutations = ".commit=1, .create=1"
 
 [[site]]
@@ -111,6 +111,16 @@ test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fas
 oracle = false
 note = "ADR 0078 §4 rev 2 step 3: plan one non-page pulled file per store transaction (revision-guarded replace from H's bytes, no-replace create, trash), validate before any host publication, then commit in apply; config.edn validates and reloads through the transaction's own config path."
 mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "apply_pull"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fast_forward"
+oracle = false
+note = "ADR 0078 §4 rev 2 step 3 (SB1-GITSYNC census): commit each non-page transaction plan_other built and validated. The commit is the store's audited transaction path (base-revision guard, temp + fsync + rename, trash for deletions); a refusal after page publications is a late refusal that names partial progress. Index and ref moves are IndexLock::install and Repo::advance."
+mutations = ".commit=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_pull.rs"
@@ -1981,8 +1991,18 @@ domain = "dotgit"
 guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
 oracle = false
-note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
-mutations = ".commit=1, .write_tree_to=1"
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain. D-20261029-GT: a second commit object, the untrack commit (tracked logseq/.tine-* removed), is written on the tip only together with a real change; each commit is preceded by its own check_git."
+mutations = ".commit=2, .write_tree_to=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "without_tine_own"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#committed_own_files_are_untracked_in_their_own_commit_with_the_next_change"
+oracle = false
+note = "D-20261029-GT: writes the graph's logseq tree object without its .tine-* entries (autocommit's untrack commit, and the pull's H/U comparison); check_git before the write, the rest through Repo::tree_with. Object writes only: no ref, index or work-tree write."
+mutations = ".write=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"
@@ -1993,6 +2013,16 @@ test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirecte
 oracle = false
 note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
 mutations = ".blob_writer=1, .commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync.rs"
+fn = "Operation::fetch_locked"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_sync/transport_tests.rs#file_fetch_updates_only_tracking_ref_and_preserves_dirty_worktree_and_index"
+oracle = false
+note = "ADR 0078 fetch (SB1-GITSYNC census): under index.lock, an anonymous remote downloads exactly the tracked branch (libgit2 writes the pack under .git/objects/pack), then the tracking ref moves by Git's ref lock with old-oid comparison. check_ref runs check_git on the tracking ref before the download and again after network IO; no FETCH_HEAD, tags, HEAD, index or work-tree write. libgit2's internal pack write is not containment-checked per syscall (same limit as Repo::advance)."
+mutations = ".download=1, .reference=1, .reference_matching=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
@@ -2073,3 +2103,33 @@ test = "src-tauri/src/owner/git_sync/line_endings.rs#crlf_fix_overrides_inherite
 oracle = false
 note = "D-20261028-CRLF: explicit user repair only. RUN_LOCK and index.lock protect a repeated raw-byte probe; bound common-dir config and config.lock containment checks precede libgit2's locked local-config replace. No graph, index or ref publication; a crash leaves conversion enabled or disabled, both safe for the checked bytes. Included/global/system files are never written."
 mutations = ".set_bool=1, .set_multivar=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run/index_lock_identity.rs"
+fn = "IndexLockIdentity::capture_new"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#index_lock_identity_failure_leaves_no_lock_behind"
+oracle = false
+note = "GS-LOCK-FIX2: called only by IndexLock::acquire right after its guard-checked create_new; a failed identity read removes that just-created, still-empty index.lock (it is Tine's own), so no lock is left behind. No other path."
+mutations = "fs::remove_file=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run/index_lock_identity.rs"
+fn = "IndexLockIdentity::matches_path"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_mobile_tests.rs#an_index_lock_replaced_while_tine_held_it_is_never_installed_or_deleted"
+oracle = false
+note = "GS-LOCK-FIX1: read-only Windows ownership probe of the guard-checked index.lock entry, opened without following reparse points. The census counts OpenOptions without write/create. No content mutation; compare the volume serial and file ID with the held handle before install/unlink. Missing/unavailable/mismatched identity refuses. Unix uses symlink_metadata; Windows runtime acceptance pending."
+mutations = "OpenOptions::new=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_stale_lock.rs"
+fn = "remove_within"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_mobile_tests.rs#a_lock_replaced_between_check_and_move_is_linked_back_never_deleted"
+oracle = false
+note = "D-20261029-GSL: explicit click only, under RUN_LOCK, on the guard-checked index.lock and same-gitdir aside path. Recheck regular empty stale lock and offered times; rename aside, verify the moved token, then delete. A changed replacement is hard-linked back without replacing another lock; failed restoration preserves the named aside file. Crash may leave an aside file; no graph/index/ref write. Frozen third-party holders, clock skew and native check-to-call limits are documented in storage-contract I-8."
+mutations = "fs::hard_link=1, fs::remove_file=2, fs::rename=1"

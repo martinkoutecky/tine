@@ -258,6 +258,7 @@ impl<'ast> Visit<'ast> for Mutations {
                     | "write"
                     | "set_bool"
                     | "set_multivar"
+                    | "download"
             ))
             || (method == "write" && !node.args.is_empty())
             || matches!(
@@ -470,6 +471,7 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
                 break;
             }
         }
+        let git2_use = regex::Regex::new(r"\bgit2\b").unwrap();
         for file in sources {
             if test_modules.iter().any(|path| file.starts_with(path)) {
                 continue;
@@ -477,10 +479,15 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
             let source = fs::read_to_string(&file).unwrap();
             let syntax =
                 syn::parse_file(&source).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+            // Every production file that names git2 (or lives in the git
+            // owner family) is scanned for libgit2 mutators: SB1-GITSYNC found
+            // fetch and the pull apply missing while only three files were.
+            let git_family = file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("git_"));
             let mut scan = Mutations {
-                git_metadata: file.ends_with("owner/git_run.rs")
-                    || file.ends_with("owner/git_autocommit.rs")
-                    || file.ends_with("owner/git_sync/line_endings.rs"),
+                git_metadata: git_family || git2_use.is_match(&source),
                 ..Mutations::default()
             };
             scan.visit_file(&syntax);

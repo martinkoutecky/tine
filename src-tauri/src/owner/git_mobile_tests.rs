@@ -544,8 +544,10 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
             remote_locks += 1;
             fs::remove_file(lock).unwrap();
         }
-        // ADR 0078 §1: Tine never removes a lock; the next commit is busy
-        // and Settings names the lock until the person removes it.
+        // ADR 0078 §1: Tine never removes a lock unasked; the next commit is
+        // busy and Settings names the lock until the person removes it. An
+        // `index.lock` a kill left is Tine's own, empty one (GS-LOCK's second
+        // condition), and once it is old, the click removes it.
         for _ in 0..4 {
             let next = commit_now(&phone.root, MESSAGE);
             if next != Err(Unusable::Busy) {
@@ -563,7 +565,30 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
             *stale_locks
                 .entry(lock.file_name().unwrap().to_string_lossy().into_owned())
                 .or_insert(0) += 1;
-            fs::remove_file(lock).unwrap();
+            if lock.file_name() == Some(std::ffi::OsStr::new("index.lock")) {
+                assert_eq!(
+                    fs::metadata(&lock).unwrap().len(),
+                    0,
+                    "killed after {delay} ms: a non-empty index.lock on {volume}"
+                );
+                let later = SystemTime::now() + STALE_AFTER;
+                let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+                let offer = stale_lock::assess(&phone.root, later)
+                    .unwrap_or_else(|| panic!("killed after {delay} ms: not offered"));
+                drop(_run);
+                assert_eq!(
+                    stale_lock::remove_within(
+                        &phone.root,
+                        &offer.token,
+                        Duration::from_secs(60),
+                        later
+                    ),
+                    Ok(Removed::Removed),
+                    "killed after {delay} ms on {volume}"
+                );
+            } else {
+                fs::remove_file(lock).unwrap();
+            }
         }
         // The next holder of the index lock removes a killed index copy.
         let leftovers = assert_whole(&phone.repo, "after the next commit");
@@ -856,6 +881,879 @@ fn commit_only_never_pushes_from_the_background() {
     assert!(
         crate::owner::git_sync::push_pending(&phone.root),
         "the commit waits for a sync the person starts"
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// The `logseq/.tine-*` paths `commit`'s tree holds.
+fn tine_own_in(repo: &Repository, commit: Oid) -> Vec<String> {
+    let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+    let mut own = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        let path = format!("{dir}{}", entry.name().unwrap());
+        if path.starts_with("logseq/.tine-") && entry.kind() == Some(git2::ObjectType::Blob) {
+            own.push(path);
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .unwrap();
+    own
+}
+
+/// REG-SB1-GIT-TINE-OWN-TRASH (D-20261029-GT): a pulled deletion leaves this
+/// device's trash copy on disk; the next pull's pre-pull autocommit must not
+/// commit it and turn the fast-forward into `diverged`.
+#[test]
+fn a_pulled_deletion_does_not_make_the_next_pull_diverge() {
+    let phone = Phone::new();
+    let slot = phone.slot();
+    phone.peer_pushes(&[("pages/gone.md", None)]);
+    assert_eq!(cycle(&slot, &credentials()).code, "pulled");
+    assert!(
+        phone.root.join("logseq/.tine-trash").is_dir(),
+        "the pulled deletion keeps its bytes in this device's trash"
+    );
+    let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
+    let next = cycle(&slot, &credentials());
+    assert_eq!(next.code, "pulled", "{next:?}");
+    assert_eq!(head(&phone.repo), theirs);
+    assert_eq!(tine_own_in(&phone.repo, theirs), Vec::<String>::new());
+    assert!(
+        phone.root.join("logseq/.tine-trash").is_dir(),
+        "the trash stays on disk"
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// REG-SB1-GIT-TINE-OWN-TRASH: another Tine device (one that committed its
+/// trash) pushes a deletion with its trash copy; this device's pull lands
+/// without writing that copy, and its next commit untracks it in a commit of
+/// its own.
+#[test]
+fn another_devices_trash_copy_does_not_stop_the_pull() {
+    let phone = Phone::new();
+    let slot = phone.slot();
+    let laptop_trash = "logseq/.tine-trash/pages/20261029T000000Z__c.md";
+    let theirs = phone.peer_pushes(&[("pages/c.md", None), (laptop_trash, Some("- lower case\n"))]);
+    let next = cycle(&slot, &credentials());
+    assert_eq!(next.code, "pulled", "{next:?}");
+    assert_eq!(head(&phone.repo), theirs);
+    assert!(!phone.root.join("pages/c.md").exists());
+    assert!(
+        !phone.root.join(laptop_trash).exists(),
+        "a pull never writes Tine's own files"
+    );
+    // Nothing is staged under the published HEAD (the index's own entries
+    // are the pulled commit's), and a no-op autocommit keeps it that way.
+    let staged = |repo: &git2::Repository| {
+        let mut index = repo.index().unwrap();
+        index.read(true).unwrap();
+        index.write_tree().unwrap()
+    };
+    let theirs_tree = phone.repo.find_commit(theirs).unwrap().tree_id();
+    assert_eq!(
+        staged(&phone.repo),
+        theirs_tree,
+        "nothing staged after the pull"
+    );
+    assert_eq!(commit_now(&phone.root, MESSAGE).unwrap(), Outcome::Clean);
+    assert_eq!(head(&phone.repo), theirs);
+    assert_eq!(
+        staged(&phone.repo),
+        theirs_tree,
+        "nor after a no-op autocommit"
+    );
+
+    // The next commit with a real change first untracks the laptop's copy.
+    phone.edit("pages/a.md", "- edited here\n");
+    let Ok(Outcome::Committed(mine)) = commit_now(&phone.root, MESSAGE) else {
+        panic!("the edit is committed");
+    };
+    assert_eq!(tine_own_in(&phone.repo, mine), Vec::<String>::new());
+    let mine = phone.repo.find_commit(mine).unwrap();
+    assert_eq!(mine.message().ok(), Some(MESSAGE));
+    let untrack = mine.parent(0).unwrap();
+    assert_eq!(untrack.message().ok(), Some(UNTRACK_MESSAGE));
+    assert_eq!(untrack.parent_id(0).unwrap(), theirs);
+    assert_eq!(
+        staged(&phone.repo),
+        mine.tree_id(),
+        "nothing staged after it"
+    );
+    assert_eq!(cycle(&slot, &credentials()).code, "pushed");
+    assert_eq!(phone.remote_tip(), mine.id());
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// A bound graph after a restart: a fresh Store and page host on the same
+/// app data, as the next launch has.
+fn restarted(root: &Path, app_data: &Path) -> GraphSlot {
+    let store = Arc::new(Store::open(root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let mut slot = GraphSlot::new(store.clone(), root.to_path_buf());
+    let host = PageHost::start_for_tests(&store, app_data).unwrap();
+    *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
+    slot
+}
+
+/// The child half of the pull kill test: one sync cycle (fetch, pull through
+/// the page host, index, ref), unless the parent ends this process first.
+fn pull_until_killed(root: &Path, app_data: &Path, marks: &Path) {
+    crate::owner::git_run::configure_libgit2();
+    let slot = restarted(root, app_data);
+    fs::write(marks.join("ready"), "").unwrap();
+    // A process that exited right after a finished pull (the previous
+    // child) can leave that operation's draft vehicle, which the host
+    // retires after the pull answers: this launch recovers it as unsaved
+    // input and holds the pull until it is saved, as a resume may.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut done = cycle(&slot, &credentials());
+    while done.code.starts_with("pull-held") && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+        done = cycle(&slot, &credentials());
+    }
+    if let Some(path) = &done.path {
+        fs::write(marks.join("path"), path).unwrap();
+    }
+    fs::write(marks.join("done"), done.code).unwrap();
+}
+
+const PULL_KILL_PAGES: usize = 150;
+
+/// Version `i` of the laptop's commit: every numbered page rewritten, the
+/// asset rewritten, `moving` renamed, and `extra` deleted (odd `i`) or
+/// created (even `i`). Version 0 creates them all.
+fn pull_kill_changes(i: usize) -> Vec<(String, Option<String>)> {
+    let mut changes: Vec<(String, Option<String>)> = (0..PULL_KILL_PAGES)
+        .map(|n| {
+            let filler = "lorem ipsum ".repeat(20);
+            (
+                format!("pages/p{n}.md"),
+                Some(format!("- page {n} version {i}\n- {filler}\n")),
+            )
+        })
+        .collect();
+    changes.push(("assets/data.txt".into(), Some(format!("asset {i}\n"))));
+    if i > 0 {
+        changes.push((format!("pages/moving {}.md", i - 1), None));
+    }
+    changes.push((
+        format!("pages/moving {i}.md"),
+        Some("- a page the laptop renames every time\n".into()),
+    ));
+    changes.push((
+        "pages/extra.md".into(),
+        i.is_multiple_of(2).then(|| format!("- extra {i}\n")),
+    ));
+    changes
+}
+
+#[derive(Debug, Default)]
+struct PullKills {
+    untouched: u32,
+    partial: u32,
+    index_at_u: u32,
+    landed: u32,
+    finished: u32,
+    locks_removed: u32,
+    held_resumes: u32,
+    max_resume_cycles: usize,
+}
+
+/// The OS ends the app in the middle of a pull: during the fetch, between
+/// the page host's publications, during the non-page writes, around the
+/// index and the ref (s3.7 P1/P2 with a real process cut, not a test hook).
+/// The kill is SIGKILL on Unix and TerminateProcess on Windows. After each
+/// one: every pulled path holds whole H or U bytes, the branch is at H or U
+/// and, at U, every changed path and index entry is U's. The next launch
+/// then lands exactly U (no autocommit of the half-applied tree, P3) with
+/// the deleted page's H bytes in the graph trash.
+#[test]
+fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
+    if let Some(root) = std::env::var_os("TINE_GIT_PULL_KILL_CHILD") {
+        let app = std::env::var_os("TINE_GIT_PULL_KILL_APP").unwrap();
+        let marks = std::env::var_os("TINE_GIT_PULL_KILL_MARKS").unwrap();
+        pull_until_killed(Path::new(&root), Path::new(&app), Path::new(&marks));
+        return;
+    }
+    let phone = Phone::new();
+    let volume = describe_volume(phone.root.parent().unwrap());
+    let marks = phone.private.join("marks");
+    fs::create_dir_all(&marks).unwrap();
+    let name = format!(
+        "{}::a_pull_the_os_ends_resumes_to_the_fetched_tip",
+        module_path!().split_once("::").unwrap().1
+    );
+    let blob_at = |repo: &Repository, commit: Oid, path: &str| {
+        let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+        tree.get_path(Path::new(path)).ok().map(|e| e.id())
+    };
+    let on_disk = |path: &str| {
+        let full = phone.root.join(path);
+        full.is_file()
+            .then(|| Oid::hash_file(git2::ObjectType::Blob, &full).unwrap())
+    };
+    // One child per pull: `None` lets it finish, `Some(d)` kills it `d`
+    // after it is ready. Returns its cycle code if it finished.
+    let run = |kill: Option<Duration>| -> (Option<String>, Duration) {
+        for mark in ["ready", "done", "path"] {
+            let _ = fs::remove_file(marks.join(mark));
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+            .env("TINE_GIT_PULL_KILL_CHILD", &phone.root)
+            .env("TINE_GIT_PULL_KILL_APP", &phone.app_data)
+            .env("TINE_GIT_PULL_KILL_MARKS", &marks)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !marks.join("ready").exists() {
+            assert!(Instant::now() < deadline, "the child never started");
+            assert!(child.try_wait().unwrap().is_none(), "the child exited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let started = Instant::now();
+        match kill {
+            Some(delay) => {
+                std::thread::sleep(delay);
+                child.kill().unwrap();
+                child.wait().unwrap();
+            }
+            None => assert!(child.wait().unwrap().success(), "the child failed"),
+        }
+        let elapsed = started.elapsed();
+        (fs::read_to_string(marks.join("done")).ok(), elapsed)
+    };
+    let mut kills = PullKills::default();
+    let mut orphan_temps = std::collections::BTreeSet::new();
+    let mut timing = Duration::ZERO;
+    // Latest kill that left nothing at U; latest that left the branch at H;
+    // earliest that found the branch at U (or the cycle finished).
+    let (mut untouched, mut at_h, mut moved) = (Duration::ZERO, Duration::ZERO, Duration::MAX);
+    let fractions = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2];
+    let (mut bisect_pages, mut bisect_ref) = (0, 0);
+    // Pull times vary between children (a loaded runner), so a later kill
+    // can land earlier in the pull than an earlier, shorter one did: the two
+    // bounds may cross, and the midpoint is then taken the other way round.
+    let mid = |a: Duration, b: Duration| a.min(b) + a.abs_diff(b) / 2;
+    let mut i = 0;
+    loop {
+        let kill = if i < 2 {
+            None
+        } else if i - 2 < fractions.len() {
+            Some(timing.mul_f64(fractions[i - 2]))
+        } else if kills.partial == 0 && bisect_pages < 14 {
+            // Bisect between nothing and landed until a kill lands inside
+            // the page writes (required below).
+            bisect_pages += 1;
+            Some(mid(untouched, moved.min(timing * 2)))
+        } else if kills.landed + kills.index_at_u == 0 && bisect_ref < 8 {
+            // Then try for the barrier, index and ref window (recorded,
+            // not required: it is a few milliseconds wide).
+            bisect_ref += 1;
+            Some(mid(at_h, moved.min(timing * 2)))
+        } else {
+            break;
+        };
+        let h = head(&phone.repo);
+        let changes = pull_kill_changes(i);
+        let borrowed: Vec<(&str, Option<&str>)> = changes
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_deref()))
+            .collect();
+        let u = phone.peer_pushes(&borrowed);
+        let (done, elapsed) = run(kill);
+        if kill.is_none() {
+            let path = fs::read_to_string(marks.join("path")).ok();
+            assert_eq!(
+                done.as_deref(),
+                Some("pulled"),
+                "unkilled pull {i}: {path:?}"
+            );
+            if i == 1 {
+                timing = elapsed;
+            }
+        }
+        let what = format!("pull {i} killed after {kill:?} (done {done:?}) on {volume}");
+
+        // What the killed process left.
+        let repo = Repository::open(&phone.root).unwrap();
+        let leftovers = assert_whole(&repo, &what);
+        let at = head(&repo);
+        assert!(at == h || at == u, "{what}: the branch is at {at}");
+        let index = repo.index().unwrap();
+        let (mut some_u, mut index_u) = (false, false);
+        for (path, _) in &changes {
+            let (bh, bu) = (blob_at(&phone.bare, h, path), blob_at(&phone.bare, u, path));
+            let disk = on_disk(path);
+            assert!(
+                disk == bh || disk == bu,
+                "{what}: {path} holds neither H's nor U's bytes"
+            );
+            let entry = index.get_path(Path::new(path), 0).map(|e| e.id);
+            assert!(entry == bh || entry == bu, "{what}: {path} index entry");
+            if at == u {
+                assert_eq!(disk, bu, "{what}: at U, {path} is not U's");
+                assert_eq!(entry, bu, "{what}: at U, {path}'s index entry");
+            }
+            some_u |= bh != bu && disk == bu;
+            index_u |= bh != bu && entry == bu;
+        }
+        if done.is_some() {
+            kills.finished += 1;
+        } else if at == u {
+            kills.landed += 1;
+        } else if some_u {
+            kills.partial += 1;
+            kills.index_at_u += u32::from(index_u);
+        } else {
+            kills.untouched += 1;
+        }
+        if let Some(delay) = kill {
+            if at == u || done.is_some() {
+                moved = moved.min(delay);
+            } else {
+                at_h = at_h.max(delay);
+                if !some_u {
+                    untouched = untouched.max(delay);
+                }
+            }
+        }
+        // ADR 0078 §1: Tine never removes a lock a killed process left;
+        // the person does, as Settings tells them.
+        for lock in leftovers
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "lock"))
+        {
+            kills.locks_removed += 1;
+            fs::remove_file(lock).unwrap();
+        }
+        drop(index);
+
+        // The next launch resumes and lands exactly U.
+        let slot = restarted(&phone.root, &phone.app_data);
+        let mut codes = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while head(&repo) != u && Instant::now() < deadline {
+            if !codes.is_empty() {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            codes.push(cycle(&slot, &credentials()));
+        }
+        kills.max_resume_cycles = kills.max_resume_cycles.max(codes.len());
+        kills.held_resumes += u32::from(codes.len() > 1);
+        if head(&repo) != u {
+            // Name what the resume committed or left that is neither H's
+            // nor U's (the bytes, or the commit's path list).
+            let mut odd = Vec::new();
+            let at = head(&repo);
+            if at != h {
+                let (ht, at_tree) = (
+                    phone.repo.find_commit(h).unwrap().tree().unwrap(),
+                    repo.find_commit(at).unwrap().tree().unwrap(),
+                );
+                let diff = repo
+                    .diff_tree_to_tree(Some(&ht), Some(&at_tree), None)
+                    .unwrap();
+                for delta in diff.deltas() {
+                    let path = delta.new_file().path().or(delta.old_file().path());
+                    let path = path.unwrap().to_string_lossy().into_owned();
+                    let new = Some(delta.new_file().id()).filter(|id| !id.is_zero());
+                    if new != blob_at(&phone.bare, u, &path) {
+                        odd.push(format!("committed {path} {new:?}"));
+                    }
+                }
+            }
+            for (path, _) in &changes {
+                let (bh, bu) = (blob_at(&phone.bare, h, path), blob_at(&phone.bare, u, path));
+                let disk = on_disk(path);
+                if disk != bh && disk != bu {
+                    let text = fs::read_to_string(phone.root.join(path)).unwrap_or_default();
+                    odd.push(format!("disk {path} {:?}", text.lines().next()));
+                }
+            }
+            panic!("{what}: resumed {codes:?}; neither H nor U: {odd:?}");
+        }
+        // A pull killed inside a page-host operation leaves that operation's
+        // durable custody in app data. The restarted host finishes it first;
+        // until then the pull is held (its page has input, or the store has
+        // not yet seen the host's writes), never diverged or refused.
+        assert!(
+            codes.iter().all(|c| matches!(
+                c.code,
+                "pulled" | "up-to-date" | "pull-held-unsaved" | "pull-held-changed"
+            )),
+            "{what}: resumed {codes:?}"
+        );
+        let index = Repository::open(&phone.root).unwrap().index().unwrap();
+        for (path, _) in &changes {
+            let bu = blob_at(&phone.bare, u, path);
+            assert_eq!(on_disk(path), bu, "{what}: resumed {path}");
+            assert_eq!(index.get_path(Path::new(path), 0).map(|e| e.id), bu);
+        }
+        let dirty: Vec<String> = repo
+            .statuses(Some(git2::StatusOptions::new().include_untracked(true)))
+            .unwrap()
+            .iter()
+            .filter_map(|s| s.path().ok().map(str::to_owned))
+            .filter(|p| !p.starts_with("logseq/.tine-"))
+            .collect();
+        // A publication the kill interrupted leaves its hidden temp file,
+        // as any crash does; autocommit and the watcher skip it.
+        let (temps, dirty): (Vec<String>, Vec<String>) =
+            dirty.into_iter().partition(|p| tine_temp(p));
+        orphan_temps.extend(temps);
+        assert!(dirty.is_empty(), "{what}: resumed with {dirty:?}");
+        assert!(assert_whole(&repo, &what).is_empty(), "{what}: leftovers");
+        if i % 2 == 1 {
+            // The deleted page's H bytes are in the trash (A-TRASH-COUPLED).
+            let kept = format!("- extra {}\n", i - 1);
+            let trash = phone.root.join("logseq/.tine-trash/pages");
+            assert!(
+                fs::read_dir(&trash).unwrap().flatten().any(|e| {
+                    e.file_name().to_string_lossy().ends_with("__extra.md")
+                        && fs::read_to_string(e.path()).ok().as_deref() == Some(kept.as_str())
+                }),
+                "{what}: the deleted page is not in the trash"
+            );
+        }
+        // The cadence commit (the trash copy) and its push, before the
+        // laptop's next commit, as an idle app's interval would.
+        assert!(matches!(
+            commit_now(&phone.root, MESSAGE),
+            Ok(Outcome::Committed(_) | Outcome::Clean)
+        ));
+        let pushed = cycle(&slot, &credentials());
+        assert!(matches!(pushed.code, "pushed" | "up-to-date"), "{pushed:?}");
+        drop(slot);
+        i += 1;
+    }
+    assert!(
+        kills.partial > 0,
+        "no kill landed inside the pull's writes: {kills:?}, one pull takes {timing:?}"
+    );
+    eprintln!(
+        "GIT-PULL-KILL result=PASS pulls={i} pages={PULL_KILL_PAGES} one_pull={timing:?} {kills:?} orphan_temps={} {volume}",
+        orphan_temps.len()
+    );
+}
+
+// ---- a stale index.lock (GS-LOCK) -------------------------------------------------
+
+use crate::owner::git_stale_lock::{self as stale_lock, Refusal, Removed, StaleLock, STALE_AFTER};
+use std::time::SystemTime;
+
+/// An empty `index.lock`, as a commit the OS ended leaves it, last changed
+/// `age` ago.
+fn left_lock(phone: &Phone, age: Duration) -> PathBuf {
+    let lock = phone.repo.path().join("index.lock");
+    fs::write(&lock, "").unwrap();
+    set_age(&lock, age);
+    lock
+}
+
+fn set_age(path: &Path, age: Duration) {
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(SystemTime::now() - age)
+        .unwrap();
+}
+
+/// The offer as the worker computes it, holding RUN_LOCK for as long as
+/// another test's commit takes (the worker's own check gives up after
+/// 250 ms instead).
+fn offered(root: &Path) -> Option<StaleLock> {
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    stale_lock::assess(root, SystemTime::now())
+}
+
+fn click(root: &Path, token: &str) -> Result<Removed, Refusal> {
+    stale_lock::remove_within(root, token, Duration::from_secs(60), SystemTime::now())
+}
+
+/// Before GS-LOCK a lock a killed commit left kept every commit busy until
+/// someone removed it by hand. Now Tine offers it, and the click recovers the
+/// commit.
+#[test]
+fn a_stale_index_lock_is_offered_and_removing_it_recovers_the_commit() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER + Duration::from_secs(60));
+    phone.edit("pages/b.md", "- typed before the kill\n");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    let offer = offered(&phone.root).expect("a stale empty lock is offered");
+    assert_eq!(PathBuf::from(&offer.path), lock);
+    assert_eq!(click(&phone.root, &offer.token), Ok(Removed::Removed));
+    assert!(!lock.exists());
+    let leftovers: Vec<_> = fs::read_dir(phone.repo.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("tine-stale-index-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    assert!(matches!(
+        commit_now(&phone.root, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    assert_eq!(offered(&phone.root), None);
+}
+
+#[test]
+fn a_fresh_or_future_index_lock_is_not_offered() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, Duration::ZERO);
+    assert_eq!(offered(&phone.root), None, "just created");
+    set_age(&lock, STALE_AFTER - Duration::from_secs(60));
+    assert_eq!(offered(&phone.root), None, "nine minutes old");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&lock)
+        .unwrap()
+        .set_modified(SystemTime::now() + Duration::from_secs(3600))
+        .unwrap();
+    assert_eq!(offered(&phone.root), None, "a time in the future");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    assert!(lock.exists());
+}
+
+/// A git program writes the new index into its lock; `git commit -a` holds
+/// that lock for as long as its editor is open. Old or not, it is not offered.
+#[test]
+fn an_index_lock_with_content_is_not_offered() {
+    let phone = Phone::new();
+    let lock = phone.repo.path().join("index.lock");
+    fs::copy(phone.repo.path().join("index"), &lock).unwrap();
+    set_age(&lock, STALE_AFTER * 6);
+    assert_eq!(offered(&phone.root), None);
+    assert!(lock.exists());
+}
+
+#[test]
+fn no_offer_and_no_removal_while_tine_runs_a_git_operation() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    let (held, release) = (
+        std::sync::mpsc::channel::<()>(),
+        std::sync::mpsc::channel::<()>(),
+    );
+    let (held_tx, held_rx) = held;
+    let (release_tx, release_rx) = release;
+    let operation = std::thread::spawn(move || {
+        let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        held_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    });
+    held_rx.recv().unwrap();
+    assert_eq!(stale_lock::offer(&phone.root), None);
+    assert_eq!(
+        stale_lock::remove_within(
+            &phone.root,
+            &token,
+            Duration::from_millis(100),
+            SystemTime::now()
+        ),
+        Err(Refusal::TineBusy)
+    );
+    assert!(lock.exists());
+    release_tx.send(()).unwrap();
+    operation.join().unwrap();
+    assert_eq!(click(&phone.root, &token), Ok(Removed::Removed));
+}
+
+/// The click rechecks the lock it was offered: one changed since (a git
+/// program took it up again), even one still old, stays.
+#[test]
+fn the_click_refuses_a_lock_that_changed_since_the_offer() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    set_age(&lock, STALE_AFTER + Duration::from_secs(30));
+    assert_eq!(click(&phone.root, &token), Err(Refusal::Changed));
+    assert!(lock.exists());
+    set_age(&lock, Duration::ZERO);
+    assert_eq!(click(&phone.root, &token), Err(Refusal::Changed));
+    assert!(lock.exists());
+    fs::write(&lock, "a git program's new index").unwrap();
+    set_age(&lock, STALE_AFTER * 2);
+    let now = offered(&phone.root);
+    assert_eq!(now, None, "content: not offered any more");
+    // A lock someone else removed meanwhile is simply gone.
+    fs::remove_file(&lock).unwrap();
+    assert_eq!(click(&phone.root, &token), Ok(Removed::Gone));
+}
+
+/// A suspended Tine may resume after someone removed its lock and another
+/// client took it. It must neither install an old index nor unlink that lock.
+#[test]
+fn an_index_lock_replaced_while_tine_held_it_is_never_installed_or_deleted() {
+    let phone = Phone::new();
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = crate::owner::git_run::open_repo_at(&phone.root).unwrap();
+    let before = fs::read(phone.repo.path().join("index")).unwrap();
+    let mut held = repo.lock_index(false).unwrap();
+    held.index.clear().unwrap();
+    let lock = phone.repo.path().join("index.lock");
+    // Keep the original alive so neither Windows deletion semantics nor
+    // inode reuse makes this test depend on the host filesystem's timing.
+    fs::rename(&lock, phone.repo.path().join("original.lock")).unwrap();
+    fs::write(&lock, "").unwrap();
+    let error = held
+        .install()
+        .expect_err("a lost lock must refuse the install");
+    assert!(
+        error
+            .to_string()
+            .contains("the index lock was removed while Tine held it"),
+        "{error}"
+    );
+    assert_eq!(fs::read(phone.repo.path().join("index")).unwrap(), before);
+    drop(held);
+    assert_eq!(fs::read(lock).unwrap(), b"");
+}
+
+#[test]
+fn an_index_lock_removed_while_tine_held_it_cannot_install() {
+    let phone = Phone::new();
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = crate::owner::git_run::open_repo_at(&phone.root).unwrap();
+    let before = fs::read(phone.repo.path().join("index")).unwrap();
+    let mut held = repo.lock_index(false).unwrap();
+    held.index.clear().unwrap();
+    fs::rename(
+        phone.repo.path().join("index.lock"),
+        phone.repo.path().join("original.lock"),
+    )
+    .unwrap();
+    assert!(held.install().is_err());
+    drop(held);
+    assert_eq!(fs::read(phone.repo.path().join("index")).unwrap(), before);
+    assert!(!phone.repo.path().join("index.lock").exists());
+}
+
+#[test]
+fn dropping_an_index_lock_never_deletes_a_replacement() {
+    let phone = Phone::new();
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = crate::owner::git_run::open_repo_at(&phone.root).unwrap();
+    let held = repo.lock_index(false).unwrap();
+    let lock = phone.repo.path().join("index.lock");
+    fs::rename(&lock, phone.repo.path().join("original.lock")).unwrap();
+    fs::write(&lock, "").unwrap();
+    drop(held);
+    assert_eq!(fs::read(lock).unwrap(), b"");
+}
+
+#[test]
+fn a_stale_lock_is_not_offered_during_a_merge_or_with_detached_head() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    fs::write(
+        phone.repo.path().join("MERGE_HEAD"),
+        head(&phone.repo).to_string(),
+    )
+    .unwrap();
+    assert_eq!(offered(&phone.root), None);
+    assert!(matches!(
+        click(&phone.root, &token),
+        Err(Refusal::Failed(_))
+    ));
+    assert!(lock.exists());
+    fs::remove_file(phone.repo.path().join("MERGE_HEAD")).unwrap();
+    phone.repo.set_head_detached(head(&phone.repo)).unwrap();
+    assert_eq!(offered(&phone.root), None);
+    assert!(matches!(
+        click(&phone.root, &token),
+        Err(Refusal::Failed(_))
+    ));
+    assert!(lock.exists());
+}
+
+/// Replacement in the stat-to-rename window must give the new lock back,
+/// retaining the file itself, rather than merely reporting a changed token.
+#[test]
+fn a_lock_replaced_between_check_and_move_is_linked_back_never_deleted() {
+    // Exercise link-back on the private filesystem even when the mobile
+    // suite puts graphs on a provider that does not support hard links.
+    let private = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(private.path()).unwrap();
+    let repo = Repository::init(&root).unwrap();
+    let lock = repo.path().join("index.lock");
+    fs::write(&lock, "").unwrap();
+    set_age(&lock, STALE_AFTER * 2);
+    let token = offered(&root).unwrap().token;
+    let replacement = repo.path().join("replacement.lock");
+    fs::write(&replacement, "").unwrap();
+    let identity = same_file::Handle::from_file(fs::File::open(&replacement).unwrap()).unwrap();
+    let replacement_token = stale_lock::token(&fs::symlink_metadata(&replacement).unwrap());
+    assert_ne!(replacement_token, token);
+    let original = repo.path().join("original.lock");
+    let target = lock.clone();
+    stale_lock::before_move_test_hook(move || {
+        fs::rename(&target, original).unwrap();
+        fs::rename(replacement, target).unwrap();
+    });
+    let probe = root.join("link-probe");
+    fs::write(&probe, "").unwrap();
+    let links = fs::hard_link(&probe, root.join("link-probe-2")).is_ok();
+    let refused = click(&root, &token);
+    // Android denies hard links even in app-private storage, so link-back
+    // falls to the contract's no-link outcome: the replacement is kept
+    // under the aside name the refusal gives, never deleted.
+    if cfg!(target_os = "android") && !links {
+        let Err(Refusal::Failed(message)) = &refused else {
+            panic!("{refused:?}");
+        };
+        let aside = fs::read_dir(repo.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("tine-stale-index-")
+            })
+            .unwrap();
+        assert!(message.contains(&aside.display().to_string()), "{message}");
+        assert_eq!(same_file::Handle::from_path(&aside).unwrap(), identity);
+        assert!(!lock.exists());
+        return;
+    }
+    assert_eq!(refused, Err(Refusal::Changed));
+    assert_eq!(same_file::Handle::from_path(&lock).unwrap(), identity);
+    // NTFS tunnelling gives a name re-created within 15 s the old entry's
+    // creation time, so on Windows only size and mtime carry over.
+    let carried = |token: String| match cfg!(windows) {
+        true => token.rsplit_once(':').unwrap().0.to_string(),
+        false => token,
+    };
+    assert_eq!(
+        carried(stale_lock::token(&fs::symlink_metadata(lock).unwrap())),
+        carried(replacement_token)
+    );
+    assert!(fs::read_dir(repo.path()).unwrap().all(|e| {
+        !e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("tine-stale-index-")
+    }));
+}
+
+/// Only `index.lock` is ever offered or removed: a branch lock a killed
+/// commit left stays for the person, and Settings goes on naming it.
+#[test]
+fn removing_a_stale_index_lock_leaves_ref_locks_alone() {
+    let phone = Phone::new();
+    let branch = phone.repo.path().join("refs/heads/main.lock");
+    fs::write(&branch, "").unwrap();
+    set_age(&branch, STALE_AFTER * 2);
+    assert_eq!(offered(&phone.root), None, "a branch lock alone");
+    left_lock(&phone, STALE_AFTER * 2);
+    let token = offered(&phone.root).unwrap().token;
+    assert_eq!(click(&phone.root, &token), Ok(Removed::Removed));
+    assert!(branch.exists());
+    phone.edit("pages/b.md", "- typed before the kill\n");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    assert!(held_lock(&phone.root)
+        .unwrap()
+        .ends_with("refs/heads/main.lock"));
+    fs::remove_file(branch).unwrap();
+}
+
+/// End to end on the worker: the phone goes to the background, the commit
+/// finds the lock a killed commit left, the notice offers it under the
+/// commit-only policy too, and after the click the worker commits at once.
+#[test]
+fn the_worker_offers_a_stale_lock_and_commits_after_the_click() {
+    let phone = Phone::new();
+    let lock = left_lock(&phone, STALE_AFTER * 2);
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::Commit,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    let before = head(&phone.repo);
+    phone.edit("pages/b.md", "- typed before switching apps\n");
+    backgrounded_at(&phone.root);
+    wait_for("the offer", || {
+        last_attempt(&phone.root).stale_lock_offer.is_some()
+    });
+    foregrounded_at(&phone.root);
+    let notice = crate::git_settings::notice_for(Policy::Commit, &phone.root).unwrap();
+    assert_eq!(notice.code.as_deref(), Some("stale-lock"));
+    assert!(notice.persistent);
+    let offer = notice.stale_lock.unwrap();
+    assert_eq!(PathBuf::from(&offer.path), lock);
+    assert_eq!(
+        crate::git_settings::notice_for(Policy::Off, &phone.root),
+        None
+    );
+    assert_eq!(
+        stale_lock::remove(&phone.root, &offer.token),
+        Ok(Removed::Removed)
+    );
+    assert!(lock_removed(&phone.root, false));
+    wait_for("the commit after the click", || head(&phone.repo) != before);
+    wait_for("the offer to clear", || {
+        last_attempt(&phone.root).stale_lock_offer.is_none()
+    });
+    assert_eq!(
+        crate::git_settings::notice_for(Policy::Commit, &phone.root),
+        None
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+#[test]
+fn the_sync_worker_offers_a_stale_lock_and_pushes_after_the_click() {
+    let phone = Phone::new();
+    left_lock(&phone, STALE_AFTER * 2);
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncOnDemand,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    let before = phone.remote_tip();
+    phone.edit("pages/b.md", "- waiting to sync\n");
+    assert!(request_sync(&phone.root));
+    wait_for("the busy sync cycle and offer", || {
+        let last = last_attempt(&phone.root);
+        !last.sync.running
+            && matches!(last.sync.code.as_deref(), Some("busy" | "pull-held-busy"))
+            && last.stale_lock_offer.is_some()
+    });
+    let notice = crate::git_settings::notice_for(Policy::SyncOnDemand, &phone.root).unwrap();
+    let offer = notice.stale_lock.unwrap();
+    assert_eq!(click(&phone.root, &offer.token), Ok(Removed::Removed));
+    assert!(lock_removed(&phone.root, true));
+    wait_for("the push after the click", || phone.remote_tip() != before);
+    wait_for("the sync to finish and offer to clear", || {
+        let last = last_attempt(&phone.root);
+        !last.sync.running && last.stale_lock_offer.is_none()
+    });
+    assert_eq!(phone.remote_tip(), head(&phone.repo));
+    let remote_commit = phone.bare.find_commit(phone.remote_tip()).unwrap();
+    let blob = remote_commit
+        .tree()
+        .unwrap()
+        .get_path(Path::new("pages/b.md"))
+        .unwrap()
+        .id();
+    assert_eq!(
+        phone.bare.find_blob(blob).unwrap().content(),
+        b"- waiting to sync\n"
     );
     slot.background_cancelled.store(true, Ordering::Release);
 }

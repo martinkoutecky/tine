@@ -1,14 +1,26 @@
 import { t } from "./i18n";
-import type { GitLineEndingsProbe, GitSyncStatus } from "./backendTypes";
+import type { GitLineEndingsProbe, GitStaleLock, GitSyncStatus } from "./backendTypes";
 
 /** What the user can do about a sync problem (D-20261027-OF: a persistent indicator offers a fix). */
-export type GitSyncFix = "sync-now" | "sign-in" | "copy-command" | "open-folder" | "line-endings" | "line-endings-guide";
+export type GitSyncFix = "sync-now" | "sign-in" | "copy-command" | "open-folder" | "line-endings" | "line-endings-guide" | "remove-stale-lock";
 
 export interface GitSyncProblem {
   text: string;
   fixes: GitSyncFix[];
   /** The git command "copy the git command" copies. */
   command?: string;
+  /** What "Remove the stale lock" passes back (`GitStaleLock.token`). */
+  staleLock?: string;
+}
+
+/** A stale `index.lock` Tine offers to remove (GS-LOCK), for Settings and the app's notice alike. */
+export function gitStaleLockProblem(lock: GitStaleLock | undefined | null): GitSyncProblem | null {
+  if (!lock) return null;
+  return {
+    text: t("git-sync-stale-lock", { path: lock.path, time: new Date(lock.modified * 1000).toLocaleString() }),
+    fixes: ["remove-stale-lock"],
+    staleLock: lock.token,
+  };
 }
 
 export function gitLineEndingsProblem(probe: GitLineEndingsProbe | undefined | null): GitSyncProblem | null {
@@ -27,6 +39,8 @@ export function gitSyncProblem(sync: GitSyncStatus | undefined | null, root: str
   if (!sync?.code) return null;
   const lineEndings = gitLineEndingsProblem(sync.line_endings);
   if (lineEndings) return lineEndings;
+  const staleLock = gitStaleLockProblem(sync.stale_lock);
+  if (staleLock) return staleLock;
   const message = sync.message ?? "";
   const path = sync.path ?? "";
   const git = (args: string) => root ? `git -C "${root}" ${args}` : `git ${args}`;

@@ -11,7 +11,7 @@ import type { OutlineNode } from "../editor/outline";
 import { outlineApply, outlineReads } from "../render/parse";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wiring";
-import { doc, keySource, keysUsed, pageByName, setDoc } from "./model";
+import { doc, keySource, keysUsed, pageByName, setDoc, writeRaw } from "./model";
 import { msg } from "../i18n";
 import { pushToastUnique } from "../toasts";
 import { editorHidePolicy } from "../editor/properties";
@@ -202,7 +202,7 @@ export function applyOutlineChange(change: OutlineChange): void {
       for (const u of patch.upserts) {
         const node = s.byId[u.key];
         if (node) {
-          if (node.raw !== u.raw) node.raw = u.raw;
+          if (node.raw !== u.raw) writeRaw(s, u.key, u.raw);
           node.children = u.children;
           if (node.page !== patch.name) node.page = patch.name;
           if (u.collapsed !== undefined) node.collapsed = u.collapsed;

@@ -61,13 +61,14 @@ export function deriveFlatpak({ root = ROOT, identity, date, version }) {
 
   let manifest = read(`${stableId}.yml`);
   // Replace the Flathub git source (pinned to a released tag) with a local `dir`
-  // source so CI builds THIS commit. The vendored cargo/node source files are
-  // unchanged (referenced relative to the manifest dir).
-  const at = manifest.indexOf("    sources:");
-  if (at < 0) throw new Error("manifest has no module `sources:` block to replace");
-  manifest =
-    manifest.slice(0, at) +
-    "    sources:\n      - type: dir\n        path: ..\n      - cargo-sources.json\n      - node-sources.json\n";
+  // source so CI builds THIS commit. Every other source (the vendored cargo/node
+  // files, the pinned Emscripten SDK archives the PDF decoder build needs) is kept
+  // as the recipe lists it.
+  const git = /^      - type: git\n(?:        .*\n)+/m;
+  if (!manifest.includes("    sources:") || !git.test(manifest)) {
+    throw new Error("manifest has no module `sources:` block with a git source to replace");
+  }
+  manifest = manifest.replace(git, "      - type: dir\n        path: ..\n");
   if (!released) {
     manifest = manifest
       .replaceAll(`src-tauri/${stable.iconDirectory}/`, `src-tauri/${target.iconDirectory}/`)

@@ -109,7 +109,7 @@ it("names the ignore file and rule, explains removal, and discloses a failed set
   const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
     policy: "commit", last: {
       committed_at: null, commit: null, refused: null, stale_lock: null,
-      syncthing_ignore_added: "/graph/.gitignore",
+      gitignore_added: "/graph/.gitignore", gitignore_lines: [".syncthing.*"],
     },
   }));
   let view = mount();
@@ -121,12 +121,48 @@ it("names the ignore file and rule, explains removal, and discloses a failed set
   status.mockResolvedValue(repo({
     policy: "commit", last: {
       committed_at: null, commit: null, refused: null, stale_lock: null,
-      syncthing_ignore_failed: true,
+      gitignore_failed: true, gitignore_lines: [".syncthing.*"],
     },
   }));
   view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("couldn't confirm adding .syncthing.*"));
   expect(view.root.textContent).toContain("Temporary files are still excluded from Tine's commits");
+  view.dispose();
+});
+
+it("names the Tine line, alone or with the Syncthing line, in the same status line (D-20261029-GT)", async () => {
+  const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
+    policy: "sync-automatically", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      gitignore_added: "/graph/.gitignore", gitignore_lines: ["logseq/.tine-*"],
+    },
+  }));
+  let view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added logseq/.tine-* to /graph/.gitignore"));
+  expect(view.root.textContent).toContain("Copies already in git are removed from it, not from disk, in a separate Tine commit");
+  expect(view.root.textContent).not.toContain(".syncthing.*");
+  view.dispose(); document.body.innerHTML = "";
+
+  status.mockResolvedValue(repo({
+    policy: "commit", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      gitignore_added: "/graph/.gitignore", gitignore_lines: [".syncthing.*", "logseq/.tine-*"],
+    },
+  }));
+  view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added .syncthing.* and logseq/.tine-* to /graph/.gitignore"));
+  expect(view.root.querySelectorAll("[role=status]").length).toBe(1);
+  view.dispose(); document.body.innerHTML = "";
+
+  status.mockResolvedValue(repo({
+    policy: "commit", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      gitignore_failed: true, gitignore_lines: ["logseq/.tine-*"],
+    },
+  }));
+  view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("couldn't confirm adding logseq/.tine-*"));
+  expect(view.root.textContent).toContain("Tine's own files are still excluded from its commits");
   view.dispose();
 });
 
@@ -228,5 +264,18 @@ it("signs in to the remote's host without keeping the token on the page, and sig
   root.querySelector<HTMLButtonElement>("[data-git-sign-out]")!.click();
   await vi.waitFor(() => expect(root.textContent).toContain("Not signed in"));
   expect(signOut).toHaveBeenCalledOnce();
+  dispose();
+});
+
+it("GS-LOCK: Settings offers to remove a stale index.lock under the commit-only policy", async () => {
+  const offer = { path: "/graph/.git/index.lock", modified: 1_700_000_000, token: "0:1:2" };
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ policy: "commit", last: { committed_at: null, commit: null, refused: ["busy", "Another git command is using the repository (its index.lock is held)."], stale_lock: null, stale_lock_offer: offer } }));
+  const remove = vi.spyOn(backend(), "gitRemoveStaleLock").mockResolvedValue(repo({ policy: "commit" }));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-stale-lock] [data-git-sync-fix=remove-stale-lock]")).not.toBeNull());
+  expect(root.querySelector("[data-git-stale-lock]")!.textContent).toContain("/graph/.git/index.lock");
+  root.querySelector<HTMLButtonElement>("[data-git-sync-fix=remove-stale-lock]")!.click();
+  await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("0:1:2"));
+  await vi.waitFor(() => expect(root.querySelector("[data-git-stale-lock]")).toBeNull());
   dispose();
 });

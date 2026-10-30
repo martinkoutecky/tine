@@ -142,7 +142,10 @@ s3.4 adds to s3.3 without changing existing actions; s3.5 changes only the one g
 s3.4 scenarios give the same outcome in every profile and under every mutant, 152 cases, 0 differences; proved
 in Lean on runs that do not take the changed branch, `Storage35.compatible_runs_exact34_10`). s3.1 and s3.2
 also tighten the s3 operations (held pages, the rename order), so they are not extensions of s3 in that sense. Full SHA-256 sums
-are in [`quint/SHA256SUMS`](quint/SHA256SUMS). Note that inside `SPEC-s3.md`, `storage-s3.qnt` names the
+are in [`quint/SHA256SUMS`](quint/SHA256SUMS), which the assumption-ledger meta-test checks against the
+files. The published s3 is `baaaeab4`; the file has hashed `141f5698` since commit `a3f933103` added a
+four-line comment pointing to SPEC-s3's JJ6 note (no model text changed), and the list names the file as
+it is. Note that inside `SPEC-s3.md`, `storage-s3.qnt` names the
 s3.2 model (its publication note explains the mapping).
 
 ## Status: what is checked and what is proved

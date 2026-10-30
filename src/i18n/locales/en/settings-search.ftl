@@ -113,3 +113,4 @@ settings-search-quick-share-account = Quick share: connect or disconnect GitHub 
 settings-search-quick-share-shares = Quick share links made on this device: copy, check, delete, forget
 settings-search-quick-share-find = Quick share: list the Tine shares in your GitHub account
 settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = phone tablet android ios top bar bottom row thumb reach back forward search sidebar
+settings-search-search-tab-results-open-in-new-tab-this-tab = search tab results click enter open new tab same tab in place background pane sidebar

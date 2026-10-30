@@ -14,6 +14,8 @@
 //!    those skipped as already at `U` included (P2);
 //! 5. the index entries moved to `U`'s blobs and the index installed durably,
 //!    then the branch moved from `H` to `U` by compare-and-swap (P1, P1b).
+//!    Tine's own `logseq/.tine-*` entries take `U`'s too, though their files
+//!    are never written (D-20261029-GT), so nothing is staged after a pull.
 //!
 //! Anything that stops before step 5 leaves `HEAD` at `H`; the next cycle
 //! resumes from step 1. Meanwhile every autocommit skips ([`defers_autocommit`],
@@ -42,9 +44,6 @@ use super::git_run::{LockRefusal, Repo, RUN_LOCK};
 use crate::state::GraphSlot;
 
 const REFLOG: &str = "tine: pull (fast-forward)";
-/// Tine's own files in the graph (`logseq/.tine-trash`, …), which the store
-/// never writes for a caller.
-const TINE_OWN: &str = "logseq/.tine-";
 
 /// Why a pull did not land now, but may on a later cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +212,8 @@ fn pending_upstream(repo: &Repo) -> Option<(Oid, Oid)> {
 /// root that differs from `H` holds its `U` blob or is a path this process's
 /// pull applied (P4). Then the half-applied tree is the pull's, not a local
 /// change, and committing it on `H` would make the next cycle diverge. Costs
-/// one status scan, and only while such a `U` exists.
+/// one status scan, and only while such a `U` exists. A scan that fails defers
+/// too (REG-SB1-GIT-RESUME-STATUS-ERROR).
 pub(super) fn defers_autocommit(repo: &Repo) -> bool {
     if !repo.prefix.as_os_str().is_empty() {
         return false;
@@ -239,8 +239,18 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
         .exclude_submodules(true)
         .renames_head_to_index(false)
         .renames_index_to_workdir(false);
-    let Ok(statuses) = repo.repo.statuses(Some(&mut options)) else {
-        return false;
+    let scanned = repo.repo.statuses(Some(&mut options));
+    #[cfg(test)]
+    let scanned = if test_hook::status_fails() {
+        Err(git2::Error::from_str("error reading file for hashing: "))
+    } else {
+        scanned
+    };
+    // A scan that fails (libgit2 hashing a file a page save is replacing)
+    // cannot rule the pull out, and committing then would record the
+    // half-applied tree as a local change: defer, the next one asks again.
+    let Ok(statuses) = scanned else {
+        return true;
     };
     let mut differs = false;
     for entry in statuses.iter() {
@@ -248,9 +258,9 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
             return false;
         };
         // Tine's own folders (the graph trash a pulled deletion fills) are
-        // not the pull's paths: `U` cannot change them (step 1 refuses).
+        // not the pull's paths: the pull leaves them out of `H` and `U`.
         if path.ends_with('/')
-            || path.starts_with(TINE_OWN)
+            || git_autocommit::tine_own(path.as_bytes())
             || git_autocommit::tine_temp(path)
             || git_autocommit::syncthing_temp(path.as_bytes())
         {
@@ -266,7 +276,12 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
         let at_u = blob_at(&u_tree, path);
         let on_disk = match hash_on_disk(&key.join(path)) {
             Ok(blob) => blob,
-            Err(_) => return false,
+            // A folder or link where a file was is a local change.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => return false,
+            // A read that fails (a page save replacing the file, a sharing
+            // violation) cannot rule the pull out either: defer, as for a
+            // failed scan (REG-SB1-GIT-RESUME-HASH-ERROR).
+            Err(_) => return true,
         };
         if on_disk != at_u {
             return false;
@@ -285,8 +300,13 @@ fn blob_at(tree: &git2::Tree<'_>, path: &str) -> Option<Oid> {
 }
 
 /// The blob id of the regular file at `path`, `None` when absent; a folder,
-/// symlink or other non-file is an error.
+/// symlink or other non-file is an `InvalidInput` error, a failed read any
+/// other error.
 fn hash_on_disk(path: &Path) -> std::io::Result<Option<Oid>> {
+    #[cfg(test)]
+    if test_hook::hash_fails() {
+        return Err(std::io::Error::other("error reading file for hashing"));
+    }
     #[cfg(test)]
     if test_hook::folding() && !path.exists() {
         if let Some(parent) = path.parent() {
@@ -313,7 +333,10 @@ fn hash_on_disk(path: &Path) -> std::io::Result<Option<Oid>> {
         Ok(meta) if meta.is_file() => Oid::hash_file(ObjectType::Blob, path)
             .map(Some)
             .map_err(|e| std::io::Error::other(e.message().to_string())),
-        Ok(_) => Err(std::io::Error::other("not a regular file")),
+        Ok(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        )),
     }
 }
 
@@ -636,9 +659,6 @@ fn pre_check(
     for change in changes {
         let mut pending: Vec<&str> = Vec::new();
         for path in change.paths() {
-            if path.starts_with(TINE_OWN) {
-                return Err(refused(path, "Tine's own folder"));
-            }
             if let Some(attr) = conversion(repo, path).map_err(git)? {
                 return Err(refused(
                     path,
@@ -750,12 +770,15 @@ fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome 
     let Some(key) = work_tree_key(repo) else {
         return PullOutcome::Unusable(Unusable::Repository("the work tree is gone".into()));
     };
-    let trees = (|| {
-        Ok::<_, git2::Error>((
-            repo.repo.find_commit(head)?.tree()?,
-            repo.repo.find_commit(up)?.tree()?,
-        ))
-    })();
+    // Tine's own `logseq/.tine-*` files are per-device (D-20261029-GT): a
+    // pull neither writes them nor refuses over them, so both sides are
+    // compared without them (an old Tine may have committed its trash).
+    let own_free = |commit: Oid| -> Result<git2::Tree<'_>, git2::Error> {
+        let tree = repo.repo.find_commit(commit)?.tree()?;
+        repo.repo
+            .find_tree(git_autocommit::without_tine_own(repo, &tree, "")?)
+    };
+    let trees = (|| Ok::<_, git2::Error>((own_free(head)?, own_free(up)?)))();
     let (h_tree, u_tree) = match trees {
         Ok(trees) => trees,
         Err(error) => return git(error),
@@ -916,6 +939,9 @@ fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome 
             }
         }
     }
+    if let Err(error) = own_entries_at(repo, &mut lock.index, up) {
+        return git(error);
+    }
     if let Err(error) = lock.install() {
         return PullOutcome::Incomplete(format!("the index could not be written: {error}"));
     }
@@ -938,6 +964,65 @@ fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome 
         Ok(false) => PullOutcome::Diverged("the branch moved while the pull was applied".into()),
         Err(error) => git(error),
     }
+}
+
+/// D-20261029-GT: the index's `logseq/.tine-*` entries become exactly `U`'s,
+/// so publishing `U` leaves nothing staged (an ordinary `git commit` would
+/// otherwise record a deletion or revert of them). Their files are not
+/// written: this device's own bytes stay, and git may list them as unstaged
+/// until the next real autocommit untracks them. Unchanged entries keep their
+/// stat data.
+fn own_entries_at(repo: &Repo, index: &mut git2::Index, up: Oid) -> Result<(), git2::Error> {
+    let tree = repo.repo.find_commit(up)?.tree()?;
+    let mut want: HashMap<Vec<u8>, (Oid, u32)> = HashMap::new();
+    if let Some(logseq) = tree
+        .get_name("logseq")
+        .filter(|e| e.kind() == Some(ObjectType::Tree))
+    {
+        repo.repo
+            .find_tree(logseq.id())?
+            .walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+                if entry.kind() != Some(ObjectType::Tree) {
+                    let mut path = format!("logseq/{root}").into_bytes();
+                    path.extend_from_slice(entry.name_bytes());
+                    if git_autocommit::tine_own(&path) {
+                        want.insert(path, (entry.id(), entry.filemode() as u32));
+                    }
+                }
+                git2::TreeWalkResult::Ok
+            })?;
+    }
+    let mut stale = Vec::new();
+    for entry in index.iter().filter(|e| git_autocommit::tine_own(&e.path)) {
+        if want.get(&entry.path) == Some(&(entry.id, entry.mode)) {
+            want.remove(&entry.path);
+        } else {
+            stale.push(entry.path);
+        }
+    }
+    for path in stale {
+        let path = std::str::from_utf8(&path)
+            .map_err(|_| git2::Error::from_str("an own index path is not UTF-8"))?;
+        index.remove_path(Path::new(path))?;
+    }
+    for (path, (id, mode)) in want {
+        let size = repo.repo.find_blob(id).map_or(0, |b| b.size() as u32);
+        index.add(&git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            file_size: size,
+            id,
+            flags: 0,
+            flags_extended: 0,
+            path,
+        })?;
+    }
+    Ok(())
 }
 
 /// The edit kinds of a host operation's pages.
@@ -1195,6 +1280,8 @@ pub(crate) mod test_hook {
         static BEFORE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
         static AFTER_HOST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
         static FOLDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static STATUS_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static HASH_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     /// Answer the next host operations: `Some((apply_first, result))`
@@ -1216,6 +1303,28 @@ pub(crate) mod test_hook {
         BEFORE_LOCK.with(|h| *h.borrow_mut() = None);
         AFTER_HOST.with(|h| *h.borrow_mut() = None);
         FOLDING.with(|f| f.set(false));
+        STATUS_FAILS.with(|f| f.set(false));
+        HASH_FAILS.with(|f| f.set(false));
+    }
+
+    /// Fail the next resume test's status scan, as a page save replacing a
+    /// file under libgit2's hashing does (one shot).
+    pub(crate) fn fail_status() {
+        STATUS_FAILS.with(|f| f.set(true));
+    }
+
+    pub(super) fn status_fails() -> bool {
+        STATUS_FAILS.with(|f| f.replace(false))
+    }
+
+    /// Fail the next on-disk hash, as a read racing a save's replace can
+    /// (one shot).
+    pub(crate) fn fail_hash() {
+        HASH_FAILS.with(|f| f.set(true));
+    }
+
+    pub(super) fn hash_fails() -> bool {
+        HASH_FAILS.with(|f| f.replace(false))
     }
 
     pub(super) fn host(op: &HostOp) -> Option<(bool, Result<(), ApplyRefusal>)> {

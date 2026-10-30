@@ -139,6 +139,65 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
+// The Installed tab label carries the live count. Once, in the full release
+// suite, `button=Installed (1)` was not found although the same journey passes
+// alone and in repeat runs (2026-10-29, 0.9.0-beta.1 candidate). Keep the
+// assertion exactly as strict, but when it fails leave the evidence that
+// distinguishes "count not yet 1", "wrong Settings tab" and "covered".
+async function settingsSnapshot(browser) {
+  return browser.execute(() => {
+    const text = (node) => (node?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    return {
+      title: document.title,
+      page: { visibility: document.visibilityState, focused: document.hasFocus(), ready: document.readyState, size: `${innerWidth}x${innerHeight}`, url: location.href },
+      document: { bodyChildren: document.body?.children.length ?? -1, bodyText: text(document.body).slice(0, 160), headerButtons: document.querySelectorAll("button.icon-btn").length },
+      overlays: [...document.querySelectorAll(".modal-overlay")].map((node) => node.className),
+      settingsModal: Boolean(document.querySelector(".settings-modal")),
+      navItems: [...document.querySelectorAll(".settings-nav-item")].map((node) => `${text(node)}${node.classList.contains("active") ? "*" : ""}`),
+      pending: Boolean(document.querySelector(".settings-pane-pending")),
+      regionFailure: text(document.querySelector(".region-failure")),
+      pluginNav: [...document.querySelectorAll(".plugin-settings-nav button")].map((node) => text(node)),
+      detailPage: Boolean(document.querySelector(".plugin-detail-page")),
+      pane: text(document.querySelector(".settings-pane-body")),
+      toasts: [...document.querySelectorAll("[role=alert], .toast")].map((node) => text(node)),
+      active: document.activeElement ? `${document.activeElement.tagName}.${document.activeElement.className}` : null,
+    };
+  }).catch((inner) => ({ unreadable: String(inner) }));
+}
+async function openInstalledTab(browser, label) {
+  try {
+    await browser.$("button=Installed (1)").click();
+  } catch (error) {
+    const dir = process.env.E2E_ARTIFACT_DIR || TMP;
+    fs.mkdirSync(dir, { recursive: true });
+    // A web view that is not painting makes the screenshot hang for a minute;
+    // bound it so the rest of the evidence is still collected.
+    const shot = await Promise.race([
+      browser.saveScreenshot(path.join(dir, `installed-tab-missing-${label}.png`)).then(() => "saved", (inner) => `failed: ${String(inner)}`),
+      sleep(8_000).then(() => "timed out after 8s"),
+    ]);
+    const frames = await browser.executeAsync((done) => {
+      let count = 0;
+      const stop = Date.now() + 700;
+      const tick = () => { count += 1; if (Date.now() < stop) requestAnimationFrame(tick); else done(count); };
+      requestAnimationFrame(tick);
+      setTimeout(() => done(count), 1500);
+    }).catch((inner) => `unreadable: ${String(inner)}`);
+    const handles = await browser.getWindowHandles().catch((inner) => `unreadable: ${String(inner)}`);
+    const current = await browser.getWindowHandle().catch((inner) => `unreadable: ${String(inner)}`);
+    const first = await settingsSnapshot(browser);
+    // Whether the panel is slow or never arrives: keep looking after the miss.
+    const started = Date.now();
+    const lateMs = await browser.waitUntil(async () => (await browser.$$(".plugin-settings-nav button").length) > 0, { timeout: 15_000, interval: 250 })
+      .then(() => Date.now() - started, () => null);
+    const late = await settingsSnapshot(browser);
+    for (const name of fs.readdirSync(TMP)) {
+      if (name.endsWith("-tauri-driver.log")) fs.copyFileSync(path.join(TMP, name), path.join(dir, `evidence-${name}`));
+    }
+    console.error(`installed-tab-missing in ${label} session: ${JSON.stringify({ shot, framesIn700ms: frames, handles, current, first, lateMs, late })}`);
+    throw error;
+  }
+}
 async function withAppSession(label, check) {
   const sessionLog = fs.openSync(path.join(TMP, `${label}-tauri-driver.log`), "w");
   const td = spawn(TD, [
@@ -197,7 +256,7 @@ try {
 
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
-    await browser.$("button=Installed (1)").click();
+    await openInstalledTab(browser, "revoked");
     await browser.waitUntil(async () => browser.execute((id) => {
       const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
       const toggle = row?.querySelector('[role="switch"]');
@@ -227,7 +286,7 @@ try {
     await assertNoContribution(browser, "restart-without-cache");
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
-    await browser.$("button=Installed (1)").click();
+    await openInstalledTab(browser, "restart-without-cache");
     await browser.waitUntil(async () => browser.execute((id) => {
       const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
       const toggle = row?.querySelector('[role="switch"]');

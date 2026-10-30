@@ -20,6 +20,7 @@ DESIGN (rev 0 + §8–§9) and the seen design (rev 1). Dossier with line number
 | D-20261018-G3 | generic messages; a structural operation commits at its boundaries with its verb as message; no op log, no diff-derived messages | follow |
 | D-20261018-G4 | `author::` stays | untouched |
 | D-20261018-G5 | an autocommit includes every change git sees under the graph root, honouring `.gitignore`; Tine applies pulls itself through the audited writer; sync off under eol/filter conversion; Tine never writes `.gitignore` unasked | follow, with the scoped D-20261026-GI exception in §2 |
+| D-20261029-GT | like `.syncthing.*` (D-20261026-GI): add `logseq/.tine-*` to `.gitignore` once with the same toast and Settings line, untrack already-committed copies (they stay on disk), a pull ignores those paths; rejected: excluding them only in staging | follow (§2, §4) |
 | D-20261028-CRLF | offer a repository-local autocrlf repair only when raw tracked bytes match the index and no other conversion blocks sync; otherwise commit first, then re-checkout | follow; pull keeps refusing conversion |
 | D-20261018-G6 | lands in whatever release the timing gives; no release waits for it | follow (card hBpb2k's "after model v0" is stale) |
 | D-20261018-G7 | libgit2 (git2-rs, `default-features = false`) on all five platforms; HTTPS through Tine's own Rust HTTP/TLS stack as a registered smart transport; no OpenSSL | follow |
@@ -55,9 +56,34 @@ Tine's exact bytes and a later normalising checkout changes only line endings), 
 skip-worktree entry under the graph root: libgit2's add would commit the excluded files as deleted), and on macOS
 and iOS a repository without `core.precomposeunicode = true` (decomposed names would commit every diacritic page as
 a delete plus an add). A held `index.lock` is "busy, retry"; after three busy cycles spanning 30 minutes Settings
-names the file and says to remove it if no git command is running (a crash can leave it; Tine never deletes it).
+names the file and says to remove it if no git command is running (a crash can leave it; the exception below
+allows an explicit click to remove a qualifying `index.lock`).
 Slice 3: the lock named is the one actually held, `index.lock` or a ref lock a crashed commit left on `HEAD`, the
 branch or `packed-refs` (`held_lock`; before, Settings always named `index.lock`, even when a branch lock was the cause).
+Slice 3, D-20261029-GSL (Martin approved 2026-10-29): when a commit or sync finds `index.lock` held,
+Tine offers **Remove the stale lock** in
+the app's notice (under every committing policy) and in Settings if (a) Tine runs no git operation itself
+(`RUN_LOCK` is free in this process; every Tine path that takes `index.lock` holds it), (b) the lock is a regular, empty file
+(Tine's own lock is always empty; a git program writes the new index into its lock, and `git commit -a` holds such
+a written lock while its editor is open), and (c) its modification time is at least 10 minutes old and not in
+the future. The click passes back the offered identity (size, modification and creation times); under `RUN_LOCK`
+Tine rechecks (a)–(c) and the identity, renames the lock aside, checks the renamed file is still the same one
+(otherwise links it back), deletes it, logs `git-stale-lock-removed`, and the worker commits (and syncs) at once.
+Tine never removes a lock unasked, and never a ref, `HEAD`, `packed-refs` or `shallow` lock
+(`src-tauri/src/owner/git_stale_lock.rs`).
+The offer also applies the click's guard, clean repository state and attached-HEAD checks, so a merge or
+detached HEAD does not offer an action that must refuse.
+
+Known limit: a process the OS froze or suspended while it held an empty lock (Android freezer, iOS suspension,
+e.g. Tine beside Tine Beta, or a git app paused mid-checkout) is indistinguishable by age. Each Tine process has
+its own `RUN_LOCK`. To limit the cascade, `IndexLock` records the created handle's identity (Unix dev+ino;
+Windows volume serial + file ID) and refuses to install or unlink after observing a missing or replaced lock.
+This protects a resumed Tine from overwriting the index or deleting its successor's lock; it cannot protect
+a frozen third-party git client without such a check. That remains a gap in the approval's "never for a lock
+another git program holds" requirement. Identity errors or zero IDs fail closed without a timestamp fallback;
+unstable FUSE/NFS identities can refuse an otherwise safe commit. Native check-to-mutation races remain.
+Network filesystem/peer clock skew can also defeat the age test; filesystems without hard links preserve a
+raced replacement at the named aside path for recovery (see the storage contract's refusal/limit table).
 Sync additionally needs the graph root to be the work tree root: a fast-forward of a bigger repository changes
 files outside the graph, which Tine does not own.
 
@@ -66,7 +92,17 @@ Follow-up D-20261026-GI: with autocommit enabled, at binding start and when enab
 Tine checks git's ignore rules for a representative `.syncthing.*` name. If not ignored,
 it appends `.syncthing.*` to **the graph root's** `.gitignore`, including for a graph nested
 inside a larger repository. Existing bytes and line endings survive; the new line ends
-with a newline. This is the sole exception to autocommit never writing graph files: it
+with a newline. Follow-up D-20261029-GT adds a second line the same way, `logseq/.tine-*`
+(Tine's own per-device files: the trash), counted as present only when git ignores both a
+representative `logseq/.tine-ignore-check` and a real trash file (a file below an ignored
+folder counts as ignored, as in git; so a negation such as `!logseq/.tine-trash/**` still
+gets the line, which comes last and wins; staging excludes these files regardless), and
+remembered under its own key
+`git-tine-own-ignore-checked`; lines due together go into one write and one notice, and a
+device that already had the Syncthing attempt gets only the new line, once. The line is
+graph-relative, so in the graph root's `.gitignore` it matches only the graph's own
+`logseq/` folder, also for a graph nested in a larger repository. These two lines are the
+only exception to autocommit never writing graph files: it
 uses Store's guarded non-page transaction (create-if-absent or revision-checked replace,
 lock, temp, fsync, rename). Store accepts only the fixed root `.gitignore` identity in
 addition to its existing file areas; this does not widen graph discovery or backups.
@@ -81,13 +117,31 @@ status surface reports the added file and rule (and that it may be removed), or 
 failure, for the current binding. Clearing device-local app data or moving the graph
 resets this memory, just like other graph notices.
 
-Staging independently removes `.syncthing.*` paths under the graph root from its private
-index copy, including pre-staged and previously tracked temps, and skips matching working
-files. This keeps temps out even when ignore setup fails or a narrower rule leaves some
+Staging independently removes `.syncthing.*` and `logseq/.tine-*` paths under the graph
+root from its private index copy, including pre-staged and previously tracked ones, and
+skips matching working files. `logseq/.tine-*` files an older Tine committed leave `HEAD`
+in a commit of their own (`Tine: stop tracking its own device files (logseq/.tine-*); they
+stay on disk`), made just before the next commit with a real change and never alone: two
+devices untracking the same files would otherwise diverge over that commit alone. A pull
+compares `H` and `U` without `logseq/.tine-*` (§4): it neither writes those paths nor
+refuses over them (before, a trash copy in `U` was `pull-refused`, and a committed trash
+copy made the next pull `diverged`: REG-SB1-GIT-TINE-OWN-TRASH). The pull still sets the
+index's `logseq/.tine-*` entries to exactly `U`'s, before the index install that precedes
+the ref move, so publishing `U` leaves nothing staged (an ordinary `git commit` records
+nothing of them); their files are not written, so a terminal `git status` may list them as
+modified or deleted until the next real autocommit untracks them. The namespace is literal:
+any file named `logseq/.tine-*` counts as Tine's own, whoever wrote it. Tine's byte-exact
+`logseq/.tine-` prefix governs staging, untracking and the pull; on a case-insensitive
+repository (`core.ignorecase`) git's matching of the `.gitignore` line is wider (it also
+matches `logseq/.TINE-x`), which, like any ignore rule, only keeps such an untracked file
+from being added: a tracked one stays tracked and is pulled as ordinary content. This keeps temps out even when ignore setup fails or a narrower rule leaves some
 directories visible. It never deletes their working files. Conflict copies
 (`*.sync-conflict-*`) remain user data and are committed unless the user's rules ignore
-them. No new per-edit file or transport record: setup adds 13 bytes (`.syncthing.*\n`),
-or 14 with CRLF, plus a missing separator newline, and one device-local notice key once;
+them. No new per-edit file or transport record: setup adds 13 bytes (`.syncthing.*\n`)
+and 15 bytes (`logseq/.tine-*\n`), one more each with CRLF, plus a missing separator
+newline, and one device-local notice key per line once; the untrack is one commit per
+graph (a nested graph cleans up separately) each time tracked own files appear, normally
+once, again only if an older peer re-adds its own files;
 one-block and 60-block page edits both add zero bytes/files/transport beyond §Unit cost.
 
 Every change git sees under the graph root, honouring `.gitignore`: Tine's saves, other programs' edits,
@@ -260,7 +314,7 @@ only for its local checks, not during the network transfer (review F3). The OS e
 the graph on shared storage). Android's shared storage (MediaProvider FUSE) reports another owner for every file,
 so libgit2's repository-owner check is off on Android only (accepted under the trust model, 2026-10-28: it excludes an attacker with write access
 to the files). On that storage a case-only rename succeeds but keeps the old spelling, so a pull that renames a page
-by capitalization alone stays `pull-incomplete` and writes nothing (an open decision).
+by capitalization alone stays `pull-incomplete` and writes nothing (a stated limit for 0.9.0-beta.1, D-20261029-GS1; a two-step rename follows in a later 0.9 Beta).
 
 ## Unit cost (I-25)
 

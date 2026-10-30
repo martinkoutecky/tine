@@ -116,6 +116,7 @@ moveSelectionItems
 nextVisible
 nextVisibleOrExtend
 node
+onBlockRawChanged  # why: outline window geometry keeps one raw-change listener per window, not one tracked computation per row (BIGLOAD-090b); batch-og-bigload-090b
 orderedListMarker
 outdentBlock
 outdentSelection
@@ -177,6 +178,7 @@ setRaw
 setSchedule
 setSelectionHeading  # why: context-menu heading applies to the whole selection in one undo (GH #240); batch19b
 settleBlockRef  # why: a restored position ref becomes the block's live identity once found (GH #623); batch-nav
+someBlockInTrees  # why: the margin comment scan reads blocks untracked and re-runs only when the document structure moves (BIGLOAD-090b); batch-og-bigload-090b
 splitBlock
 stopOwnNumberedListOnEmptyEnter
 storedFold  # why: the bullet's fold including a query's authored default, read by Block and the query arrow; batch-og-query-fold-arrow

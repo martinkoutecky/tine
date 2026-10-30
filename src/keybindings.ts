@@ -2,6 +2,7 @@ import { shortcutKey } from "./shortcutKey";
 import { installMouseHistory } from "./mouseHistory";
 import { setCurrentPageCollapsed, toggleCurrentPageCollapsed } from "./pageCollapse";
 import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailable } from "./seen/seenState";
+import { seenStepAvailable, stepSeenChange } from "./seen/stepper";
 import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
@@ -327,6 +328,8 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-custom-css", binding: "", label: msg("command-ui-toggle-custom-css"), scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
   // "Changed since you last looked" (ADR 0079): offered only once a git read answered for this graph.
   { id: "seen/mark-page", binding: "", label: msg("command-seen-mark-page"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true && seenRoutedPage() !== null; }, run: () => { const name = seenRoutedPage(); if (name) void markPageSeenNow(name); } },
+  { id: "seen/next-change", binding: "", label: msg("command-seen-next-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), 1) },
+  { id: "seen/previous-change", binding: "", label: msg("command-seen-previous-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), -1) },
   { id: "seen/mark-graph", binding: "", label: msg("command-seen-mark-graph"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true; }, run: () => void markGraphSeenNow() },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
   { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },

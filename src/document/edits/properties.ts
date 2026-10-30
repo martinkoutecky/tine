@@ -3,7 +3,7 @@ import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type Node, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
@@ -169,7 +169,7 @@ export function setPageProperty(pageName: string, key: string, value: string | n
       if (node.originatedFromPageHeader && next[i] === "" && node.children.length === 0) {
         if (s.pages[idx].roots[0] === part.id) s.pages[idx].roots.shift();
         delete s.byId[part.id];
-      } else node.raw = next[i];
+      } else writeRaw(s, part.id, next[i]);
     });
   }));
   markDirty(pageName, "save-block");
@@ -647,7 +647,7 @@ export function setCollapsedTrees(roots: readonly string[], collapsed?: boolean)
   setDoc(produce(state => {
     for (const change of changes) {
       state.byId[change.id].collapsed = value;
-      state.byId[change.id].raw = change.raw;
+      writeRaw(state, change.id, change.raw);
     }
   }));
   bumpCollapseEpochs(changes.map(change => change.id));
@@ -696,7 +696,7 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
         const child = state.byId[change.id];
         if (!child) continue;
         child.collapsed = collapsed;
-        child.raw = change.raw;
+        writeRaw(state, change.id, change.raw);
       }
     })
   );

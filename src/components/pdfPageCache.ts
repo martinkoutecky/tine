@@ -1,4 +1,5 @@
 import type { PDFPageProxy } from "pdfjs-dist";
+import { releasePdfPage } from "./pdfRenderTask";
 
 // A PDFDocumentProxy (and therefore its page proxies) is shared by splits.
 // Retiring one view must not discard another view's cached decoded data.
@@ -19,7 +20,7 @@ export function createPdfPageCache() {
     if (remaining > 0) holders.set(page, remaining);
     else {
       holders.delete(page);
-      page.cleanup();
+      releasePdfPage(page);
     }
   }
   function retain(number: number, page: PDFPageProxy) {

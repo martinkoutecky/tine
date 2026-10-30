@@ -95,6 +95,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "editor", label: msg("settings-search-copy-a-parent-block-s-sub-blocks"), description: msg("settings-search-clipboard-subtree"), level: "advanced" },
   { tab: "editor", label: msg("settings-search-strip-collapsed-when-copying"), description: msg("settings-search-clipboard-properties"), level: "advanced" },
   { tab: "editor", label: msg("settings-search-click-a-block-reference-to-zoom-in"), description: msg("settings-search-reference-navigation") },
+  { tab: "editor", label: msg("settings-result-destination-label"), description: msg("settings-search-search-tab-results-open-in-new-tab-this-tab"), level: "advanced" },
   { tab: "journals", label: msg("settings-search-journal-date-format"), description: msg("settings-search-display-titles") },
   { tab: "journals", label: msg("settings-search-first-day-of-week"), description: msg("settings-search-calendar-monday-sunday") },
   { tab: "journals", label: msg("settings-search-carry-over"), description: msg("settings-search-buttons-context-header-last-days") },

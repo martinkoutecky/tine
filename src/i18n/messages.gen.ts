@@ -238,6 +238,8 @@ export interface MessageArgs {
   "command-right-sidebar-shrink-width": {};
   "command-seen-mark-graph": {};
   "command-seen-mark-page": {};
+  "command-seen-next-change": {};
+  "command-seen-previous-change": {};
   "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
   "command-sidebar-shrink-width": {};
@@ -939,6 +941,8 @@ export interface MessageArgs {
   "formula-year": {};
   "git-settings-branch": { "branch": string | number };
   "git-settings-hint": {};
+  "git-settings-ignore-added": { "path": string | number; "which": string | number };
+  "git-settings-ignore-failed": { "which": string | number };
   "git-settings-interval": {};
   "git-settings-interval-aria": {};
   "git-settings-label": {};
@@ -968,11 +972,10 @@ export interface MessageArgs {
   "git-settings-sync-now": {};
   "git-settings-sync-now-failed": { "error": string | number };
   "git-settings-sync-unusable": { "message": string | number };
-  "git-settings-syncthing-ignore-added": { "path": string | number };
-  "git-settings-syncthing-ignore-failed": {};
   "git-settings-token": {};
   "git-settings-unusable": { "message": string | number };
   "git-settings-username": {};
+  "git-stale-lock-notice-title": {};
   "git-sync-auth-required": {};
   "git-sync-busy": {};
   "git-sync-copy-failed": {};
@@ -981,6 +984,7 @@ export interface MessageArgs {
   "git-sync-fix-line-endings": {};
   "git-sync-fix-line-endings-guide": {};
   "git-sync-fix-open-folder": {};
+  "git-sync-fix-remove-stale-lock": {};
   "git-sync-fix-sign-in": {};
   "git-sync-held-changed": { "path": string | number };
   "git-sync-held-changed-unnamed": {};
@@ -1006,6 +1010,8 @@ export interface MessageArgs {
   "git-sync-pull-stopped": { "message": string | number; "path": string | number };
   "git-sync-refused": { "message": string | number };
   "git-sync-running": {};
+  "git-sync-stale-lock": { "path": string | number; "time": string | number };
+  "git-sync-stale-lock-failed": { "error": string | number };
   "gpu-software-rendering-is-on-tine-gpu-0-webkit": {};
   "gpu-this-app-image-is-rendering-on-the-cpu": {};
   "gpu-tine-is-rendering-on-the-cpu-your-gpu": {};
@@ -2348,15 +2354,19 @@ export interface MessageArgs {
   "row-chrome-collapse-all-descendants": {};
   "row-chrome-expand-all-descendants": {};
   "search-result-row-block": {};
+  "seen-change-position": { "index": string | number; "total": string | number };
+  "seen-change-position-wrapped": { "index": string | number; "total": string | number };
   "seen-forget-failed": { "error": string | number };
   "seen-graph-marked": {};
   "seen-header-count": { "count": number };
   "seen-mark-failed": { "error": string | number };
   "seen-mark-page": {};
+  "seen-next-change": {};
   "seen-note-identity-unknown": {};
   "seen-note-unattributed": {};
   "seen-note-unattributed-line": {};
   "seen-page-marked": { "name": string | number };
+  "seen-previous-change": {};
   "seen-removed-block": {};
   "seen-settings-forget": {};
   "seen-settings-hint": {};
@@ -2459,6 +2469,10 @@ export interface MessageArgs {
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };
+  "settings-result-destination-hint": {};
+  "settings-result-destination-label": {};
+  "settings-result-destination-new-tab": {};
+  "settings-result-destination-this-tab": {};
   "settings-same-as-other-links": {};
   "settings-scan-for-orphans": {};
   "settings-scanning": {};
@@ -2550,6 +2564,7 @@ export interface MessageArgs {
   "settings-search-reuse-tabs": {};
   "settings-search-safe-mode-broken-stylesheet-unreadable-session": {};
   "settings-search-scheduled-deadline-days": {};
+  "settings-search-search-tab-results-open-in-new-tab-this-tab": {};
   "settings-search-shift-tab-following-siblings-roam-config": {};
   "settings-search-show-brackets": {};
   "settings-search-show-tine-in-the-system-tray": {};

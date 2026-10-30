@@ -14,11 +14,21 @@ git-settings-unusable = Tine 无法在此提交：{ $message }
 git-settings-last-commit = 上次提交 { $commit }，时间 { $time }。
 git-settings-last-refused = 上次尝试失败：{ $message }
 git-settings-repack-deferred = Git 清理正在等待；提交仍会继续。Tine 将自动重试。
-git-settings-stale-lock = { $path } 已被占用超过 30 分钟，可能有 git 程序崩溃了。确认没有 git 命令在运行后请删除它。Tine 不会删除它。
+git-settings-stale-lock = { $path } 已被占用超过 30 分钟，可能有 git 程序崩溃了。确认没有 git 命令在运行后请删除它。
 git-settings-load-failed = 无法加载 git 设置：{ $error }
 git-settings-save-failed = 无法更改 git 设置：{ $error }
-git-settings-syncthing-ignore-added = Tine 已将 .syncthing.* 添加到 { $path }，以免将 Syncthing 的临时文件提交到 git。你可以删除这一行；Tine 不会在本设备上再次添加它。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
-git-settings-syncthing-ignore-failed = Tine 无法确认是否已将 .syncthing.* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。
+git-settings-ignore-added =
+    { $which ->
+        [tine] Tine 已将 logseq/.tine-* 添加到 { $path }，以免将 Tine 在本设备上的自有文件（例如其回收站）提交到 git，这样同步同一仓库的多台设备不会在删除页面后停止同步。已在 git 中的副本会在一次单独的 Tine 提交中从 git 移除，但不会从磁盘删除。你可以删除这一行；Tine 不会在本设备上再次添加它，并且仍会将这些文件排除在其提交之外。
+        [both] Tine 已将 .syncthing.* 和 logseq/.tine-* 添加到 { $path }，以免将 Syncthing 的临时文件和 Tine 在本设备上的自有文件（例如其回收站）提交到 git。已在 git 中的副本会在一次单独的 Tine 提交中从 git 移除，但不会从磁盘删除。你可以删除这些行；Tine 不会在本设备上再次添加它们。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
+       *[syncthing] Tine 已将 .syncthing.* 添加到 { $path }，以免将 Syncthing 的临时文件提交到 git。你可以删除这一行；Tine 不会在本设备上再次添加它。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
+    }
+git-settings-ignore-failed =
+    { $which ->
+        [tine] Tine 无法确认是否已将 logseq/.tine-* 添加到图谱的 .gitignore。Tine 的提交仍会排除其自有文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。
+        [both] Tine 无法确认是否已将 .syncthing.* 和 logseq/.tine-* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件和 Tine 的自有文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这些行。
+       *[syncthing] Tine 无法确认是否已将 .syncthing.* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。
+    }
 git-settings-remote = 远程仓库：{ $name }（{ $url }）
 git-settings-sync-unusable = Tine 无法在此同步：{ $message }
 git-settings-sync-now = 立即同步
@@ -67,3 +77,7 @@ git-sync-line-endings-safe = Git 的自动行尾转换阻止了同步。所有�
 git-sync-line-endings-differ = 有 { $count } 个已跟踪文件的字节不同或无法读取，例如 { $path }。这可能是 Windows 行尾或未提交的编辑造成的。请先提交编辑，再按照指南步骤重新检出文件且不进行转换。
 git-sync-line-endings-blocked = 关闭自动行尾转换后仍会阻止同步：{ $reason }。请按照指南步骤处理，然后重试。
 git-sync-line-endings-failed = 无法关闭行尾转换：{ $error }
+git-stale-lock-notice-title = Git 提交正在等待
+git-sync-stale-lock = 锁文件 { $path } 自 { $time } 起没有变化，而 Tine 本身没有在使用 git。它很可能是 Tine 或其他 git 程序在提交过程中被中止时遗留的。在它被删除之前，Tine 无法提交。如果此刻没有 git 程序在这个仓库中工作，请删除它。
+git-sync-fix-remove-stale-lock = 删除遗留的锁
+git-sync-stale-lock-failed = 无法删除锁文件：{ $error }

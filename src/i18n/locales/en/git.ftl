@@ -14,11 +14,21 @@ git-settings-unusable = Tine can't commit here: { $message }
 git-settings-last-commit = Last commit { $commit } at { $time }.
 git-settings-last-refused = Last attempt failed: { $message }
 git-settings-repack-deferred = Git cleanup is waiting; commits continue. Tine will retry automatically.
-git-settings-stale-lock = { $path } has been held for over 30 minutes; a git program may have crashed. Remove it once no git command is running. Tine will not remove it.
+git-settings-stale-lock = { $path } has been held for over 30 minutes; a git program may have crashed. Remove it once no git command is running.
 git-settings-load-failed = Couldn't load git settings: { $error }
 git-settings-save-failed = Couldn't change git settings: { $error }
-git-settings-syncthing-ignore-added = Tine added .syncthing.* to { $path } to keep Syncthing's temporary files out of git. You can remove the line; Tine won't add it again on this device. Conflict copies are still committed unless your own rules ignore them.
-git-settings-syncthing-ignore-failed = Tine couldn't confirm adding .syncthing.* to the graph's .gitignore. Temporary files are still excluded from Tine's commits. Check the file and add the line yourself if you want other git tools to ignore them too.
+git-settings-ignore-added =
+    { $which ->
+        [tine] Tine added logseq/.tine-* to { $path } to keep its own files for this device, such as its trash, out of git, so devices syncing one repository don't stop at a deleted page. Copies already in git are removed from it, not from disk, in a separate Tine commit. You can remove the line; Tine won't add it again on this device and still leaves those files out of its commits.
+        [both] Tine added .syncthing.* and logseq/.tine-* to { $path } to keep Syncthing's temporary files and Tine's own files for this device, such as its trash, out of git. Copies already in git are removed from it, not from disk, in a separate Tine commit. You can remove the lines; Tine won't add them again on this device. Conflict copies are still committed unless your own rules ignore them.
+       *[syncthing] Tine added .syncthing.* to { $path } to keep Syncthing's temporary files out of git. You can remove the line; Tine won't add it again on this device. Conflict copies are still committed unless your own rules ignore them.
+    }
+git-settings-ignore-failed =
+    { $which ->
+        [tine] Tine couldn't confirm adding logseq/.tine-* to the graph's .gitignore. Tine's own files are still excluded from its commits. Check the file and add the line yourself if you want other git tools to ignore them too.
+        [both] Tine couldn't confirm adding .syncthing.* and logseq/.tine-* to the graph's .gitignore. Temporary files and Tine's own files are still excluded from Tine's commits. Check the file and add the lines yourself if you want other git tools to ignore them too.
+       *[syncthing] Tine couldn't confirm adding .syncthing.* to the graph's .gitignore. Temporary files are still excluded from Tine's commits. Check the file and add the line yourself if you want other git tools to ignore them too.
+    }
 git-settings-remote = Remote: { $name } ({ $url })
 git-settings-sync-unusable = Tine can't sync here: { $message }
 git-settings-sync-now = Sync now
@@ -67,3 +77,7 @@ git-sync-line-endings-safe = Git's automatic line-ending conversion prevents syn
 git-sync-line-endings-differ = { $count } tracked files have different bytes or cannot be read, for example { $path }. Windows line endings or uncommitted edits can cause this. Commit your edits first, then follow the Guide steps to check out the files without conversion.
 git-sync-line-endings-blocked = Turning off automatic line-ending conversion would still leave sync blocked: { $reason }. Follow the Guide steps, then try again.
 git-sync-line-endings-failed = Couldn't turn off line-ending conversion: { $error }
+git-stale-lock-notice-title = Git commits are waiting
+git-sync-stale-lock = The lock file { $path } has not changed since { $time }, and Tine itself is not using git. It was most likely left behind when Tine or another git program was stopped in the middle of a commit. Until it is gone, Tine can't commit. If no git program is working in this repository right now, remove it.
+git-sync-fix-remove-stale-lock = Remove the stale lock
+git-sync-stale-lock-failed = Couldn't remove the lock: { $error }

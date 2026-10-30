@@ -96,3 +96,33 @@ it("keeps the refusal visible when the click's fresh check fails", async () => {
   expect(root.querySelector("[data-testid=git-sync-notice]")).not.toBeNull();
   dispose();
 });
+
+const staleLock = { path: "/graph/.git/index.lock", modified: 1_700_000_000, token: "0:1700000000000000000:0" };
+
+it("GS-LOCK: offers to remove a stale index.lock, passes its token back, and clears after the click", async () => {
+  vi.spyOn(backend(), "gitSyncNotice").mockResolvedValue(sync({ code: "stale-lock", path: staleLock.path, stale_lock: staleLock }));
+  const remove = vi.spyOn(backend(), "gitRemoveStaleLock").mockResolvedValue({ available: true });
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-sync-fix=remove-stale-lock]")).not.toBeNull());
+  expect(root.textContent).toContain("Git commits are waiting");
+  expect(root.textContent).toContain("/graph/.git/index.lock");
+  expect(root.querySelector("[data-git-sync-fix=sync-now]")).toBeNull();
+  const button = root.querySelector<HTMLButtonElement>("[data-git-sync-fix=remove-stale-lock]")!;
+  expect(button.textContent).toBe("Remove the stale lock");
+  button.click();
+  await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(staleLock.token));
+  await vi.waitFor(() => expect(root.querySelector("[data-testid=git-sync-notice]")).toBeNull());
+  dispose();
+});
+
+it("GS-LOCK: keeps the offer and says why when the click's recheck refuses", async () => {
+  vi.spyOn(backend(), "gitSyncNotice").mockResolvedValue(sync({ code: "stale-lock", path: staleLock.path, stale_lock: staleLock }));
+  vi.spyOn(backend(), "gitRemoveStaleLock").mockRejectedValue(new Error("The lock file changed since Tine offered to remove it"));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-sync-fix=remove-stale-lock]")).not.toBeNull());
+  root.querySelector<HTMLButtonElement>("[data-git-sync-fix=remove-stale-lock]")!.click();
+  await vi.waitFor(() => expect(root.querySelector("[role=alert]")?.textContent).toContain("Couldn't remove the lock"));
+  expect(root.querySelector("[role=alert]")?.textContent).toContain("changed since Tine offered");
+  expect(root.querySelector("[data-testid=git-sync-notice]")).not.toBeNull();
+  dispose();
+});

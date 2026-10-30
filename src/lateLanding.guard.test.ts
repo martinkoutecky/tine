@@ -53,6 +53,7 @@ const EXEMPT: Record<string, string> = {
   "src/document/host/wiring.ts#hostPort.owed": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
   "src/document/host/wiring.ts#applyLiveResolution": "the review ticket owns the read-only merge: submitReviewed drops it when the session, page instance, edit or version moved; host/client.test.ts",
   "src/gpu.ts#warnIfSoftwareRendering": "one-time device-wide best-effort probe has no graph or view owner",
+  "src/quickShareGate.ts#primeQuickShareGate": "the quick share gate is a build constant; one session-wide read has no graph or view owner",
   "src/plugins/manager.ts#install": "process-wide install writes and applies its returned record independent of graph navigation; plugins/manager.test.ts",
   "src/plugins/registry.ts#verifiedIndex": "pure process-wide signature check; callers own any UI publication; plugins/registry.test.ts",
 };
@@ -100,6 +101,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/document/host/wiring.ts#hostPort.owed": ["pageOwed", "pageOwed"], // .then and .catch
   "src/document/host/wiring.ts#applyLiveResolution": ["mergeLiveConflict"],
   "src/gpu.ts#warnIfSoftwareRendering": ["gpuEnv"],
+  "src/quickShareGate.ts#primeQuickShareGate": ["quickShareList", "quickShareList"],
   "src/plugins/manager.ts#install": ["installPlugin"],
   "src/plugins/registry.ts#verifiedIndex": ["verifyPluginRegistry"],
 };
@@ -126,7 +128,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
-  "setBackupKeep", "setGitAutocommit", "gitSyncNow", "gitDisableLineEndings", "gitSignIn", "gitSignOut", "gitAppLifecycle", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
+  "setBackupKeep", "setGitAutocommit", "gitSyncNow", "gitDisableLineEndings", "gitRemoveStaleLock", "gitSignIn", "gitSignOut", "gitAppLifecycle", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",

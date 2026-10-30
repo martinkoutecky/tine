@@ -4,7 +4,7 @@ import { ensureSeenAvailability, forgetSeenStateNow, markGraphSeenNow, seenAvail
 import { Field } from "./settingsField";
 
 /** Settings → Graph → Changed since you last looked (ADR 0079): the whole-graph mark and the device-local forget.
- *  Shown only where the backend can read git history (desktop, a graph inside a git repository). */
+ *  Shown on every platform where the backend can read the graph's git history. */
 export function SeenSettings(): JSX.Element {
   onMount(() => void ensureSeenAvailability());
   return <Show when={seenAvailable() === true}>

@@ -4,13 +4,13 @@ import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
-import { dbg } from "../debug";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
 import { QuickShareSettings } from "./QuickShareSettings";
 import { AboutTab } from "./AboutTab";
 import { platformKind } from "../platform";
+import { primeQuickShareGate, quickShareOffered } from "../quickShareGate";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { ConflictFileRow } from "./JournalConflictFileRow";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
@@ -31,7 +31,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, setMobileNavigationAtBottom, setNavReuseTabs } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
@@ -129,13 +129,10 @@ export function Settings(): JSX.Element {
     return platform === "desktop" || platform === "android";
   };
   // Sharing appears where quick share is on (DESIGN §5: off in shipped builds until its viewer is deployed).
-  // A signal, not a resource: a resource read here would suspend the whole dialog (GH #409).
-  const [sharingAvailable, setSharingAvailable] = createSignal(false);
-  onMount(() => {
-    void readOwned(graphOwner(), backend().quickShareList())
-      .then((answer) => { if (answer.kind === "current") setSharingAvailable(answer.value.enabled); })
-      .catch((error) => dbg(`settings: reading the quick share gate failed: ${String(error)}`));
-  });
+  // A session-wide signal primed at graph load, not a resource: a resource read here would suspend the
+  // whole dialog (GH #409), and a read per open inserted the tab after the list painted.
+  const sharingAvailable = quickShareOffered;
+  onMount(() => { void primeQuickShareGate(); });
   const availableTabs = createMemo(() => TABS.filter((entry) =>
     (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
@@ -823,6 +820,17 @@ function EditorTab(props: { search: string }): JSX.Element {
           hint={t("settings-ui-plain-navigation-to-a-page-journal-or-exact-zoomed")}
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
+        </Field>
+
+        <Field label={render(msg("settings-result-destination-label"))} hint={render(msg("settings-result-destination-hint"))}>
+          <select
+            aria-label={render(msg("settings-result-destination-label"))}
+            value={searchResultsOpenInThisTab() ? "here" : "tab"}
+            onChange={(event) => setSearchResultsOpenInThisTab(event.currentTarget.value === "here")}
+          >
+            <option value="tab">{render(msg("settings-result-destination-new-tab"))}</option>
+            <option value="here">{render(msg("settings-result-destination-this-tab"))}</option>
+          </select>
         </Field>
 
         <Field label={render(msg("settings-pinyin-label"))} hint={render(msg("settings-pinyin-description"))}>

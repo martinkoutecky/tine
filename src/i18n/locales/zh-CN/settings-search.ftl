@@ -217,3 +217,5 @@ settings-search-quick-share-account = 快速分享：连接或断开用于分享
 settings-search-quick-share-shares = 在此设备上创建的快速分享链接：复制、检查、删除、忘记
 settings-search-quick-share-find = 快速分享：列出你 GitHub 账号中的 Tine 分享
 settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = 手机 平板 安卓 顶栏 底部 单手 后退 前进 搜索 侧边栏
+
+settings-search-search-tab-results-open-in-new-tab-this-tab = 搜索 标签页 结果 点击 打开 新标签页 当前标签页 原地 后台 窗格 侧边栏
