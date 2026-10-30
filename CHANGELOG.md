@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
+- The experimental CodeMirror editor uses the block's own line height and padding, so entering edit mode no longer nudges wrapped lines and the blocks below (UI-CM6-LINEHEIGHT).
+- In the experimental CodeMirror editor a SCHEDULED/DEADLINE line shows as the same date chip as the view while the caret is elsewhere, and as its source only while the caret is in that line (UI-CM6-PLANNING).
 
 ### Fixed
 
