@@ -44,6 +44,8 @@ shot() { adb exec-out screencap -p > "$out/$1.png" 2>/dev/null || true; }
 ime_shown() { adb shell dumpsys input_method 2>/dev/null | grep -aoE 'mInputShown=(true|false)' | head -1; }
 
 adb shell settings put global hide_error_dialogs 1 || true
+adb shell settings put secure anr_show_background 0 || true
+adb shell settings put global anr_show_background 0 || true
 nav="${NAV:-3button}"
 if [ "$nav" = "gestural" ]; then adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural > "$out/nav.txt" 2>&1 || true; sleep 3; fi
 adb shell settings get secure navigation_mode >> "$out/nav.txt" 2>&1 || true
@@ -164,6 +166,15 @@ for n in 1 2 3 4 5 6 7; do
   x=$(python3 -I -c "print(int($wl + $cx * $dpr))"); y=$(python3 -I -c "print(int($wt + $cy * $dpr))")
   echo "trial $n: css=($cx,$cy) dpr=$dpr webview=[$wl,$wt][$wr,$wb] -> tap ($x,$y)" | tee -a "$out/taps.txt"
   echo "ime-before-$n $(ime_shown)" >> "$out/taps.txt"
+  # A system "isn't responding" dialog (slow emulator) swallows the tap: press Wait first.
+  python3 -I - "$out/ui-t$n.xml" > "$out/wait-$n.txt" <<'PY'
+import re, sys
+s = open(sys.argv[1], errors="replace").read()
+m = re.search(r'text="Wait"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', s)
+print((int(m.group(1)) + int(m.group(3))) // 2, (int(m.group(2)) + int(m.group(4))) // 2) if m else None
+PY
+  w=$(cat "$out/wait-$n.txt")
+  if [ -n "$w" ] && [ "$w" != None ]; then adb shell input tap $w; echo "dismissed ANR dialog at $w" >> "$out/taps.txt"; sleep 1; fi
   shot "t$n-0-before"
   adb shell input tap "$x" "$y"
   sleep 0.5; shot "t$n-1-p0.5s"
