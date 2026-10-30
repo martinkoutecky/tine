@@ -1,0 +1,131 @@
+name: GH783 emulator probe
+run-name: GH783 emulator probe / ${{ inputs.refs }}
+
+# Probe branch only (probe/gh783-emulator). Builds a debug x86_64 APK of each ref
+# with temporary instrumentation overlaid (never committed to the ref), runs it on
+# an emulator and records where the caret row goes when the keyboard opens.
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: 'JSON list of refs to test, e.g. ["release/0.9","v0.7.4"]'
+        required: true
+        default: '["release/0.9","v0.7.4"]'
+      api:
+        description: Emulator API level
+        default: "35"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe ${{ matrix.ref }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ fromJSON(inputs.refs) }}
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_INCREMENTAL: "false"
+      GRADLE_OPTS: -Dorg.gradle.workers.max=2 -Dorg.gradle.jvmargs=-Xmx2048m
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: probe
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ matrix.ref }}
+          path: app
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 4.0.20
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: x86_64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "app -> target"
+          shared-key: gh783-${{ matrix.ref }}
+          cache-on-failure: true
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install pinned Android build toolchain
+        run: |
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "platforms;android-35" \
+            "build-tools;35.0.0" "ndk;26.3.11579264" "platform-tools"
+          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          for v in NDK_HOME ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME; do
+            echo "$v=$NDK" >> "$GITHUB_ENV"
+          done
+          find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d ! -name "26.3.11579264" -exec rm -rf {} +
+          rm -rf "$ANDROID_SDK_ROOT/ndk-bundle"
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci
+
+      - name: Overlay the probe (not committed to the ref)
+        working-directory: app
+        run: |
+          cp ../probe/.github/gh783/probe.js public/assets/gh783-probe.js
+          sed -i 's#<script src="/assets/startup-theme.js"></script>#&<script src="/assets/gh783-probe.js"></script>#' index.html
+          grep -q gh783-probe index.html
+          # readable function names in the logged stacks
+          sed -i 's/^  build: {/  build: {\n    minify: false,/' vite.config.ts
+          grep -q 'minify: false' vite.config.ts
+          if [ -f scripts/release-workflow-inputs.mjs ]; then node scripts/release-workflow-inputs.mjs android-config; fi
+          git rev-parse HEAD
+
+      - name: Build debug x86_64 APK
+        working-directory: app
+        run: npx tauri android build --debug --target x86_64 --apk --ci
+
+      - name: Locate the APK
+        run: |
+          apk=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*debug.apk' ! -path '*androidTest*' | head -1)
+          test -n "$apk"
+          echo "APK=$apk" >> "$GITHUB_ENV"
+          ls -l "$apk"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Drive the app on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api }}
+          arch: x86_64
+          target: default
+          profile: pixel_6
+          ram-size: 4096M
+          emulator-boot-timeout: 400
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash probe/.github/gh783/drive.sh "$APK" "gh783-out" "${{ matrix.ref }}"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gh783-${{ strategy.job-index }}-api${{ inputs.api }}
+          path: gh783-out
+          if-no-files-found: warn
+          retention-days: 14
