@@ -96,6 +96,16 @@
       var ct = caretTop(ed);
       if (ct !== null && m) { o.caretY = r1(ct); o.caretAboveTop = r1(ct - m.getBoundingClientRect().top); o.caretToTb = tb0() === null ? null : r1(tb0() - ct); }
     }
+    if (m) {
+      var mt = m.getBoundingClientRect().top, ml = [];
+      [].forEach.call(m.querySelectorAll("video, img.media-embed, .asset-img, img"), function (el) {
+        var rr = el.getBoundingClientRect();
+        if (rr.height > 20 && rr.bottom > mt - 50 && rr.top < mt + m.clientHeight + 50 && ml.length < 4) ml.push({ g: el.tagName[0], t: r1(rr.top - mt), h: r1(rr.height), w: r1(rr.width) });
+      });
+      o.media = ml;
+      var pins = document.querySelectorAll("[data-sticky-parent]"), pn = 0;
+      o.pinsN = pins.length;
+    }
     var tb = document.querySelector("[data-mobile-keyboard-toolbar]");
     if (tb) { var tr = tb.getBoundingClientRect(); o.tb = { t: r1(tr.top), h: r1(tr.height), vis: !tb.hidden && tb.style.display !== "none" }; }
     var nav = document.querySelector(".mobile-navigation-toolbar");
@@ -170,6 +180,15 @@
     { tall: 0, f: 0.25, within: 0.4 },
     { tall: 1, f: 0.60, within: 0.0 },
   ];
+  var mediaPlan = [
+    { find: "Kitchen", f: 0.12 },
+    { find: "Cabinets", f: 0.20 },
+    { find: "Between the dishwasher", f: 0.12 },
+    { find: "Between the dishwasher", f: 0.40 },
+    { find: "Kitchen", f: 0.30 },
+    { find: "Right of the stove", f: 0.10 },
+    { find: "Cabinets", f: 0.08 },
+  ];
   var state = "boot";
   var created = false;
   var confirmed = false;
@@ -226,14 +245,37 @@
     return null;
   }
 
+  function pickFind(p) {
+    var m = scroller();
+    var mr = m.getBoundingClientRect();
+    var blocks = [].filter.call(m.querySelectorAll(".block-content"), function (b) { return (b.textContent || "").trim().indexOf(p.find) === 0; });
+    var b = blocks[0];
+    if (!b) return null;
+    var r = b.getBoundingClientRect();
+    quiet = true; m.scrollTop += r.top - (mr.top + p.f * m.clientHeight); quiet = false;
+    r = b.getBoundingClientRect();
+    var y = r.top + Math.min(12, r.height / 2);
+    var xs = [r.left + 60, r.left + 30, r.left + 100];
+    for (var i = 0; i < xs.length; i++) {
+      var hit = document.elementFromPoint(xs[i], y);
+      if (hit && hit.closest(".block-content") === b && !hit.closest("a, button, svg, img, video")) return { cx: xs[i], cy: y, text: p.find + " f=" + p.f };
+    }
+    return null;
+  }
+
   function startTrial() {
+    if (!plan.mediaChecked) {
+      plan.mediaChecked = true;
+      var hasK = [].some.call(document.querySelectorAll(".block-content"), function (b) { return (b.textContent || "").trim().indexOf("Kitchen") === 0; });
+      if (hasK) { plan = mediaPlan; log("MEDIA-PLAN"); }
+    }
     var p = plan[trial];
     if (!p) { state = "finished"; log("ALLDONE"); return; }
     trial += 1;
     var m = scroller();
     if (p.top) { quiet = true; m.scrollTop = 0; quiet = false; }
     setTimeout(function () {
-      var tg = p.tall !== undefined ? pickTall(p) : pickTarget(p.f);
+      var tg = p.find ? pickFind(p) : (p.tall !== undefined ? pickTall(p) : pickTarget(p.f));
       var mr = scroller().getBoundingClientRect();
       if (!tg) { log("TARGET-NONE trial=" + trial); snap("no-target"); setTimeout(startTrial, 1000); return; }
       snap("pre-tap");

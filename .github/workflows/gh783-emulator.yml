@@ -110,6 +110,9 @@ jobs:
           echo "APK=$apk" >> "$GITHUB_ENV"
           ls -l "$apk"
 
+      - name: Ensure ffmpeg (fixture video)
+        run: which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -122,6 +125,7 @@ jobs:
         env:
           NAV: ${{ matrix.nav }}
           IME: ${{ matrix.ime }}
+          SEED: ${{ matrix.seed }}
         with:
           api-level: ${{ matrix.api }}
           arch: x86_64

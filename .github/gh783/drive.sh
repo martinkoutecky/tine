@@ -63,6 +63,27 @@ day=$(adb shell date +%Y_%m_%d | tr -d '\r')
 adb shell run-as "$pkg" find . -type d -name journals > "$out/journals-dirs.txt" 2>&1 || true
 jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1 | tr -d '\r')
 echo "journals dir: $jdir day: $day" | tee -a "$out/taps.txt"
+if [ "${SEED:-plain}" = "media" ]; then
+python3 -I - > "$out/journal.md" <<'PY'
+def grp(a, b):
+    print("\t\t- " + a)
+    print("\t\t- ![clip](../assets/clip.mp4)")
+    print("\t\t- " + b)
+    print("\t\t- ![photo](../assets/photo.png)")
+for h in ("Hall", "Living room", "Dining room"):
+    print("- # " + h)
+print("- # Kitchen")
+print("\t- ## Cabinets")
+grp("Right of the stove, make a spice drawer", "Between the dishwasher and the counter, a thin drawer for utensils and small tools.")
+grp("Pull-out shelf for the pans, with a soft close", "A tall cabinet for the brooms and the mop, with hooks on the inside of the door.")
+print("\t- ## Counter")
+grp("Corner unit with a rotating tray", "The fridge goes next to the window, with a cabinet above it for the cereal.")
+print("- # Bathroom")
+print("\t- ## Storage")
+grp("Mirror cabinet with a socket inside", "Two towel rails on the wall behind the door.")
+PY
+
+else
 python3 -I - > "$out/journal.md" <<'PY'
 words = "the quick brown fox jumps over a lazy dog while notes accumulate on every page of this scratch graph".split()
 long_en = " ".join(words[(k * 7) % len(words)] for k in range(260))
@@ -75,7 +96,31 @@ for i in range(1, 91):
     if i == 30:
         print("- Long B: " + cjk)
 PY
+
+fi
 adb shell "run-as $pkg sh -c 'cat > $jdir/$day.md'" < "$out/journal.md"
+if [ "${SEED:-plain}" = "media" ]; then
+  adbdir=$(dirname "$jdir")/assets
+  python3 -I - "$out/photo.png" <<'PY'
+import struct, sys, zlib
+w, h = 540, 960
+raw = bytearray()
+for y in range(h):
+    raw.append(0)
+    for x in range(w):
+        raw += bytes(((x * 255) // w, (y * 255) // h, ((x // 40 + y // 40) % 2) * 160 + 40))
+def chunk(t, d):
+    c = struct.pack(">I", len(d)) + t + d
+    return c + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+open(sys.argv[1], "wb").write(png)
+PY
+  ffmpeg -v error -y -f lavfi -i "testsrc2=size=360x640:rate=15:duration=2" -c:v libx264 -preset ultrafast -crf 32 -pix_fmt yuv420p -movflags +faststart "$out/clip.mp4"
+  ls -l "$out/photo.png" "$out/clip.mp4" > "$out/fixtures.txt" 2>&1
+  adb shell run-as "$pkg" mkdir -p "$adbdir"
+  for f in photo.png clip.mp4; do adb shell "run-as $pkg sh -c 'cat > $adbdir/$f'" < "$out/$f"; done
+  adb shell run-as "$pkg" ls -l "$adbdir" >> "$out/fixtures.txt" 2>&1
+fi
 adb shell run-as "$pkg" ls -l "$jdir" > "$out/journals-ls.txt" 2>&1 || true
 
 # Phase B: relaunch; the graph (with the long journal) loads.
