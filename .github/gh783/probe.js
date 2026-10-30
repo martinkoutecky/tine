@@ -220,6 +220,7 @@
 
   setInterval(function () {
     var now = performance.now();
+    [].forEach.call(document.querySelectorAll(".toast-close"), function (b) { b.click(); });
     if (now - lastLog > 5000) { lastLog = now; log("STATE", state, "main=" + !!scroller(), "blocks=" + document.querySelectorAll(".block-content").length); }
     if (state === "boot") {
       if (!created) {

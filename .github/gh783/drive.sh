@@ -7,7 +7,7 @@
 set -uo pipefail
 apk="$1"; out="$2"; label="$3"
 mkdir -p "$out"
-log="$out/logcat.txt"
+log="$out/logcat-a.txt"
 adb logcat -c || true
 adb logcat -v threadtime > "$log" 2>&1 &
 lc=$!
@@ -35,11 +35,43 @@ waitfor() { # pattern timeout-seconds
 shot() { adb exec-out screencap -p > "$out/$1.png" 2>/dev/null || true; }
 ime_shown() { adb shell dumpsys input_method 2>/dev/null | grep -aoE 'mInputShown=(true|false)' | head -1; }
 
-adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 > "$out/launch.txt" 2>&1
+adb shell settings put global hide_error_dialogs 1 || true
+nav="${NAV:-3button}"
+if [ "$nav" = "gestural" ]; then adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural > "$out/nav.txt" 2>&1 || true; sleep 3; fi
+adb shell settings get secure navigation_mode >> "$out/nav.txt" 2>&1 || true
+
+launch() { adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >> "$out/launch.txt" 2>&1; }
+
+# Phase A: create the demo graph through the real dialog, then stop the app.
+launch
 waitfor 'GH783 .* BOOT ' 120 || { echo "probe never booted" >&2; shot no-boot; exit 1; }
-echo "probe booted"
-sleep 8; shot after-boot
-waitfor 'GH783 .* (TALL-OK|TALL-FAIL)' 240 || { echo "no tall page" >&2; shot no-tall; exit 1; }
+waitfor 'GH783 .* CLICKED create-graph' 120 || { echo "no create click" >&2; shot no-create; exit 1; }
+waitfor 'GH783 .* CLICKED confirm-create' 30 || echo "no confirm dialog (older UI?)"
+sleep 15; shot after-create
+adb shell am force-stop "$pkg"; sleep 2
+
+# Write a long journal for today into the new graph (app-private dir, debug APK).
+day=$(adb shell date +%Y_%m_%d | tr -d '\r')
+adb shell run-as "$pkg" find . -type d -name journals > "$out/journals-dirs.txt" 2>&1 || true
+jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1)
+echo "journals dir: $jdir day: $day" | tee -a "$out/taps.txt"
+python3 -I - > "$out/journal.md" <<'PY'
+import textwrap
+words = "the quick brown fox jumps over a lazy dog while notes accumulate on every page of this scratch graph".split()
+for i in range(1, 91):
+    n = 6 + (i * 7) % 18
+    print("- Block %02d: %s" % (i, " ".join(words[(i + k) % len(words)] for k in range(n))))
+PY
+adb shell run-as "$pkg" sh -c "cat > $jdir/$day.md" < "$out/journal.md"
+adb shell run-as "$pkg" ls -l "$jdir" > "$out/journals-ls.txt" 2>&1 || true
+
+# Phase B: relaunch; the graph (with the long journal) loads.
+kill $lc 2>/dev/null; adb logcat -c || true
+log="$out/logcat.txt"
+adb logcat -v threadtime > "$log" 2>&1 &
+lc=$!
+launch
+waitfor 'GH783 [0-9.]+ (TALL-OK|TALL-FAIL)' 240 || { echo "no tall page" >&2; shot no-tall; exit 1; }
 sleep 3; shot tall-page
 
 webview_bounds() {
