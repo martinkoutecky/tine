@@ -359,6 +359,38 @@ describe("S7 Concord review capture", () => {
   });
 });
 
+describe("GH #800 a reviewed merge supersedes the disk text held back during the conflict", () => {
+  it("a hold released while the merge installs never puts the reviewed disk text back over it", async () => {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    await opened(ctx, "P", 3);
+    // Unsaved input, then the host mails the file another writer changed: the
+    // window holds that text back (input is newer), and its own send conflicts.
+    doc.type("P", "mine");
+    client.noteEdit("P", "save-block");
+    client.receive(mail(7, KEY, mailPage(4, { kind: "page", dto: page("P", "disk", "r4") }, { disk: { kind: "file", rev: "r4" } })));
+    expect(heldVersion(client, "P")).toBe(4);
+    client.sendNow("P");
+    await tick();
+    const refused = host.last("submit");
+    client.receive(mail(7, KEY, mailPage(5, { kind: "unchanged" }, { conflict: true, disk: { kind: "file", rev: "r4" } }), took(refused.id, 5)));
+    // Installing the merge re-renders the page; a draft pin ending there
+    // releases the page's holds synchronously (pinPageWhileDrafting).
+    const install = doc.install.bind(doc);
+    let pinned = true;
+    doc.install = (name, content) => { install(name, content); if (pinned) { pinned = false; client.release(name); } };
+    const ticket = client.reviewTicket("P", "r4")!;
+    const result = client.submitReviewed(ticket, async () => page("P", "mine + disk"));
+    await tick(10);
+    expect(doc.text("P")).toBe("mine + disk");
+    const submit = host.last("submit");
+    expect([textOf(submit.dto), submit.resolve]).toEqual(["mine + disk", { kind: "file", rev: "r4" }]);
+    client.receive(mail(7, KEY, mailPage(6, { kind: "unchanged" }), took(submit.id, 6)));
+    expect(await result).toEqual({ took: true, refusal: null });
+    expect([doc.text("P"), heldVersion(client, "P")]).toEqual(["mine + disk", null]);
+  });
+});
+
 describe("R7 cut grants carry the host page and session", () => {
   it("checks instance, file, key, session, tombstone, conflict and outstanding work", async () => {
     const ctx = await setup();

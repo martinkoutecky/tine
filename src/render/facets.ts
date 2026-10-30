@@ -290,6 +290,16 @@ function angleText(line: string): string | null {
   return lt >= 0 && gt > lt ? line.slice(lt + 1, gt) : null;
 }
 
+/** A parser-confirmed standalone SCHEDULED/DEADLINE timestamp, in the exact terms the view's date chip uses
+ *  (`planningDates`): lsdoc's Timestamp, whose source span starts its line. `value` is the text between the angle
+ *  brackets. The CM6 editor renders the same chip from this, so view and edit cannot disagree on what a planning
+ *  line is. */
+export function planningChipOf(i: Inline, raw: string): { ts: "Scheduled" | "Deadline"; value: string | null; hasTrailingBody: boolean } | null {
+  const line = planningLineText(i, raw);
+  if (line === null || i.k !== "timestamp" || (i.ts !== "Scheduled" && i.ts !== "Deadline")) return null;
+  return { ts: i.ts, value: angleText(line.text), hasTrailingBody: line.hasTrailingBody };
+}
+
 /** Remove genuine line-leading planning timestamps from the body AST while
  *  preserving any following text in the SAME paragraph. lsdoc represents both
  *  same-line and next-line body text in the planning timestamp's inline flow, so

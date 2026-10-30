@@ -1,7 +1,19 @@
-.cm6-block-editor { min-width: 0; width: 100%; position: relative; container: editor / inline-size; }
+.cm6-block-editor { min-width: 0; width: 100%; position: relative; container: editor / inline-size;
+  /* The block's own first-line metric (app.css `.block-content` / `.block-editor`), set once here so every
+     descendant inherits it. Without this the host sat outside `.block-content`, inherited the body's unitless
+     1.5 (24px) and every line was 2px shorter than the rendered block's 26px, so the lines below moved on
+     entering and leaving edit (CM6-LINEHEIGHT). `font: inherit` below also resets line-height to inherit, which
+     is why the CM base theme's own scroller line-height of 1.4 never wins. */
+  line-height: var(--ls-block-line-height); }
 .cm6-block-editor .cm-editor { font: inherit; background: transparent; }
 .cm6-block-editor .cm-editor.cm-focused { outline: none; }
+/* Same box as `.block-content` / the textarea `.block-editor`: the 2px vertical padding and a one-line floor,
+   so the first baseline and the block height match the rendered body. Code views keep their card metrics. */
 .cm6-block-editor .cm-content { padding: 0; font: inherit; line-height: inherit; }
+.cm6-block-editor:not(:has(.code-edit)) .cm-content {
+  padding: var(--ls-block-content-pad-y) 0;
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+}
 /* CM6's base theme pins caret-color to black (light) unless told the theme is dark; follow the text colour. */
 .cm6-block-editor .cm-editor .cm-content { caret-color: currentColor; }
 .cm6-block-editor .cm-line { padding: 0; }

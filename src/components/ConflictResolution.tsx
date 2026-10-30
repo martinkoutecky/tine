@@ -42,6 +42,8 @@ import {
 } from "./DiffRows";
 import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from "../types";
 import { listen, newIntersectionObserver, newResizeObserver } from "../windowRealm";
+import { pageConflictToResolve } from "../liveConflicts";
+import { conflictForPage } from "../conflictQueue";
 
 function errorDetail(error: unknown): string {
   // Tauri rejects a `Result<T, String>` with the bare string; keep its text.
@@ -101,6 +103,26 @@ async function readDiff(c: ConflictObject, alive: () => boolean): Promise<DiffRe
   } catch (e) {
     return { diff: null, error: errorDetail(e) };
   }
+}
+
+/** The conflict panel of one page: the conflict `pageConflictToResolve` names
+ *  (the page's own save conflict before a queued artifact, GH #800), one
+ *  resolver per conflict object. Keyed by the object's id so the next conflict
+ *  of the same page (the sync copy after the save conflict) mounts its own
+ *  resolver: fresh decisions, its own reads and its own leave-page note.
+ *  Page.tsx mounts it inside its FailureBoundary (failureBoundarySeams). */
+export function PageConflictPanel(props: { name: string; path: string | undefined }): JSX.Element {
+  const conflict = createMemo(() => pageConflictToResolve(props.name, props.path));
+  const id = createMemo(() => conflict()?.id);
+  return (
+    <Show when={id()} keyed>
+      {(_key) => (
+        <Show when={conflict()}>
+          {(current) => <PageConflictResolution conflict={current()} />}
+        </Show>
+      )}
+    </Show>
+  );
 }
 
 /** The in-page conflict resolver for the page currently being viewed. */
@@ -383,6 +405,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           </Show>
         </span>
       </div>
+      <Show when={conflict().source === "live-save" && conflictForPage(conflict().page_path)}>
+        <div class="settings-hint page-conflict-next">{t("conflict-resolution-another-version-waits")}</div>
+      </Show>
       <Show when={markers()}>
         <div class="settings-hint page-conflict-refusal">{t("conflict-resolution-this-file-still-contains-merge-markers-so-tine")}</div>
       </Show>
