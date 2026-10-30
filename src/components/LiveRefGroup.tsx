@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createComputed, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -20,6 +20,7 @@ import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { clearOnBindingInvalidated } from "../binding";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
@@ -86,19 +87,50 @@ interface LiveRefGroupProps {
   bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> };
 }
 
+// GH #810: the height an embed's rows had when it last unmounted, so its placeholder
+// reserves it. A scrolled-out outline window keeps a spacer of its measured height,
+// and the window comes back with its groups unmounted until each one is near
+// again: a placeholder of one row's estimate made the window about one embed
+// shorter than its spacer, and every block below it jumped (and jumped back when
+// the rows mounted). Keyed by the embedding block, so it reads no row of an
+// offscreen group (I-25); other surfaces have no such identity and keep the
+// estimate. Bounded and graph-scoped like BlockList's window heights; the width
+// guards a pane resized in between.
+const groupHeights = new Map<string, { width: number; height: number }>();
+const MAX_GROUP_HEIGHTS = 512;
+clearOnBindingInvalidated(() => groupHeights.clear());
+
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
+  const [reserved, setReserved] = createSignal(0);
   let el: HTMLDivElement | undefined;
+  // Kept current while alive: a cleanup must not read props, whose getters may
+  // already answer for an unmounted embed.
+  let key: string | undefined;
+  createComputed(() => {
+    key = props.hostBlockId === undefined ? undefined
+      : `${props.hostBlockId}\0${props.embedId ?? props.page}\0${props.blocks.length}`;
+  });
   onMount(() => {
     if (!el || near()) return;
     const node = el;
+    const remembered = key === undefined ? undefined : groupHeights.get(key);
+    if (remembered && remembered.width === node.clientWidth) setReserved(remembered.height);
     observeNear(node, () => setNear(true));
     onCleanup(() => unobserveNear(node));
+  });
+  onCleanup(() => {
+    if (key === undefined || !el?.isConnected || !untrack(near)) return;
+    const height = el.getBoundingClientRect().height;
+    if (height <= 0) return;
+    groupHeights.delete(key);
+    groupHeights.set(key, { width: el.clientWidth, height });
+    if (groupHeights.size > MAX_GROUP_HEIGHTS) groupHeights.delete(groupHeights.keys().next().value!);
   });
 
   return (
     <div ref={el} class="live-ref-group"
-      style={!near() ? { "min-height": `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}>
+      style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}>
       <Show when={near()}><MountedRefGroup {...props} /></Show>
     </div>
   );
