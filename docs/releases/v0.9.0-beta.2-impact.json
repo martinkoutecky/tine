@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.2",
+  "baseTag": "v0.9.0-beta.1",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Scrolling a long page with an expanded block embed no longer makes the page jump (#810). Scrolling back up past an embed made everything below it jump up by the height of the embed's rows, and jump back when the embed's rows appeared; the embed now keeps the height it had when it scrolled out of view.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH810-EMBED-SCROLL-NO-JUMP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH810-EMBED-SCROLL-NO-JUMP. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.reservedHeight.test.tsx",
+          "scripts/e2e-gh810-embed-scroll.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its \"Two versions of this page arrived\" panel used to hide the review of the unsaved edits, and its Apply only said \"Resolve this page’s save conflict first\". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display (\"This page could not be displayed\") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH800-MERGE-UNIQUE-KEYS",
+        "REG-GH800-REVIEWED-MERGE-HELD-TEXT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH800-MERGE-UNIQUE-KEYS, REG-GH800-REVIEWED-MERGE-HELD-TEXT. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-graph-features/tests/f8e_live_conflict.rs",
+          "src/document/host/client.test.ts",
+          "scripts/e2e-gh800-save-then-copy.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On Android shared storage, renaming a page by capitalization alone now works, on the phone and in a git pull: Tine moves it through a temporary name and finishes the rename at the next open if it is stopped in between. Before, such a pull stopped git sync (\"pull incomplete\") and such a rename was refused (GS1).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GS1-CASE-MOVE-TEMPORARY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GS1-CASE-MOVE-TEMPORARY. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONFLICT-INVALIDINPUT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-CONFLICT-INVALIDINPUT. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Android: tapping a line of a block taller than the space above the keyboard no longer scrolls that line above the top of the screen when the keyboard opens, and after the keyboard resizes the view the edited line is brought back on screen if anything has moved it off (#783). The jump reported with headings between tall photos and videos could not be reproduced on an emulator, so this is not yet confirmed as the whole fix.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH783-ANDROID-TALL-BLOCK-CARET-OFF-TOP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH783-ANDROID-TALL-BLOCK-CARET-OFF-TOP. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/editor/caretReveal.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Fast scrolling through a PDF no longer leaves pages blank for up to a second behind the scroll, a regression in 0.9.0-beta.1 from the pdf.js 5 upgrade. pdf.js 5 gave every glyph of the hidden selectable-text layer its own transformed layer, which the webview repainted on every scroll frame; glyphs that need no stretching or rotation are now drawn untransformed again, as with pdf.js 4, with text selection unchanged (PDF5-SCROLL).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF09-PDFJS5-FASTSCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-PDF09-PDFJS5-FASTSCROLL. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The Journals feed opens even when today's journal cannot be created from the default journal template (#811). The feed used to fail as a whole (\"Could not load journal feed\"), as on Android in 0.9.0-beta.1; now an error says the template was not added and the journals are shown without it.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH811-TEMPLATE-ERROR-FEED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH811-TEMPLATE-ERROR-FEED. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "PDF pages are now set off by a thin edge line instead of a soft drop shadow. On HiDPI screens without GPU compositing the shadow was re-blurred on every scrolled frame, making scrolling sluggish and leaving pages blank for a second or two during fast scrolling (PDF9-5).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF09-PAGE-SHADOW-DPR2"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-PDF09-PAGE-SHADOW-DPR2. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}
