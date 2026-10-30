@@ -1,7 +1,8 @@
-//! GH #811: on Android shared storage (MediaProvider's FUSE daemon) every page
-//! save of 0.9.0-beta.1 ended Uncertain (diagnostics: published 0, uncertain
-//! 6), so creating today's journal from the template never published and the
-//! Journals feed failed. These cases put the graph on the volume named by
+//! GH #811: on the reporter's Android phone every page save of 0.9.0-beta.1
+//! ended Uncertain (diagnostics: published 0, uncertain 6), so creating today's
+//! journal from the template never published and the Journals feed failed.
+//! These cases passed on the API 33 and 35 emulators (CI run 41017745975), so
+//! the device's cause is still open. These cases put the graph on the volume named by
 //! `TINE_HOST_FS_ROOT` (ci.yml android-git-storage runs them on the emulator's
 //! shared storage) and the app data beside the test binary's temp dir, as on a
 //! phone. Without the variable they run on the ordinary temp dir.
