@@ -88,7 +88,7 @@ PY
     [ -n "$b" ] && [ "$b" != None ] && { echo "$b"; return 0; }
     sleep 2
   done
-  echo "0 0 0 0"
+  echo "0 128 1080 2274"
 }
 
 for n in 1 2 3 4; do
