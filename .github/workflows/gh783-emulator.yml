@@ -1,32 +1,41 @@
 name: GH783 emulator probe
-run-name: GH783 emulator probe / ${{ inputs.refs }}
+run-name: GH783 emulator probe / ${{ github.sha }}
 
 # Probe branch only (probe/gh783-emulator). Builds a debug x86_64 APK of each ref
 # with temporary instrumentation overlaid (never committed to the ref), runs it on
 # an emulator and records where the caret row goes when the keyboard opens.
+# Runs on every push to the probe branch (a workflow_dispatch-only file is not
+# runnable from a non-default branch); .github/gh783/plan.json holds the refs
+# and the emulator API level, so a rerun is a commit that edits it.
 on:
-  workflow_dispatch:
-    inputs:
-      refs:
-        description: 'JSON list of refs to test, e.g. ["release/0.9","v0.7.4"]'
-        required: true
-        default: '["release/0.9","v0.7.4"]'
-      api:
-        description: Emulator API level
-        default: "35"
+  push:
+    branches: [probe/gh783-emulator]
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      refs: ${{ steps.p.outputs.refs }}
+      api: ${{ steps.p.outputs.api }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: p
+        run: |
+          echo "refs=$(jq -c .refs .github/gh783/plan.json)" >> "$GITHUB_OUTPUT"
+          echo "api=$(jq -r .api .github/gh783/plan.json)" >> "$GITHUB_OUTPUT"
+
   probe:
+    needs: plan
     name: probe ${{ matrix.ref }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ fromJSON(inputs.refs) }}
+        ref: ${{ fromJSON(needs.plan.outputs.refs) }}
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -111,7 +120,7 @@ jobs:
       - name: Drive the app on the emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: ${{ inputs.api }}
+          api-level: ${{ needs.plan.outputs.api }}
           arch: x86_64
           target: default
           profile: pixel_6
@@ -125,7 +134,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gh783-${{ strategy.job-index }}-api${{ inputs.api }}
+          name: gh783-${{ strategy.job-index }}-api${{ needs.plan.outputs.api }}
           path: gh783-out
           if-no-files-found: warn
           retention-days: 14
