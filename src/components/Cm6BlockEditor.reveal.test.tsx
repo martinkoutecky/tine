@@ -88,26 +88,32 @@ it("clicking rendered markup reveals its host source without following a link", 
   expect(node("reveal").raw).toBe(raw);
 });
 
+// CM6-CODEJUMP. A projected code or calc body is the whole editor text, so its caret is never on a wrapper line:
+// the fence lines stay concealed (the card's language label and the line numbers say what they say), exactly as
+// in the textarea editor and the view. Showing them made the block 78-92px taller than the view's card.
 it.each([
-  ["Markdown code", "md", "```js\ncode\n```", "```js\n", "\n```"],
-  ["Org source", "org", "#+BEGIN_SRC js\ncode\n#+END_SRC", "#+BEGIN_SRC js\n", "\n#+END_SRC"],
-  ["calculator", "md", "```calc\n1+1\n```", "```calc\n", "```"],
-] as const)("reveals exact wrappers around a projected %s body", (_name, format, raw, open, close) => {
+  ["Markdown code", "md", "```js\ncode\n```", "js"],
+  ["Org source", "org", "#+BEGIN_SRC js\ncode\n#+END_SRC", "js"],
+  ["calculator", "md", "```calc\n1+1\n```", null],
+] as const)("conceals the wrapper lines of a projected %s body and keeps their bytes", (_name, format, raw, lang) => {
   const { root, editor } = mount(raw, format);
-  expect([...root.querySelectorAll(".cm6-projected-source")].map(el => el.textContent)).toEqual([open, close]);
+  expect(root.querySelector(".cm6-projected-source")).toBeNull();
+  expect(root.querySelector(".cm-content")!.textContent).not.toMatch(/```|#\+(BEGIN|END)/);
+  if (lang) expect(root.querySelector(".code-language")!.textContent).toBe(lang);
   const body = editor.value();
+  expect(raw).toContain(body);
+  expect(body).not.toMatch(/```|#\+(BEGIN|END)/);
   editor.select(0); editor.type("文😀");
   expect(node("reveal").raw).toBe(raw.replace(body, "文😀" + body));
 });
 
-it("removes projected source wrappers when the caret leaves a mixed fence", () => {
+it("shows only the body while the caret is in a mixed fence, and the whole source once it leaves", () => {
   const raw = "before\n```js\ncode\n```\nafter";
   const { root, editor } = mount(raw);
   editor.selectByUser(raw.indexOf("code"));
   expect(editor.value()).toBe("code");
-  expect([...root.querySelectorAll(".cm6-projected-source")].map(el => el.textContent)).toEqual(["```js\n", "\n```"]);
-  editor.select(0); editor.keydown({ key: "ArrowLeft" });
   expect(root.querySelector(".cm6-projected-source")).toBeNull();
+  editor.select(0); editor.keydown({ key: "ArrowLeft" });
   expect(editor.value()).toBe(raw);
   expect(root.querySelector('[data-cm6-construct="src"]')).toBeNull();
   editor.select(0);
@@ -132,5 +138,18 @@ it("renders a DEADLINE line as the view's date chip and reveals its source only 
   expect(root.querySelectorAll(".cm-line")).toHaveLength(2);
   editor.select(raw.length);
   expect(chip()).toBeNull();
+  expect(node("reveal").raw).toBe(raw);
+});
+
+// CM6-SAMELINE: one line holding both keywords is two chips on the header line, like the view's two chips.
+it("renders SCHEDULED and DEADLINE sharing a source line as two chips on the header line", async () => {
+  const raw = "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon .+2d>";
+  const { root, editor } = mount(raw);
+  editor.select(0);
+  await vi.waitFor(() => expect(root.querySelectorAll('[data-cm6-construct="planning"] .date-chip')).toHaveLength(2));
+  expect([...root.querySelectorAll(".date-chip")].map(c => c.textContent!.trim())).toEqual(["2026-10-30 Thu", "2026-11-02 Mon .+2d"]);
+  expect(root.querySelectorAll(".cm-line")).toHaveLength(1);
+  expect(root.querySelector(".cm-content")!.textContent).not.toContain("<");
+  expect(editor.value()).toBe(raw);
   expect(node("reveal").raw).toBe(raw);
 });

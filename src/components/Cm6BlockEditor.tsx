@@ -13,7 +13,7 @@ import { editorCommitRecovery } from "../editor/commitRecovery";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
-import { concealedSpans, constructRevealed, previewSpans } from "../editor/cm6Preview";
+import { concealedSpans, previewSpans } from "../editor/cm6Preview";
 import { PreviewWidget } from "../editor/cm6PreviewWidget";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { cm6Formatting } from "../editor/cm6Formatting";
@@ -77,29 +77,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const code = codeView.shown;
   const literal = () => isCalc() || code() !== null;
   const shown = () => isCalc() ? calcSource(visible()) ?? visible() : code()?.body ?? visible();
-  const [previewSelection, setPreviewSelection] = createSignal<readonly { from: number; to: number }[]>([{ from: 0, to: 0 }]);
-  const projectedMarkup = createMemo(() => {
-    const p = code();
-    if (p) {
-      // open/close are the parser-owned, frozen projection wrappers. Select
-      // their edge lines without recognizing syntax or reparsing literal input.
-      const start = p.open.lastIndexOf("\n", p.open.length - 2) + 1;
-      const separator = p.close.startsWith("\r\n") ? 2 : p.close.startsWith("\n") ? 1 : 0;
-      const endLine = p.close.indexOf("\n", separator);
-      const close = p.close.slice(0, endLine < 0 ? p.close.length : endLine);
-      const end = p.open.length + p.body.length + close.length;
-      const selection = previewSelection().map(r => ({ from: r.from + p.open.length, to: r.to + p.open.length }));
-      return constructRevealed({ from: start, to: end }, selection) ? { open: p.open.slice(start), close } : null;
-    }
-    if (isCalc()) {
-      const raw = visible(), fence = codeFences(raw, format)[0];
-      if (!fence) return null;
-      const selection = previewSelection().map(r => ({ from: r.from + fence.openEnd, to: r.to + fence.openEnd }));
-      return constructRevealed({ from: fence.start, to: fence.end }, selection)
-        ? { open: raw.slice(fence.start, fence.openEnd), close: fence.closed ? raw.slice(fence.closeStart, fence.end) : "" } : null;
-    }
-    return null;
-  });
   const codeEditing = () => code() !== null || codeFenceOnly(visible(), format) !== null;
   const calcRows = createMemo(() => isCalc() ? evalCalc(shown()) : []);
   const mixedContext = createMemo(() => {
@@ -223,11 +200,19 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     photo: () => { void assets.capturePhotoCmd(); }, voice: () => { void assets.voiceMemoToggle(); },
   });
   const command = (id: string) => sheet?.blocks(id) || commands[id]?.() || false;
+  // The view wraps a heading block's header line in `<span class="heading-text hN">` inside the block's own
+  // line box; the editor wraps its first line in the same span, so both resolve the line box the same way
+  // and entering or leaving edit does not move anything (CM6-HEADING). Level 1..6 from the block's own facets
+  // (the `heading::` property is not in the editor text), the depth for `heading:: true`.
+  const headingLevel = createMemo(() => effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id)));
   const buildDecorations = (state: EditorState): DecorationSet => {
     if (!parserReady() || literal()) return Decoration.none;
     const raw = state.doc.toString();
     const ranges = concealedSpans(previewSpans(raw, format), state.selection.ranges).map(span =>
       Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
+    const level = headingLevel();
+    const headerEnd = state.doc.line(1).to;
+    if (level !== null && headerEnd > 0) ranges.push(Decoration.mark({ class: `heading-text h${level}` }).range(0, headerEnd));
     return Decoration.set(ranges, true);
   };
   const decorations = StateField.define<DecorationSet>({
@@ -300,7 +285,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           keyup: event => { if (event.key.toLowerCase() === "v") clipboard.clearRaw(); return false; },
         }),
         EditorView.updateListener.of(update => {
-          if (update.selectionSet || update.docChanged) setPreviewSelection(update.state.selection.ranges);
           formatting.changed(update);
           if (update.transactions.every(tr => tr.annotation(projection))) return;
           if (typing.changed(update) && !typing.active()) completion.changed(update);
@@ -442,6 +426,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   createEffect(() => {
     if (parserReady()) untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
   });
+  createEffect(() => {
+    headingLevel();
+    untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
+  });
   onCleanup(() => {
     pendingScrollAnchor?.cancel();
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
@@ -449,7 +437,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   return <div class="cm6-block-editor editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
     <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>
-    <Show when={projectedMarkup()}>{markup => <pre class="cm6-projected-source">{markup().open}</pre>}</Show>
     <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(code() ?? codeFenceOnly(visible(), format))?.lang.toLowerCase()}</span>
@@ -458,7 +445,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>
       <div ref={editorHost} />
     </div>
-    <Show when={projectedMarkup()}>{markup => <pre class="cm6-projected-source">{markup().close}</pre>}</Show>
     <Show when={mixedContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><AstBody raw={after()} format={format} /></div>}</Show>
     <Show when={isCalc()}><div class="calc-results"><For each={calcRows()}>{row =>
       <div class="calc-out" classList={{ "calc-error": !!row.error }}>{row.output ?? ""}

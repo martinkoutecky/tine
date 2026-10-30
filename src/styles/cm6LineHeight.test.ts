@@ -46,4 +46,18 @@ describe("CM6 block editor line metrics match the rendered block", () => {
     const card = ruleBody(cm6, ".cm6-block-editor:has(.code-edit) .cm-editor");
     expect(decl(card, "line-height")).toBe("1.5");
   });
+
+  // CM6-CODEJUMP: the code card's box is the textarea card's, so a code block is as tall in the CM6 editor as in the
+  // textarea and the view; its language label and line numbers (positioned over the card) must be painted above the
+  // CM6 card, which is itself positioned and comes later in the DOM.
+  it("gives the code card the textarea card's box", () => {
+    const textarea = ruleBody(app, ".block-editor.code-edit");
+    const card = ruleBody(cm6, ".cm6-block-editor:has(.code-edit) .cm-editor");
+    for (const property of ["padding", "margin", "border", "border-radius"]) expect(decl(card, property), property).toBe(decl(textarea, property));
+  });
+
+  it("paints the language label and the line numbers above the CM6 card", () => {
+    const over = ruleBody(cm6, ".cm6-block-editor .code-editor-region > :is(.code-gutter, .code-language)");
+    expect(Number(decl(over, "z-index"))).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -80,7 +80,7 @@ import {
   type SelectionAction,
 } from "../editor/selectionActions";
 import { selectionActionLabel } from "./SelectionActionLabel";
-import { effectiveHeadingLevel, facetsOf, EMPTY_FACETS, type Facets } from "../render/facets";
+import { effectiveHeadingLevel, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
 import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
@@ -336,8 +336,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           // Heading level on the row so the bullet column can match the (taller)
           // heading line box and the bullet stays centered on the first line. While
           // editing, apply the same offset only when the hidden-props-stripped editor
-          // value is still a single line; multi-line heading blocks edit at body size.
-          [`bullet-h${headingLevel()}`]: headingLevel() != null && (!editing() || editorIsUniline()),
+          // value is still a single line; multi-line heading blocks edit at body size in the textarea. The CM6
+          // editor sizes the first line whatever follows it.
+          [`bullet-h${headingLevel()}`]: headingLevel() != null && (!editing() || cm6EditorEnabled() || editorIsUniline()),
           "drop-before": dropInd()?.id === props.id && dropInd()?.position === "before",
           "drop-after": dropInd()?.id === props.id && dropInd()?.position === "after",
           "drop-child": dropInd()?.id === props.id && dropInd()?.position === "child",
@@ -582,10 +583,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // GH #357: while the buffer IS one whole-block code fence the editor presents
   // as the same mono, no-wrap card the rendered face is (no re-layout jump).
   // Mixed content / ```calc keep their own modes; re-derived per keystroke.
+  // The level comes from the whole block (`heading:: N` / `heading:: true` live in the hidden properties, which
+  // the editor text no longer contains); the single-line gate is on the editor text. OG parity:
+  // `components/editor.cljs get-editor-style-class` reads `(:heading (:block/properties block))` and gates on
+  // the content being one line (`uniline-block`).
   const editorHeadingLevel = createMemo(() => {
-    const visible = editorValue();
-    if (visible.includes("\n")) return null;
-    return effectiveHeadingLevel(facetsOf(visible, pageFmt()), depthOf(props.id));
+    if (editorValue().includes("\n")) return null;
+    return effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id));
   });
   // Live calc preview: when this editor opened on a ```calc fence, show the SAME
   // results panel as the rendered view, recomputed on every keystroke (onInput

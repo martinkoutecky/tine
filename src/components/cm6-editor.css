@@ -22,8 +22,6 @@
 /* The read renderer can show decorative page brackets by graph preference.
    Live preview reserves those source delimiters for the revealed editor text. */
 .cm6-preview .bracket { display: none; }
-.cm6-projected-source { margin: 0; white-space: pre-wrap; font: inherit; }
-.cm6-block-editor.calc-wrap > .cm6-projected-source { grid-column: 1 / -1; }
 .cm6-block-editor .code-editor-region > div:has(> .cm-editor) { min-width: 0; }
 .cm6-block-editor:has(.code-edit) { padding: var(--ls-block-content-pad-y) 0; }
 .cm6-block-editor:has(.code-edit) .cm-editor {
@@ -32,5 +30,8 @@
   font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5;
 }
 .cm6-block-editor:has(.code-edit) .cm-scroller { overflow-x: auto; }
+/* The card (`.cm-editor`, positioned) is painted after the language label and the line numbers that sit over it, so
+   without a stack order they hid behind its background. The textarea card has no positioned box of its own. */
+.cm6-block-editor .code-editor-region > :is(.code-gutter, .code-language) { z-index: 1; }
 .cm6-block-editor.calc-wrap .code-editor-region > div:has(> .cm-editor) { grid-column: 2; }
 .cm6-block-editor.calc-wrap .cm-scroller { overflow-x: auto; }
