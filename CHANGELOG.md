@@ -8,12 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Zoom in on block** and **Zoom out one level** commands (#799). Both are in the command palette and in Settings → Keyboard shortcuts, and start unbound so you choose the keys (OG's own keys are Tine's Back / Forward). Zoom in acts on the selected block or the block you are editing and keeps the caret in it; Zoom out steps from a zoomed block to its parent, then to the page, and does nothing on the page itself, so it can be pressed repeatedly. Each works in the pane you are in, including a split pane.
+- A **Reload window** command, unbound, for reloading the app on purpose (#797).
+
 ### Changed
 
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
 
 ### Fixed
 
+- Ctrl/Cmd+R and F5 no longer reload the whole app on Windows (#797). The webview's built-in reload ran on a stray Ctrl+R, discarded the screen state, and could not be changed in Settings → Keyboard shortcuts. Tine now consumes these keys; while editing, Ctrl/Cmd+R is **Comment on selected text**, which is listed there and can be rebound or cleared, and **Reload window** reloads on request.
 - On Android shared storage, renaming a page by capitalization alone now works, on the phone and in a git pull: Tine moves it through a temporary name and finishes the rename at the next open if it is stopped in between. Before, such a pull stopped git sync ("pull incomplete") and such a rename was refused (GS1).
 - Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).
 - Fast scrolling through a PDF no longer leaves pages blank for up to a second behind the scroll, a regression in 0.9.0-beta.1 from the pdf.js 5 upgrade. pdf.js 5 gave every glyph of the hidden selectable-text layer its own transformed layer, which the webview repainted on every scroll frame; glyphs that need no stretching or rotation are now drawn untransformed again, as with pdf.js 4, with text selection unchanged (PDF5-SCROLL).

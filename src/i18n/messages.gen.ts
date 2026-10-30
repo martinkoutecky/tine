@@ -197,6 +197,8 @@ export interface MessageArgs {
   "command-editor-toggle-open-blocks": {};
   "command-editor-toggle-undo-redo-mode": {};
   "command-editor-undo": {};
+  "command-editor-zoom-in": {};
+  "command-editor-zoom-out": {};
   "command-go-all-graphs": {};
   "command-go-backward": {};
   "command-go-find-in-page": {};
@@ -251,6 +253,7 @@ export interface MessageArgs {
   "command-tab-reopen-closed": {};
   "command-task-carry-n": {};
   "command-ui-open-settings": {};
+  "command-ui-reload-window": {};
   "command-ui-reset-zoom": {};
   "command-ui-toggle-brackets": {};
   "command-ui-toggle-code-block-wrap": {};
@@ -277,6 +280,7 @@ export interface MessageArgs {
   "commands-normally-splits-the-current-block-continues-an": {};
   "commands-open-a-page-first-to-export-it": {};
   "commands-plugin-command-failed": { "error": string | number };
+  "commands-select-a-block-or-edit-one-to-zoom-in": {};
   "commands-select-text-in-a-block-then-use": {};
   "commands-undo-redo-mode": { "mode": string | number };
   "comment-author-you": {};

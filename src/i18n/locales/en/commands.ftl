@@ -56,6 +56,7 @@ command-pane-move-tab-up = Move tab to pane up
 command-pane-move-tab-down = Move tab to pane down
 command-ui-toggle-theme = Toggle dark / light
 command-ui-reset-zoom = Reset interface zoom
+command-ui-reload-window = Reload window
 command-ui-toggle-brackets = Toggle reference brackets
 command-ui-toggle-left-sidebar = Toggle left sidebar
 command-ui-toggle-right-sidebar = Toggle right sidebar
@@ -111,12 +112,15 @@ command-editor-select-embedding-block = Select embedding block
 command-editor-collapse-children = Collapse (one level)
 command-editor-expand-children = Expand (one level)
 command-editor-paste-as-link = Paste as link
+command-editor-zoom-in = Zoom in on block
+command-editor-zoom-out = Zoom out one level
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
 commands-open-a-page-first-to-export-it = Open a page first to export it to PDF
 # $mode is the chosen undo/redo mode label.
 commands-undo-redo-mode = Undo/redo mode: { $mode }
 commands-select-text-in-a-block-then-use = Select text in a block, then use Paste as link
+commands-select-a-block-or-edit-one-to-zoom-in = Select a block or edit one to zoom in on it
 command-builtin-global-escape = Close overlays or exit focus
 commands-closes-search-settings-first-outside-overlays = Closes Search / Settings first; outside overlays, peels off block selection and focus mode.
 command-builtin-editor-enter = New block (or newline in Document mode)
