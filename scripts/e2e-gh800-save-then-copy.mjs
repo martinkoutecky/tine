@@ -138,7 +138,11 @@ try {
     return entry.isDirectory() ? recoverable(p, want) : fs.readFileSync(p, "utf8") === want;
   });
   assert.ok(recoverable(path.join(graph, "logseq/.tine-trash"), copyText), "the folded copy is not recoverable");
-  assert.ok(recoverable(path.join(graph, "logseq/.tine-trash"), diskBefore), "the disk version replaced by the live resolution is not recoverable");
+  // Stable (0.8) has no recovery copy of the reviewed disk bytes on a live
+  // resolution: that guarantee is L9-04 (cdb189512, development only), not
+  // part of GH #800. Here the disk version survives inside the merge itself
+  // ("Keep both everywhere"): every line of it is still in the file.
+  for (const line of lines(diskBefore)) assert.ok(lines(resolved).includes(line), `the disk line ${JSON.stringify(line)} was lost`);
   shot("resolved.png");
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify({ ...proof, outcome: "PASS", merged, resolved }, null, 2));
   console.log(`PASS GH800-SAVE-THEN-COPY: ${out}`);
