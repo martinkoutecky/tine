@@ -5,6 +5,7 @@ import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBr
 import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
+import { scrollToClearToolbar } from "../editor/caretReveal";
 
 type ToolbarIcon =
   | "outdent"
@@ -48,7 +49,6 @@ const KEYBOARD_GAP_THRESHOLD = 48;
 /** Dispatched on window by Android's MainActivity with `detail: true|false`
  *  whenever the soft keyboard's visibility changes (GH #716). */
 export const NATIVE_IME_EVENT = "tine-ime";
-const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
   const el = document.activeElement;
@@ -73,11 +73,11 @@ export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   }
   const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
   const top = formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
-  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - top;
-  if (overlap <= 0) return false;
   const scroller = editor.closest<HTMLElement>(
     ".main-content, .right-sidebar, .left-sidebar-scroll",
   );
+  const overlap = scrollToClearToolbar(editor, scroller, top);
+  if (overlap <= 0) return false;
   if (scroller) scroller.scrollTop += overlap;
   else window.scrollBy({ top: overlap });
   return true;
