@@ -4,10 +4,10 @@
 // arrow keys go when part of the outline is drawn beside it. Everything is
 // derived from the outline at render time; nothing is persisted.
 
-import { createSignal, untrack } from "solid-js";
+import { createSignal } from "solid-js";
 import { quoteSelectorOf } from "./comments";
 import { facetsOf } from "./render/facets";
-import { nextVisible, prevVisible, node as docNode, structureRevision, type OutlineScope } from "./document";
+import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type Node, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The
@@ -17,10 +17,13 @@ export const MARGIN_MIN_PANE_WIDTH = 960;
 /** Vertical space between two stacked threads, px. */
 export const MARGIN_THREAD_GAP = 8;
 
+const isComment = (n: Node, format: Format): boolean =>
+  n.parent !== null && quoteSelectorOf(facetsOf(n.raw, format).properties) !== null;
+
 /** Whether `id` is a comment: it has a parent block and a `quote::`. */
 export function isCommentId(id: string, format: Format): boolean {
   const n = docNode(id);
-  return !!n && n.parent !== null && quoteSelectorOf(facetsOf(n.raw, format).properties) !== null;
+  return !!n && isComment(n, format);
 }
 
 // Bumped when a comment is written, so the margin re-asks `pageHasComment`
@@ -38,16 +41,7 @@ export const watchCommentsWritten = (): number => commentsEpoch();
  * child, so a structural change re-asks; a block edited by hand into (or out of)
  * a comment is noticed at the next structural change or page reload. */
 export function pageHasComment(roots: readonly string[], format: Format): boolean {
-  structureRevision();
-  const visit = (ids: readonly string[]): boolean => {
-    for (const id of ids) {
-      if (isCommentId(id, format)) return true;
-      const n = docNode(id);
-      if (n && visit(n.children)) return true;
-    }
-    return false;
-  };
-  return untrack(() => visit(roots));
+  return someBlockInTrees(roots, (n) => isComment(n, format));
 }
 
 /** The comment whose thread holds `id` (itself or its nearest comment

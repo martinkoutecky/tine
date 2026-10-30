@@ -85,7 +85,7 @@
  * bump, at most one feed restart and one summary toast. With "always ask"
  * (conflictPolicy.ts) the one silent case, a loaded clean page, is held for its
  * bar instead; `replayDeferredExternalReloads` is the focus-return sweep. */
-export { blockIsGridView, collapseEpochOf, node, onBlockRawChanged, structureRevision, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
+export { blockIsGridView, collapseEpochOf, node, onBlockRawChanged, someBlockInTrees, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { trackAssetWrite } from "./assetWrites";
 export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushPage, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, type UnsavedState } from "./host/wiring";

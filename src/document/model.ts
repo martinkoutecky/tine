@@ -1,5 +1,5 @@
 import { type PageKind, type Format } from "../types";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, unwrap } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
@@ -162,6 +162,23 @@ const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0
  * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded).
  * A whole-document question can read nodes untracked and depend on this alone. */
 export const structureRevision = (): number => identityStructureRevision();
+/** Whether `test` holds for some block in the trees under `roots`; stops at the
+ * first. Reads plain nodes untracked and depends on structureRevision alone, so
+ * a whole-page question at open subscribes to nothing per block (BIGLOAD-090b). */
+export function someBlockInTrees(roots: readonly string[], test: (n: ReadonlyNode) => boolean): boolean {
+  structureRevision();
+  return untrack(() => {
+    const byId = unwrap(doc.byId);
+    const visit = (ids: readonly string[]): boolean => {
+      for (const id of ids) {
+        const n = byId[id];
+        if (n && (test(n) || visit(n.children))) return true;
+      }
+      return false;
+    };
+    return visit(roots);
+  });
+}
 
 function updateAuthoredIdentity(id: string): void {
   const node = doc.byId[id];
