@@ -5075,7 +5075,6 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "base64 0.22.1",
@@ -5130,7 +5129,6 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "ammonia",
@@ -5153,7 +5151,6 @@ dependencies = [
 
 [[package]]
 name = "tine-graph-features"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "base64 0.22.1",
@@ -5172,7 +5169,6 @@ dependencies = [
 
 [[package]]
 name = "tine-ios-folder-picker-native"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "tauri",
@@ -5181,7 +5177,6 @@ dependencies = [
 
 [[package]]
 name = "tine-ios-native-integrations"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "tauri",
@@ -5190,7 +5185,6 @@ dependencies = [
 
 [[package]]
 name = "tine-outline"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "lsdoc",
@@ -5208,7 +5202,6 @@ dependencies = [
 
 [[package]]
 name = "tine-search"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "regex",
@@ -5219,7 +5212,6 @@ dependencies = [
 
 [[package]]
 name = "tine-store"
-version = "0.9.0-beta.2"
 version = "0.10.0-beta.1"
 dependencies = [
  "cap-std",
