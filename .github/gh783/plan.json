@@ -1,1 +1,1 @@
-{"refs":["release/0.9","v0.7.4"],"api":"35"}
+{"api": "35", "jobs": [{"ref": "release/0.9", "nav": "3button", "profile": "pixel_6", "ime": "default"}, {"ref": "v0.7.4", "nav": "3button", "profile": "pixel_6", "ime": "default"}, {"ref": "release/0.9", "nav": "gestural", "profile": "pixel_9_pro", "ime": "default"}, {"ref": "release/0.9", "nav": "3button", "profile": "pixel_6", "ime": "florisboard"}]}

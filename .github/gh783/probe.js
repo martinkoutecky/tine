@@ -73,6 +73,7 @@
 
   // ---- geometry snapshot ----
   var trial = 0;
+  function tb0() { var t = document.querySelector("[data-mobile-keyboard-toolbar]"); return t && !t.hidden && t.style.display !== "none" ? t.getBoundingClientRect().top : null; }
   function snap(label) {
     var m = scroller();
     var vv = window.visualViewport;
@@ -92,6 +93,8 @@
       var er = ed.getBoundingClientRect();
       o.ed = { t: r1(er.top), b: r1(er.bottom), h: r1(er.height) };
       if (m) o.edAboveTop = r1(er.top - m.getBoundingClientRect().top); // < 0 = above the scroller top
+      var ct = caretTop(ed);
+      if (ct !== null && m) { o.caretY = r1(ct); o.caretAboveTop = r1(ct - m.getBoundingClientRect().top); o.caretToTb = tb0() === null ? null : r1(tb0() - ct); }
     }
     var tb = document.querySelector("[data-mobile-keyboard-toolbar]");
     if (tb) { var tr = tb.getBoundingClientRect(); o.tb = { t: r1(tr.top), h: r1(tr.height), vis: !tb.hidden && tb.style.display !== "none" }; }
@@ -100,6 +103,22 @@
     log("SNAP", o);
   }
   window.__gh783snap = snap;
+  // Viewport y of the caret row of a focused textarea, by a hidden mirror (the app's own helper is not reachable from here).
+  function caretTop(ed) {
+    try {
+      var cs = getComputedStyle(ed);
+      var d = document.createElement("div");
+      ["fontFamily","fontSize","fontWeight","fontStyle","letterSpacing","lineHeight","textTransform","wordSpacing","textIndent","paddingTop","paddingRight","paddingBottom","paddingLeft","borderTopWidth","borderRightWidth","borderBottomWidth","borderLeftWidth","boxSizing","tabSize","wordBreak","overflowWrap"].forEach(function (k) { d.style[k] = cs[k]; });
+      d.style.position = "absolute"; d.style.visibility = "hidden"; d.style.left = "-9999px"; d.style.top = "0";
+      d.style.whiteSpace = "pre-wrap"; d.style.width = ed.getBoundingClientRect().width + "px";
+      d.textContent = ed.value.slice(0, ed.selectionEnd);
+      var mk = document.createElement("span"); mk.textContent = "\u200b"; d.appendChild(mk);
+      document.body.appendChild(d);
+      var y = mk.offsetTop;
+      document.body.removeChild(d);
+      return ed.getBoundingClientRect().top + y - ed.scrollTop;
+    } catch (e) { return null; }
+  }
 
   // ---- events ----
   var tFocus = null;
@@ -147,6 +166,9 @@
     { f: 0.55, top: true },
     { f: 0.90, top: true },
     { f: 0.70, top: false },
+    { tall: 0, f: 0.55, within: 0.0 },
+    { tall: 0, f: 0.25, within: 0.4 },
+    { tall: 1, f: 0.60, within: 0.0 },
   ];
   var state = "boot";
   var created = false;
@@ -186,6 +208,24 @@
     return best;
   }
 
+  function pickTall(p) {
+    var m = scroller();
+    var mr = m.getBoundingClientRect();
+    var tall = [].filter.call(m.querySelectorAll(".block-content"), function (b) { return b.getBoundingClientRect().height >= 250; });
+    var b = tall[p.tall];
+    if (!b) return null;
+    var r = b.getBoundingClientRect();
+    quiet = true; m.scrollTop += r.top - (mr.top + p.f * m.clientHeight); quiet = false;
+    r = b.getBoundingClientRect();
+    var y = r.top + Math.max(14, p.within * r.height);
+    var xs = [r.left + 60, r.left + 120, r.left + 40];
+    for (var i = 0; i < xs.length; i++) {
+      var hit = document.elementFromPoint(xs[i], y);
+      if (hit && hit.closest(".block-content") === b && !hit.closest("a, button, svg, img")) return { cx: xs[i], cy: y, text: "tall" + p.tall + " h=" + r1(r.height) };
+    }
+    return null;
+  }
+
   function startTrial() {
     var p = plan[trial];
     if (!p) { state = "finished"; log("ALLDONE"); return; }
@@ -193,7 +233,7 @@
     var m = scroller();
     if (p.top) { quiet = true; m.scrollTop = 0; quiet = false; }
     setTimeout(function () {
-      var tg = pickTarget(p.f);
+      var tg = p.tall !== undefined ? pickTall(p) : pickTarget(p.f);
       var mr = scroller().getBoundingClientRect();
       if (!tg) { log("TARGET-NONE trial=" + trial); snap("no-target"); setTimeout(startTrial, 1000); return; }
       snap("pre-tap");

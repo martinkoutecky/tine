@@ -18,24 +18,24 @@ jobs:
   plan:
     runs-on: ubuntu-22.04
     outputs:
-      refs: ${{ steps.p.outputs.refs }}
+      jobs: ${{ steps.p.outputs.jobs }}
       api: ${{ steps.p.outputs.api }}
     steps:
       - uses: actions/checkout@v5
       - id: p
         run: |
-          echo "refs=$(jq -c .refs .github/gh783/plan.json)" >> "$GITHUB_OUTPUT"
+          echo "jobs=$(jq -c .jobs .github/gh783/plan.json)" >> "$GITHUB_OUTPUT"
           echo "api=$(jq -r .api .github/gh783/plan.json)" >> "$GITHUB_OUTPUT"
 
   probe:
     needs: plan
-    name: probe ${{ matrix.ref }}
+    name: probe ${{ matrix.ref }} ${{ matrix.nav }} ${{ matrix.profile }} ${{ matrix.ime }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ fromJSON(needs.plan.outputs.refs) }}
+        include: ${{ fromJSON(needs.plan.outputs.jobs) }}
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -119,11 +119,14 @@ jobs:
 
       - name: Drive the app on the emulator
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          NAV: ${{ matrix.nav }}
+          IME: ${{ matrix.ime }}
         with:
           api-level: ${{ needs.plan.outputs.api }}
           arch: x86_64
           target: default
-          profile: pixel_6
+          profile: ${{ matrix.profile }}
           ram-size: 4096M
           emulator-boot-timeout: 400
           disable-animations: true
@@ -134,7 +137,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gh783-${{ strategy.job-index }}-api${{ needs.plan.outputs.api }}
+          name: gh783-${{ strategy.job-index }}-${{ matrix.nav }}-${{ matrix.ime }}-api${{ needs.plan.outputs.api }}
           path: gh783-out
           if-no-files-found: warn
           retention-days: 14

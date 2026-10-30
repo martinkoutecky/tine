@@ -13,9 +13,17 @@ adb logcat -v threadtime > "$log" 2>&1 &
 lc=$!
 trap 'kill $lc 2>/dev/null; adb logcat -d -v threadtime > "$out/logcat-final.txt" 2>&1 || true; adb shell dumpsys webviewupdate > "$out/webview.txt" 2>&1 || true' EXIT
 
+# Optional second IME (IME=florisboard): a different input method, installed and selected.
+if [ "${IME:-default}" = "florisboard" ]; then
+  curl -sSL -o "$out/florisboard.apk" https://github.com/florisboard/florisboard/releases/download/v0.5.2/florisboard-0.5.2-stable.apk || true
+  adb install -r "$out/florisboard.apk" > "$out/ime-install.txt" 2>&1 || true
+  adb shell ime enable dev.patrickgold.florisboard/.FlorisImeService >> "$out/ime-install.txt" 2>&1 || true
+  adb shell ime set dev.patrickgold.florisboard/.FlorisImeService >> "$out/ime-install.txt" 2>&1 || true
+fi
 # Make the soft keyboard show on the emulator (it has a virtual hardware keyboard).
 adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell ime list -s > "$out/ime-list.txt" 2>&1 || true
+adb shell settings get secure default_input_method >> "$out/ime-list.txt" 2>&1 || true
 adb shell wm size > "$out/wm.txt" 2>&1; adb shell wm density >> "$out/wm.txt" 2>&1
 adb shell getprop ro.build.version.sdk >> "$out/wm.txt"; adb shell getprop ro.product.model >> "$out/wm.txt"
 
@@ -56,11 +64,16 @@ adb shell run-as "$pkg" find . -type d -name journals > "$out/journals-dirs.txt"
 jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1 | tr -d '\r')
 echo "journals dir: $jdir day: $day" | tee -a "$out/taps.txt"
 python3 -I - > "$out/journal.md" <<'PY'
-import textwrap
 words = "the quick brown fox jumps over a lazy dog while notes accumulate on every page of this scratch graph".split()
+long_en = " ".join(words[(k * 7) % len(words)] for k in range(260))
+cjk = "这是一段很长的中文笔记用来测试键盘弹出以后光标的位置是否仍然在屏幕可见的范围之内" * 6
 for i in range(1, 91):
     n = 6 + (i * 7) % 18
     print("- Block %02d: %s" % (i, " ".join(words[(i + k) % len(words)] for k in range(n))))
+    if i == 6:
+        print("- Long A: " + long_en)
+    if i == 30:
+        print("- Long B: " + cjk)
 PY
 adb shell "run-as $pkg sh -c 'cat > $jdir/$day.md'" < "$out/journal.md"
 adb shell run-as "$pkg" ls -l "$jdir" > "$out/journals-ls.txt" 2>&1 || true
@@ -91,7 +104,7 @@ PY
   echo "0 128 1080 2274"
 }
 
-for n in 1 2 3 4; do
+for n in 1 2 3 4 5 6 7; do
   if ! waitfor "GH783 [0-9.]+ (TARGET|TARGET-NONE) trial=$n( |$)" 90; then echo "trial $n: no target" >&2; continue; fi
   line=$(grep -aE "GH783 [0-9.]+ TARGET trial=$n " "$log" | tail -1)
   [ -z "$line" ] && { echo "trial $n: no usable target"; continue; }
