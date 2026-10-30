@@ -1391,6 +1391,7 @@ export interface MessageArgs {
   "page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle": {};
   "page-ui-focus-or-create-a-trailing-block": {};
   "page-ui-hide-tag-table": {};
+  "page-ui-journal-template-not-applied": { "error": string | number };
   "page-ui-last-d": { "value1": string | number };
   "page-ui-loading-page": {};
   "page-ui-move-this-day-s-unfinished-tasks-to-today": {};

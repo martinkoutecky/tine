@@ -105,6 +105,35 @@ describe("journal feed read failures (GH #385, master d6024bac3aad)", () => {
     } finally { mounted.dispose(); }
   });
 
+  it("shows the journals and reports the template when today's template step fails (GH #811)", async () => {
+    setGraphMeta({ root: "/private/graph", default_journal_template: "Private template" } as GraphMeta);
+    // Android 0.9.0-beta.1: the template's save of today's page never published.
+    vi.mocked(ensureJournalTemplateForDay).mockResolvedValueOnce({
+      kind: "error", error: new Error("Couldn't save “Oct 30th, 2026” to disk."),
+    });
+    const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
+    const read = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
+      pages: [{
+        id: "journals/2026_10_29.md", name: "Oct 29th, 2026", kind: "journal", title: "Oct 29th, 2026", pre_block: null,
+        blocks: [{ id: "b", raw: "an earlier day", collapsed: false, children: [] }],
+      }],
+      next_before_day: null, done: true, as_of_day: localDayKey(),
+    });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.querySelector(".journal-title")).not.toBeNull());
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("an earlier day"));
+      expect(mounted.root.textContent).not.toContain("Couldn't open this page");
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(toasts()).toEqual([expect.objectContaining({
+        kind: "error",
+        message: expect.stringContaining("Couldn't add the journal template to today's page: Error: Couldn't save “Oct 30th, 2026” to disk."),
+      })]);
+      expect(diagnostic).toHaveBeenCalledWith("journal_feed", { journalFeedReason: "template-error", journalFeedCause: "other-rejection" });
+      expect(diagnostic).not.toHaveBeenCalledWith("journal_feed", { journalFeedReason: "route-unpublished" });
+    } finally { mounted.dispose(); }
+  });
+
   it("records a repeated native/frontend day mismatch (GH #671)", async () => {
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
       pages: [], next_before_day: null, done: true, as_of_day: localDayKey() - 1,
