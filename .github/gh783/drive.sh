@@ -100,7 +100,7 @@ if [ "${SEED:-plain}" = "media-page" ]; then
   pdir=$(dirname "$jdir")/pages
   adb shell run-as "$pkg" mkdir -p "$pdir"
   adb shell "run-as $pkg sh -c 'cat > $pdir/Home.md'" < "$out/journal.md"
-  printf -- '- Notes for [[Home]]\n' > "$out/journal.md"
+  for i in 1 2 3 4 5 6 7; do printf -- '- Notes %s for [[Home]]\n' $i; done > "$out/journal.md"
   adb shell run-as "$pkg" ls -l "$pdir" > "$out/pages-ls.txt" 2>&1 || true
 fi
 adb shell "run-as $pkg sh -c 'cat > $jdir/$day.md'" < "$out/journal.md"
