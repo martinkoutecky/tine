@@ -871,6 +871,19 @@ fn remove_block_children_is_off_only_for_a_false_or_nil_advanced_option() {
     assert!(!advanced(":remove-block-children? false"));
     assert!(!advanced(":remove-block-children? nil"));
     assert!(removes("(task TODO)", super::QueryInput::Og));
+    // GH #651: a BEGIN_QUERY map that embeds the simple DSL reaches the engine as the DSL plus the trailing
+    // options map, so that map carries the option (for a datalog vector as well).
+    let macro_text = |text: &str| removes(text, super::QueryInput::MacroQuery);
+    assert!(macro_text("(task TODO) {:table-view? true}"));
+    assert!(macro_text(
+        "(task TODO) {:table-view? true :remove-block-children? true}"
+    ));
+    assert!(!macro_text(
+        "(task TODO) {:table-view? true :remove-block-children? false}"
+    ));
+    assert!(!macro_text(&format!(
+        "{vector} {{:remove-block-children? nil}}"
+    )));
 }
 
 /// Card hB3Lv8: the binding says whether its answer depends on the execution
