@@ -13,7 +13,7 @@ const h = vi.hoisted(() => {
     finish: () => void; fail: (error: Error) => void;
   };
   const layers: Layer[] = [];
-  return { getDocument: vi.fn(), layers };
+  return { getDocument: vi.fn(), layers, minFontSize: 1 };
 });
 
 vi.mock("pdfjs-dist", () => ({
@@ -21,7 +21,9 @@ vi.mock("pdfjs-dist", () => ({
   getDocument: h.getDocument,
   TextLayer: class {
     layer: (typeof h.layers)[number];
-    constructor() {
+    constructor({ container }: { container: HTMLElement }) {
+      // Like pdf.js 5: the constructor records the browser's minimum font size.
+      container.style.setProperty("--min-font-size", String(h.minFontSize));
       let finish = () => {}, fail = (_error: Error) => {};
       const done = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
       done.catch(() => {});
@@ -84,6 +86,7 @@ async function mount(userUnit = 1) {
 describe("PdfViewer text layer ownership", () => {
   beforeEach(() => {
     h.layers.length = 0;
+    h.minFontSize = 1;
     h.getDocument.mockReset();
     Observer.instances = [];
     vi.stubGlobal("IntersectionObserver", Observer);
@@ -114,6 +117,23 @@ describe("PdfViewer text layer ownership", () => {
     } finally { dispose(); }
   });
 
+  // PDF5-SCROLL: the unstretched glyph spans drop pdf.js 5's identity transform
+  // (pdf-workspace.css) only where its minimum-font scale is identity too.
+  it("marks a text layer whose minimum font size leaves glyph spans unscaled", async () => {
+    const { host, dispose } = await mount();
+    try {
+      expect(host.querySelector(".textLayer")!.classList.contains("pdf-text-unit-font")).toBe(true);
+    } finally { dispose(); }
+  });
+
+  it("keeps pdf.js's minimum-font scale where the browser enforces a larger font size", async () => {
+    h.minFontSize = 8;
+    const { host, dispose } = await mount();
+    try {
+      expect(host.querySelector(".textLayer")!.classList.contains("pdf-text-unit-font")).toBe(false);
+    } finally { dispose(); }
+  });
+
   it("shows a failed text-layer render instead of leaving an unhandled rejection", async () => {
     const { host, dispose } = await mount();
     try {
@@ -121,6 +141,32 @@ describe("PdfViewer text layer ownership", () => {
       h.layers[0].fail(new Error("glyph overflow"));
       await flush();
       expect(host.querySelector(".pdf-load-error")?.textContent).toContain("Couldn't draw this PDF text");
+    } finally { dispose(); }
+  });
+
+  it("batches a first text layer's connected layout until its glyphs are ready", async () => {
+    const { host, dispose } = await mount();
+    try {
+      const container = host.querySelector<HTMLElement>(".textLayer")!;
+      expect(container.hidden).toBe(true);
+      expect(host.querySelector(".pdf-page > canvas")).not.toBeNull();
+      h.layers[0].finish(); await flush();
+      expect(container.hidden).toBe(false);
+    } finally { dispose(); }
+  });
+
+  it("keeps a newer text build hidden when a cancelled build completes late", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount();
+    try {
+      const container = host.querySelector<HTMLElement>(".textLayer")!;
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(200); await flush();
+      expect(h.layers).toHaveLength(2);
+      h.layers[0].finish(); await flush();
+      expect(container.hidden).toBe(true);
+      h.layers[1].finish(); await flush();
+      expect(container.hidden).toBe(false);
     } finally { dispose(); }
   });
 
