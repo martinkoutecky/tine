@@ -1521,7 +1521,10 @@ mod projection_tests {
                 "{:?}",
                 strip_planning_lines(crate::render::parse_block(raw, false), raw)
             );
-            assert!(!body.contains("2026-1"), "no stray date in the body: {body}");
+            assert!(
+                !body.contains("2026-1"),
+                "no stray date in the body: {body}"
+            );
             assert!(!body.contains("Timestamp"), "no timestamp left: {body}");
             assert!(body.contains("Review"), "title remains: {body}");
         }
@@ -1532,12 +1535,16 @@ mod projection_tests {
             "{:?}",
             strip_planning_lines(crate::render::parse_block(tail, false), tail)
         );
-        assert!(body.contains("and a tail") && !body.contains("2026-1"), "{body}");
+        assert!(
+            body.contains("and a tail") && !body.contains("2026-1"),
+            "{body}"
+        );
         // Mid-text stays content, even with a second timestamp after it.
         let mid = DocBlock::new("Discuss SCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon>");
         assert_eq!((mid.scheduled(), mid.deadline()), (None, None));
         // A later timestamp after ordinary words on the line is not line-leading.
-        let later = DocBlock::new("Review\nSCHEDULED: <2026-10-30 Thu> words DEADLINE: <2026-11-02 Mon>");
+        let later =
+            DocBlock::new("Review\nSCHEDULED: <2026-10-30 Thu> words DEADLINE: <2026-11-02 Mon>");
         assert_eq!(later.scheduled(), Some("2026-10-30 Thu"));
         assert_eq!(later.deadline(), None);
     }
