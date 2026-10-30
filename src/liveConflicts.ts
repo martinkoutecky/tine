@@ -6,7 +6,7 @@ import { msg, render } from "./i18n";
 // reads at each review. Derived on every read; nothing here is stored.
 import { untrack } from "solid-js";
 import { conflicts, liveConflictDraft, pageByName } from "./document";
-import { conflictQueue, syncConflicts } from "./conflictQueue";
+import { conflictForPage, conflictQueue, syncConflicts } from "./conflictQueue";
 import type { ConflictObject, LiveConflictDraft, PageKind } from "./types";
 
 function liveObject(name: string, path: string, kind: PageKind, live: LiveConflictDraft): ConflictObject {
@@ -32,6 +32,19 @@ export function liveConflictForPage(name: string, path: string | undefined): Con
   if (!path || !conflicts().includes(name)) return undefined;
   const draft = untrack(() => liveConflictDraft(name));
   return draft ? liveObject(name, path, draft.page.kind, { base_rev: draft.baseRev }) : undefined;
+}
+
+/** The one conflict the page at `name`/`path` resolves next (GH #800). A page
+ *  can hold its own refused save AND a queued artifact (a sync copy, VCS
+ *  markers, a duplicate day) at once. Every artifact fold refuses while the
+ *  page holds unsaved input it has not reviewed (the native writers meet it as
+ *  a changed-on-disk refusal), so the live draft's review comes FIRST: once it
+ *  is resolved the page is clean and the artifact's panel follows. Showing the
+ *  artifact first left its Apply refusing forever, the save conflict's review
+ *  unreachable. Nothing is written by choosing; every version stays where it
+ *  is (the draft in the host's drafts, the copy beside the page). */
+export function pageConflictToResolve(name: string, path: string | undefined): ConflictObject | undefined {
+  return liveConflictForPage(name, path) ?? conflictForPage(path);
 }
 
 /** Every live-draft conflict, for the overview's "Unsaved drafts" group

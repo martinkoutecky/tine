@@ -3,6 +3,7 @@
 use crate::doc::{self, DocBlock};
 use crate::model::{BlockDto, Format, PageDto, PageKind};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Versioned namespace for file-mode runtime block locators. These UUIDs are
@@ -159,6 +160,42 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
     let owner = file_runtime_namespace(owner_rel_path);
     assign_runtime_ids_rec(roots, owner);
+}
+
+/// [`assign_doc_runtime_ids`] for a document that mixes blocks which keep a
+/// live key (an editor draft's blocks) with freshly parsed ones (the file on
+/// disk), as a reviewed merge does (GH #800). A fresh block's positional key
+/// can equal a kept block's key from another position; a page whose keys
+/// repeat collapses two blocks into one store node, so the next save would
+/// write one block's text twice and lose the other's. Kept keys stay; a fresh
+/// block whose positional key is taken gets the next free key derived from it
+/// (deterministic, still a runtime locator). O(blocks) expected.
+pub fn assign_doc_runtime_ids_unique(roots: &mut [DocBlock], owner_rel_path: &str) {
+    fn kept(blocks: &[DocBlock], into: &mut HashSet<String>) {
+        for block in blocks {
+            if !block.uuid.is_empty() {
+                into.insert(block.uuid.clone());
+            }
+            kept(&block.children, into);
+        }
+    }
+    fn fill(blocks: &mut [DocBlock], parent: Uuid, taken: &mut HashSet<String>) {
+        for (sibling_index, block) in blocks.iter_mut().enumerate() {
+            let structural = structural_child(parent, sibling_index);
+            if block.uuid.is_empty() {
+                let mut key = structural;
+                while taken.contains(&key.to_string()) {
+                    key = deterministic_runtime_uuid(key, b"taken");
+                }
+                block.uuid = key.to_string();
+                taken.insert(block.uuid.clone());
+            }
+            fill(&mut block.children, structural, taken);
+        }
+    }
+    let mut taken = HashSet::new();
+    kept(roots, &mut taken);
+    fill(roots, file_runtime_namespace(owner_rel_path), &mut taken);
 }
 
 /// Visit the structural ids a fresh load will assign, borrowing the original
