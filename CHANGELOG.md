@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Page menu: **Copy as ▸ → Copy page embed** copies `{{embed [[Page]]}}`, the page counterpart of a block's **Copy block embed** (GH #418).
+
 ### Changed
 
 - The Quick capture Guide page now says Tine has no built-in system-wide hotkey (the **Quick-capture: file to today's journal** key, Ctrl+Shift+Enter by default, files what you typed inside the capture box) and gives the setup for Linux, Windows and macOS, plus the tray menu as a no-shortcut way in (GH #807).

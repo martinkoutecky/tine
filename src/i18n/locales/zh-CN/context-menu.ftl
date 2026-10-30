@@ -122,6 +122,10 @@ context-menu-ui-copy-page-ref = 复制页面引用
 
 context-menu-ui-copied-page-ref = 已复制页面引用
 
+context-menu-ui-copy-page-embed = 复制页面嵌入
+
+context-menu-ui-copied-page-embed = 已复制页面嵌入
+
 context-menu-ui-copy-export-as = 复制 / 导出为…
 context-menu-ui-share = 分享…
 

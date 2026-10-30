@@ -101,3 +101,6 @@ journey (`scripts/e2e-*.mjs`), not here.
   menu rows `menu.block.plain` 15→17, `block.full` 19→21, `block.multi` 14→16 and the mobile twins likewise (Copy block
   ref, Copy block embed and Copy link left the Copy as submenu, net +2 rows each); `block.full.nested` 6→3 (Copy as left
   the block menu; the page menu keeps its Copy as). Approved by Martin 2026-10-19 (D-20261019-UC1, option a: all three top-level, as in OG).
+- 2026-10-30, D-20261030-PE (GH #418, Ellis): `menu.page.header.nested` 2→3 and `mobile.menu.page.header.nested` 2→3:
+  **Copy as ▸ → Copy page embed** (`{{embed [[Page]]}}`) joins Copy page ref and Copy link. OG's page menu has no such row;
+  approved by Martin 2026-10-30 ("Mk21 yes").

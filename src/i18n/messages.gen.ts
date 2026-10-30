@@ -449,6 +449,7 @@ export interface MessageArgs {
   "context-menu-ui-copied-block-embed": {};
   "context-menu-ui-copied-block-ref": {};
   "context-menu-ui-copied-page-as-markdown": {};
+  "context-menu-ui-copied-page-embed": {};
   "context-menu-ui-copied-page-ref": {};
   "context-menu-ui-copy": { "count": number };
   "context-menu-ui-copy-as": {};
@@ -459,6 +460,7 @@ export interface MessageArgs {
   "context-menu-ui-copy-export-as": {};
   "context-menu-ui-copy-link": {};
   "context-menu-ui-copy-page-as-markdown": {};
+  "context-menu-ui-copy-page-embed": {};
   "context-menu-ui-copy-page-ref": {};
   "context-menu-ui-couldn-t-copy-clipboard-write-failed": {};
   "context-menu-ui-couldn-t-copy-page-as-markdown": {};
