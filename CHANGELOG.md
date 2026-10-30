@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
+
+## [0.9.0-beta.2] - 2026-10-30
+
+### Fixed
+
+- Scrolling a long page with an expanded block embed no longer makes the page jump (#810). Scrolling back up past an embed made everything below it jump up by the height of the embed's rows, and jump back when the embed's rows appeared; the embed now keeps the height it had when it scrolled out of view.
 - A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its "Two versions of this page arrived" panel used to hide the review of the unsaved edits, and its Apply only said "Resolve this page’s save conflict first". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display ("This page could not be displayed") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).
 - On Android shared storage, renaming a page by capitalization alone now works, on the phone and in a git pull: Tine moves it through a temporary name and finishes the rename at the next open if it is stopped in between. Before, such a pull stopped git sync ("pull incomplete") and such a rename was refused (GS1).
 - Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).
