@@ -4,6 +4,7 @@ import { backend } from "../backend";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
 import type { PaneRouter } from "../router";
 import { pushToast } from "../toasts";
+import { errorFamily } from "../errorFamily";
 import type { ConflictObject, ConflictSource, SyncConflict } from "../types";
 import { conflictQueue, openPageInSidebar, refreshSyncConflicts, syncConflicts } from "../ui";
 import { liveConflictObjects, pendingConflictCount } from "../liveConflicts";
@@ -58,6 +59,11 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
       pushToast(msg("conflict-overview-discarded", { name: String(name) }), "success");
       await readOwned(owner, refreshSyncConflicts());
     } catch (e) {
+      if (owner() && errorFamily(e) === "conflict-copy-gone") {
+        pushToast(msg("conflict-resolution-copy-gone"), "info");
+        await readOwned(owner, refreshSyncConflicts());
+        return;
+      }
       pushToast(msg("conflict-overview-couldn-t-discard-it", { error: String(e) }), "error");
     }
   };

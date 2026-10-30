@@ -76,6 +76,8 @@ conflict-resolution-applying = 正在应用…
 
 conflict-resolution-apply-resolution = 应用解决方案
 
+conflict-resolution-copy-gone = 冲突副本已不在磁盘上。已从冲突列表中移除，页面保持不变。
+
 diff-rows-earlier-lines-are-the-same-on-both-sides = 前面的行在两方中相同
 
 diff-rows-merged = 已合并

@@ -36,6 +36,23 @@ fn changed(what: &str) -> io::Error {
     )
 }
 
+/// Confirmed absence of the copy before a write started. Kept distinct from
+/// a missing winner (or a late cleanup failure) across the IPC boundary.
+#[derive(Debug)]
+pub struct ConflictCopyGone;
+
+impl std::fmt::Display for ConflictCopyGone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the conflict copy is no longer on disk")
+    }
+}
+
+impl std::error::Error for ConflictCopyGone {}
+
+fn copy_gone() -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, ConflictCopyGone)
+}
+
 pub(crate) fn id(store: &Store, rel: &str) -> io::Result<FileId> {
     let config = store.config();
     for (area, dir) in [
@@ -838,8 +855,26 @@ fn folded(
     bases: &[String],
     pre_choice: &str,
 ) -> io::Result<Folded> {
-    let (mine, win_rev) = read_text(store, win)?;
-    let (theirs, conf_rev) = read_text(store, conf)?;
+    // Read the copy first: its confirmed absence settles a stale review even
+    // when the winner has since changed. No operation has been planned yet.
+    let (theirs, conf_rev) = read_text(store, conf).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            if sync_copy_winner(conf.as_str()).as_deref() == Some(win.as_str()) {
+                copy_gone()
+            } else {
+                changed("conflict copy")
+            }
+        } else {
+            error
+        }
+    })?;
+    let (mine, win_rev) = read_text(store, win).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            changed("winner")
+        } else {
+            error
+        }
+    })?;
     if String::from(win_rev.clone()) != base_rev {
         return Err(changed("winner"));
     }
@@ -927,12 +962,7 @@ pub fn trash_sync_conflict(
         let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
         let rev = match store.read(&conf, max) {
             Ok((_, rev)) => rev,
-            Err(tine_store::StoreError::NotFound) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "no such conflict file",
-                ))
-            }
+            Err(tine_store::StoreError::NotFound) => return Err(copy_gone()),
             Err(error) => return Err(crate::store_error(error)),
         };
         trash_copy(store, &conf, rev)

@@ -90,6 +90,219 @@ fn keep_both(rows: &[DiffRow], out: &mut HashMap<String, String>) {
     }
 }
 
+#[test]
+fn a_copy_gone_before_apply_leaves_the_page_untouched() {
+    let _integration_guard = crate::integration_lock();
+    for rename in [false, true] {
+        let root = graph("gone-before-apply");
+        let app_data = tempfile::tempdir().unwrap();
+        let store = open(&root);
+        let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        let review = Fold::SyncCopy.review(&store);
+        fs::write(
+            root.join(WINNER),
+            "- many later edits to the current page\n",
+        )
+        .unwrap();
+        let original = fs::read(root.join(WINNER)).unwrap();
+        if rename {
+            fs::rename(root.join(COPY), root.join("pages/Renamed.md")).unwrap();
+        } else {
+            fs::remove_file(root.join(COPY)).unwrap();
+        }
+        let error = Fold::SyncCopy
+            .run(&store, Some(&host), &review)
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.to_string(), "the conflict copy is no longer on disk");
+        assert_eq!(fs::read(root.join(WINNER)).unwrap(), original);
+        if rename {
+            assert_eq!(
+                fs::read_to_string(root.join("pages/Renamed.md")).unwrap(),
+                COPY_TEXT
+            );
+        }
+        // A stale Discard is also a settled absence, never a failure toast.
+        let gone = conflicts::trash_sync_conflict(&store, Some(&host), COPY).unwrap_err();
+        assert!(gone.get_ref().unwrap().is::<conflicts::ConflictCopyGone>());
+        drop(host);
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn sync_review_changes_and_scalar_properties_preserve_both_sources() {
+    let _integration_guard = crate::integration_lock();
+    for mutation in [
+        "copy",
+        "winner",
+        "encoding",
+        "missing-winner",
+        "union",
+        "theirs",
+        "both",
+    ] {
+        let root = graph(mutation);
+        let mine = "status:: local\n- shared\n- mine\n";
+        let theirs = "status:: remote\n- shared\n- theirs\n";
+        fs::write(root.join(WINNER), mine).unwrap();
+        fs::write(root.join(COPY), theirs).unwrap();
+        // Git tracking does not change the filesystem conflict's identity.
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "."])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        let app_data = tempfile::tempdir().unwrap();
+        let store = open(&root);
+        let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        let diff = conflicts::sync_conflict_diff(&store, WINNER, COPY, &[])
+            .unwrap()
+            .unwrap();
+        let mut decisions = HashMap::new();
+        keep_both(&diff.rows, &mut decisions);
+        for decision in decisions.values_mut() {
+            *decision = if mutation == "both" { "both" } else { "theirs" }.into();
+        }
+        match mutation {
+            "copy" => {
+                let replacement = root.join("pages/incoming.tmp");
+                fs::write(&replacement, "- delivered replacement\n").unwrap();
+                fs::rename(replacement, root.join(COPY)).unwrap();
+            }
+            "winner" => fs::write(root.join(WINNER), "- later page edits\n").unwrap(),
+            "encoding" => fs::write(root.join(COPY), [0xff, 0xfe]).unwrap(),
+            "missing-winner" => fs::remove_file(root.join(WINNER)).unwrap(),
+            _ => {}
+        }
+        let before = tree(&root);
+        let result = conflicts::resolve_sync_conflict(
+            &store,
+            Some(&host),
+            WINNER,
+            COPY,
+            &decisions,
+            &diff.base_rev,
+            &diff.conflict_rev,
+            None,
+            &[],
+            if mutation == "union" {
+                "union"
+            } else {
+                "theirs"
+            },
+        );
+        if matches!(mutation, "theirs" | "both") {
+            result.unwrap();
+            let merged = fs::read_to_string(root.join(WINNER)).unwrap();
+            assert!(merged.contains("status:: remote"), "{merged}");
+            assert!(merged.contains("- theirs"), "{merged}");
+            assert_eq!(merged.contains("- mine"), mutation == "both", "{merged}");
+            assert!(!root.join(COPY).exists());
+            let recovery = trashed(&root.join("logseq/.tine-trash"));
+            assert!(
+                recovery.contains(&theirs.to_owned()),
+                "copy remains recoverable"
+            );
+        } else {
+            let error = result.unwrap_err();
+            match mutation {
+                "union" => {
+                    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+                    assert!(error.to_string().contains("status differs"), "{error}");
+                }
+                "encoding" => assert_eq!(error.kind(), std::io::ErrorKind::InvalidData),
+                _ => assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::AlreadyExists,
+                    "{mutation}: {error}"
+                ),
+            }
+            assert_eq!(
+                tree(&root),
+                before,
+                "{mutation}: refusal must change neither source"
+            );
+        }
+        drop(host);
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn a_unicode_sync_copy_resolves_and_bad_pairings_keep_the_files() {
+    let _integration_guard = crate::integration_lock();
+    let root = graph("unicode");
+    let winner = "pages/日本語___Café %25.md";
+    let copy = "pages/日本語___Café %25.sync-conflict-20261029-135112-MAGHY7C.md";
+    fs::rename(root.join(WINNER), root.join(winner)).unwrap();
+    fs::rename(root.join(COPY), root.join(copy)).unwrap();
+    let app_data = tempfile::tempdir().unwrap();
+    let store = open(&root);
+    let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let diff = conflicts::sync_conflict_diff(&store, winner, copy, &[])
+        .unwrap()
+        .unwrap();
+    let mut decisions = HashMap::new();
+    keep_both(&diff.rows, &mut decisions);
+    for bad in [
+        winner,
+        "pages/Other.sync-conflict-20261029-135112-MAGHY7C.md",
+        "pages/../bad.md",
+        "pages/bad\0.md",
+    ] {
+        let before = tree(&root);
+        let error = conflicts::resolve_sync_conflict(
+            &store,
+            Some(&host),
+            winner,
+            bad,
+            &decisions,
+            &diff.base_rev,
+            &diff.conflict_rev,
+            None,
+            &[],
+            "theirs",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "{bad}: {error}"
+        );
+        assert_eq!(tree(&root), before);
+    }
+    conflicts::resolve_sync_conflict(
+        &store,
+        Some(&host),
+        winner,
+        copy,
+        &decisions,
+        &diff.base_rev,
+        &diff.conflict_rev,
+        None,
+        &[],
+        "theirs",
+    )
+    .unwrap();
+    assert!(!root.join(copy).exists());
+    assert!(fs::read_to_string(root.join(winner))
+        .unwrap()
+        .contains("theirs"));
+    drop(host);
+    store.close();
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Fold {
     SyncCopy,

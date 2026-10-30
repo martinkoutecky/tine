@@ -3,8 +3,22 @@
 //! `tine_graph_features::conflicts`, which commit one guarded store
 //! transaction; nothing here touches a file.
 
-use crate::commands::sync_conflict_error;
 use crate::state::{slot_for_context, GraphContext, GraphSlot};
+
+/// Concord refusals explain how to recover. Do not erase a property choice,
+/// malformed file, or partial-success explanation into `io:InvalidInput`.
+fn sync_conflict_error(error: std::io::Error) -> String {
+    if error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<tine_graph_features::conflicts::ConflictCopyGone>())
+    {
+        "conflict-copy-gone".into()
+    } else if error.kind() == std::io::ErrorKind::AlreadyExists {
+        crate::commands::sync_conflict_error(error)
+    } else {
+        error.to_string()
+    }
+}
 
 /// Candidate common ancestors for one copy from the Concord base ledger;
 /// empty (2-way review) when there is no ledger or it cannot answer.
@@ -116,7 +130,7 @@ pub(crate) async fn trash_sync_conflict(
             slot.host_slot()?.running(),
             &conflict,
         )
-        .map_err(|e| e.to_string());
+        .map_err(sync_conflict_error);
         settle_queue(&slot, &[&conflict]);
         outcome
     })
@@ -312,4 +326,38 @@ pub(crate) async fn merge_live_conflict(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod resolution_error_tests {
+    use super::sync_conflict_error;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn resolution_refusals_keep_their_recovery_explanation() {
+        let reason = "the page's own status differs between the two versions; keep mine or theirs for the page properties";
+        assert_eq!(
+            sync_conflict_error(Error::new(ErrorKind::InvalidInput, reason)),
+            reason
+        );
+        assert_eq!(
+            sync_conflict_error(Error::new(
+                ErrorKind::NotFound,
+                tine_graph_features::conflicts::ConflictCopyGone
+            )),
+            "conflict-copy-gone"
+        );
+        assert_ne!(
+            sync_conflict_error(Error::new(ErrorKind::NotFound, "winner missing")),
+            "conflict-copy-gone"
+        );
+        assert_eq!(
+            sync_conflict_error(Error::new(ErrorKind::AlreadyExists, "copy changed")),
+            "conflict"
+        );
+        let partial = Error::other(tine_graph_features::IncompleteTransaction::Rollback(
+            "recovery: logseq/.tine-trash/a.md".into(),
+        ));
+        assert!(sync_conflict_error(partial).contains("rollback-incomplete"));
+    }
 }

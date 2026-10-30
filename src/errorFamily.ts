@@ -1,7 +1,7 @@
 export type ErrorFamily =
   | "conflict" | "deleted" | "twin" | "repeated" | "read-only" | "invalid-target"
   | "closed" | "not-found" | "asset-too-large" | "result-too-large" | "stale-graph-binding" | "io" | "rollback-incomplete" | "publication-incomplete"
-  | "unreadable-owner" | "unknown";
+  | "unreadable-owner" | "conflict-copy-gone" | "unknown";
 
 /** Classify exact Tauri wire tokens for control flow. Cost O(message length);
  * unknown strings are `unknown`, and human prose is never interpreted. */
@@ -23,6 +23,7 @@ export function errorFamily(error: unknown): ErrorFamily {
     case "result-too-large":
     case "stale-graph-binding":
     case "unreadable-owner":
+    case "conflict-copy-gone":
       return message;
     default:
       return "unknown";

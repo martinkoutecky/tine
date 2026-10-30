@@ -78,6 +78,8 @@ conflict-resolution-applying = Applying…
 
 conflict-resolution-apply-resolution = Apply resolution
 
+conflict-resolution-copy-gone = The conflict copy is no longer on disk. Removed it from the conflict list; the page was left unchanged.
+
 diff-rows-earlier-lines-are-the-same-on-both-sides = Earlier lines are the same on both sides
 
 diff-rows-merged = Merged

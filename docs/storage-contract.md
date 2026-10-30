@@ -434,6 +434,20 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 
 ## I-8 refusal scenarios
 
+CONFLICT-INVALIDINPUT: a sync copy confirmed absent before planning a
+resolution is settled without writing the page; Discard copy also treats
+confirmed absence as settled. The UI removes the stale entry and explains
+that the copy is gone. Missing winners are not missing copies. Changed copy
+or winner revisions require a fresh comparison and fresh choices. Renamed
+copies are re-derived from inventory, never followed by guessing their path.
+Whole-side choices include that side's page properties; mixed choices can
+still request property union, whose scalar clashes retain both files and
+explain which property needs a choice. Conflict-command refusals retain their
+explanation rather than reducing it to an I/O kind. Existing post-apply copy
+cleanup guards remain: a late change keeps the copy and the saved merge.
+No new persistent records or transport; bytes/files/syncs per successful fold
+are unchanged, and settling an already absent copy writes nothing.
+
 Each row below is keyed by the source file, owning function and refusal family.
 The count is the number of production constructions or save-adapter outcomes;
 the source guard fails when an unreviewed site appears. These scenarios involve

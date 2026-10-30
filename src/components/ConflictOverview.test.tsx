@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
 import { resetStore } from "../document";
-import { setToasts } from "../toasts";
+import { setToasts, toasts } from "../toasts";
 import type { PaneRouter } from "../router";
 import type { ConflictInventory, ConflictObject, SyncConflict } from "../types";
 import { ConflictOverview } from "./ConflictOverview";
@@ -80,6 +80,20 @@ describe("the conflict overview", () => {
     await settle();
     expect(trash).toHaveBeenCalledWith(copy.path, "delete-page");
     expect(list).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it("settles a copy removed while its discard confirmation was open", async () => {
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValueOnce(inventory)
+      .mockResolvedValue({ sync_conflicts: [], vcs_markers: [], queue: [] });
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    vi.spyOn(backend(), "trashSyncConflict").mockRejectedValue("conflict-copy-gone");
+    const { host, dispose } = mount(() => <ConflictOverview router={{} as PaneRouter} />);
+    await settle();
+    (host.querySelector(".settings-btn-danger") as HTMLButtonElement).click();
+    await settle();
+    expect(host.textContent).toContain("No conflicts.");
+    expect(toasts().some((t) => t.message.includes("copy is no longer on disk"))).toBe(true);
     dispose();
   });
 
