@@ -65,6 +65,27 @@ it.each(cm6PreviewCases)("$name renders outside, reveals inside/spanning, and pr
   }
 });
 
+// CM6-TASKMARKER (Martin, 2026-10-30): the concealed marker is the view's own chip group. The checkbox is a SIBLING of the marker
+// chip (the view's checkbox colour is `.block-task-checkbox:has(+ .marker-x)`; nested, it took the chip's font size, tint and
+// a grey border), CANCELED has no box, and the priority chip shows `[#A]` like the view.
+it.each([["TODO", "block-task-checkbox"], ["DOING", "block-task-checkbox"], ["DONE", "block-task-checkbox checked"], ["CANCELED", null]] as const)(
+  "%s marker renders as the view's chip group", (marker, boxClass) => {
+    const raw = `${marker} [#A] after`;
+    const { root, editor } = mount(raw);
+    editor.select(raw.length);
+    const chip = root.querySelector(".cm6-preview .block-marker") as HTMLElement;
+    expect(chip.textContent).toBe(marker);
+    expect(chip.querySelector(".block-task-checkbox"), "the chip does not wrap the box").toBeNull();
+    const box = root.querySelector(".cm6-preview .block-task-checkbox") as HTMLElement | null;
+    if (boxClass === null) { expect(box).toBeNull(); } else {
+      expect(box!.className).toBe(boxClass);
+      expect(box!.nextElementSibling, "the colour rule needs the chip as the next sibling").toBe(chip);
+      expect(box!.nextSibling!.textContent, "a space joins box and chip, as in the view").toBe(" ");
+    }
+    expect(root.querySelector(".cm6-preview .block-priority")!.textContent).toBe("[#A]");
+    expect(editor.value()).toBe(raw);
+  });
+
 it("reveals only the selected nested constructs and keeps a sibling rendered", () => {
   const raw = "中文😀 **bold *inner* tail** and `sibling` end";
   const { root, editor } = mount(raw);

@@ -38,6 +38,19 @@ export const CASES: Record<string, string> = {
   sameline: "Review\nSCHEDULED: <2026-10-30 Thu> DEADLINE: <2026-11-02 Mon .+2d>",
   todo: "TODO A task with a marker that is long enough to wrap over several lines of the narrow column here",
   priority: "[#A] A high priority task text that is long enough to wrap over several lines of the narrow column",
+  // Task markers (CM6-TASKMARKER): the chip group (checkbox, marker chip, priority chip) must look the same in the view and in
+  // the CM6 editor with the caret away from it. Short texts, one line, so the caret at the end is away from the marker.
+  doing: "DOING Write the report", now: "NOW Write the report", later: "LATER Write the report", done: "DONE Write the report",
+  waiting: "WAITING Write the report", canceled: "CANCELED Write the report",
+  todop: "TODO [#A] Write the report", doingp: "DOING [#B] Write the report", donep: "DONE [#C] Write the report",
+  todotags: "TODO Write the report #tag [[Page]]",
+  // Inline constructs between plain words, one line each, so the caret at the end is away from them (CM6-TASKMARKER census).
+  i_tag: "Write #tag the report now", i_btag: "Write #[[two words]] the report now", i_page: "Write [[Page]] the report now",
+  i_aliasref: "Write [alias]([[Page]]) the report now", i_bref: "Write ((12345678-1234-1234-1234-123456789abc)) the report now",
+  i_link: "Write [label](https://example.org) the report now", i_url: "Write https://example.org the report now",
+  i_code: "Write `code` the report now", i_hl: "Write ^^bright^^ the report now", i_strike: "Write ~~gone~~ the report now",
+  i_bold: "Write **bold** the report now", i_ital: "Write *italic* the report now", i_math: "Write $x^2$ the report now",
+  i_macro: "Write {{unknown arg}} the report now", i_fn: "Write[^1] the report now",
   quote: "> A quoted paragraph that is long enough to wrap over several lines of the narrow column here and again\n> second quoted line",
   list: "Intro line\n- item one\n- item two\n  - nested item",
   olist: "1. first item\n2. second item\n3. third item",
@@ -60,10 +73,14 @@ export const CASES: Record<string, string> = {
 // Facets the Rust backend would seed that the in-browser fixture must supply by hand.
 const DTO_EXTRA: Record<string, Record<string, unknown>> = {
   mdh1: { heading_level: 1 }, mdh1body: { heading_level: 1 }, todo: { marker: "TODO" }, priority: { priority: "A" },
+  doing: { marker: "DOING" }, now: { marker: "NOW" }, later: { marker: "LATER" }, done: { marker: "DONE" }, waiting: { marker: "WAITING" },
+  canceled: { marker: "CANCELED" }, todop: { marker: "TODO", priority: "A" }, doingp: { marker: "DOING", priority: "B" },
+  donep: { marker: "DONE", priority: "C" }, todotags: { marker: "TODO" },
 };
 await initParser();
 loadSingle({ name: "Target", title: "Target", kind: "page", pre_block: null, format: "md",
-  blocks: [{ id: "target-block", raw: "Embedded block text, one line", collapsed: false, children: [] }] });
+  blocks: [{ id: "target-block", raw: "Embedded block text, one line", collapsed: false, children: [] },
+    { id: "12345678-1234-1234-1234-123456789abc", raw: "Referenced block text", collapsed: false, children: [] }] });
 loadSingle({ name: "LH", title: "LH", kind: "page", pre_block: null, format: "md",
   blocks: Object.entries(CASES).map(([id, raw]) => ({ id, raw, collapsed: false, ...DTO_EXTRA[id], scheduled: raw.match(/SCHEDULED: <([^>]*)>/)?.[1], deadline: raw.match(/DEADLINE: <([^>]*)>/)?.[1], properties: raw.match(/\nheading:: (\w+)$/) ? [["heading", raw.match(/\nheading:: (\w+)$/)![1]]] : [], children: [{ id: `${id}-child`, raw: "child", collapsed: false, children: [] }] })) });
 Object.assign(window, { startEditing, endEdit, setCm6EditorEnabled, CASES });
@@ -93,7 +110,24 @@ function probe(id: string, kind: Kind) {
     }
   }
   const cs = getComputedStyle(box);
+  // The leading chip group, relative to the content box's left edge and the row's top (CM6-TASKMARKER).
+  const chips = ["block-task-checkbox", "block-marker", "block-priority"].map(cls => {
+    const el = box.querySelector(`.${cls}`) as HTMLElement | null;
+    if (!el) return null;
+    const q = el.getBoundingClientRect(), c = getComputedStyle(el);
+    return { cls, x: +(q.left - r.left).toFixed(2), y: +(q.top - rowRect.top).toFixed(2), w: +q.width.toFixed(2), h: +q.height.toFixed(2),
+      text: el.textContent, border: c.borderTopWidth + " " + c.borderTopStyle + " " + c.borderTopColor, radius: c.borderTopLeftRadius,
+      bg: c.backgroundColor, color: c.color, fontSize: c.fontSize, margin: c.marginLeft + "/" + c.marginRight, pad: c.paddingLeft + "/" + c.paddingRight, va: c.verticalAlign };
+  }).filter(Boolean);
+  // Every inline element the renderer can emit, in document order (CM6's wrappers/buffers are not elements of the view).
+  const INL = "a,code,mark,del,em,strong,u,sup,sub,b,.tag,.page-ref,.block-ref,.katex,.property,.macro,.footnote-ref,.bracket";
+  const inl = Array.from(box.querySelectorAll(INL)).filter(el => !el.closest(".block-marker,.block-task-checkbox,.katex-html,.katex-mathml") && !(el.parentElement?.closest(".katex"))).map(el => {
+    const q = el.getBoundingClientRect(), c = getComputedStyle(el);
+    return { el: el.tagName.toLowerCase() + "." + [...el.classList].filter(k => !k.startsWith("cm-")).join("."), x: +(q.left - r.left).toFixed(2), y: +(q.top - rowRect.top).toFixed(2), w: +q.width.toFixed(2), h: +q.height.toFixed(2),
+      text: (el.textContent || "").slice(0, 30), color: c.color, bg: c.backgroundColor, fontSize: c.fontSize, fontWeight: c.fontWeight, fontStyle: c.fontStyle, deco: c.textDecorationLine, border: c.borderTopWidth + " " + c.borderTopColor, radius: c.borderTopLeftRadius, pad: c.paddingLeft + "/" + c.paddingTop, family: c.fontFamily.slice(0, 24), display: c.display };
+  });
   return {
+    chips, inl,
     boxH: +r.height.toFixed(2), hostH: +hostRect.height.toFixed(2), childY: +(child.getBoundingClientRect().top - rowRect.top).toFixed(2),
     lineHeight: cs.lineHeight, fontSize: cs.fontSize, cls: box.className, val: (box as HTMLTextAreaElement).value ?? box.textContent!.slice(0, 120),
     lines: [...new Map(lines.map(t => [t.top, t])).values()].sort((a, b) => a.top - b.top),

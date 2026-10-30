@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The editor of a single-line block with `heading:: N` or `heading:: true` keeps the heading size while editing, as in Logseq; before, only a `#` heading did (UI-EDITOR-HEADING-PROP).
 - In the experimental CodeMirror editor a code or calculator block no longer shows its fence lines, and its line numbers and language label are visible, so it is as tall as in the view and the textarea editor (UI-CM6-CODEJUMP).
 - `SCHEDULED:` and `DEADLINE:` written on one line show as two date chips with no stray `<date>` text left in the block, in the view and in the experimental CodeMirror editor (UI-CM6-SAMELINE).
+- In the experimental CodeMirror editor a TODO, DOING, NOW, LATER or DONE marker (with or without a `[#A]` priority) is drawn exactly as in the view while the caret is elsewhere: the checkbox keeps its size, border and state colour, the marker chip its place and the gap before it, CANCELED has no box, and the priority reads `[#A]`. A `[[page reference]]` keeps its brackets like the view, so the line no longer narrows when the caret leaves it (UI-CM6-TASKMARKER).
 
 ### Fixed
 

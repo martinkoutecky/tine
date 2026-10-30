@@ -33,7 +33,7 @@ try {
     await page.goto(url, { timeout: 120_000 });
     await page.waitForSelector('[data-block-id="plain"] .block-content');
     results = await page.evaluate(o => window.measureAll(o), opts);
-    for (const id of ["martin", "h1", "mdh1body", "inline", "code", "calc", "deadline", "scheduled", "repeater", "both", "sameline", "list", "quote", "props", "table", "image", "math", "embed", "quote2", "table2", "math2", "image2"]) {
+    for (const id of ["todo", "todop", "donep", "canceled", "todotags", "martin", "h1", "mdh1body", "inline", "code", "calc", "deadline", "scheduled", "repeater", "both", "sameline", "list", "quote", "props", "table", "image", "math", "embed", "quote2", "table2", "math2", "image2"]) {
       const shot = kind => page.locator(`[data-block-id="${id}"]`).first().screenshot({ path: `${out}/${which}-${id}-${kind}.png` });
       await page.evaluate(() => window.closeEditor()); await shot("rendered");
       for (const [kind, on, caret] of [["textarea", false, 0], ["cm6", true, 0], ["cm6end", true, 1e9]]) { await page.evaluate(([i, o, c]) => window.openEditor(i, o, c), [id, on, caret]); await shot(kind); }
@@ -107,6 +107,33 @@ try {
       if (results[id][kind].missing) continue;
       if (/<\d{4}-/.test(results[id][kind].val)) bad.push(`${id}: ${kind} body shows a stray <date>: ${JSON.stringify(results[id][kind].val)}`);
     }
+  }
+  // The leading chip group (checkbox, marker chip, priority chip) looks and sits the same in the view and in CM6 with the caret
+  // away from it (CM6-TASKMARKER); the caret on the marker shows its source by design, then only the other chips are compared.
+  const sameChips = (id, kind, label, skip) => {
+    const a = results[id].rendered.chips ?? [], b = results[id][kind].chips ?? [];
+    const keep = (l) => skip ? l.filter(c => !skip.includes(c.cls)) : l;
+    const A = keep(a), B = keep(b);
+    if (A.length !== B.length || A.some((c, i) => c.cls !== B[i].cls)) { bad.push(`${id}: ${label} chips ${B.map(c => c.cls)} vs rendered ${A.map(c => c.cls)}`); return; }
+    A.forEach((c, i) => {
+      const d = B[i];
+      for (const k of ["text", "border", "radius", "bg", "color", "fontSize", "margin", "pad", "va"]) if (c[k] !== d[k]) bad.push(`${id}: ${label} ${c.cls} ${k} ${JSON.stringify(d[k])} vs rendered ${JSON.stringify(c[k])}`);
+      for (const k of ["w", "h"]) if (Math.abs(c[k] - d[k]) > 0.5) bad.push(`${id}: ${label} ${c.cls} ${k} ${d[k]} vs rendered ${c[k]}`);
+      if (!skip) for (const k of ["x", "y"]) if (Math.abs(c[k] - d[k]) > 0.5) bad.push(`${id}: ${label} ${c.cls} ${k} ${d[k]} vs rendered ${c[k]}`);
+    });
+  };
+  const markerIds = ["todo", "doing", "now", "later", "done", "waiting", "canceled", "todop", "doingp", "donep", "todotags", "priority"];
+  for (const id of markerIds) { sameChips(id, "cm6end", "CM6 (caret at end)"); compare(id, "cm6end", "CM6 (caret at end)"); }
+  // A caret at 0 sits on the marker: its source is shown (D-20261025-CR), so only a priority chip after it is compared (by look, not place).
+  for (const id of ["todop", "doingp", "donep"]) sameChips(id, "cm6", "CM6 (caret on the marker)", ["block-task-checkbox", "block-marker"]);
+  // Every inline element (tags, page refs, links, code, highlights, math, ...) sits and looks the same in CM6 with the caret away.
+  for (const id of Object.keys(results).filter(i => i.startsWith("i_"))) {
+    compare(id, "cm6end", "CM6 (caret at end)");
+    const A = results[id].rendered.inl ?? [], B = results[id].cm6end.inl ?? [];
+    if (A.length !== B.length) { bad.push(`${id}: CM6 inline elements ${B.map(e => e.el)} vs rendered ${A.map(e => e.el)}`); continue; }
+    A.forEach((a, i) => { const b = B[i];
+      for (const k of ["el", "text", "color", "bg", "fontSize", "fontWeight", "fontStyle", "deco", "border", "radius", "pad", "family", "display"]) if (a[k] !== b[k]) bad.push(`${id}: CM6 ${a.el} ${k} ${JSON.stringify(b[k])} vs rendered ${JSON.stringify(a[k])}`);
+      for (const k of ["x", "y", "w", "h"]) if (Math.abs(a[k] - b[k]) > 0.5) bad.push(`${id}: CM6 ${a.el} ${k} ${b[k]} vs rendered ${a[k]}`); });
   }
   for (const id of cm6Gated) compare(id, "cm6", "CM6");
   for (const id of cm6EndGated) compare(id, "cm6end", "CM6 (caret at end)");

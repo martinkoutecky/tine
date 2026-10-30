@@ -61,3 +61,13 @@ describe("CM6 block editor line metrics match the rendered block", () => {
     expect(Number(decl(over, "z-index"))).toBeGreaterThanOrEqual(1);
   });
 });
+
+// CM6-TASKMARKER: a concealed `[[Page]]` is the view's page ref, brackets included when the graph preference shows them.
+describe("CM6 concealed constructs keep the view's look", () => {
+  it("does not hide the page-ref brackets the preference shows", () => {
+    expect(cm6).not.toMatch(/\.bracket\s*\{[^}]*display\s*:\s*none/);
+  });
+  it("keeps the task checkbox a plain box: text cursor, no hover tint (a pointer reveals the source)", () => {
+    expect(decl(ruleBody(cm6, ".cm6-preview .block-task-checkbox"), "cursor")).toBe("text");
+  });
+});

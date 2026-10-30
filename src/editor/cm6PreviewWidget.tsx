@@ -5,7 +5,23 @@ import { PageRef, renderInlines } from "../render/inline";
 import { renderBlocks } from "../render/body";
 import { renderedClickOffset } from "../components/blockGestures";
 import { CalGlyph } from "../components/blockParts";
+import { taskCheckboxState } from "../markers";
 import type { PreviewSpan } from "./cm6Preview";
+
+/** The marker as the view draws it (Rendered.tsx): the task checkbox and the marker chip are SIBLINGS joined by a space
+ * (the checkbox colour is `.block-task-checkbox:has(+ .marker-x)`, and the chip must not wrap the box), and CANCELED has no box.
+ * The pointer reveals the source instead of toggling. */
+function TaskMarker(props: { label: string }) {
+  const state = taskCheckboxState(props.label);
+  return <>
+    {state !== null && <><span class="block-task-checkbox" classList={{ checked: state }} aria-hidden="true" />{" "}</>}
+    <span class={`block-marker marker-${props.label.toLowerCase()}`}>{props.label}</span>
+  </>;
+}
+/** The priority chip with the view's text: the span covers `[#A]` and the view shows it whole. */
+function PriorityChip(props: { label: string }) {
+  return <span class={`block-priority priority-${props.label}`}>[#{props.label}]</span>;
+}
 
 /** Reuse the read renderer, with a disposable Solid owner for each CM widget.
  * A pointer edits the host source instead of following a link or mutating a
@@ -29,17 +45,15 @@ export class PreviewWidget extends WidgetType {
       if (span.block) {
         const header = span.block.kind === "bullet" || span.block.kind === "heading" ? span.block : null;
         return <>
-          {header?.marker && <span class={`block-marker marker-${header.marker.toLowerCase()}`}>{header.marker}</span>}
-          {header?.priority && <span class={`block-priority priority-${header.priority}`}>{header.priority}</span>}
+          {header?.marker && <TaskMarker label={header.marker} />}
+          {header?.priority && <PriorityChip label={header.priority} />}
           {renderBlocks([span.block], blockId, span.block.kind === "bullet" ? span.block.size : undefined, false, format)}
           {header?.htags?.map(name => <PageRef name={name} blockId={blockId} tag />)}
         </>;
       }
       if (span.headerTags) return span.headerTags.map(name => <PageRef name={name} blockId={blockId} tag />);
-      if (span.kind === "task") return <span class={`block-marker marker-${span.label!.toLowerCase()}`}>
-        <span class="block-task-checkbox" classList={{ checked: span.label === "DONE" }} aria-hidden="true" />{span.label}
-      </span>;
-      return <span class={`block-priority priority-${span.label}`}>{span.label}</span>;
+      if (span.kind === "task") return <TaskMarker label={span.label!} />;
+      return <PriorityChip label={span.label!} />;
     }, el));
     const reveal = (event: MouseEvent | PointerEvent) => {
       if (event.button !== 0) return;
