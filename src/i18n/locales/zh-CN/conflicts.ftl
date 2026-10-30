@@ -68,6 +68,8 @@ conflict-resolution-applying-writes-the-merged-page-only-if-the = 仅当文件�
 
 conflict-resolution-the-other-file-moves-to-the-recoverable-trash = 应用后，另一文件会移入可恢复的回收站，当天日记只保留一个文件。
 
+conflict-resolution-another-version-waits = 此页面的另一个版本也已到达。请先在此处解决你未保存的编辑；之后会打开它的对比。
+
 conflict-resolution-the-copy-moves-to-the-recoverable-trash-once = 应用后，副本会移入可恢复的回收站。
 
 conflict-resolution-applying = 正在应用…

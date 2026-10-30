@@ -50,12 +50,10 @@ import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PropertyKey } from "../render/PropertyKey";
-import { PageConflictResolution } from "./ConflictResolution";
+import { PageConflictPanel } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
-import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
-import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
 import { captureReadingViewport } from "./readingViewportAnchor";
@@ -1281,13 +1279,9 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       <ExternalChangeBar name={props.page.name} />
       <SeenHeader seen={seen} pageName={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
-      <Show when={conflictForPage(props.page.id) ?? liveConflictForPage(props.page.name, props.page.id)}>
-        {(conflict) => (
-          <FailureBoundary region="The conflict panel">
-            <PageConflictResolution conflict={conflict()} />
-          </FailureBoundary>
-        )}
-      </Show>
+      <FailureBoundary region="The conflict panel">
+        <PageConflictPanel name={props.page.name} path={props.page.id} />
+      </FailureBoundary>
       <MarginContext.Provider value={margin.placement}>
       <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={preambleContent()}>
