@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On Android shared storage, renaming a page by capitalization alone now works, on the phone and in a git pull: Tine moves it through a temporary name and finishes the rename at the next open if it is stopped in between. Before, such a pull stopped git sync ("pull incomplete") and such a rename was refused (GS1).
 - Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).
 - Fast scrolling through a PDF no longer leaves pages blank for up to a second behind the scroll, a regression in 0.9.0-beta.1 from the pdf.js 5 upgrade. pdf.js 5 gave every glyph of the hidden selectable-text layer its own transformed layer, which the webview repainted on every scroll frame; glyphs that need no stretching or rotation are now drawn untransformed again, as with pdf.js 4, with text selection unchanged (PDF5-SCROLL).
 - The Journals feed opens even when today's journal cannot be created from the default journal template (#811). The feed used to fail as a whole ("Could not load journal feed"), as on Android in 0.9.0-beta.1; now an error says the template was not added and the journals are shown without it.

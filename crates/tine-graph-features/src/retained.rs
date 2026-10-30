@@ -168,7 +168,7 @@ fn refusal_error(
         ),
         ApplyRefusal::SpellingIncomplete => error(
             io::ErrorKind::TimedOut,
-            "The file name may already be changed; the text change is not confirmed. Save or discard any pending edits, then open Rename and rename again to the intended name. If the page already shows that name, check its text before retrying.".into(),
+            "The file name may already be changed; the text change is not confirmed. Save or discard any pending edits, then open Rename and rename again to the intended name. If the page already shows that name, check its text before retrying. If the page is missing, reopen the graph: Tine finishes the rename when it opens.".into(),
         ),
     }
 }

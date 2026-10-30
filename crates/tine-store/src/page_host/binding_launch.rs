@@ -138,6 +138,12 @@ impl PageHost {
         } = &launch;
         let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
         let graph = store.graph.clone();
+        // A case move a stopped process left at its temporary entry (GS1)
+        // finishes first, so a recovered draft resolves its page's spelling.
+        {
+            let _writer = store.writer.lock().unwrap_or_else(|e| e.into_inner());
+            store.page_plan(None).complete_case_moves();
+        }
         let trash = crate::model::trash_root(&graph.root).join("pages");
         let mut io = ProductionIo::attach_bound(
             &graph.root,
