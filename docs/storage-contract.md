@@ -1119,6 +1119,20 @@ measured) at ~1.3 GiB for a run that writes.
 
 ## I-8 refusal scenarios
 
+CONFLICT-INVALIDINPUT: a sync copy confirmed absent before planning a
+resolution is settled without writing the page; Discard copy also treats
+confirmed absence as settled. The UI removes the stale entry and explains
+that the copy is gone. Missing winners are not missing copies. Changed copy
+or winner revisions require a fresh comparison and fresh choices. Renamed
+copies are re-derived from inventory, never followed by guessing their path.
+Whole-side choices include that side's page properties; mixed choices can
+still request property union, whose scalar clashes retain both files and
+explain which property needs a choice. Conflict-command refusals retain their
+explanation rather than reducing it to an I/O kind. Existing post-apply copy
+cleanup guards remain: a late change keeps the copy and the saved merge.
+No new persistent records or transport; bytes/files/syncs per successful fold
+are unchanged, and settling an already absent copy writes nothing.
+
 `git_disable_line_endings` (D-20261028-CRLF, ADR 0078 §4; all five targets since slice 3) repairs a sync
 refusal only after a raw blob hash of every tracked regular working file equals
 its index oid; missing/unreadable/nonregular paths and gitlinks refuse, with a

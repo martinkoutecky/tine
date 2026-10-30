@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-conflict-invalidinput.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A routed page's scalar property conflict explains the needed choice while preserving both files. Keep sync copy applies that side's blocks and page properties, retires the conflict and keeps the copy recoverable.","blocking":false,"authority":"UI-CONFLICT-INVALIDINPUT; Martin 2026-10-30"}],
+      "acceptableVariations": ["Page geometry, latency, copy timestamp and recovery filename may vary."],
+      "nonRequirements": ["No private graph or app data, exact pixels, native boundary enumeration, other-platform certification or manager burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-query-layout.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"On a synthetic graph a query table lies inside its query box in the main pane and the right sidebar, board counts are separated from their labels, table and card page links read as links, Collapse all is in the Linked References header row, an image in a reference breadcrumb is small, comma-separated property values are page links, and with journals off the sidebar leads to the configured home page instead of Journals.","blocking":false,"authority":"D-20261028-UILP; UI-LP-QUERY-TABLE-BOX, UI-LP-BOARD-CARDS, UI-LP-REFERENCES-HEADER, UI-LP-BREADCRUMB-IMAGE, UI-LP-JOURNALS-OFF-HOME, UI-LP-COMMA-PROPERTY-LINKS"}],
       "acceptableVariations": ["Exact pixels, column widths, fonts, scrollbar thickness, theme colours and window size may vary; only containment, separation and presence are asserted."],
