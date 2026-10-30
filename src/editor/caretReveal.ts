@@ -1,4 +1,4 @@
-import { documentOf, requestFrame, windowOf } from "../windowRealm";
+import { documentOf, isElementTag, requestFrame, windowOf } from "../windowRealm";
 import { textareaCaretLeft, textareaCaretRow } from "./caretRows";
 
 /** GH #745. The one rule for where the view goes when the caret lands in a
@@ -113,7 +113,7 @@ export function scrollToClearToolbar(editor: HTMLElement, scroller: HTMLElement 
   const bottomRule = editor.getBoundingClientRect().bottom - limit;
   if (bottomRule <= 0) return 0;
   // The CodeMirror editor measures its caret itself; it keeps the bottom rule.
-  const g = editor instanceof HTMLTextAreaElement ? caretViewRow(editor, scroller) : null;
+  const g = isElementTag(editor, "textarea") ? caretViewRow(editor, scroller) : null;
   if (!g) return bottomRule;
   const room = limit - g.visibleTop;
   if (editor.getBoundingClientRect().height <= room) return bottomRule;
