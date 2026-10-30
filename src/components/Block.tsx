@@ -2144,26 +2144,28 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   // Move the block up/down among siblings, keeping edit mode + caret (the DOM
-  // reorder briefly blurs the textarea; cross-day it remounts).
+  // reorder briefly blurs the textarea; cross-day it remounts). A whole-block
+  // embed's root moves its host on this page, like Tab (D-20261030-EMB).
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
     const movedEditor = ref;
+    const { id, scope } = position();
     const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
     const restore = () => restoreMovedSelection(ref, props.id, selection.start, selection.end, selection.direction);
     commit(ref.value);
-    void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
+    void withBlockMoving(docNode(id)?.page ?? "", async () => {
       startEditing(props.id, selection, null, editSurface());
       const intentIsCurrent = captureEditIntent();
       // A sibling reorder happens synchronously (a feed move's own sync part)
       // and keeps this textarea. Restore it in the same gesture: waiting a
       // frame lets Android dismiss the IME despite the later focus.
-      const move = outlineScope && !outlineScope.navOnly ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
+      const move = scope && !scope.navOnly ? moveItem(id, dir) : moveBlockFeed(id, dir);
       if (intentIsCurrent() && ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (documentOf(movedEditor).activeElement === movedEditor
           || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
       const moved = await move;
       // GH #641: a move this surface cannot show says where the block went.
-      if (moved !== false && moved !== "none") noticeMoveOutOfView(props.id, outlineScope);
+      if (moved !== false && moved !== "none") noticeMoveOutOfView(id, scope);
       await nextFrame(ref);
       if (intentIsCurrent() && documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));

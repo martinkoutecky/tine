@@ -2386,7 +2386,9 @@ mod i2_guide_sentence_tests {
             // D-20261030-EMB: a block embed's one bullet is the host's position.
             "Where a block sits is per page; what it says is shared",
             "A block embed shows one bullet, the embedded block's own",
-            "dragging that bullet, **Tab**/**Shift+Tab** and selecting it act on the block containing `{{embed ...}}`",
+            "dragging that bullet, **Tab**/**Shift+Tab**, **Move block up/down** and selecting it act on the block containing `{{embed ...}}`",
+            // GH #641's source move and notice stay for page embeds only.
+            "**Move block up/down** on a page embed's top-level block moves the source block among its own siblings",
             "its text and children are the source's, so editing them edits the source",
             "A block that has its own text besides the embed keeps its own bullet",
             "A page embed has its own host bullet",

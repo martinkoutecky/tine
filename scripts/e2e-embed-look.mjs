@@ -2,7 +2,8 @@
 // what it says is shared." One block is embedded on two pages. The journey checks that the embed shows one
 // bullet, at the host's place; that folding its root on page A is saved on A's host and leaves page B open,
 // and that both survive an app restart; that a fold below the root is saved on the source and shows on every
-// page; that Tab/Shift+Tab on the edited root move the host; and that the bullet's menu deletes the host only.
+// page; that Tab/Shift+Tab and Move up/down on the edited root move the host; and that the bullet's menu deletes
+// the host only.
 // Run under xvfb-run -s "-screen 0 1920x1080x24" with TINE_APP set to a custom-protocol build.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
@@ -149,6 +150,24 @@ try {
   await browser.keys(["Escape"]);
   pass();
 
+  stage = "Move up/down on the edited root moves page A's host; page B and the source stay put";
+  await openEmbedPage("Embed A");
+  const aBeforeMove = read(PAGE_A), sourceBeforeMove = read(SOURCE);
+  const [aBefore, aHost] = aBeforeMove.split(/\n(?=- )/);
+  await editRoot();
+  await browser.keys(["Alt", "Shift", "ArrowUp", "NULL"]);
+  await waitForFileText(PAGE_A, (text) => text === `${aHost.replace(/\n$/, "")}\n${aBefore}\n`);
+  assert.equal(read(PAGE_B), original.b);
+  assert.equal(read(SOURCE), sourceBeforeMove);
+  await browser.waitUntil(() => browser.execute((row) => !!document.activeElement?.closest(row), ROW),
+    { timeout: 5000, timeoutMsg: "the caret left the embed after Move up" });
+  await browser.keys(["Alt", "Shift", "ArrowDown", "NULL"]);
+  await waitForFileText(PAGE_A, (text) => text === aBeforeMove);
+  assert.equal(read(PAGE_B), original.b);
+  assert.equal(read(SOURCE), sourceBeforeMove);
+  await browser.keys(["Escape"]);
+  pass();
+
   stage = "both pages keep their folds after an app restart";
   await browser.deleteSession();
   await launch();
@@ -185,7 +204,7 @@ try {
   await waitForFileText(PAGE_A, (text) => text.includes(MACRO));
   pass();
   fs.writeFileSync(path.join(OUT, "embed-look-result.json"), JSON.stringify({ outcome: "pass", passed, graph: GRAPH }, null, 2));
-  console.log("PASS: one bullet; root fold per page across restart; nested fold shared; Tab and the menu act on the host");
+  console.log("PASS: one bullet; root fold per page across restart; nested fold shared; Tab, Move up/down and the menu act on the host");
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(OUT, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(OUT, "failure-dom.html"), await browser.execute(() => document.documentElement.outerHTML)); } catch {}

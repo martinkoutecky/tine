@@ -15,11 +15,12 @@ import { installKeybindings } from "../keybindings";
 
 let keys = () => {};
 
-// GH #641: Move Block Up/Down on the embedded ROOT moves the source block among
-// its own siblings (OG parity, kept: Martin 2026-10-06), and nothing visible
-// changes in the embed. Tine says where it went: a short notice naming the page,
-// with a way to open the block there. Moves the embed itself shows (a nested row
-// among its siblings) and ordinary outline moves stay silent.
+// GH #641: Move Block Up/Down on a page embed's top block moves the source block
+// among its own siblings (OG parity, kept: Martin 2026-10-06). Tine says where it
+// went: a short notice naming the page, with a way to open the block there.
+// Moves the embed itself shows (a nested row among its siblings) and ordinary
+// outline moves stay silent. D-20261030-EMB supersedes this for a whole-block
+// embed's root: it moves the HOST on this page, like Tab, with no notice.
 
 class AllNearObserver implements IntersectionObserver {
   readonly root = null;
@@ -61,17 +62,22 @@ function loadFixture() {
   const src: PageDto = { name: "Src", kind: "page", title: "Src", pre_block: null, blocks: [leaf("first", "first on src"), target] };
   const host: PageDto = { name: "HostPage", kind: "page", title: "HostPage", pre_block: null,
     blocks: [leaf("above", "plain above"), leaf("host", "{{embed ((target))}}"), leaf("below", "plain below")] };
+  const pageHost: PageDto = { name: "PageHost", kind: "page", title: "PageHost", pre_block: null,
+    blocks: [leaf("phost", "{{embed [[Src]]}}")] };
   const group: RefGroup = { page: "Src", kind: "page", blocks: [{ ...target, children: [] }] };
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map((id) => (id === "target" ? group : null)));
+  vi.spyOn(backend(), "getPage").mockResolvedValue(src as never);
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue(src as never);
   loadSingle(src);
   loadSingle(host);
+  loadSingle(pageHost);
 }
 
-function mount() {
+function mount(page = "HostPage") {
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render(() => (
-    <For each={pageByName("HostPage")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    <For each={pageByName(page)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
   return { root, dispose };
 }
@@ -94,12 +100,27 @@ async function editAndMoveUp(root: HTMLElement, selector: string, id: string) {
 }
 
 describe("move notice for moves the view cannot show (GH #641)", () => {
-  it("Move Up on the embedded root names the page it moved in and opens the block there", async () => {
+  it("Move Up on a whole-block embed's root moves the host on this page, silently (D-20261030-EMB)", async () => {
     loadFixture();
-    const open = vi.spyOn(router, "openPageAtBlock").mockImplementation(() => {});
     const { root, dispose } = mount();
     try {
       await editAndMoveUp(root, `.embed-block [data-block-id="target"]`, "target");
+      await vi.waitFor(() => expect(pageByName("HostPage")!.roots).toEqual(["host", "above", "below"]));
+      expect(pageByName("Src")!.roots).toEqual(["first", "target"]);
+      expect(editingId()).toBe("target");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(toasts()).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("Move Up on a page embed's top block names the page it moved in and opens the block there", async () => {
+    loadFixture();
+    const open = vi.spyOn(router, "openPageAtBlock").mockImplementation(() => {});
+    const { root, dispose } = mount("PageHost");
+    try {
+      await editAndMoveUp(root, `[data-block-id="phost"] [data-block-id="target"]`, "target");
       await vi.waitFor(() => expect(pageByName("Src")!.roots).toEqual(["target", "first"]));
       const notice = await vi.waitFor(() => {
         const toast = toasts().find((t) => t.message.includes("Src"));

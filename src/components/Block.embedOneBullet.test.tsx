@@ -114,6 +114,24 @@ describe("D-20261030-EMB: the embed's one bullet stands for the host", () => {
     } finally { dispose(); }
   });
 
+  it("Move up/down on the edited root moves the host on this page; the other page and the source stay put", async () => {
+    load({ A: "{{embed ((target))}}", B: "{{embed ((target))}}" });
+    const { root, dispose } = mount("A");
+    try {
+      const editor = await editRoot(root);
+      editor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(pageByName("A")!.roots).toEqual(["host-A", "prev-A"]));
+      expect(pageByName("B")!.roots).toEqual(["prev-B", "host-B"]);
+      expect(pageByName("Source")!.roots).toEqual(["target"]);
+      expect(editingId()).toBe("target");
+      await vi.waitFor(() => expect(focusedEditor()?.value()).toContain("Embedded root"));
+      focusedEditor()!.keydown(new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(pageByName("A")!.roots).toEqual(["prev-A", "host-A"]));
+      expect(pageByName("B")!.roots).toEqual(["prev-B", "host-B"]);
+      expect(pageByName("Source")!.roots).toEqual(["target"]);
+    } finally { dispose(); }
+  });
+
   it("Escape from the root selects the host", async () => {
     load({ A: "{{embed ((target))}}" });
     const { root, dispose } = mount("A");
