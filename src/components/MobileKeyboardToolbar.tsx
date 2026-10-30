@@ -183,6 +183,9 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     const keepCaretAfterResize = () => {
       settleCaret?.();
       settleCaret = undefined;
+      // Only while the keyboard is up: closing it (Back) leaves the editor focused,
+      // and the page must stay wherever the reader has scrolled it.
+      if (!untrack(keyboardVisible)) return;
       const editor = document.activeElement;
       if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) return;
       const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");

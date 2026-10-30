@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(() => { document.body.innerHTML = ""; });
 const flush = (n = 8) => { for (let i = 0; i < n; i++) frames.splice(0).forEach(cb => cb(0)); };
 
-it("brings a tapped line that sits above the top back into view after the keyboard resizes the view (GH #783)", async () => {
+async function setup() {
   const { render } = await import("solid-js/web");
   const bridge = await import("../editorCommandBridge");
   const { MobileKeyboardToolbar, NATIVE_IME_EVENT } = await import("./MobileKeyboardToolbar");
@@ -42,10 +42,23 @@ it("brings a tapped line that sits above the top back into view after the keyboa
   const toolbar = host.querySelector<HTMLElement>("[data-mobile-keyboard-toolbar]")!;
   toolbar.getBoundingClientRect = () => ({ top: 480, bottom: 520, height: 40 } as DOMRect);
   await Promise.resolve();
-  window.dispatchEvent(new CustomEvent(NATIVE_IME_EVENT, { detail: true }));
+  const ime = (visible: boolean) => window.dispatchEvent(new CustomEvent(NATIVE_IME_EVENT, { detail: visible }));
+  return { scroller, ime, done: () => { unregister(); dispose(); } };
+}
+
+it("brings a tapped line that sits above the top back into view after the keyboard resizes the view (GH #783)", async () => {
+  const f = await setup();
+  f.ime(true);
   flush();
   // visible top is the scroller top 100 + 8: the line (y 40) moves up the page by 68px
-  expect(scroller.scrollTop).toBe(1000 - 68);
-  unregister();
-  dispose();
+  expect(f.scroller.scrollTop).toBe(1000 - 68);
+  f.done();
+});
+
+it("leaves the page where the reader scrolled it when the keyboard closes with the editor still focused (GH #783)", async () => {
+  const f = await setup();
+  f.ime(false);
+  flush();
+  expect(f.scroller.scrollTop).toBe(1000);
+  f.done();
 });
