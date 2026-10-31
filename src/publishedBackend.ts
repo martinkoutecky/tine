@@ -228,7 +228,7 @@ export function viewKey(view: ViewSettings): string {
   return stableJson(out);
 }
 
-/** The host block's `tine.*` properties as `parseQuery` receives them, compared
+/** The host block's `tine.*` and `query-table` properties as `parseQuery` receives them, compared
  *  the way the engine reads them: keys case-insensitively, values trimmed. */
 function propertiesEqual(a: [string, string][], b: [string, string][]): boolean {
   if (a.length !== b.length) return false;

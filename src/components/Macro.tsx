@@ -278,8 +278,16 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return page ? { current_page: page } : undefined;
   };
   // What exporting or sharing this block starts from: its query text, host properties and page.
-  const exportRequest = (): QueryPublicationRequest => ({ argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
-    properties: hostProperties(), currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() });
+  const exportRequest = (): QueryPublicationRequest => {
+    const id = props.blockId;
+    const node = id ? docNode(id) : undefined;
+    // These renderer-only properties must also travel to the generated home.
+    // They do not belong to parseQuery's key (query-table itself does).
+    const legacyDisplay = id && node ? facetsOf(node.raw, formatForBlock(id)).properties
+      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc") : [];
+    return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
+      properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
+  };
   const friendlySearch = createMemo(() => {
     const s = runnable()?.query.source;
     return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;

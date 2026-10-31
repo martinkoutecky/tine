@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Queries with `query-table:: true` now show their results in published read-only apps. Query exports also keep the table's chosen columns and starting sort.
+
 ## [0.9.0-beta.3] - 2026-10-31
 
 ### Added

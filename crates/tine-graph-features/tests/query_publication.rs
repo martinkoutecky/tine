@@ -35,6 +35,48 @@ fn bundle() -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
+fn generated_query_home_preserves_legacy_table_columns_and_sort() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _output, store) = fixture();
+    let request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![
+            ("query-table".into(), "true".into()),
+            ("query-properties".into(), "[:owner :block]".into()),
+            ("query-sort-by".into(), "owner".into()),
+            ("query-sort-desc".into(), "false".into()),
+        ],
+        current_page: Some("Public".into()),
+        name: "Legacy".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: true,
+    };
+    let plan = plan_query(&store, &request).unwrap();
+    publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    let snapshot: serde_json::Value = serde_json::from_slice(
+        &fs::read(graph.join("published-queries/legacy/app/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    let raw = snapshot["pages"][0]["blocks"][0]["raw"].as_str().unwrap();
+    for (key, value) in &request.properties {
+        assert!(
+            raw.contains(&format!("{key}:: {value}")),
+            "generated query must retain {key}: {raw}"
+        );
+    }
+    assert_eq!(
+        snapshot["queries"][0]["properties"],
+        serde_json::json!([["query-table", "true"]])
+    );
+    assert_eq!(snapshot["queries"][0]["parsed"]["legacy_table"], true);
+    store.close();
+}
+
+#[test]
 fn folder_membership_review_is_read_only_and_ignores_unavailable_snapshots() {
     let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
