@@ -409,7 +409,7 @@ impl PagePlan<'_> {
         }
         if !crate::model::dto_depth_within_limit(doc) {
             return Err(Why::Refused(Refusal::InvalidTarget(
-                "page content nesting exceeds 512 levels".into(),
+                "page content nesting exceeds 128 levels".into(),
             )));
         }
         Ok(())
