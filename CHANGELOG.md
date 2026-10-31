@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- Microsoft Store package: needs Windows 11, and only Tine's own three data folders (`%APPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\tine-owners`) are shared with other installs and kept after uninstall; all other app data stays private to the Store package. Windows 10 users install from GitHub.
+
 ## [0.8.3] - 2026-10-30
 
 ### Fixed

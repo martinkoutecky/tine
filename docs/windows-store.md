@@ -56,35 +56,59 @@ Add-AppxPackage -Path .\TineOutline-test-signed.msixbundle
 The certificate is for this test build only. Future proof runs use new certificates;
 production packages are signed by Microsoft. Test with the exact bundle recorded
 in the SHA-256 sums. WebView2 Evergreen must be present; MSIX does not run the
-NSIS bootstrapper. Verify a clean Windows 10 machine separately.
+NSIS bootstrapper. The Store package needs Windows 11.
 
-## Data virtualization: disabled (decided 2026-10-12)
+## Data virtualization: three folders excluded (D-20261031-MSV)
 
-The package disables filesystem and registry write virtualization using
-`desktop6` properties and `unvirtualizedResources` (Martin, 2026-10-12).
-Partner Center approval of the restricted capability is pending; if certification
-refuses it, the fallback keeps virtualization and moves backups to a user folder
-when packaged, which is a new decision for Martin. Change the single
-`unvirtualized` constant in `scripts/stage-msix.mjs` to flip both properties and
-the capability together; reconsider data safety before shipping that alternative.
+Partner Center refused the earlier blanket opt-out (`desktop6` properties that
+disabled all AppData and registry write virtualization). The package now uses
+Windows 11 flexible virtualization with the `unvirtualizedResources` restricted
+capability, and unvirtualizes exactly three folders:
 
-With the opt-out, Store and GitHub stable installs share the same
-`%APPDATA%\page.tine.Tine` and `%LOCALAPPDATA%\page.tine.Tine` data. Settings,
-plugins, drafts, launch checkpoints and backup zips survive Store uninstall.
-Default virtualization instead redirects new AppData writes to a per-package
-container that uninstall removes. Graph folders outside AppData use ordinary
-user permissions. Both installs register `tine:`; Windows chooses its handler.
-The GitHub installation still manages its own updates. Shared single-instance
-coordination and coexistence require hands-on verification.
+```xml
+<virtualization:FileSystemWriteVirtualization>
+  <virtualization:ExcludedDirectories>
+    <virtualization:ExcludedDirectory>$(KnownFolder:RoamingAppData)\page.tine.Tine</virtualization:ExcludedDirectory>
+    <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\page.tine.Tine</virtualization:ExcludedDirectory>
+    <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\tine-owners</virtualization:ExcludedDirectory>
+  </virtualization:ExcludedDirectories>
+</virtualization:FileSystemWriteVirtualization>
+```
+
+| Folder | Holds |
+| --- | --- |
+| `%APPDATA%\page.tine.Tine` | settings, plugins, themes, drafts, backup zips |
+| `%LOCALAPPDATA%\page.tine.Tine` | caches and WebView2 data |
+| `%LOCALAPPDATA%\tine-owners` | the per-account owner lock the app and the `tine` command line share (0.9 and later) |
+
+Why these stay real: Store and GitHub stable installs share them, so switching
+install keeps settings and drafts; backups and unsaved drafts survive Store
+uninstall; and the Store app and the command line see the same owner lock, so
+one graph never gets two writers. Every other AppData write, and every registry
+write, is virtualized as usual. Tine's own code writes no registry; its
+dependencies only read it (`hyper-util` proxy settings; `embed-resource` at build
+time). Tine writes nothing machine-wide and nothing in another app's folders.
+
+After uninstall the three folders remain. To remove all Tine data, delete them
+by hand (the paths above). Flexible virtualization needs Windows 11, so the
+Store package's minimum is Windows 11 (`10.0.22000.0`); Windows 10 users install
+from GitHub. `msix.yml` proves the behaviour on the installed test package:
+writes from inside the package reach the three real folders, a control folder
+stays in the package container, Tine's own first-run data lands in the real
+folders, and the three folders keep their data after uninstall.
+
+Change the single `unvirtualized` constant in `scripts/stage-msix.mjs` to drop
+the exclusions and the capability together; that fallback (full virtualization)
+loses the guarantees above and needs a new decision.
 
 The manifest requests exactly `runFullTrust` and `unvirtualizedResources`.
-Full-trust desktop networking needs no `internetClient` capability. It uses the
-classic full-trust entry point without the Windows 10 2004 `uap10` attributes,
-preserving the specified Windows 10 1903 minimum.
+Full-trust desktop networking needs no `internetClient` capability. Both
+installs register `tine:`; Windows chooses its handler. The GitHub installation
+still manages its own updates.
 
 ## Open acceptance items
 
-- Confirm the virtualization proposal and justify the restricted capabilities in Partner Center.
+- Resubmit with the flexible-virtualization justification (D-20261031-MSV); the first submission's blanket opt-out was refused.
 - Resolve the Store documentation's “first version component cannot be 0” rule against live `0.x.y.0` precedent using a draft submission; no workaround is applied.
 - WACK runs in `msix.yml` on the x64 runner against the test-signed bundle and fails the build unless the
   overall result is PASS (first PASS: run 38310552020, 0.7.1.0). The kit is not available on ARM64 Windows hosts.
