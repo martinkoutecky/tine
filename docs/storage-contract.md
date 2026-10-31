@@ -264,7 +264,19 @@ replace, 0 bytes, 0 files and 0 transport bytes, for 1 and 60 blocks alike
 (counted from the code: one `File::metadata` in
 `production.rs#read_published`). A missing, unreadable or changed publication
 witness returns Uncertain, retaining input risk for drafting/retry and watcher
-reconciliation. This check also runs after
+reconciliation. The same flush pins a replaced page's mtime: every later
+version keeps the first one's on the backing volume, and with passthrough on
+the path too, so a sync client's rescan can miss a same-size edit (GH #811,
+run 41181752203: 0 of 4 same-size saves moved it). On Android,
+`atomic_file.rs#rename_replace` therefore sets the destination's mtime back to
+the source's after the rename (`utimensat`, as rename(2) keeps it). It is best
+effort: the rename has landed, so a failure leaves MediaProvider's mtime and
+reports nothing. Unit cost (I-25), Android only, per replacing rename: one
+`lstat` of the source (served from the FUSE attribute cache, which MediaProvider
+never expires) and one `utimensat`, which is one FUSE SETATTR that MediaProvider
+answers with its write-access check and a `utimensat` beneath; 0 bytes, 0 files,
+0 transport bytes, for 1 and 60 blocks alike (counted from the code and the
+kernel/MediaProvider source). This check also runs after
 Unsupported sync and Windows's no-op sync; it adds no Windows directory flush.
 Windows file stamps use creation time as their identity witness, not the full
 directory FILE_ID_INFO. Publication-stamp capture after rename can itself race
