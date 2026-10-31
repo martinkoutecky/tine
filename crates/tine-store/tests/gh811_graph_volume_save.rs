@@ -333,7 +333,7 @@ fn other_process_stat(path: &Path) -> String {
 /// same-size edits could look unchanged. Saves one existing page through the
 /// page host with same-size edits a second apart and prints what another
 /// process sees after each, then after the kernel's caches are dropped (root
-/// only). Asserts only that the saves published.
+/// only). On Android it asserts that each same-size save moved the mtime.
 #[test]
 fn same_size_saves_and_the_page_mtime_another_process_sees() {
     let _integration_guard = crate::integration_lock();
@@ -407,13 +407,29 @@ fn same_size_saves_and_the_page_mtime_another_process_sees() {
         seen.push(now);
         std::thread::sleep(Duration::from_millis(1100));
     }
-    let mtime = |line: &str| line.split_whitespace().nth(1).map(str::to_owned);
+    // Each side's mtime ("<seconds> <date> <time>"), None where stat failed.
+    let mtime = |line: &str, side: usize| {
+        let part = line.split(" | ").nth(side)?;
+        let words: Vec<_> = part.split_whitespace().skip(1).take(3).collect();
+        (words.len() == 3 && !part.contains("stat")).then(|| words.join(" "))
+    };
     // seen[0] is the page before the first edit, a different size.
-    let advanced = seen[1..]
-        .windows(2)
-        .filter(|pair| mtime(&pair[0]) != mtime(&pair[1]))
-        .count();
-    println!("GH811-MTIME path mtime advanced on {advanced} of 4 same-size saves");
+    let advanced = |side| {
+        seen[1..]
+            .windows(2)
+            .filter(|pair| mtime(&pair[0], side) != mtime(&pair[1], side))
+            .count()
+    };
+    let lower_read = seen.iter().all(|line| mtime(line, 1).is_some());
+    println!(
+        "GH811-MTIME mtime advanced on path {} and lower {} of 4 same-size saves",
+        advanced(0),
+        if lower_read {
+            advanced(1).to_string()
+        } else {
+            "unread".into()
+        }
+    );
     let dropped = std::process::Command::new("sh")
         .args(["-c", "sync; echo 3 > /proc/sys/vm/drop_caches"])
         .status()
@@ -427,6 +443,19 @@ fn same_size_saves_and_the_page_mtime_another_process_sees() {
         },
         other_process_stat(&page)
     );
+    // Decision 2: on Android shared storage a same-size save must move the
+    // page's mtime, on the path and beneath FUSE, or a rescan misses it.
+    #[cfg(target_os = "android")]
+    {
+        assert_eq!(advanced(0), 4, "a same-size save left the path's mtime");
+        if lower_read {
+            assert_eq!(
+                advanced(1),
+                4,
+                "a same-size save left the backing file's mtime"
+            );
+        }
+    }
     drop(host);
     store.close();
 }

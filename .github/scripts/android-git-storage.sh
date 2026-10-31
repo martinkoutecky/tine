@@ -77,6 +77,15 @@ run_bin() {
   fi
 }
 failed=0
+# GH #811 decision 2: the same-size-save mtime probe again as root, which can
+# stat the file beneath FUSE and drop the kernel's caches. Last, so no other
+# test runs as root.
+root_mtime_probe() {
+  adb root > /dev/null
+  adb wait-for-device
+  run_bin tine_store_integration store-mtime-root \
+    "TINE_HOST_FS_ROOT=$shared TINE_LOWER_FS_ROOT=/data/media/0/Documents/tine-git-storage" same_size_saves
+}
 
 # Page saves through the page host publish on shared storage (GH #811): the
 # app data stays app-private, as on a phone.
@@ -89,7 +98,10 @@ run_bin tine_store_lib store-publication-read "TINE_HOST_FS_ROOT=$shared" page_h
 # F-M3S-1: the supported-volume acceptance of the post-sync stamp check.
 run_bin tine_store_lib store-acceptance "TINE_STORAGE_ACCEPT_ROOT=$shared/accept" storage_acceptance_tests --ignored
 # The passthrough run is for the page saves only.
-[ "${TINE_FUSE_PASSTHROUGH:-}" = 1 ] && exit "$failed"
+if [ "${TINE_FUSE_PASSTHROUGH:-}" = 1 ]; then
+  root_mtime_probe
+  exit "$failed"
+fi
 run shared-storage "TINE_HOST_FS_ROOT=$shared TINE_EXPECT_FUSE=1" owner::git_autocommit::mobile_tests
 for line in 'GIT-STORAGE result=PASS' 'GIT-KILL result=PASS'; do
   grep -q "$line" "$out/shared-storage.txt" || { echo "missing: $line" >&2; failed=1; }
@@ -100,4 +112,5 @@ for n in 1 2 3; do
     --exact owner::git_autocommit::mobile_tests::a_commit_or_push_the_os_ends_leaves_the_repository_whole
 done
 run private-storage "" owner::git_autocommit owner::seen
+root_mtime_probe
 exit "$failed"
