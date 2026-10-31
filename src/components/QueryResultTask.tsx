@@ -15,7 +15,7 @@ export function queryResultTarget(row: FormulaEvalRow) {
     ...(row.path ? { path: row.path } : {}) };
 }
 
-export function openQueryResult(row: FormulaEvalRow, event: MouseEvent): void {
+export function openQueryResult(row: FormulaEvalRow, event: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "stopPropagation">): void {
   event.stopPropagation();
   const target = queryResultTarget(row);
   const route = { kind: "page" as const, name: target.page, pageKind: target.pageKind, block: target.uuid,

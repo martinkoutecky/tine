@@ -45,7 +45,8 @@
 /* GH #619 c6 (UI1): finishing sits at the trailing end, Cancel just left of the primary action. */
 .qc-panel-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .qc-panel .qd-panel { position: static; min-width: 0; max-width: 100%; max-height: none; overflow: visible; box-shadow: none; }
-.query-result-open { border: 0; background: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.query-result-open { display: block; min-width: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.query-result-open:focus-visible { outline: 2px solid var(--accent, #4c8bf5); outline-offset: 1px; }
 .query-block .sheet-board { max-width: 100%; overflow-x: auto; }
 @media (hover: none), (pointer: coarse) { .qc-actions > summary { opacity: 1; } }
 .all-pages-head, .all-pages-row { grid-template-columns: minmax(0, 1fr) 10.5em 6em 8em; }

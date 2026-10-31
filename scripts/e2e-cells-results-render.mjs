@@ -67,6 +67,8 @@ fs.writeFileSync(`${GRAPH}/pages/Lists.md`, [
   "- Numbered steps #lists",
   "  1. first",
   "  2. second",
+  "- Long note #lists",
+  ...Array.from({ length: 20 }, (_, i) => `  line ${i + 1} of a long block`),
   "",
 ].join("\n"));
 for (const [name, view] of [["Found", null], ["FoundTable", "table"], ["FoundBoard", "board"]]) {
@@ -184,6 +186,21 @@ try {
         ol: block ? block.querySelectorAll("ol li").length : 0,
       };
     }, selector);
+    if (name === "FoundTable") {
+      const clamp = await browser.execute(() => {
+        const cell = [...document.querySelectorAll(".query-block .sheet-title-cell")].find((c) => /Long note/.test(c.textContent ?? ""));
+        const body = cell?.querySelector(".sheet-title-body");
+        if (!cell || !body) return null;
+        return { body: body.clientHeight, scroll: body.scrollHeight, cell: cell.getBoundingClientRect().height, font: parseFloat(getComputedStyle(body).fontSize) };
+      });
+      fs.writeFileSync(`${ARTIFACTS}/long-title-clamp.json`, `${JSON.stringify(clamp, null, 2)}\n`);
+      expect(clamp !== null, "the long block has no .sheet-title-body in the Table view");
+      if (clamp) {
+        expect(clamp.body <= clamp.font * 7.5 + 2, `a 20-line block must stay clamped to about 7.5em in the Table view, got ${clamp.body}px (font ${clamp.font}px)`);
+        expect(clamp.scroll > clamp.body, `the long block should overflow its clamp (scroll ${clamp.scroll} vs ${clamp.body})`);
+        expect(clamp.cell < 220, `a 20-line block must not make a tall row, got ${clamp.cell}px`);
+      }
+    }
     fs.writeFileSync(`${ARTIFACTS}/results-${name}.json`, `${JSON.stringify(results, null, 2)}\n`);
     // A Board card shows only the block's first line by design, so lists are required as <li> in List and Table only.
     if (name !== "FoundBoard") expect(results.ul === 2, `${name}: the bullet list in a result must render as 2 <li>, got ${results.ul}; text: ${results.text}`);

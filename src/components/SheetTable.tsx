@@ -1130,7 +1130,11 @@ function TitleBody(props: { row: FormulaEvalRow; format: "md" | "org" }): JSX.El
   };
   return (
     <Show when={placeholder() === null} fallback={<InlineText text={placeholder() ?? ""} format={props.format} />}>
-      <AstBody raw={rowRaw(props.row)} format={props.format} />
+      {/* Clamped (CSS max-height) so a long block cannot make a tall row: the cell shows the first lines, whole
+          blocks as the page draws them, and the full text opens with the result. */}
+      <div class="sheet-title-body">
+        <AstBody raw={rowRaw(props.row)} format={props.format} />
+      </div>
     </Show>
   );
 }
@@ -1232,9 +1236,26 @@ function TitleCell(props: {
             >
               <Show when={props.query} fallback={<TitleBody row={props.row} format={fmt()} />}>
                 <QueryResultTask row={props.row} />
-                <button type="button" class="query-result-open" onClick={(event) => openQueryResult(props.row, event)}>
+                {/* Not a <button>: the title holds block content (lists, links, refs), which a button may not
+                    contain. A ref or link inside handles its own click and stops it; any other click opens the
+                    result, and Enter/Space do the same when the row itself has focus. */}
+                <div
+                  class="query-result-open"
+                  role="button"
+                  tabindex="0"
+                  onClick={(event) => {
+                    const inner = (event.target as Element | null)?.closest?.("a, button, input, textarea, [role=button]");
+                    if (inner && inner !== event.currentTarget && event.currentTarget.contains(inner)) return;
+                    openQueryResult(props.row, event);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    openQueryResult(props.row, event);
+                  }}
+                >
                   <TitleBody row={props.row} format={fmt()} />
-                </button>
+                </div>
               </Show>
             </Show>
           }

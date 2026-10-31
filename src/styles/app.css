@@ -5938,6 +5938,21 @@ body.file-drop-active::after {
   line-height: inherit;
   cursor: inherit;
 }
+/* A Table title shows the block as the page draws it, clamped to about five lines so a long block keeps a
+   bounded row height (the full block opens with the result). */
+.sheet-title-body {
+  max-height: 7.5em;
+  overflow: hidden;
+  min-width: 0;
+}
+.sheet-title-body > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.sheet-title-body ul,
+.sheet-title-body ol {
+  padding-left: 1.4em;
+}
 .sheet-cell .sheet-grid,
 .sheet-cell .sheet-table {
   margin-top: 6px;
