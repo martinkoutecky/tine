@@ -2124,10 +2124,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
       const valueKey = propertyValueKeyAfterBoundary(ref.value, ref.selectionStart, ch);
       if (valueKey) setPropertyValueKey(valueKey);
-      // OG's typing trigger is exact: only the complete visible editor value
-      // `1. ` becomes own numbered-list state, then the trigger text disappears
-      // (`src/main/frontend/handler/editor.cljs:1888-1892`, 6e7afa8eb).
-      if (ch === " " && ref.value === "1. " && makeOwnNumberedList(props.id, "")) {
+      // Only a whole visible block `1. ` becomes own numbered-list state.
+      // Projected code/calc bodies are literal; their hidden wrappers must survive.
+      // OG: src/main/frontend/handler/editor.cljs:1888-1892 (6e7afa8eb).
+      if (ch === " " && ref.value === "1. " && !codeShown() && !isCalc() && makeOwnNumberedList(props.id, "")) {
         ref.value = "";
         ref.setSelectionRange(0, 0);
         autosize();
