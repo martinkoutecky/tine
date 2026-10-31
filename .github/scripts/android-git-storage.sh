@@ -9,6 +9,7 @@ set -euo pipefail
 
 bin="$1"
 store_bin="$2"
+store_lib_bin="$3"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="$repo_root/artifacts/android-git-storage"
 mkdir -p "$out"
@@ -30,7 +31,8 @@ if [ "${TINE_FUSE_PASSTHROUGH:-}" = 1 ]; then
 fi
 adb push "$bin" "$device/tine_lib_tests" > /dev/null
 adb push "$store_bin" "$device/tine_store_integration" > /dev/null
-adb shell "chmod 755 $device/tine_lib_tests $device/tine_store_integration && mkdir -p $device/tmp $shared"
+adb push "$store_lib_bin" "$device/tine_store_lib" > /dev/null
+adb shell "chmod 755 $device/tine_lib_tests $device/tine_store_integration $device/tine_store_lib && mkdir -p $device/tmp $shared/accept"
 # Just after boot MediaProvider may still refuse writes in shared storage
 # (EPERM on the first file, run 40762656695 API 33): wait until a file of the
 # kinds the tests write can be created and removed.
@@ -79,6 +81,8 @@ failed=0
 # Page saves through the page host publish on shared storage (GH #811): the
 # app data stays app-private, as on a phone.
 run_bin tine_store_integration store-shared-storage "TINE_HOST_FS_ROOT=$shared" gh811_graph_volume_save
+# F-M3S-1: the supported-volume acceptance of the post-sync stamp check.
+run_bin tine_store_lib store-acceptance "TINE_STORAGE_ACCEPT_ROOT=$shared/accept" storage_acceptance_tests --ignored
 # The passthrough run is for the page saves only.
 [ "${TINE_FUSE_PASSTHROUGH:-}" = 1 ] && exit "$failed"
 run shared-storage "TINE_HOST_FS_ROOT=$shared TINE_EXPECT_FUSE=1" owner::git_autocommit::mobile_tests

@@ -572,6 +572,13 @@ jobs:
             target/android-store-build.json | tail -n 1)
           test -x "$store"
           echo "TINE_ANDROID_STORE_TEST_BIN=$store" >> "$GITHUB_ENV"
+          # F-M3S-1 storage volume acceptance on shared storage (GH #811).
+          cargo test -p tine-store --lib --no-run --target x86_64-linux-android \
+            --message-format=json > target/android-store-lib-build.json
+          store_lib=$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.name == "tine_store") | .executable' \
+            target/android-store-lib-build.json | tail -n 1)
+          test -x "$store_lib"
+          echo "TINE_ANDROID_STORE_LIB_TEST_BIN=$store_lib" >> "$GITHUB_ENV"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -589,7 +596,7 @@ jobs:
           emulator-boot-timeout: 300
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN"
+          script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN" "$TINE_ANDROID_STORE_LIB_TEST_BIN"
       - name: Upload device evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
