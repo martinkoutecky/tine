@@ -133,7 +133,7 @@ try {
       await tab.screenshot({ path: `${OUT}/${name}-toolbar.png` });
       await editor.press("Escape");
       if (f.column) {
-        await tab.evaluate(() => document.documentElement.style.setProperty("--margin-column-width", "220px"));
+        await tab.evaluate(() => document.querySelector(".main-content-inner").style.setProperty("--margin-column-width", "220px"));
         await tab.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
         await tab.screenshot({ path: `${OUT}/${name}-narrow-margin.png` });
         const narrowProblems = await tab.evaluate(marginFirstLineProblems);

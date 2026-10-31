@@ -44,6 +44,7 @@ childIds
 clearSelection
 collapseEpochOf  # why: embed occurrence folds compare the source collapse write epoch (GH #360); batch21c
 collapsibleDescendantIds
+commentsFirst  # why: a block's comments show and navigate right under it, before its other children, when drawn inline (GH #110); batch-fix-margin-comments
 conflictReason  # why: conflict bar reason text; batch03
 conflicts
 consumedAnswer  # why: backup restore waits on the host answer watermark; batch-og-s3b

@@ -9,7 +9,7 @@ import { CommentNameSetting } from "./components/CommentNameSetting";
 import { backend } from "./backend";
 import { commentRaw, replyRaw } from "./comments";
 import { createComment, replyOnEnter } from "./commentActions";
-import { commentAuthorName, isOwnAuthor, normalizeAuthorName, resetCommentAuthorNameForTests, initCommentIdentity } from "./commentIdentity";
+import { AUTHOR_TINTS, authorTint, commentAuthorName, isOwnAuthor, normalizeAuthorName, resetCommentAuthorNameForTests, initCommentIdentity } from "./commentIdentity";
 import { blockRegions, initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
@@ -145,5 +145,21 @@ describe("Settings: Your name", () => {
     expect(commentAuthorName()).toBe("Ada");
     await vi.waitFor(() => expect(set).toHaveBeenCalledWith("comment_author_name", "Ada"));
     expect(doc.byId["p"].raw).toBe("x");
+  });
+});
+
+describe("author tints (MARGIN-AUTHOR, Martin 2026-10-31)", () => {
+  it("gives a name one stable tint, ignoring case and spacing", () => {
+    for (const name of ["Claude", "Ellis Morrow", "x"]) {
+      const tint = authorTint(name);
+      expect(tint).toBeGreaterThanOrEqual(0);
+      expect(tint).toBeLessThan(AUTHOR_TINTS);
+      expect(authorTint(` ${name.toUpperCase()}  `)).toBe(tint);
+    }
+  });
+
+  it("spreads different names over the tints", () => {
+    const names = ["Claude", "Codex", "Ellis", "Martin", "Ana", "Bo", "Chen", "Dita", "Eva", "Filip"];
+    expect(new Set(names.map(authorTint)).size).toBeGreaterThan(2);
   });
 });

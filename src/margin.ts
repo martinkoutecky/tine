@@ -14,6 +14,24 @@ import type { Format } from "./render/ast";
  * main column keeps at least ~550 px beside a 280 px column, a 32 px gap and the
  * pane's 48 px side padding. Mirrored by `--margin-column-*` in comments.css. */
 export const MARGIN_MIN_PANE_WIDTH = 960;
+/** The comment column's width bounds, px (`--margin-column-width` in comments.css
+ * is the narrow end). */
+export const MARGIN_COLUMN_MIN = 280;
+export const MARGIN_COLUMN_MAX = 440;
+const MARGIN_COLUMN_GAP = 32;
+// Kept free of the column at the pane's edge, beyond the content's own padding
+// (a vertical scrollbar, rounding).
+const PANE_SLACK = 16;
+
+/** The column's width in a pane `paneWidth` px wide whose reading column is at
+ * most `content` px, padding included (`--tine-main-content-max-width`; null: wide mode or an unknown cap, where the outline takes
+ * whatever the column leaves). Spare width beyond outline, gap and padding goes to
+ * the column, up to the maximum. Pure. */
+export function marginColumnWidth(paneWidth: number, content: number | null): number {
+  if (content === null) return MARGIN_COLUMN_MIN;
+  const spare = paneWidth - content - MARGIN_COLUMN_GAP - PANE_SLACK;
+  return Math.round(Math.min(MARGIN_COLUMN_MAX, Math.max(MARGIN_COLUMN_MIN, spare)));
+}
 /** Vertical space between two stacked threads, px. */
 export const MARGIN_THREAD_GAP = 8;
 
