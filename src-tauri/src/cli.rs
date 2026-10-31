@@ -149,6 +149,8 @@ enum Command {
     },
     /// Replace a block's text, as typing it into the block would: hidden
     /// properties (id::, collapsed::) and children are kept.
+    /// Supplying a LOGBOOK drawer requires --rev from the read; otherwise
+    /// reread and pass --rev (refused:revision-required).
     Edit {
         /// The block: its id:: UUID, or PAGE/POS~FP as a read prints it.
         #[arg(value_name = "BLOCK")]
@@ -412,6 +414,7 @@ impl ReadArgs {
 #[derive(Debug, Subcommand)]
 enum ExportFormat {
     /// Write the static HTML site.
+    /// A zero-page public selection explains public:: true and --all-pages.
     Static(ExportArgs),
     /// Write the read-only Tine app.
     Live(LiveExportArgs),
@@ -508,6 +511,7 @@ fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Tine export".into())
     });
+    let public_only_static = live.is_none() && !args.all_pages;
     let result = match live {
         Some(home) => publish_live_home(
             &store,
@@ -519,7 +523,16 @@ fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
         ),
         None => publish_static(&store, &args.output, &display, args.all_pages),
     };
-    result.map_err(|e| e.to_string())
+    result
+        .map(|mut receipt| {
+            if public_only_static && receipt.pages == 0 {
+                receipt.warnings.push(
+                    "No pages were published: no publishable page has public:: true. Add public:: true to the pages you want to publish, or use --all-pages to include unmarked pages (public:: false pages stay private).".into(),
+                );
+            }
+            receipt
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// What `tine doctor` found: summary lines for stdout and one line per problem.
@@ -629,6 +642,9 @@ pub(crate) fn dispatch() -> Option<i32> {
                 "Published {} pages to {}",
                 receipt.pages, receipt.path
             ));
+            for warning in &receipt.warnings {
+                terminal_stderr(format_args!("tine: warning: {warning}"));
+            }
         }),
         _ => return None,
     };
@@ -1108,6 +1124,34 @@ mod tests {
         assert_eq!(
             relative.unwrap_err(),
             "--output must be an absolute folder path"
+        );
+    }
+
+    #[test]
+    fn static_export_explains_empty_public_selection_and_all_pages_override() {
+        let graph = doctor_fixture("private-export");
+        let output = tempfile::tempdir().unwrap();
+        let publish = |name: &str, all_pages| {
+            export(ExportFormat::Static(ExportArgs {
+                graph: graph.path().to_path_buf(),
+                output: output.path().to_path_buf(),
+                name: Some(name.into()),
+                all_pages,
+            }))
+            .unwrap()
+        };
+        let empty = publish("public-only", false);
+        assert_eq!(empty.pages, 0);
+        assert!(empty
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("public:: true") && warning.contains("--all-pages")));
+        let all = publish("all-pages", true);
+        assert_eq!(all.pages, 1);
+        assert!(all.warnings.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(graph.path().join("pages/Note.md")).unwrap(),
+            "- fine\n"
         );
     }
 

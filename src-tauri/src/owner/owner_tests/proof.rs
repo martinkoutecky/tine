@@ -82,10 +82,29 @@ fn rn_f_cli_supplied_history_uses_revision() {
             ));
             assert_eq!(code, "stale");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), current);
-            // Without --rev the visible fingerprint still resolves. Plain text
-            // keeps B; an explicitly supplied drawer intentionally replaces B
-            // with A, which is why full-buffer clients must supply the revision.
-            verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+            // History does not affect the visible fingerprint. Full-buffer
+            // replacement therefore requires the read's revision, even with a
+            // fingerprint or UUID; plain text keeps the latest history.
+            let unguarded = verb(&slot, "block.edit", json!({"handle": handle, "text": text}));
+            if supplied {
+                let error = unguarded.unwrap_err();
+                assert_eq!(error.code, "refused");
+                let detail = error.detail.as_ref().unwrap();
+                assert_eq!(detail["reason"], "revision-required");
+                assert_eq!(detail["admitted"], false);
+                assert!(error.message.contains("reread"));
+                assert!(error.message.contains("--rev"));
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), current);
+                let reread = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+                verb(
+                    &slot,
+                    "block.edit",
+                    json!({"handle": handle, "text": text, "rev": reread["rev"]}),
+                )
+                .unwrap();
+            } else {
+                unguarded.unwrap();
+            }
             let written = std::fs::read_to_string(&path).unwrap();
             assert_eq!(
                 written,
@@ -95,6 +114,54 @@ fn rn_f_cli_supplied_history_uses_revision() {
                 ))
             );
         }
+    }
+}
+
+#[test]
+fn cli_edit_uuid_full_buffer_requires_revision() {
+    for org in [false, true] {
+        let source = if org {
+            format!("* old\n:PROPERTIES:\n:id: {UUID}\n:END:\n:LOGBOOK:\n:END:\n")
+        } else {
+            format!("- old\n  id:: {UUID}\n  :LOGBOOK:\n  :END:\n")
+        };
+        let (_graph, slot, path) = fixture(&source, org);
+        let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let text = read["page"]["blocks"][0]["raw"]
+            .as_str()
+            .unwrap()
+            .replacen("old", "new", 1);
+        let error = verb(&slot, "block.edit", json!({"handle": UUID, "text": text})).unwrap_err();
+        assert_eq!(error.detail.unwrap()["reason"], "revision-required");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle": UUID, "text": text, "rev": read["rev"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            source.replacen("old", "new", 1)
+        );
+    }
+}
+
+#[test]
+fn cli_edit_logbook_lookalikes_do_not_require_revision() {
+    for org in [false, true] {
+        let (_graph, slot, path) = fixture(if org { "* old\n" } else { "- old\n" }, org);
+        let text = if org {
+            "example\n#+BEGIN_SRC text\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:\n#+END_SRC"
+        } else {
+            "example\n```text\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:\n```"
+        };
+        let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let handle = format!("proof/{}", block_handle(&read, 0));
+        verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains(":LOGBOOK:"));
     }
 }
 

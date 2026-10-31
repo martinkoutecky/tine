@@ -759,6 +759,26 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
     } = super::verbs::parse(args)?;
     let handle = parse_handle(&text)?;
     let page = handle_page(slot, &handle)?;
+    // Clock-only changes leave a visible-text fingerprint unchanged. A
+    // full-buffer replacement must therefore carry the read's file revision.
+    // Check before flushing drafts or entering the guarded save path, using
+    // parser-owned drawers so literal examples remain ordinary editor text.
+    if rev.is_none()
+        && tine_core::block_regions::may_have_logbook(&new_text)
+        && tine_core::block_regions::parse(
+            &new_text,
+            Format::from_path(std::path::Path::new(page.as_str())) == Format::Org,
+        )
+        .drawers
+        .iter()
+        .any(|drawer| drawer.name.eq_ignore_ascii_case("LOGBOOK"))
+    {
+        return Err(refused(
+            "revision-required",
+            Some(&page),
+            "block.edit with a supplied LOGBOOK requires the read's revision; reread the page and pass --rev",
+        ));
+    }
     let config = slot.store.config();
     write_page(
         slot,
