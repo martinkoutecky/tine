@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-31
+
+Fixes for Tine 0.8.3: the Microsoft Store package, scrolling past a block embed, and sync apps missing edits on Android shared storage.
+
 ### Changed
 
 - Microsoft Store package: needs Windows 11, and only Tine's own three data folders (`%APPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\tine-owners`) are shared with other installs and kept after uninstall; all other app data stays private to the Store package. Windows 10 users install from GitHub.

@@ -1,0 +1,95 @@
+{
+ "schemaVersion": 1,
+ "version": "0.8.4",
+ "baseTag": "v0.8.3",
+ "focusedAudit": {
+  "required": false,
+  "reason": "0.8.4 is a stable patch: the Microsoft Store package fix, #810 and the #811 mtime fix on one stable fix branch, with fail-before on stable 0.8.3; full suites and hosted CI run on the candidate. Martin authorized the cut on 2026-10-31 (D-20261031-084)."
+ },
+ "items": [
+  {
+   "section": "Changed",
+   "text": "Microsoft Store package: needs Windows 11, and only Tine's own three data folders (`%APPDATA%\\page.tine.Tine`, `%LOCALAPPDATA%\\page.tine.Tine`, `%LOCALAPPDATA%\\tine-owners`) are shared with other installs and kept after uninstall; all other app data stays private to the Store package. Windows 10 users install from GitHub.",
+   "userVisible": true,
+   "regressions": [],
+   "regressionEvidence": {
+    "status": "not-applicable",
+    "reason": "Packaging change: proven by msix.yml on the installed Store test package (three Tine folders real, a control folder virtualized, data kept after uninstall) and the app identity guard (D-20261031-MSV).",
+    "refs": [
+     ".github/workflows/msix.yml"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix: no documented behaviour changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Scrolling a long page with an expanded block embed no longer makes the page jump (#810). Scrolling back up past an embed made everything below it jump up by the height of the embed's rows, and jump back when the embed's rows appeared; the embed now keeps the height it had when it scrolled out of view.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH810-EMBED-SCROLL-NO-JUMP"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH810-EMBED-SCROLL-NO-JUMP. Fixed on stable in batch/fix-084, gated on master (Linux).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix: no documented behaviour changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "On Android shared storage, a page saved again now gets a new modification time each time, so Syncthing and other sync apps notice edits that keep the file the same size (before, the page kept its first version's time on devices with the newer storage mode) (#811).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH811-ANDROID-FROZEN-MTIME"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH811-ANDROID-FROZEN-MTIME. Fixed on stable in batch/fix-084 (a530d3330); hosted Android CI 41195467616 green on that commit.",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix: no documented behaviour changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+    "refs": []
+   }
+  }
+ ]
+}
