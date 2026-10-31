@@ -164,6 +164,11 @@ try {
     if (Math.abs(r.textarea.boxH - r.rendered.boxH) > tol) bad.push(`${id}: textarea box height ${r.textarea.boxH} vs rendered ${r.rendered.boxH}`);
     if (Math.abs(r.textarea.childY - r.rendered.childY) > tol) bad.push(`${id}: textarea next block y ${r.textarea.childY} vs rendered ${r.rendered.childY}`);
   }
+  // The CM6 content never gets wider than the editor host, whatever it conceals (CM6-WIDE: a concealed code block's long
+  // line widened the block while the prose beside it was edited).
+  for (const [id, r] of Object.entries(results)) for (const kind of ["cm6", "cm6end"]) {
+    if (!r[kind].missing && r[kind].boxW > r[kind].hostW + 0.5) bad.push(`${id}: ${kind} content ${r[kind].boxW}px wide in a ${r[kind].hostW}px editor`);
+  }
   console.log(bad.length ? "FAIL\n" + bad.join("\n") : "PASS: editing moves nothing for the gated constructs");
   if (bad.length) process.exitCode = 1;
 } finally {
