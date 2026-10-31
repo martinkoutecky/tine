@@ -25,12 +25,26 @@ describe("MSIX manifest and workflow contract", () => {
     expect([...manifest.matchAll(/<rescap:Capability Name="([^"]+)"/g)].map((m) => m[1]).sort()).toEqual(["runFullTrust", "unvirtualizedResources"]);
     expect(manifest).toContain('<uap:Protocol Name="tine"');
     expect(manifest).toContain('Executable="tine.exe"');
-    expect(manifest).toContain('MinVersion="10.0.18362.0"');
+    expect(manifest).toContain('MinVersion="10.0.22000.0"');
     for (const name of ["StoreLogo", "Square44x44Logo", "Square150x150Logo"]) {
       const png = fs.readFileSync(`src-tauri/icons/${name}.png`);
       const size = name === "StoreLogo" ? 50 : name === "Square44x44Logo" ? 44 : 150;
       expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([size, size]);
     }
+  });
+  it("unvirtualizes exactly Tine's three AppData folders and nothing else (D-20261031-MSV)", () => {
+    const excluded = [...manifest.matchAll(/<virtualization:ExcludedDirectory>([^<]+)<\/virtualization:ExcludedDirectory>/g)].map((m) => m[1]);
+    expect(excluded).toEqual([
+      "$(KnownFolder:RoamingAppData)\\page.tine.Tine",
+      "$(KnownFolder:LocalAppData)\\page.tine.Tine",
+      "$(KnownFolder:LocalAppData)\\tine-owners",
+    ]);
+    expect(manifest).toContain('xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"');
+    expect(manifest).toMatch(/IgnorableNamespaces="[^"]*\bvirtualization\b/);
+    // No blanket opt-out: Partner Center refused it; the registry stays virtualized.
+    expect(manifest).not.toContain("desktop6");
+    expect(manifest).not.toContain("RegistryWriteVirtualization");
+    expect(manifest).not.toContain("ExcludedKey");
   });
   it("enumerates every shipped platform for package detection", () => {
     const source = fs.readFileSync("src-tauri/src/platform.rs", "utf8");
@@ -46,5 +60,8 @@ describe("MSIX manifest and workflow contract", () => {
     for (const match of workflow.matchAll(/uses: (\S+)/g)) expect(match[1]).toMatch(/@[0-9a-f]{40}$/);
     expect(workflow).toContain("node scripts/set-app-identity.mjs release");
     expect(workflow).toContain("--no-sign");
+    // The installed package proves where writes land: the three folders real, a control folder virtualized.
+    expect(workflow).toContain("Flexible virtualization proof");
+    for (const dir of ["page.tine.Tine", "tine-owners", "tine-msix-virt-control"]) expect(workflow).toContain(dir);
   });
 });

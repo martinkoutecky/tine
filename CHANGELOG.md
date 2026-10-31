@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Block embeds are back to one bullet, as in 0.8 (#417, #748). In 0.9.0-beta.1 a block embed showed two bullets, one for the block holding `{{embed ((…))}}` and one for the embedded block. Now the embedded block's bullet sits where the embed does, and dragging it, **Tab**/**Shift+Tab**, **Move block up/down**, selecting it and its menu act on the block holding the embed on that page; its text and children are still the source's. Moving it up or down therefore no longer moves the source block on its own page or shows the "moved in" notice (GH #641); page embeds, Linked References and query results keep that behaviour. Folding the embedded block is still remembered per page; folding a block further inside the embed now folds that source block on its own page and in every embed of it, as in Logseq. A block with its own text besides the embed keeps its own bullet.
+- Microsoft Store package: needs Windows 11, and only Tine's own three data folders (`%APPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\tine-owners`) are shared with other installs and kept after uninstall; all other app data stays private to the Store package. Windows 10 users install from GitHub.
 
 ### Fixed
 
