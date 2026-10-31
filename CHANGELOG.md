@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
 - On Android, saving a page that already exists on shared storage no longer stays unconfirmed ("Couldn't save … yet; Tine keeps trying") on devices whose storage refreshes a file's times when it is read (#811).
+- On Android shared storage, a page saved again now gets a new modification time each time, so Syncthing and other sync apps notice edits that keep the file the same size (before, the page kept its first version's time on devices with the newer storage mode). The diagnostics report counts each time-reset that failed (#811).
 - When a page save stays unconfirmed ("Couldn't save … yet; Tine keeps trying"), the message now names the check that failed when it is Tine's own check of the saved file after the folder was synced (no file there, or a file that changed), and the diagnostics report counts each kind (#811). Saving itself is unchanged; this is so that a report can show why the save could not be confirmed.
 
 ## [0.9.0-beta.2] - 2026-10-30
