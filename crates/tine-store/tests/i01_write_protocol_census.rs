@@ -660,13 +660,19 @@ fn every_content_mutation_has_a_reviewed_owner() {
         }
         if domain == "create-root" {
             // D-20261031-GCL adds one explicit new-root writer: libgit2 clone
-            // after destination admission. Neither owner may mutate an existing
-            // graph's page files; their named tests prove empty-target refusal.
+            // after destination admission. CloneFolder::cleanup can remove only
+            // that attempt's metadata and its own empty child before checkout;
+            // unexpected user contents are retained. None of these owners may
+            // mutate an existing graph's page files.
             assert!([
                 ("crates/tine-store/src/store.rs", "Store::create_graph"),
                 (
                     "src-tauri/src/owner/git_sync/clone.rs",
                     "Operation::clone_on_volume"
+                ),
+                (
+                    "src-tauri/src/owner/git_sync/clone.rs",
+                    "CloneFolder::cleanup"
                 ),
             ]
             .contains(&(key.0.as_str(), key.1.as_str())));
@@ -849,6 +855,10 @@ fn oracle_rows_cover_the_mutating_phase_list_and_exceptions_are_pinned() {
             (
                 "src-tauri/src/owner/git_sync/clone.rs",
                 "Operation::clone_on_volume"
+            ),
+            (
+                "src-tauri/src/owner/git_sync/clone.rs",
+                "CloneFolder::cleanup"
             ),
             ("crates/tine-store/src/store.rs", "Store::create_graph"),
         ]

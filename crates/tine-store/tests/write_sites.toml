@@ -29,8 +29,28 @@ domain = "create-root"
 guard = ""
 test = "src-tauri/src/owner/git_sync/transport_tests.rs#clone_default_branch_sets_upstream_and_refuses_nonempty_target"
 oracle = false
-note = "D-20261031-GCL: explicit clone only into a new/empty nonsymlink target. Tine HTTPS session and endpoint checks surround libgit2 clone, with checkout disabled until whole-tree case/NFC inspection. The new repository receives raw-byte and Unicode config before its first checkout. No bound/existing graph page writer; a refused tree can retain only downloaded .git metadata. Libgit2 internal clone/cleanup and native check-to-call races are not per-syscall containment proof."
-mutations = ".set_bool=2"
+note = "D-20261031-GCL: explicit clone only into a new/empty nonsymlink target. Tine creates only the child, binds its identity and captures the initialized .git in remote_create before endpoint checks/network IO. Checkout stays disabled until whole-tree case/NFC inspection. Before checkout, all failures pass through CloneFolder::cleanup; existing empty destinations are retained. Once checkout starts, all files stay retained. Libgit2 internal clone/cleanup and native check-to-call races are not per-syscall containment proof."
+mutations = ".set_bool=2, fs::create_dir=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/clone.rs"
+fn = "CloneFolder::cleanup"
+domain = "create-root"
+guard = "crates/tine-store/src/root_binding.rs#BoundDirectory::check_path"
+test = "src-tauri/src/owner/git_sync/clone_cleanup_tests.rs#clone_cleanup_retains_unknown_contents_and_names_the_folder"
+oracle = false
+note = "Refused-clone cleanup only before checkout: rechecks bound root and owned .git identity/containment; short-lived directory handles pin identity even on Android/FUSE. A full top-level census permits only this attempt's .git, with a recursive metadata preflight rejecting symlinks, Windows reparse points and special entries. std remove_dir_all does not follow symlinks. Only an attempt-created child is removed, non-recursively; any uncertain ownership/contents or IO failure retains the folder and names it in the error. Native check-to-syscall race limits remain. No existing graph page deletion."
+mutations = "fs::remove_dir=1, fs::remove_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/clone.rs"
+fn = "directory_identity"
+domain = "primitive"
+guard = ""
+test = "src-tauri/src/owner/git_sync/clone_cleanup_tests.rs#clone_cleanup_retains_a_replaced_destination"
+oracle = false
+note = "Read-only identity handles for an explicit clone attempt, not content mutation. Unix opens the directory with O_NOFOLLOW; Windows uses OPEN_REPARSE_POINT and explicit delete sharing, so libgit2 and cleanup can remove the owned directory while its identity is pinned. Missing identity refuses cleanup. Both platform OpenOptions constructors are counted."
+mutations = "OpenOptions::new=2"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
