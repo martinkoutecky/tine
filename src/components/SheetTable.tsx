@@ -12,6 +12,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, 
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
+import { AstBody } from "../render/body";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
@@ -1120,6 +1121,24 @@ export function resetSheetRowVirtualizationForTests() {
   renderedSheetRows.clear();
 }
 
+/** The row's block as the page draws it: Markdown lists, code, quotes and tables are rendered, not shown
+ *  as source (GH #551). An empty title keeps the em dash `tableRowTitle` gives it. */
+function TitleBody(props: { row: FormulaEvalRow; format: "md" | "org" }): JSX.Element {
+  const placeholder = () => {
+    const title = tableRowTitle(props.row);
+    return title.trim() === "" || title === "—" ? title : null;
+  };
+  return (
+    <Show when={placeholder() === null} fallback={<InlineText text={placeholder() ?? ""} format={props.format} />}>
+      {/* Clamped (CSS max-height) so a long block cannot make a tall row: the cell shows the first lines, whole
+          blocks as the page draws them, and the full text opens with the result. */}
+      <div class="sheet-title-body">
+        <AstBody raw={rowRaw(props.row)} format={props.format} />
+      </div>
+    </Show>
+  );
+}
+
 function TitleCell(props: {
   query: boolean;
   ownerId: string;
@@ -1215,11 +1234,28 @@ function TitleCell(props: {
               when={props.near}
               fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <Show when={props.query} fallback={<InlineText text={tableRowTitle(props.row)} format={fmt()} />}>
+              <Show when={props.query} fallback={<TitleBody row={props.row} format={fmt()} />}>
                 <QueryResultTask row={props.row} />
-                <button type="button" class="query-result-open" onClick={(event) => openQueryResult(props.row, event)}>
-                  <InlineText text={tableRowTitle(props.row)} format={fmt()} />
-                </button>
+                {/* Not a <button>: the title holds block content (lists, links, refs), which a button may not
+                    contain. A ref or link inside handles its own click and stops it; any other click opens the
+                    result, and Enter/Space do the same when the row itself has focus. */}
+                <div
+                  class="query-result-open"
+                  role="button"
+                  tabindex="0"
+                  onClick={(event) => {
+                    const inner = (event.target as Element | null)?.closest?.("a, button, input, textarea, [role=button]");
+                    if (inner && inner !== event.currentTarget && event.currentTarget.contains(inner)) return;
+                    openQueryResult(props.row, event);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    openQueryResult(props.row, event);
+                  }}
+                >
+                  <TitleBody row={props.row} format={fmt()} />
+                </div>
               </Show>
             </Show>
           }

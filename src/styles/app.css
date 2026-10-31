@@ -5908,7 +5908,45 @@ body.file-drop-active::after {
 }
 .sheet-nested-line {
   margin-top: 3px;
+  /* One fixed step per level: the lines nest in the DOM, so the indent compounds by itself. The thread
+     line sits under the parent's bullet, as on a page. */
+  margin-left: 7px;
+  padding-left: 8px;
   border-left: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+}
+/* A block in a cell is drawn by the page's own body renderer (Rendered); the cell sets the type scale. */
+.sheet-cell-line {
+  display: flex;
+  align-items: flex-start;
+}
+.sheet-cell-line > .sheet-cell-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sheet-nested-bullet {
+  flex: 0 0 auto;
+  margin: 2px 6px 0 0;
+}
+.sheet-cell-body .block-content {
+  padding: 0;
+  min-height: 1.45em;
+  line-height: inherit;
+  cursor: inherit;
+}
+/* A Table title shows the block as the page draws it, clamped to about five lines so a long block keeps a
+   bounded row height (the full block opens with the result). */
+.sheet-title-body {
+  max-height: 7.5em;
+  overflow: hidden;
+  min-width: 0;
+}
+.sheet-title-body > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.sheet-title-body ul,
+.sheet-title-body ol {
+  padding-left: 1.4em;
 }
 .sheet-cell .sheet-grid,
 .sheet-cell .sheet-table {

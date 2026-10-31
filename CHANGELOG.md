@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A block inside a grid cell now looks and works as it does on a page (#782). Task markers with their checkbox, priorities, SCHEDULED and DEADLINE chips and properties show in the cell and in every block nested under it, however deep; ticking a checkbox in a cell saves the new marker. Nested blocks have the page's bullet and indent one fixed step per level instead of a step that grew with each level, so deep outlines no longer run off the cell. A sub-grid inside a cell is unchanged.
+- The Table view of a query (and of a block's children) draws each block as the page does (#551). A Markdown list, quote, code block or table inside a result used to appear as source text (`* apples * pears`); it is now rendered.
 - Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
 
 ## [0.9.0-beta.2] - 2026-10-30
