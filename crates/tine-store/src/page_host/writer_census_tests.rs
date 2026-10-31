@@ -53,8 +53,8 @@ fn scan(file: &str, source: &str, out: &mut BTreeMap<String, Function>) {
 const OPERATION_KINDS: &[(&str, &str)] = &[
     ("delete", "DeletePage"),
     ("delete_checked", "DeletePage"),
-    ("rename", "RenamePage"),
-    ("rename_with", "RenamePage"),
+    // RenamePage is supplied by the feature's HostOp; the model-only
+    // rename_with adapter is excluded by cfg(test).
     // A feature's operation records the kinds it names; `PageHost::apply`
     // refuses an operation that names none (binding_apply.rs).
     ("apply", OWN_KINDS),
@@ -106,6 +106,9 @@ fn host_operations(source: &str) -> Vec<String> {
         let syn::Item::Impl(block) = item else {
             continue;
         };
+        if is_test(&block.attrs) {
+            continue;
+        }
         for item in block.items {
             if let syn::ImplItem::Fn(function) = item {
                 let visible = !matches!(function.vis, syn::Visibility::Inherited);
@@ -155,7 +158,7 @@ fn every_host_operation_records_its_edit_kind() {
     let operations = host_operations(&std::fs::read_to_string(dir.join("operations.rs")).unwrap());
     assert!(
         operations.contains(&"delete_checked".to_owned())
-            && operations.contains(&"rename_with".to_owned()),
+            && operations.contains(&"apply".to_owned()),
         "the host operation scan found {operations:?}"
     );
     let mut functions = BTreeMap::new();
@@ -183,8 +186,8 @@ fn a_planted_host_operation_without_its_kind_fails_the_census() {
     let planted = r#"
         fn bare(host: &mut Host) { host.delete(&key); }
         fn kinded(state: &mut State) {
-            state.host.rename_with(&a, &b, &refs, policy);
-            state.book.took(written, EditKind::RenamePage);
+            state.host.apply(&effects, &moves);
+            for kind in &kinds { state.book.took(written, *kind); }
         }
         fn wrong_kind(state: &mut State) {
             state.host.delete(&key);
@@ -194,7 +197,7 @@ fn a_planted_host_operation_without_its_kind_fails_the_census() {
     "#;
     let mut functions = BTreeMap::new();
     scan("planted.rs", planted, &mut functions);
-    let operations = vec!["delete".to_owned(), "rename_with".to_owned()];
+    let operations = vec!["delete".to_owned(), "apply".to_owned()];
     assert_eq!(
         undeclared(&functions, &operations),
         [

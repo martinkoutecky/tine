@@ -25,6 +25,56 @@ pub(super) struct RenamePlan {
 }
 
 impl RenamePlan {
+    /// Select from held buffers too: an unchanged unsaved referrer is not
+    /// ours to flush; a changed one refuses. Admission guards this snapshot.
+    pub(super) fn include_inputs(
+        &mut self,
+        store: &Store,
+        inputs: &tine_store::HostInputs,
+    ) -> io::Result<()> {
+        let source = self.single(store)?;
+        for (id, bytes, clean) in inputs.pages() {
+            if source.as_ref() == Some(id) && bytes.is_some() && !clean {
+                return Err(unsaved_error(&self.graph, id.as_str()));
+            }
+            if self.moves.contains_key(id) || self.moves.values().any(|to| *to == id.file()) {
+                continue;
+            }
+            let Some(bytes) = bytes else {
+                self.candidates.retain(|candidate| candidate != id);
+                continue;
+            };
+            let text = std::str::from_utf8(bytes).map_err(|_| unwritable(store, id))?;
+            let format = Format::from_path(id.as_str().as_ref());
+            let changed = std::panic::catch_unwind(|| {
+                refs::rename_rewrite(
+                    text,
+                    format == Format::Org,
+                    &self.map.0,
+                    self.config.file_name_format,
+                )
+            })
+            .map_err(|_| unwritable(store, id))?
+                != text;
+            let marked = !tine_core::concord_queue::vcs_conflict_markers(text, format).is_empty();
+            if changed && !marked && !clean {
+                return Err(unsaved_error(&self.graph, id.as_str()));
+            }
+            if changed && marked {
+                self.skipped.push(id.clone());
+            }
+            if marked || (!changed && !clean) {
+                self.candidates.retain(|candidate| candidate != id);
+            } else if changed {
+                self.candidates.push(id.clone());
+            }
+        }
+        self.candidates
+            .sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+        self.candidates.dedup();
+        Ok(())
+    }
+
     /// Every page the plan writes (A-R3): moved pages and their
     /// destinations, interrupted titles, a merge's survivor and source,
     /// and the referrers whose references it changes. A referrer the
@@ -70,11 +120,11 @@ impl RenamePlan {
         Ok(pages)
     }
 
-    /// The source and target of a single page's rename, which a host runs
+    /// The source of a single page's rename, which a host runs
     /// as one page operation (STEP3 §7, F10): one name, no namespace
     /// descendant, no merge, no interrupted title. A source with no file
     /// renames its references only, under the default Markdown spelling.
-    pub(super) fn single(&self, store: &Store) -> io::Result<Option<(PageId, PageId)>> {
+    pub(super) fn single(&self, store: &Store) -> io::Result<Option<PageId>> {
         if self.merge.is_some()
             || self.ref_merge
             || !self.moved_titles_to_rebind.is_empty()
@@ -82,28 +132,19 @@ impl RenamePlan {
         {
             return Ok(None);
         }
-        let spelled = |name: &str| {
-            let rel = format!(
-                "{}.md",
-                tine_core::model::encode_page_name(name, self.config.file_name_format)
-            );
-            store.file_id(Area::Pages, &rel).map_err(store_error)
-        };
-        let (source, target) = match self.moves.iter().next() {
-            Some((source, to)) => (source.clone(), to.clone()),
-            None => {
-                let (old, new) = &self.map.0[0];
-                (page(store, &spelled(old)?)?, spelled(new)?)
-            }
-        };
-        Ok(Some((source, page(store, &target)?)))
+        if let Some(source) = self.moves.keys().next() {
+            return Ok(Some(source.clone()));
+        }
+        let rel = format!(
+            "{}.md",
+            tine_core::model::encode_page_name(&self.map.0[0].0, self.config.file_name_format)
+        );
+        let file = store.file_id(Area::Pages, &rel).map_err(store_error)?;
+        store
+            .as_page(&file)
+            .map(Some)
+            .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))
     }
-}
-
-fn page(store: &Store, file: &FileId) -> io::Result<PageId> {
-    store
-        .as_page(file)
-        .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))
 }
 
 pub(super) fn plan_rename(

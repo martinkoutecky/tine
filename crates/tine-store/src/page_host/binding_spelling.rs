@@ -78,6 +78,9 @@ impl PageHost {
         // This also checks clean input and every expected page, even when
         // no recovery copy is needed. Content still gets full admission.
         self.retain_spelling_bytes(&op, copies)?;
+        // The scope was checked before the first entry effect. Later typing
+        // is a later edit; content admission still checks every expected page.
+        op.inputs = None;
         let mut moved_pages = BTreeMap::new();
         for (src, dst, key, bytes) in moves {
             let unchanged = planned_bytes_equal(&op, &src, &bytes);
@@ -150,6 +153,7 @@ impl PageHost {
             }
         }
         let view = op.view.clone();
+        let inputs = op.inputs.clone();
         let expected = op.pages.clone();
         let store = self.store.clone();
         let deadline = std::time::Instant::now() + OPERATION_WAIT;
@@ -160,6 +164,9 @@ impl PageHost {
             let host = &mut state.progress.host;
             if !host.alive || !host.admission_open {
                 return Wait::Ready(Err(ApplyRefusal::Refused));
+            }
+            if inputs.as_ref().is_some_and(|inputs| !inputs.current(host)) {
+                return Wait::Ready(Err(ApplyRefusal::Changed));
             }
             if view.as_ref().is_some_and(|(rev, config)| {
                 store.changes.rev() != *rev || !Arc::ptr_eq(config, &store.config().config)

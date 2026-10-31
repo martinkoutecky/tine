@@ -6,9 +6,8 @@
 
 mod binding;
 pub use binding::{
-    ApplyRefusal, DiskToken, Effect, Expected, HostOp, HostRead, HostReadError, Input, Opened,
-    PageHost, PageMail, PageOperation, PageRefusal, Reloaded, RenameRefusal, StopMode, StopState,
-    Stopped,
+    ApplyRefusal, DiskToken, Effect, Expected, HostInputs, HostOp, HostRead, HostReadError, Input,
+    Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded, StopMode, StopState, Stopped,
 };
 pub use io::DraftStatus;
 #[cfg(test)]
@@ -815,6 +814,7 @@ impl<F: HostIo> Host<F> {
     /// is not the rename's to flush or refuse), plus every other held buffer
     /// the rewrite changes, including pages no index lists. Err when the
     /// rewrite fails on a held buffer. Model refinement: `conformance.rs`.
+    #[cfg(test)]
     pub(super) fn rename_refs(
         &self,
         source: &str,

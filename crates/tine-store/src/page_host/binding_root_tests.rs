@@ -2,6 +2,8 @@ use super::*;
 
 fn create_nested(live: &Live) -> Result<(), ApplyRefusal> {
     live.host.apply(HostOp {
+        separate_case_entries: false,
+        inputs: None,
         pages: vec![(
             PageId::from("pages/sub/New.md"),
             Effect::Write(Arc::from(&b"- nested input\n"[..])),

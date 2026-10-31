@@ -121,7 +121,7 @@ it("I-2: trash asset checks use the latest publication under the writer; exempla
   // Commit and plan both run every step's preflight (`prepare_steps`) after taking the writer.
   const plan = readFileSync("crates/tine-store/src/transaction/plan.rs", "utf8");
   for (const source of [transaction, plan]) {
-    const writer = source.indexOf("let _writer = self.store.writer.lock()");
+    const writer = source.search(/let _writer = (?:self\.store\.writer\.lock\(\)|planning_lock\(&self\.store\.writer, deadline\)\?)/);
     expect(writer, RULE).toBeGreaterThan(-1);
     expect(writer, RULE).toBeLessThan(source.indexOf("self.prepare_steps("));
   }

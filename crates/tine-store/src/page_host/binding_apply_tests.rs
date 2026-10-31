@@ -140,6 +140,8 @@ fn a_window_save_back_to_h_does_not_erase_the_publication_receipt() {
 
 fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
     HostOp {
+        separate_case_entries: false,
+        inputs: None,
         creation_checks: Vec::new(),
         pages: pages
             .into_iter()
@@ -152,6 +154,72 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
         view: None,
     }
 }
+
+#[test]
+fn selection_refuses_changed_unsaved_and_new_unindexed_referrers() {
+    for newly_held in [false, true] {
+        let live = Live::new(&[("pages/a.md", "- old\n")]);
+        let empty = live.host.inputs().unwrap();
+        let (key, page) = live.open("pages/unindexed.md");
+        live.faults(super::super::io::Phase::PageTemp, 10_000);
+        let id = live
+            .submit(&key, "- already [[New]]\n", page.version, None)
+            .unwrap();
+        let version = live.answer(&key, id).answer.unwrap().version;
+        let inputs = if newly_held {
+            empty
+        } else {
+            live.host.inputs().unwrap()
+        };
+        let id = live.submit(&key, "- now [[Old]]\n", version, None).unwrap();
+        live.answer(&key, id);
+        let mut planned = op(
+            vec![(
+                "pages/a.md",
+                Effect::Write(bytes("- renamed\n")),
+                Expected::Bytes(bytes("- old\n")),
+            )],
+            Input::Refuse,
+        );
+        planned.inputs = Some(inputs);
+        assert_eq!(
+            live.host.apply(planned),
+            Err(ApplyRefusal::Changed),
+            "newly held: {newly_held}"
+        );
+        assert_eq!(live.disk("pages/a.md"), "- old\n");
+        assert!(!live.root.join("pages/unindexed.md").exists());
+        live.host.stop();
+    }
+}
+
+#[test]
+fn a_flush_that_saves_input_invalidates_its_selection_witness() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    let (key, page) = live.open("pages/a.md");
+    live.faults(super::super::io::Phase::PageTemp, 10_000);
+    let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    let before = live.host.inputs().unwrap();
+    live.host
+        .driver
+        .shared
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
+    live.host
+        .flush_input(&[PageId::from("pages/a.md")])
+        .unwrap();
+    assert_ne!(live.host.inputs().unwrap(), before);
+    assert!(!live
+        .host
+        .driver
+        .shared
+        .read(move |state| before.current(&state.progress.host))
+        .unwrap());
+    live.host.stop();
+}
+
+// The preflight bound is exercised by rename::a_rename_or_delete_under_a_held_path_lock_is_bounded,
+// whose fixture now plans through PagePlan before applying the HostOp.
 
 /// A save's directory sync precedes its index delivery. A merge cannot
 /// report success while that delivery is failing (or waiting for the writer).
@@ -928,6 +996,7 @@ fn a_write_through_a_symlinked_folder_is_refused() {
 fn a_move_applies_and_a_malformed_operation_is_refused() {
     let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/c.md", "- c\n")]);
     let moving = |source: Expected, moved: Option<(&str, &str)>| HostOp {
+        inputs: None,
         creation_checks: Vec::new(),
         moves: moved
             .map(|(dst, src)| (PageId::from(dst), PageId::from(src)))
@@ -1031,6 +1100,7 @@ fn several_moves_apply_as_one_operation_and_a_shared_page_is_refused() {
         ]
     };
     let moving = |moves: &[(&str, &str)]| HostOp {
+        inputs: None,
         moves: moves
             .iter()
             .map(|(dst, src)| (PageId::from(*dst), PageId::from(*src)))

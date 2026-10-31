@@ -816,6 +816,31 @@ impl<'a> PagePlan<'a> {
         effect
     }
 
+    /// Reuse the shared rewriter's `(old, new)` text from a feature's planning read.
+    /// Preflight still checks the revision, exact old bytes and filename
+    /// format, and applies the ordinary Org and conflict-marker firewalls.
+    pub fn rewrite_refs_prepared(
+        &mut self,
+        id: &PageId,
+        expected: FileRev,
+        text: (String, String),
+        renames: &RenameMap,
+        format: tine_core::config::FileNameFormat,
+    ) {
+        self.steps.push(Step::Rewrite {
+            id: id.clone(),
+            expected,
+            renames: renames.clone(),
+            rebind_title: false,
+            prepared: Some(Box::new(PreparedRewrite::new(
+                id.file(),
+                text.0,
+                text.1,
+                format,
+            ))),
+        });
+    }
+
     /// Queue a guarded no-replace move to a different file ID. A destination
     /// equal to the source names one file twice and the commit refuses it
     /// before any write (`Refusal::RepeatedFile`); an interrupted rename is
@@ -908,6 +933,18 @@ impl<'a> PagePlan<'a> {
     /// `moving_from`: a move's source. It claims the same name or day as the
     /// destination only because it is the file being moved, so it is no twin.
     fn twin(&self, file: &FileId, moving_from: Option<&FileId>) -> Result<(), Why> {
+        self.twin_with_absence(file, moving_from, false)
+    }
+
+    /// Only a destination proved absent by this check can use its filename
+    /// identity without opening a nonexistent title preamble. The final
+    /// publication absence guard still runs independently.
+    fn twin_with_absence(
+        &self,
+        file: &FileId,
+        moving_from: Option<&FileId>,
+        absent: bool,
+    ) -> Result<(), Why> {
         let Some(id) = self.store.as_page(file) else {
             return Ok(());
         };
@@ -919,7 +956,11 @@ impl<'a> PagePlan<'a> {
                 }));
             }
         }
-        let Some(entry) = self.store.graph.entry_for_path(&path) else {
+        let Some(entry) = self
+            .store
+            .graph
+            .entry_for_path_in(&path, absent.then_some(""))
+        else {
             return Ok(());
         };
         let claimant = if moving_from.is_some() {

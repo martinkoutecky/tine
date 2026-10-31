@@ -1,15 +1,11 @@
-//! og 21a (master a8fd4230d): a rename never rewrites references inside a file
-//! carrying VCS conflict markers. Such a referrer stays byte-identical and
-//! quarantined, every other referrer is rewritten, and the skip is reported
-//! once per file. The store refuses such a rewrite from any other caller.
+//! R-VCS-MARKERS (og 21a): marked pages stay byte-identical, including an
+//! explicit source title. The report lists each skipped rewrite once.
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
 use tine_store::{PageId, RenameMap, Store, TitleRebind};
 
-/// Renames are the page host's (STEP3 §7): each runs through a host started
-/// for it under its own app data, as the app's graph binding runs one.
 fn hosted<T>(
     store: &std::sync::Arc<tine_store::Store>,
     run: impl FnOnce(&tine_store::PageHost) -> T,
@@ -47,10 +43,11 @@ const CONFLICTED: &str =
 #[test]
 fn rename_skips_marker_bearing_referrers_and_reports_them() {
     let _integration_guard = crate::integration_lock();
+    let source = "title:: Alpha\n\n- alpha\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
     let (root, store) = graph(
         "referrer",
         &[
-            ("pages/Alpha.md", "- alpha\n"),
+            ("pages/Alpha.md", source),
             ("pages/Conflicted.md", CONFLICTED),
             ("pages/Clean.md", "- clean sees [[Alpha]]\n"),
         ],
@@ -70,8 +67,15 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
     );
     assert!(root.join("pages/Beta.md").exists() && !root.join("pages/Alpha.md").exists());
     assert_eq!(
+        fs::read_to_string(root.join("pages/Beta.md")).unwrap(),
+        source
+    );
+    assert_eq!(
         report.skipped_conflicted_referrers,
-        vec!["pages/Conflicted.md".to_owned()]
+        vec![
+            "pages/Alpha.md".to_owned(),
+            "pages/Conflicted.md".to_owned()
+        ]
     );
     assert!(report
         .touched
