@@ -183,9 +183,9 @@ async function loadHarness(
   const closeAllWorkspaceWindows = vi.fn((_reason: string) => { events.push("close-windows"); });
   vi.doMock("./workspaceWindows", () => ({ closeAllWorkspaceWindows }));
 
-  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
+  const { loadGraphPath, switchGraph, createNewGraph, chooseNewGraphParent, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
   return {
-    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, createPage, events, resetPageIndex, resetAt, waitForWarmCache,
+    loadGraphPath, switchGraph, createNewGraph, chooseNewGraphParent, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, createPage, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, resetFrozen, isFrozen, tryFreezeGraphRewrite,
     applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows,
   };
@@ -234,6 +234,21 @@ it("keeps canonical graph identity and an open workspace when reopening the curr
 // fa78c7b74): iOS opens and creates graphs only inside the app's own
 // On My iPhone / iCloud Drive containers, prepared natively first.
 describe("mobile graph folder picker", () => {
+  it("clones into an Android-picked local shared-storage parent instead of private app data", async () => {
+    const h = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "android", pickerResult: { status: "picked", path: META.root } });
+    await expect(h.chooseNewGraphParent(true)).resolves.toEqual({ kind: "chosen", dir: META.root });
+    expect(h.api.pickGraphFolder).toHaveBeenCalledOnce();
+    expect(h.api.defaultGraphParent).not.toHaveBeenCalled();
+  });
+
+  it("prepares the app-container parent before an iOS clone", async () => {
+    const h = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "ios", pickerResult: { status: "picked", path: META.root } });
+    await expect(h.chooseNewGraphParent(true)).resolves.toEqual({ kind: "chosen", dir: META.root });
+    expect(h.api.prepareGraphFolder).toHaveBeenCalledWith(META.root);
+    expect(h.api.createGraph).not.toHaveBeenCalled();
+  });
   const OUTSIDE = "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.";
 
   it("opens a picked graph from Tine's iOS Documents container", async () => {

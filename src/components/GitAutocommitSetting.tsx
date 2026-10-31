@@ -24,6 +24,9 @@ export function GitAutocommitSetting(): JSX.Element {
   const [status, setStatus] = createSignal<GitAutocommitStatus | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [signingIn, setSigningIn] = createSignal(false);
+  const [initializing, setInitializing] = createSignal(false);
+  const [initialRemote, setInitialRemote] = createSignal<string | null>(null);
+  const setupUrl = () => initialRemote() ?? status()?.remote?.url ?? "";
   const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
 
   const load = async () => {
@@ -47,7 +50,7 @@ export function GitAutocommitSetting(): JSX.Element {
   });
 
   /** A write whose answer is the new status; a failure shows the device's actual state and the error. */
-  const write = async (call: () => Promise<GitAutocommitStatus>, failed: (error: string) => string, done?: () => void) => {
+  const write = async (call: () => Promise<GitAutocommitStatus>, failed: (error: string) => string, done?: () => void, settled?: () => void) => {
     const owner = bindingOwner(() => alive);
     try {
       const answer = await writeOwned(owner, call());
@@ -60,11 +63,16 @@ export function GitAutocommitSetting(): JSX.Element {
       const now = status();
       if (now) setStatus({ ...now });
       setError(failed(message(failure)));
-    }
+    } finally { settled?.(); }
   };
   const change = (policy: GitPolicy, minutes: number) =>
     void write(() => backend().setGitAutocommit(policy, minutes), (e) => t("git-settings-save-failed", { error: e }));
   const syncNow = () => void write(() => backend().gitSyncNow(), (e) => t("git-settings-sync-now-failed", { error: e }));
+  const initGraph = () => {
+    if (initializing()) return;
+    setInitializing(true);
+    void write(() => status()?.setup_pending ? backend().gitFinishSetup(setupUrl().trim()) : backend().gitInitGraph(setupUrl().trim()), e => t("git-init-failed", { error: e }), undefined, () => { if (alive) setInitializing(false); });
+  };
 
   let username!: HTMLInputElement, token!: HTMLInputElement;
   const signIn = () => {
@@ -76,13 +84,20 @@ export function GitAutocommitSetting(): JSX.Element {
 
   const at = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString();
   const syncing = () => SYNCS.includes(status()?.policy ?? "off");
-  const problem = () => syncing() ? gitSyncProblem(status()?.last?.sync, graphMeta()?.root) : null;
+  const problem = () => syncing() || status()?.setup_pending ? gitSyncProblem(status()?.last?.sync, graphMeta()?.root) : null;
   const conversionProblem = () => gitLineEndingsProblem(status()?.line_endings);
   return <Field label={t("git-settings-label")} hint={<>
     <Show when={status()?.available !== false}>{t("git-settings-hint")}</Show>
     <Show when={status()}>{(s) => <>
       <Show when={!s().available}><div>{t("git-settings-not-available")}</div></Show>
-      <Show when={s().available && !s().repository}><div>{t("git-settings-not-a-repository")}</div></Show>
+      <Show when={s().available && (!s().repository || s().setup_pending)}>
+        <Show when={!s().repository}><div>{t("git-settings-not-a-repository")}</div></Show>
+        <Show when={s().setup_pending}><div>{t("git-init-pending")}</div></Show>
+        <div>{t("git-setup-off")}</div>
+        <label>{t("git-init-remote")}<input type="url" class="settings-input" data-git-initial-remote value={setupUrl()} disabled={initializing()}
+          onInput={e => setInitialRemote(e.currentTarget.value)} /></label>
+        <button class="settings-btn" data-git-init disabled={initializing()} onClick={() => void initGraph()}>{initializing() ? t("git-setup-working") : s().setup_pending ? t("git-init-finish") : t("git-init-label")}</button>
+      </Show>
       <Show when={s().branch}>{(branch) => <div>{t("git-settings-branch", { branch: branch() })}</div>}</Show>
       <Show when={s().remote}>{(remote) => <div data-git-remote={remote().name}>{t("git-settings-remote", { name: remote().name, url: remote().url })}</div>}</Show>
       <Show when={s().unusable}>{(why) => <div data-git-unusable={why()[0]}>{t("git-settings-unusable", { message: why()[1] })}</div>}</Show>
@@ -137,7 +152,7 @@ export function GitAutocommitSetting(): JSX.Element {
     <Show when={error()}>{(e) => <div role="alert">{e()}</div>}</Show>
   </>}>
     <Show when={status()?.available && status()?.repository}>
-      <select class="settings-select" data-git-policy value={status()!.policy ?? "off"}
+      <select class="settings-select" data-git-policy value={status()!.policy ?? "off"} disabled={initializing() || !!status()?.setup_pending}
         onChange={(e) => change(e.currentTarget.value as GitPolicy, status()!.interval_minutes ?? 10)}>
         <option value="off">{t("git-settings-policy-off")}</option>
         <option value="commit">{t("git-settings-policy-commit")}</option>
