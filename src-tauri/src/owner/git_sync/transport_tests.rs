@@ -11,7 +11,10 @@ use std::time::Instant;
 
 fn tempdir() -> tempfile::TempDir {
     // Self-deleting, so a panic leaves nothing behind (testTempDirs guard).
-    tempfile::tempdir().unwrap()
+    tempfile::Builder::new()
+        .prefix("tine-clone-cleanup-")
+        .tempdir_in(std::env::temp_dir())
+        .unwrap()
 }
 
 fn init(path: &Path) -> Repository {
@@ -123,8 +126,33 @@ fn clone_refuses_a_remote_without_commits_and_points_to_initial_setup() {
     assert!(
         matches!(operation().clone_graph(&f.url, &root), Outcome::Refused(m) if m.contains("no commits") && m.contains("Make this graph a git repository"))
     );
-    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-    assert!(root.join(".git").is_dir());
+    assert!(!root.exists(), "a refused clone must remove its new folder");
+}
+
+#[test]
+fn clone_failure_preserves_a_preexisting_empty_folder_and_allows_retry() {
+    let f = Fixture::new();
+    let root = f._dir.path().join("cloned");
+    fs::create_dir(&root).unwrap();
+    let missing = reqwest::Url::from_file_path(f._dir.path().join("missing.git"))
+        .unwrap()
+        .to_string();
+    assert_ne!(operation().clone_graph(&missing, &root), Outcome::UpToDate);
+    assert!(root.is_dir());
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+    assert_eq!(operation().clone_graph(&f.url, &root), Outcome::UpToDate);
+}
+
+#[test]
+fn clone_missing_default_branch_removes_its_new_folder() {
+    let f = Fixture::new();
+    f.bare.set_head("refs/heads/missing").unwrap();
+    let root = f._dir.path().join("cloned");
+    assert!(matches!(
+        operation().clone_graph(&f.url, &root),
+        Outcome::Refused(_)
+    ));
+    assert!(!root.exists());
 }
 
 fn initial_graph(f: &Fixture, url: &str) -> PathBuf {
@@ -226,15 +254,21 @@ fn clone_refuses_folding_tree_before_checkout_including_directories_and_nfc() {
             .fetch(&["+refs/heads/main:refs/heads/main"], None, None)
             .unwrap();
         let root = f._dir.path().join("cloned");
+        let result = operation().clone_on_volume(&f.url, &root, Some(true));
         assert!(
-            matches!(operation().clone_on_volume(&f.url, &root, Some(true)), Outcome::Refused(m) if m.contains("Unicode normalization"))
+            matches!(&result, Outcome::Refused(m) if m.contains("Unicode normalization")),
+            "{result:?}"
         );
-        assert!(!root.join("pages").exists());
+        assert!(!root.exists(), "a refused clone must remove its new folder");
+        // Repair the remote, then retry the exact destination without manual cleanup.
+        f.bare
+            .reference("refs/heads/main", f.base, true, "repair fixture")
+            .unwrap();
         assert_eq!(
-            fs::read_dir(root).unwrap().count(),
-            1,
-            "only .git, no half-checked-out files"
+            operation().clone_on_volume(&f.url, &root, Some(true)),
+            Outcome::UpToDate
         );
+        assert_eq!(fs::read(root.join("pages/a.md")).unwrap(), b"- base\n");
     }
 }
 
@@ -615,9 +649,11 @@ fn python() -> &'static str {
 fn harness() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owner/git_sync/fixture.py")
 }
-fn certs() -> &'static tempfile::TempDir {
-    static CERTS: OnceLock<tempfile::TempDir> = OnceLock::new();
-    CERTS.get_or_init(|| {
+fn certs() -> tempfile::TempDir {
+    // Cache bytes, not a static TempDir (statics are not dropped at exit).
+    // Each caller's certificate directory is self-deleting like its graph fixture.
+    static CERTS: OnceLock<Vec<(std::ffi::OsString, Vec<u8>)>> = OnceLock::new();
+    let files = CERTS.get_or_init(|| {
         let dir = tempdir();
         let output = Command::new(python())
             .arg(harness())
@@ -630,8 +666,19 @@ fn certs() -> &'static tempfile::TempDir {
             "test CA generator: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        dir
-    })
+        fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect()
+    });
+    let dir = tempdir();
+    for (name, bytes) in files {
+        fs::write(dir.path().join(name), bytes).unwrap();
+    }
+    dir
 }
 
 struct Server {
@@ -643,11 +690,12 @@ struct Server {
 impl Server {
     fn start(f: &Fixture, mode: &str, destination: &str) -> Self {
         let dir = tempdir();
+        let certificates = certs();
         let log = dir.path().join("requests.jsonl");
         let mut child = Command::new(python())
             .arg(harness())
             .arg(f.bare.path().parent().unwrap())
-            .arg(certs().path())
+            .arg(certificates.path())
             .arg(&log)
             .arg(mode)
             .arg(destination)
@@ -734,6 +782,10 @@ fn https_clone_uses_the_existing_private_token_store_after_auth_required() {
             .0
             .clone_graph(&server.remote(), &root),
         Outcome::AuthRequired
+    );
+    assert!(
+        !root.exists(),
+        "authentication retry must start with a clean folder"
     );
     let app_data = f._dir.path().join("private-device-data");
     let tokens = credentials::Tokens::new(&app_data);
@@ -1083,6 +1135,44 @@ fn wait_for_stall(log: &Path) {
     while !fs::read_to_string(log).unwrap_or_default().contains("102") {
         assert!(Instant::now() < deadline, "fixture never received git POST");
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn https_clone_cancellation_and_mid_fetch_failure_remove_the_new_folder() {
+    for cancelled in [false, true] {
+        let f = Fixture::new();
+        let server = Server::start(&f, "stall-fetch", "");
+        let root = f._dir.path().join("cloned");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let options = TransportOptions {
+            read_timeout: Duration::from_millis(300),
+            ..TransportOptions::default()
+        };
+        let op = server
+            .operation_at(None, server.remote(), &options, cancel.clone())
+            .0;
+        let canceller = if cancelled {
+            let log = server.log.clone();
+            Some(std::thread::spawn(move || {
+                wait_for_stall(&log);
+                cancel.store(true, Ordering::Release);
+            }))
+        } else {
+            None
+        };
+        let result = op.clone_graph(&server.remote(), &root);
+        if let Some(canceller) = canceller {
+            canceller.join().unwrap();
+            assert_eq!(result, Outcome::Cancelled);
+        } else {
+            assert!(
+                matches!(&result, Outcome::Network(m) if m.contains("timed out")),
+                "{result:?}"
+            );
+        }
+        assert!(!root.exists(), "{result:?}");
+        assert_eq!(operation().clone_graph(&f.url, &root), Outcome::UpToDate);
     }
 }
 

@@ -120,6 +120,27 @@ fn stamp(path: &Path) -> Option<Stamp> {
 /// Where a reconcile sends the keys of held paths that changed on disk.
 pub(crate) type Forward = Box<dyn Fn(Vec<String>) + Send + Sync>;
 
+/// The file facts of one watcher snapshot (`Core::file_facts`).
+fn snapshot_file_facts(snapshot: &HashMap<PathBuf, Stamp>) -> FileFacts {
+    let mut facts = FileFacts {
+        lens: Vec::with_capacity(snapshot.len()),
+        ..FileFacts::default()
+    };
+    for (path, value) in snapshot.iter() {
+        // A retry baseline (`retry_baseline`) holds u64::MAX, not a size.
+        if value.len != u64::MAX {
+            facts.lens.push(value.len);
+        }
+        facts.conflict_named += u64::from(tine_core::model::path_is_sync_conflict(path));
+        let stem_nfc = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_none_or(unicode_normalization::is_nfc);
+        facts.non_nfc_named += u64::from(!stem_nfc);
+    }
+    facts
+}
+
 fn retry_baseline(now: &mut HashMap<PathBuf, Stamp>, path: &Path, before: Option<&Stamp>) {
     if let Some(old) = before {
         let mut retry = old.clone();
@@ -597,24 +618,7 @@ impl Core {
     /// File lengths and name facts from the baseline: the shape statistics
     /// need no extra file reads. Numbers only; no path leaves this function.
     pub(crate) fn file_facts(&self) -> FileFacts {
-        let snapshot = self.snapshot.lock().unwrap();
-        let mut facts = FileFacts {
-            lens: Vec::with_capacity(snapshot.len()),
-            ..FileFacts::default()
-        };
-        for (path, value) in snapshot.iter() {
-            // A retry baseline (`retry_baseline`) holds u64::MAX, not a size.
-            if value.len != u64::MAX {
-                facts.lens.push(value.len);
-            }
-            facts.conflict_named += u64::from(tine_core::model::path_is_sync_conflict(path));
-            let stem_nfc = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_none_or(unicode_normalization::is_nfc);
-            facts.non_nfc_named += u64::from(!stem_nfc);
-        }
-        facts
+        snapshot_file_facts(&self.snapshot.lock().unwrap())
     }
     fn file_id(&self, path: &Path) -> Option<FileId> {
         if let Ok(rel) = path.strip_prefix(&self.graph.assets_path()) {
@@ -2239,17 +2243,18 @@ mod tests {
         )
         .unwrap();
         store.whole_graph().unwrap();
-        {
-            let mut snapshot = store.watch.core.snapshot.lock().unwrap();
-            assert!(snapshot.len() >= 3, "the scan saw the pages");
-            for name in ["pages/a.md", "pages/b.md"] {
-                let path = root.join(name);
-                let before = snapshot.get(&path).cloned();
-                assert!(before.is_some(), "{name} is in the snapshot");
-                retry_baseline(&mut snapshot, &path, before.as_ref());
-            }
+        // A copy: the live Poll watcher would rescan a retry baseline back
+        // to its real stamp before a loaded machine reached the assertion.
+        let mut snapshot = store.watch.core.snapshot.lock().unwrap().clone();
+        assert!(snapshot.len() >= 3, "the scan saw the pages");
+        for name in ["pages/a.md", "pages/b.md"] {
+            let path = root.join(name);
+            let before = snapshot.get(&path).cloned();
+            assert!(before.is_some(), "{name} is in the snapshot");
+            retry_baseline(&mut snapshot, &path, before.as_ref());
         }
-        let bytes = store.diagnostics()["shape"]["fileBytes"].clone();
+        let mut lens = snapshot_file_facts(&snapshot).lens;
+        let bytes = crate::model::shape_stats::quantiles(&mut lens);
         assert_eq!(bytes["max"].as_u64(), Some(6), "{bytes}");
         assert_eq!(bytes["sum"].as_u64(), Some(6), "{bytes}");
         store.close();
