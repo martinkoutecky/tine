@@ -270,8 +270,9 @@ the path too, so a sync client's rescan can miss a same-size edit (GH #811,
 run 41181752203: 0 of 4 same-size saves moved it). On Android,
 `atomic_file.rs#rename_replace` therefore sets the destination's mtime back to
 the source's after the rename (`utimensat`, as rename(2) keeps it). It is best
-effort: the rename has landed, so a failure leaves MediaProvider's mtime and
-reports nothing. Unit cost (I-25), Android only, per replacing rename: one
+effort: the rename has landed, so a failure leaves MediaProvider's mtime; the
+storage diagnostics count successes and failures (`androidMtimeReset`,
+process-wide). Unit cost (I-25), Android only, per replacing rename: one
 `lstat` of the source (served from the FUSE attribute cache, which MediaProvider
 never expires) and one `utimensat`, which is one FUSE SETATTR that MediaProvider
 answers with its write-access check and a `utimensat` beneath; 0 bytes, 0 files,

@@ -156,10 +156,12 @@ pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
         let modified = fs::symlink_metadata(src).and_then(|metadata| metadata.modified());
         fs::rename(src, dst)?;
         #[cfg(target_os = "android")]
-        if let Ok(modified) = modified {
+        {
             // The rename has landed; failing here would report a published
-            // file as unwritten. A failure leaves MediaProvider's mtime.
-            let _ = set_modified_at(dst, modified);
+            // file as unwritten. A failure leaves MediaProvider's mtime and
+            // is counted in the storage diagnostics (D-20261031-MTIME).
+            let reset = modified.and_then(|modified| set_modified_at(dst, modified));
+            crate::storage_diag::record_android_mtime_reset(reset.is_ok());
         }
         Ok(())
     }
