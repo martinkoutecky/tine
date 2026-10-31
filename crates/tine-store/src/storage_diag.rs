@@ -19,23 +19,6 @@ pub(crate) fn record_windows_directory_flush(succeeded: bool) {
     counter.fetch_add(1, Relaxed);
 }
 
-// GH #811: the mtime reset after a replacing rename on Android shared
-// storage is best effort; count its outcomes process-wide, as above.
-#[cfg(target_os = "android")]
-static ANDROID_MTIME_RESET_SUCCEEDED: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_os = "android")]
-static ANDROID_MTIME_RESET_FAILED: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(target_os = "android")]
-pub(crate) fn record_android_mtime_reset(succeeded: bool) {
-    let counter = if succeeded {
-        &ANDROID_MTIME_RESET_SUCCEEDED
-    } else {
-        &ANDROID_MTIME_RESET_FAILED
-    };
-    counter.fetch_add(1, Relaxed);
-}
-
 // Retain counts when a graph closes and reopens during this process. The path
 // is only an in-memory lookup key and never enters the exported snapshot.
 pub(crate) fn for_graph(root: &std::path::Path) -> std::sync::Arc<StorageCounters> {
@@ -199,7 +182,8 @@ impl StorageCounters {
     }
 
     pub(crate) fn snapshot(&self) -> serde_json::Value {
-        let report = serde_json::json!({
+        #[allow(unused_mut)]
+        let mut report = serde_json::json!({
             "scope": "since-launch",
             "pageSaves": {
                 "published": self.published.load(Relaxed),
@@ -222,6 +206,14 @@ impl StorageCounters {
             // a filesystem or cloud provider from a graph's private path.
             "backendClass": "unclassified",
         });
+        #[cfg(target_os = "android")]
+        {
+            report["androidMtimeReset"] = serde_json::json!({
+                "scope": "process-since-launch",
+                "succeeded": crate::atomic_file::ANDROID_MTIME_RESET_SUCCEEDED.load(Relaxed),
+                "failed": crate::atomic_file::ANDROID_MTIME_RESET_FAILED.load(Relaxed),
+            });
+        }
         #[cfg(target_os = "windows")]
         let report = {
             let mut report = report;
@@ -229,16 +221,6 @@ impl StorageCounters {
                 "scope": "process-since-launch",
                 "apiSucceeded": WINDOWS_DIRECTORY_FLUSH_SUCCEEDED.load(Relaxed),
                 "apiFailed": WINDOWS_DIRECTORY_FLUSH_FAILED.load(Relaxed),
-            });
-            report
-        };
-        #[cfg(target_os = "android")]
-        let report = {
-            let mut report = report;
-            report["androidMtimeReset"] = serde_json::json!({
-                "scope": "process-since-launch",
-                "succeeded": ANDROID_MTIME_RESET_SUCCEEDED.load(Relaxed),
-                "failed": ANDROID_MTIME_RESET_FAILED.load(Relaxed),
             });
             report
         };

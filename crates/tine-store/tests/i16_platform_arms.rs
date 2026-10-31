@@ -252,7 +252,10 @@ fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
     // standalone) are checked.
     let pinned = [
         // atomic_write_private adds two: its owner-only arm and refusal stub.
-        ("src/atomic_file.rs", 5),
+        // GH #811's Android-only mtime reset adds five standalone arms: its
+        // two counters, `set_modified_at`, and the read and reset around
+        // rename_replace's rename (D-20261031-MTIME).
+        ("src/atomic_file.rs", 10),
         // The Windows-only best-effort flush module adds a standalone arm.
         ("src/directory_durability.rs", 3),
         ("src/no_replace.rs", 8),
@@ -276,7 +279,7 @@ fn platform_family_guard_rejects_a_dropped_ios_arm() {
     let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join("src/atomic_file.rs")).unwrap();
-    let positive = "#[cfg(any(\n        target_os = \"linux\",\n        target_os = \"android\",\n        target_os = \"macos\",\n        target_os = \"ios\"\n    ))]\n    {\n        fs::rename";
+    let positive = "#[cfg(any(\n        target_os = \"linux\",\n        target_os = \"android\",\n        target_os = \"macos\",\n        target_os = \"ios\"\n    ))]\n    {\n        // GH #811: on Android shared storage";
     assert_eq!(source.matches(positive).count(), 1);
     let dropped = source.replace(
         positive,

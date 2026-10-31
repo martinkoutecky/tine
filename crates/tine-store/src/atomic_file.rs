@@ -60,6 +60,19 @@ pub(crate) fn names_nothing(error: &io::Error) -> bool {
     )
 }
 
+// GH #811: the mtime reset after a replacing rename on Android is best
+// effort; its outcomes are counted process-wide, for the storage
+// diagnostics (`androidMtimeReset`, D-20261031-MTIME). Kept here, not in
+// `storage_diag`, because the app crate also includes this file.
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub(crate) static ANDROID_MTIME_RESET_SUCCEEDED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub(crate) static ANDROID_MTIME_RESET_FAILED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// `path`'s mtime without opening it (utimensat, the atime untouched): one
 /// FUSE SETATTR on Android shared storage, and no open there.
 #[cfg(target_os = "android")]
@@ -161,7 +174,12 @@ pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
             // file as unwritten. A failure leaves MediaProvider's mtime and
             // is counted in the storage diagnostics (D-20261031-MTIME).
             let reset = modified.and_then(|modified| set_modified_at(dst, modified));
-            crate::storage_diag::record_android_mtime_reset(reset.is_ok());
+            let counter = if reset.is_ok() {
+                &ANDROID_MTIME_RESET_SUCCEEDED
+            } else {
+                &ANDROID_MTIME_RESET_FAILED
+            };
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(())
     }
