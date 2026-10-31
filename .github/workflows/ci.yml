@@ -528,6 +528,8 @@ jobs:
           - api: 36
             image: "36.1"
             target: google_apis
+            # Its first boot took longer than 300 s (run 41176377346).
+            boot: 900
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -580,7 +582,7 @@ jobs:
           system-image-api-level: ${{ matrix.image || matrix.api }}
           arch: x86_64
           target: ${{ matrix.target }}
-          emulator-boot-timeout: 300
+          emulator-boot-timeout: ${{ matrix.boot || 300 }}
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN"
