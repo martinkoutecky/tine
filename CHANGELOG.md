@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On Linux, middle-clicking a link while editing another block now only opens the link. The middle-click selection was also pasted at the caret of the block being edited.
 - A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).
 - Typing DONE over a bare DOING task with a LOGBOOK now closes its clock. Marker commands also recognize the bare task before its hidden history, keeping one marker and the existing clocks (#741).
 - CLI `page show` keeps the indexed page name when another editor has just changed its title, so a block handle formed from the read cannot accidentally edit a different file (CLI-REVIEW-8).
