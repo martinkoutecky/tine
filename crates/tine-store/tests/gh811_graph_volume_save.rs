@@ -290,3 +290,143 @@ fn todays_journal_created_on_the_host_publishes_on_the_graph_volume() {
 fn todays_journal_saves_publish_beside_a_sync_client_on_the_graph_volume() {
     todays_journal_saves(true);
 }
+
+/// `path`'s mtime, size and inode as another process (`stat`) reports them,
+/// and the same file on the backing volume when `TINE_LOWER_FS_ROOT` names
+/// the directory under `TINE_HOST_FS_ROOT` (Android: /data/media/0/…, which
+/// root can read beneath MediaProvider's FUSE).
+fn other_process_stat(path: &Path) -> String {
+    let stat = |path: &Path| {
+        std::process::Command::new("stat")
+            .args(["-c", "%Y %y size=%s ino=%i"])
+            .arg(path)
+            .output()
+            .map_or_else(
+                |e| format!("stat failed: {e}"),
+                |o| {
+                    String::from_utf8_lossy(if o.status.success() {
+                        &o.stdout
+                    } else {
+                        &o.stderr
+                    })
+                    .trim()
+                    .to_string()
+                },
+            )
+    };
+    let lower = std::env::var_os("TINE_HOST_FS_ROOT")
+        .zip(std::env::var_os("TINE_LOWER_FS_ROOT"))
+        .and_then(|(upper, lower)| {
+            let upper = fs::canonicalize(upper).ok()?;
+            let relative = fs::canonicalize(path).ok()?;
+            Some(Path::new(&lower).join(relative.strip_prefix(upper).ok()?))
+        });
+    match lower {
+        Some(lower) => format!("path: {} | lower: {}", stat(path), stat(&lower)),
+        None => format!("path: {}", stat(path)),
+    }
+}
+
+/// GH #811 round 2, decision 2 (verification only): a sync client's rescan
+/// compares a file's mtime and size with its index. On MediaProvider FUSE a
+/// rename over a page may leave the replaced file's mtime on the new one, so
+/// same-size edits could look unchanged. Saves one existing page through the
+/// page host with same-size edits a second apart and prints what another
+/// process sees after each, then after the kernel's caches are dropped (root
+/// only). Asserts only that the saves published.
+#[test]
+fn same_size_saves_and_the_page_mtime_another_process_sees() {
+    let _integration_guard = crate::integration_lock();
+    let volume = volume();
+    let app = tempfile::tempdir().unwrap();
+    let root = volume.path().join("graph");
+    graph(&root);
+    let page = root.join("pages/P.md");
+    std::thread::sleep(Duration::from_millis(1100));
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let (sink, mail) = mpsc::channel();
+    let send = move |m| {
+        let _ = sink.send(serde_json::to_value(m).unwrap());
+    };
+    let host = PageHost::start(&store, app.path(), "gh811", |_, _| {}, send).unwrap();
+    let answer = |id: u64| loop {
+        let value = mail.recv_timeout(Duration::from_secs(10)).unwrap();
+        if value["answer"]["id"] == id {
+            return value;
+        }
+    };
+    let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
+    let session = reloaded["session"].as_u64().unwrap();
+    let mut id = reloaded["nextId"].as_u64().unwrap();
+    let opened = host
+        .open(session, id, &PageId::from("pages/P.md"), "P")
+        .unwrap();
+    let key = serde_json::to_value(opened).unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut version = answer(id)["answer"]["version"].as_u64().unwrap();
+    println!("GH811-MTIME before: {}", other_process_stat(&page));
+    let mut seen = vec![other_process_stat(&page)];
+    for edit in 1..=5 {
+        let doc = PageDto {
+            name: "P".into(),
+            kind: PageKind::Page,
+            title: "P".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: "b".into(),
+                raw: format!("same size edit {edit}"),
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+            guide: false,
+        };
+        id += 1;
+        host.submit(
+            session,
+            id,
+            &key,
+            &doc,
+            version,
+            None,
+            &[EditKind::SaveBlock],
+        )
+        .unwrap();
+        version = answer(id)["answer"]["version"].as_u64().unwrap();
+        let outcome = host.wait_published(
+            session,
+            &[(key.clone(), version, None)],
+            Duration::from_secs(10),
+        );
+        let now = other_process_stat(&page);
+        println!("GH811-MTIME save {edit} {outcome:?}: {now}");
+        assert_eq!(outcome, PageOperation::Applied, "save {edit} published");
+        seen.push(now);
+        std::thread::sleep(Duration::from_millis(1100));
+    }
+    let mtime = |line: &str| line.split_whitespace().nth(1).map(str::to_owned);
+    // seen[0] is the page before the first edit, a different size.
+    let advanced = seen[1..]
+        .windows(2)
+        .filter(|pair| mtime(&pair[0]) != mtime(&pair[1]))
+        .count();
+    println!("GH811-MTIME path mtime advanced on {advanced} of 4 same-size saves");
+    let dropped = std::process::Command::new("sh")
+        .args(["-c", "sync; echo 3 > /proc/sys/vm/drop_caches"])
+        .status()
+        .map_or(false, |s| s.success());
+    println!(
+        "GH811-MTIME after dropping caches ({}): {}",
+        if dropped {
+            "dropped"
+        } else {
+            "not root: not dropped"
+        },
+        other_process_stat(&page)
+    );
+    drop(host);
+    store.close();
+}
