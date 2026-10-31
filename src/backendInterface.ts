@@ -27,7 +27,6 @@ import type {
   TemplateDto,
   TrashStats,
   JournalConflict,
-  SyncConflict,
   SyncConflictDiff,
   MergeDecision,
   ConflictInventory,
@@ -196,7 +195,6 @@ export interface Backend {
    *  `unsavedPaths`: page files whose edits could not be saved; the rename
    *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
   renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
-  publishHtml(): Promise<[string, number]>;
   /** Resolve a query's complete owner pages without writing. O(graph query +
    * selected source bytes); the fingerprint binds the reviewed selection. */
   publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;
@@ -383,9 +381,6 @@ export interface Backend {
   /** Move a stray file (graph-root-relative path) to a uniquely-named page so it
    *  stops colliding and becomes normally navigable (#21). */
   renameFileToPage(path: string, newName: string, kind: "rename-page"): Promise<void>;
-  /** Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
-   *  user to review + merge instead of them showing as garbage pages. */
-  listSyncConflicts(): Promise<SyncConflict[]>;
   /** Block-level diff of a conflict copy against its winner (graph-root-relative
    *  paths). Read-only; null if a path is invalid or the file is gone. */
   syncConflictDiff(winner: string, conflict: string): Promise<SyncConflictDiff | null>;
@@ -634,10 +629,6 @@ export interface Backend {
   /** Call on leave, or explicitly from Mark page seen; never per edit. */
   markPageSeen(pageKey: string, path: string): Promise<void>;
   markGraphSeen(): Promise<void>;
-  /** Drop one page's seen baseline (by pageKey or recorded path); the page
-   * then inherits the graph baseline. Tine's own rename/merge/delete already
-   * do this in the backend. */
-  forgetSeenPage(pageKey: string, path: string): Promise<void>;
   forgetSeenState(): Promise<void>;
   /** Set this device's autocommit policy for the bound graph; answers the new status. */
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;

@@ -13,7 +13,6 @@ export const mockGitCommands = {
   },
   async markPageSeen(): Promise<never> { throw new Error("Git is not available in the browser mock."); },
   async markGraphSeen(): Promise<never> { throw new Error("Git is not available in the browser mock."); },
-  async forgetSeenPage(): Promise<void> {},
   async forgetSeenState(): Promise<void> {},
   async setGitAutocommit(): Promise<never> {
     throw new Error("git is not available in the browser mock");

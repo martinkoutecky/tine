@@ -36,7 +36,6 @@ import type {
   TemplateDto,
   TrashStats,
   JournalConflict,
-  SyncConflict,
   SyncConflictDiff,
   MergeDecision,
   ConflictInventory,
@@ -424,9 +423,6 @@ class TauriBackend implements Backend {
     if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
-  publishHtml() {
-    return this.call<[string, number]>("publish_html");
-  }
   publishQueryPlan(request: QueryPublicationRequest) {
     return this.call<QueryPublicationPlan>("publish_query_plan", { request });
   }
@@ -678,9 +674,6 @@ class TauriBackend implements Backend {
     dropDisplayedFor({ path });
     return this.call<void>("rename_file_to_page", { path, newName });
   }
-  listSyncConflicts() {
-    return this.call<SyncConflict[]>("list_sync_conflicts");
-  }
   syncConflictDiff(winner: string, conflict: string) {
     return this.call<SyncConflictDiff | null>("sync_conflict_diff", { winner, conflict });
   }
@@ -898,9 +891,6 @@ class TauriBackend implements Backend {
   }
   markGraphSeen() {
     return this.call<void>("mark_graph_seen");
-  }
-  forgetSeenPage(pageKey: string, path: string) {
-    return this.call<void>("forget_seen_page", { pageKey, path });
   }
   forgetSeenState() {
     return this.call<void>("forget_seen_state");

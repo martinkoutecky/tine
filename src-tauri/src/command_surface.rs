@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 243] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 240] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -55,7 +55,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 243] = [
     "empty_asset_trash",
     "export_query_subtrees",
     "forget_known_graph",
-    "forget_seen_page",
     "forget_seen_state",
     "get_app_bool",
     "get_app_string",
@@ -96,7 +95,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 243] = [
     "list_known_graphs",
     "list_orphan_assets",
     "list_spellcheck_dictionaries",
-    "list_sync_conflicts",
     "list_templates",
     "live_conflict_diff",
     "load_graph",
@@ -137,7 +135,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 243] = [
     "pick_graph_folder",
     "prepare_graph_folder",
     "preview_block",
-    "publish_html",
     "publish_live",
     "publish_query",
     "publish_query_plan",

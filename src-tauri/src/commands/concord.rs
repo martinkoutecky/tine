@@ -41,21 +41,6 @@ fn settle_queue(slot: &GraphSlot, paths: &[&str]) {
     }
 }
 
-/// Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
-/// user to review + reconcile instead of them showing as garbage pages.
-#[tauri::command]
-pub(crate) async fn list_sync_conflicts(
-    state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::SyncConflict>, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::conflicts::list_sync_conflicts(&slot.store)
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
 /// Block-level diff of a sync-conflict copy against its winner (both graph-root-
 /// relative paths) — the data behind the two-column merge UI; 3-way with
 /// suggestions when the Concord base ledger holds an ancestor. Read-only.

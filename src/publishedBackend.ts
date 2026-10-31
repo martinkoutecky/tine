@@ -876,9 +876,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async listJournalConflicts() {
       return [];
     },
-    async listSyncConflicts() {
-      return [];
-    },
     async listJournalFilenameMigrations() {
       return [];
     },

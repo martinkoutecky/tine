@@ -628,16 +628,6 @@ mod graph_wide_command_boundary_tests {
     }
 }
 
-#[tauri::command]
-pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::publish::publish_html(&slot.store).map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
 /// Reveal an exported site using the shared desktop file-manager helper.
 #[tauri::command]
 pub(crate) async fn reveal_export(path: String) -> Result<(), String> {

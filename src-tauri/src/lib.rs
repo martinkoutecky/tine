@@ -96,19 +96,19 @@ use commands::{
     list_journal_conflicts, list_journal_filename_migrations, list_orphan_assets, list_templates,
     load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
     page_alias_group, page_icons, page_inventory, page_modified, page_print_html, preview_block,
-    publish_html, query_facets, quick_switch, read_asset, read_asset_range, read_custom_css,
-    read_highlights, read_journal_file, read_local_image, read_text_file,
-    register_unlinked_reference, rename_file_to_page, rename_page, resolve_block, resolve_blocks,
-    resolve_page, run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
+    query_facets, quick_switch, read_asset, read_asset_range, read_custom_css, read_highlights,
+    read_journal_file, read_local_image, read_text_file, register_unlinked_reference,
+    rename_file_to_page, rename_page, resolve_block, resolve_blocks, resolve_page,
+    run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
     set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
     set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
     set_show_brackets, set_start_of_week, set_timetracking_enabled, stat_asset, stream_asset_path,
     tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
-    conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
-    merge_live_conflict, resolve_duplicate_journal_day, resolve_sync_conflict,
-    resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
+    conflict_inventory, duplicate_journal_diff, live_conflict_diff, merge_live_conflict,
+    resolve_duplicate_journal_day, resolve_sync_conflict, resolve_vcs_marker_conflict,
+    sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
 use css_files::{edit_global_css, read_css_file, save_css_file};
 use debug::{
@@ -1097,7 +1097,6 @@ pub fn run() {
             block_ref_counts,
             block_referrers,
             rename_page,
-            publish_html,
             publish_query_plan,
             publish_query,
             quick_share::quick_share_prepare,
@@ -1164,7 +1163,6 @@ pub fn run() {
             list_journal_conflicts,
             list_journal_filename_migrations,
             apply_journal_filename_migrations,
-            list_sync_conflicts,
             sync_conflict_diff,
             resolve_sync_conflict,
             duplicate_journal_diff,
@@ -1280,7 +1278,6 @@ pub fn run() {
             seen::get_page_changes,
             seen::mark_page_seen,
             seen::mark_graph_seen,
-            seen::forget_seen_page,
             seen::forget_seen_state
         ])
         .build(context)
