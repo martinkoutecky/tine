@@ -71,7 +71,11 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 20 (GH #741 F2): a bare marker title followed by a LOGBOOK drawer now parses
 /// as a task, so its projection, task facets and task query answers change for
 /// unchanged graph files; older disposable caches rebuild.
-pub(crate) const FORMAT: u32 = 20;
+/// 21 (arrival L3-03): editor blocks use OG's ECMAScript leading whitespace,
+/// changing marker/planning projections and derived indexes for NEL/BOM input.
+/// Invalidate older disposable results; serialized layout and graph files stay
+/// unchanged.
+pub(crate) const FORMAT: u32 = 21;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

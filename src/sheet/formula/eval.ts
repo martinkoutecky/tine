@@ -30,6 +30,21 @@ type MemberTable = Partial<Record<FormulaValue["kind"], Record<string, MemberHan
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Per-value rendered output ceiling, in UTF-16 units like the formula source
+ * budget. Matches the 256 Ki ceiling for generated macro text. Test lengths
+ * before concat/join: inspecting a rope's length never flattens it. */
+export const MAX_FORMULA_OUTPUT_CHARS = 256 * 1024;
+const outputError = () => errorValue(`Formula output exceeds ${MAX_FORMULA_OUTPUT_CHARS} characters`);
+
+function boundedJoin(parts: readonly string[], separator: string): string | FormulaErrorValue {
+  let size = Math.max(0, parts.length - 1) * separator.length;
+  for (const part of parts) {
+    size += part.length;
+    if (size > MAX_FORMULA_OUTPUT_CHARS) return outputError();
+  }
+  return size > MAX_FORMULA_OUTPUT_CHARS ? outputError() : parts.join(separator);
+}
+
 function typeName(value: FormulaValue): string {
   return value.kind;
 }
@@ -171,7 +186,7 @@ function displayValue(value: FormulaValue): string | FormulaErrorValue {
         if (typeof displayed !== "string") return displayed;
         out.push(displayed);
       }
-      return out.join(",");
+      return boundedJoin(out, ",");
     }
     case "null":
       return "";
@@ -313,7 +328,8 @@ const MEMBER_TABLE: MemberTable = {
         if (typeof displayed !== "string") return displayed;
         out.push(displayed);
       }
-      return textValue(out.join(sep));
+      const joined = boundedJoin(out, sep);
+      return typeof joined === "string" ? textValue(joined) : joined;
     },
     contains(target, args) {
       const values = fixedArgs("contains", args, 1);
@@ -400,7 +416,10 @@ function evalBinary(op: BinaryOp, left: FormulaValue, rightAst: Ast, ctx: Evalua
 
   if (op === "<" || op === "<=" || op === ">" || op === ">=") return compareValues(op, left, right);
 
-  if (op === "+" && left.kind === "text" && right.kind === "text") return textValue(left.value + right.value);
+  if (op === "+" && left.kind === "text" && right.kind === "text") {
+    if (left.value.length + right.value.length > MAX_FORMULA_OUTPUT_CHARS) return outputError();
+    return textValue(left.value + right.value);
+  }
   if (left.kind === "number" && right.kind === "number") {
     if (op === "+") return numberValue(left.value + right.value);
     if (op === "-") return numberValue(left.value - right.value);
@@ -460,6 +479,15 @@ export const MAX_FORMULA_EVAL_DEPTH = 128;
 let evalDepth = 0;
 
 function evalAst(ast: Ast, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
+  const value = evalAstValue(ast, ctx, visited);
+  // Field values and member results share the same admission as literals and
+  // concatenation. Lists must fit their comma-separated presentation too.
+  const displayed = displayValue(value);
+  if (typeof displayed !== "string") return displayed;
+  return displayed.length > MAX_FORMULA_OUTPUT_CHARS ? outputError() : value;
+}
+
+function evalAstValue(ast: Ast, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   if (evalDepth >= MAX_FORMULA_EVAL_DEPTH) return errorValue(`Formula depth exceeds ${MAX_FORMULA_EVAL_DEPTH}`);
   evalDepth++;
   try {

@@ -80,12 +80,11 @@ describe("D07: fences follow the parser's literal ranges, not CommonMark", () =>
 });
 
 describe("D13: one accepted marker/priority answer for readers and writers", () => {
-  it("U+0085 is parser whitespace (accepted), U+FEFF is not", () => {
-    expect(matchLeadingMarker("\u0085TODO x")).toEqual({ marker: "TODO", start: 1, end: 5 });
-    expect(matchLeadingMarker("﻿TODO x")).toBeNull();
-    expect(cycleMarker("\u0085TODO x", "todo").raw).toBe("\u0085DOING x");
-    expect(cycleMarker("﻿TODO x", "todo").raw.endsWith("TODO x")).toBe(true);
-    expect(setMarker("\u0085TODO x", "DONE")).toBe("\u0085DONE x");
+  it("OG trims BOM before parsing a marker, while NEL remains content", () => {
+    expect(matchLeadingMarker("\u0085TODO x")).toBeNull();
+    expect(matchLeadingMarker("\ufeffTODO x")).toEqual({ marker: "TODO", start: 1, end: 5 });
+    expect(cycleMarker("\ufeffTODO x", "todo").raw).toBe("\ufeffDOING x");
+    expect(setMarker("\ufeffTODO x", "DONE")).toBe("\ufeffDONE x");
   });
   it("priority is read and written on the parser's span (after the marker only)", () => {
     expect(headerTokens("TODO [#A] x").priority).toEqual({ text: "A", start: 5, end: 9 });

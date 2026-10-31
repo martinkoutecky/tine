@@ -18,6 +18,33 @@ const base = {
 };
 
 describe("parsePluginManifest", () => {
+  // L4-03: pin today's host grammar without choosing a new plugin API grammar.
+  it.each([
+    ["dev.example", true], ["abc", false], ["a..b", true],
+    ["a.b-", false], ["a_b.c", false],
+  ])("pins host package id %s (%s)", (id, accepted) => {
+    if (accepted) expect(parsePluginManifest({ ...base, id }).id).toBe(id);
+    else expect(() => parsePluginManifest({ ...base, id })).toThrow(/identifier/);
+  });
+
+  it.each([
+    ["plugin.wasm", true], ["dist/../plugin.wasm", false],
+    ["dist/./plugin.wasm", true], ["dist/plugin..wasm", true],
+  ])("pins host entry %s (%s)", (entry, accepted) => {
+    if (accepted) expect(parsePluginManifest({ ...base, entry }).entry).toBe(entry);
+    else expect(() => parsePluginManifest({ ...base, entry })).toThrow(/relative/);
+  });
+
+  it.each([
+    ["hello", "badge", true], ["UPPER", "badge", false],
+    ["hello", "thread-lines", true], ["hello", "unknown", false],
+    ["", "badge", false], ["a".repeat(65), "badge", false],
+  ])("pins host decoration id %s and kind %s (%s)", (id, kind, accepted) => {
+    const input = { ...base, capabilities: ["block-decorations.register"], contributions: { blockDecorations: [{ id, kind }] } };
+    if (accepted) expect(parsePluginManifest(input).contributions?.blockDecorations).toEqual([{ id, kind }]);
+    else expect(() => parsePluginManifest(input)).toThrow();
+  });
+
   it("runs API 0.2 and 0.3 manifests; the color setting type needs 0.3, which a 0.2-only host would refuse", () => {
     const color = { key: "color", type: "color", label: "Color", description: "Color", default: "" };
     const withColor = { ...base, capabilities: [...base.capabilities, "settings.read"], settings: [color] };

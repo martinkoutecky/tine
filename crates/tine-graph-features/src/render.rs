@@ -230,12 +230,15 @@ fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     if src.contains("://") || src.starts_with("data:") {
         return None;
     }
-    // `read_asset` re-guards against traversal; pass just the file name so a
-    // `../assets/x` (or `assets/x`) ref resolves to `<graph>/assets/x`.
-    let name = src.rsplit('/').next().unwrap_or(src);
+    // Preserve the complete assets-relative identity, including PDF area-image
+    // subdirectories. The store validates traversal and symlinks after decoding.
+    let name = tine_core::asset_refs::percent_decode(
+        src.strip_prefix("../assets/")
+            .or_else(|| src.strip_prefix("assets/"))?,
+    );
     let mut budget = budget_cell.borrow_mut();
     let admission_limit = budget.per_asset.min(budget.remaining);
-    let bytes = graph.read_asset_limited(name, admission_limit).ok()?;
+    let bytes = graph.read_asset_limited(&name, admission_limit).ok()?;
     budget.remaining = budget.remaining.saturating_sub(bytes.len() as u64);
     let mime = match name
         .rsplit('.')

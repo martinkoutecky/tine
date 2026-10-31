@@ -357,8 +357,55 @@ pub(crate) fn reindex(app: &tauri::AppHandle, label: &str, slot: &Arc<crate::sta
     });
 }
 
-/// Pages one publication changed: `(name, kind, removed)`.
-pub(crate) type Changed = Vec<(String, PageKind, bool)>;
+/// Pages one publication changed: `(name, kind, removed)`. Own publication
+/// name keys have no physical kind; resolve ordinary pages then journals.
+pub(crate) type Changed = Vec<(String, Option<PageKind>, bool)>;
+
+fn changed_page(
+    store: &tine_store::Store,
+    name: &str,
+    kind: Option<PageKind>,
+) -> Result<Option<tine_store::PageRead>, tine_store::StoreError> {
+    match kind {
+        Some(kind) => store.page_named(name, kind),
+        None => match store.page_named(name, PageKind::Page)? {
+            Some(read) => Ok(Some(read)),
+            None => store.page_named(name, PageKind::Journal),
+        },
+    }
+}
+
+fn updates_for_change(store: &tine_store::Store, changed: Changed) -> Vec<Update> {
+    let mut entries = Vec::new();
+    let mut ids = Vec::new();
+    for (name, kind, removed) in changed {
+        match (!removed)
+            .then(|| changed_page(store, &name, kind))
+            .transpose()
+        {
+            Ok(Some(Some(read))) => {
+                // A former title can now resolve through an alias to the renamed
+                // page. Retire that former index identity before upserting.
+                if tine_core::refs::page_key(&name) != tine_core::refs::page_key(&read.doc.name) {
+                    ids.push(tine_core::refs::page_key(&name));
+                }
+                entries.push(entry_for_page(&read.doc));
+            }
+            Ok(_) => ids.push(tine_core::refs::page_key(&name)),
+            Err(error) => {
+                crate::debug::diag_private("spotlight-page-read-failed", &format!("{error:?}"))
+            }
+        }
+    }
+    let mut updates = Vec::new();
+    if !ids.is_empty() {
+        updates.push(Update::Delete { ids });
+    }
+    if !entries.is_empty() {
+        updates.push(Update::Upsert { entries });
+    }
+    updates
+}
 
 /// Bring the changed pages' items up to date (watcher.rs `dispatch`).
 pub(crate) fn observe(
@@ -373,31 +420,7 @@ pub(crate) fn observe(
     let source = slot.clone();
     index(app).observe(
         &binding_of(slot),
-        Box::new(move || {
-            let mut entries = Vec::new();
-            let mut ids = Vec::new();
-            for (name, kind, removed) in changed {
-                match (!removed)
-                    .then(|| source.store.page_named(&name, kind))
-                    .transpose()
-                {
-                    Ok(Some(Some(read))) => entries.push(entry_for_page(&read.doc)),
-                    Ok(_) => ids.push(tine_core::refs::page_key(&name)),
-                    Err(error) => crate::debug::diag_private(
-                        "spotlight-page-read-failed",
-                        &format!("{error:?}"),
-                    ),
-                }
-            }
-            let mut updates = Vec::new();
-            if !ids.is_empty() {
-                updates.push(Update::Delete { ids });
-            }
-            if !entries.is_empty() {
-                updates.push(Update::Upsert { entries });
-            }
-            updates
-        }),
+        Box::new(move || updates_for_change(&source.store, changed)),
     );
 }
 
@@ -509,6 +532,46 @@ mod tests {
 
     /// A watcher update must produce the same item as the warm reindex did,
     /// or an edit would flip a page's excerpt between two spellings.
+    #[test]
+    fn own_name_keys_update_pages_and_journals_and_retire_old_titles() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        std::fs::create_dir_all(root.path().join("journals")).unwrap();
+        std::fs::write(
+            root.path().join("pages/Source.md"),
+            "title:: Renamed\nalias:: Former\n\n- updated excerpt\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("journals/2026_10_22.md"),
+            "- journal excerpt\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let updates = updates_for_change(
+            &store,
+            vec![
+                ("former".into(), None, false),
+                ("oct 22nd, 2026".into(), None, false),
+                ("removed".into(), None, false),
+            ],
+        );
+        let value = serde_json::to_value(updates).unwrap();
+        assert_eq!(value[0]["ids"], serde_json::json!(["former", "removed"]));
+        let entries = value[1]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .any(|entry| entry["title"] == "Renamed" && entry["excerpt"] == "updated excerpt"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry["excerpt"] == "journal excerpt"));
+        store.close();
+    }
+
     #[test]
     fn a_loaded_page_yields_the_same_entry_as_the_corpus() {
         let markdown = "- \n- TODO First [[real]] line\n  id:: 6512b1a4-0000-4000-8000-000000000001\n- second\n";

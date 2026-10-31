@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- PDF and print exports keep images in nested asset folders distinct, including images with the same filename.
+- iPhone Spotlight search updates page titles and excerpts after edits made in Tine.
+- Editor parsing uses Logseq's whitespace rules consistently for planning dates and source offsets, including leading BOM and NEL characters.
+- Formula cells show an error when generated text exceeds 262,144 characters, keeping repeated concatenation and list joins bounded.
+
+### Changed
+
+- Block embeds are back to one bullet, as in 0.8 (#417, #748). In 0.9.0-beta.1 a block embed showed two bullets, one for the block holding `{{embed ((…))}}` and one for the embedded block. Now the embedded block's bullet sits where the embed does, and dragging it, **Tab**/**Shift+Tab**, **Move block up/down**, selecting it and its menu act on the block holding the embed on that page; its text and children are still the source's. Moving it up or down therefore no longer moves the source block on its own page or shows the "moved in" notice (GH #641); page embeds, Linked References and query results keep that behaviour. Folding the embedded block is still remembered per page; folding a block further inside the embed now folds that source block on its own page and in every embed of it, as in Logseq. A block with its own text besides the embed keeps its own bullet.
 ### Added
 
 - **Zoom in on block** and **Zoom out one level** commands (#799). Both are in the command palette and in Settings → Keyboard shortcuts, and start unbound so you choose the keys (OG's own keys are Tine's Back / Forward). Zoom in acts on the selected block or the block you are editing and keeps the caret in it; Zoom out steps from a zoomed block to its parent, then to the page, and does nothing on the page itself, so it can be pressed repeatedly. Each works in the pane you are in, including a split pane.

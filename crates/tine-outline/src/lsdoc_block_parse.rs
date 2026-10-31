@@ -10,6 +10,35 @@
 use lsdoc::ast::{Block, Inline, ListItem, Projection, Span};
 
 const MAX_PARSED_TREE_DEPTH: usize = 1024;
+
+/// OG `frontend/format/block.cljs::parse-title-and-body` re-bullets after
+/// `clojure.string/triml` → Closure `trimLeft` (`/^[\s\xa0]+/`). Match that
+/// ECMAScript whitespace set: BOM is removed, NEL is content. Shared by parsing
+/// and native source-offset rebasing; TS uses `String.trimStart()`.
+pub fn trim_block_start(raw: &str) -> &str {
+    raw.trim_start_matches(|c| {
+        matches!(c,
+            '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' |
+            '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
+            '\u{205f}' | '\u{3000}' | '\u{feff}'
+        )
+    })
+}
+
+#[cfg(test)]
+mod trim_tests {
+    use super::trim_block_start;
+
+    #[test]
+    fn og_editor_trim_uses_ecmascript_whitespace() {
+        assert_eq!(trim_block_start("\u{0085}Title"), "\u{0085}Title");
+        assert_eq!(trim_block_start("\u{feff}Title"), "Title");
+        assert_eq!(
+            trim_block_start(" \t\r\n\u{a0}\u{2028}\u{2029}Title"),
+            "Title"
+        );
+    }
+}
 /// Source-side ceiling on a line's quote staircase for free-text doors; the
 /// same 128-level ceiling the page admission applies (`PARSE_INPUT_MAX_DEPTH`).
 #[allow(dead_code)] // each crate that includes this file uses a subset
@@ -390,7 +419,7 @@ fn prepare_markdown(trimmed: &str) -> Preparation {
 }
 
 fn prepare(raw: &str, is_org: bool) -> Preparation {
-    let trimmed = raw.trim_start();
+    let trimmed = trim_block_start(raw);
     if is_org {
         Preparation::Plain(format!("* {trimmed}"))
     } else {
@@ -530,7 +559,7 @@ fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
     } else {
         // Fail closed: an unanticipated parser shape may retain lsdoc's original
         // classification, but transformed bytes must never leak into the AST.
-        bounded_blocks(lsdoc::parse(&format!("- {}", raw.trim_start()), "md"))
+        bounded_blocks(lsdoc::parse(&format!("- {}", trim_block_start(raw)), "md"))
     }
 }
 
@@ -559,7 +588,7 @@ fn parse_projection_inner(raw: &str, is_org: bool) -> Projection {
         bounded_projection(projection)
     } else {
         bounded_projection(lsdoc::parse_format(
-            &format!("- {}", raw.trim_start()),
+            &format!("- {}", trim_block_start(raw)),
             "md",
         ))
     }

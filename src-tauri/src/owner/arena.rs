@@ -12,14 +12,14 @@ use tine_core::model::{BlockDto, Format, PageDto};
 use tine_core::outline_kernel::{Block, Change, Format as OutlineFormat, Key, OutlinePage};
 
 /// A page in arena form, with each key's path in the page read it came from.
-pub(crate) struct Arena {
+pub(crate) struct Arena<'a> {
     pub(crate) page: OutlinePage,
     pub(crate) paths: HashMap<Key, Vec<usize>>,
-    originals: HashMap<Key, BlockDto>,
+    originals: HashMap<Key, &'a BlockDto>,
 }
 
-impl Arena {
-    pub(crate) fn of(doc: &PageDto) -> Self {
+impl<'a> Arena<'a> {
+    pub(crate) fn of(doc: &'a PageDto) -> Self {
         let mut arena = Arena {
             page: OutlinePage {
                 name: doc.name.clone(),
@@ -42,7 +42,7 @@ impl Arena {
         arena
     }
 
-    fn add(&mut self, blocks: &[BlockDto], path: &mut Vec<usize>) -> Vec<Key> {
+    fn add(&mut self, blocks: &'a [BlockDto], path: &mut Vec<usize>) -> Vec<Key> {
         let mut keys = Vec::with_capacity(blocks.len());
         for (index, block) in blocks.iter().enumerate() {
             path.push(index);
@@ -56,13 +56,7 @@ impl Arena {
                     children,
                 },
             );
-            self.originals.insert(
-                key.clone(),
-                BlockDto {
-                    children: Vec::new(),
-                    ..block.clone()
-                },
-            );
+            self.originals.insert(key.clone(), block);
             keys.push(key);
             path.pop();
         }
@@ -94,13 +88,7 @@ impl Arena {
         let roots = self.page.roots.clone();
         let blocks = self.build(&roots, &mut path, &mut paths);
         let changed = keys.iter().filter_map(|k| paths.get(k).cloned()).collect();
-        (
-            PageDto {
-                blocks,
-                ..doc.clone()
-            },
-            changed,
-        )
+        (page_with_blocks(doc, blocks), changed)
     }
 
     fn build(
@@ -117,12 +105,78 @@ impl Arena {
                 paths.insert(key.clone(), path.clone());
                 let children = self.build(&block.children, path, paths);
                 path.pop();
-                let mut dto = self.originals.get(key).cloned().unwrap_or_default();
+                let mut dto = self
+                    .originals
+                    .get(key)
+                    .map(|original| block_metadata(original))
+                    .unwrap_or_default();
                 dto.raw = block.raw.clone();
                 dto.children = children;
                 Some(dto)
             })
             .collect()
+    }
+}
+
+/// Copy only one block's metadata; descendants and old raw are deliberately
+/// omitted. Exhaustive destructuring makes new DTO fields a compiler decision.
+fn block_metadata(block: &BlockDto) -> BlockDto {
+    let BlockDto {
+        id,
+        has_id,
+        raw: _,
+        collapsed,
+        children: _,
+        breadcrumb,
+        page_property,
+        marker,
+        priority,
+        heading_level,
+        scheduled,
+        deadline,
+        tags,
+        properties,
+    } = block;
+    BlockDto {
+        id: id.clone(),
+        has_id: *has_id,
+        raw: String::new(),
+        collapsed: *collapsed,
+        children: Vec::new(),
+        breadcrumb: breadcrumb.clone(),
+        page_property: *page_property,
+        marker: marker.clone(),
+        priority: priority.clone(),
+        heading_level: *heading_level,
+        scheduled: scheduled.clone(),
+        deadline: deadline.clone(),
+        tags: tags.clone(),
+        properties: properties.clone(),
+    }
+}
+
+fn page_with_blocks(doc: &PageDto, blocks: Vec<BlockDto>) -> PageDto {
+    let PageDto {
+        name,
+        kind,
+        title,
+        pre_block,
+        blocks: _,
+        rev,
+        format,
+        read_only,
+        guide,
+    } = doc;
+    PageDto {
+        name: name.clone(),
+        kind: *kind,
+        title: title.clone(),
+        pre_block: pre_block.clone(),
+        blocks,
+        rev: rev.clone(),
+        format: *format,
+        read_only: *read_only,
+        guide: *guide,
     }
 }
 
@@ -136,6 +190,52 @@ mod tests {
             children,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn deep_arena_borrows_originals_and_preserves_all_metadata() {
+        let mut tree = Vec::new();
+        for depth in 0..64 {
+            let mut node = block(&format!("node {depth}"), tree);
+            node.id = format!("id-{depth}");
+            node.has_id = Some(true);
+            node.marker = Some("TODO".into());
+            node.tags = vec!["tag".into()];
+            node.properties = vec![("key".into(), "value".into())];
+            tree = vec![node];
+        }
+        let doc = PageDto {
+            name: "deep".into(),
+            kind: tine_core::model::PageKind::Page,
+            title: "Deep title".into(),
+            blocks: tree,
+            pre_block: Some("alias:: deeper".into()),
+            rev: Some("rev".into()),
+            format: Format::Md,
+            read_only: false,
+            guide: false,
+        };
+        let arena = Arena::of(&doc);
+        assert_eq!(arena.originals.len(), 64);
+        assert!(std::ptr::eq(
+            *arena.originals.get("b0").unwrap(),
+            &doc.blocks[0]
+        ));
+        let (rebuilt, _) = arena.apply(
+            &doc,
+            &Change {
+                pages: vec![],
+                focus: None,
+                notices: vec![],
+                keys_used: 0,
+                transfers: vec![],
+            },
+            &[],
+        );
+        assert_eq!(
+            serde_json::to_value(rebuilt).unwrap(),
+            serde_json::to_value(doc).unwrap()
+        );
     }
 
     #[test]

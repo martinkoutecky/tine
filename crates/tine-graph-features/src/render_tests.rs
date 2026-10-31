@@ -298,6 +298,60 @@ mod tests {
     }
 
     #[test]
+    fn print_nested_assets_keep_their_full_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("paper/scan.png", b"paper".as_slice()),
+            ("other/scan.png", b"other".as_slice()),
+            ("scan.png", b"root".as_slice()),
+            ("paper/only.png", b"nested only".as_slice()),
+            ("paper/space name.png", b"space".as_slice()),
+        ] {
+            let path = dir.path().join("assets").join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let whole = store.whole_graph().unwrap();
+        let corpus = whole.corpus();
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
+        let refs = no_refs();
+        let budget = RefCell::new(PrintAssetBudget::standard());
+        let ctx = Ctx {
+            refs: &refs,
+            reverse_refs: None,
+            graph: Some(&graph),
+            slugs: None,
+            inline_assets: true,
+            print_asset_budget: Some(&budget),
+            query_cache: None,
+            pages: None,
+            current_page: None,
+        };
+        for (src, expected) in [
+            ("../assets/paper/scan.png", b"paper".as_slice()),
+            ("assets/other/scan.png", b"other".as_slice()),
+            ("../assets/paper/only.png", b"nested only".as_slice()),
+            ("../assets/paper/space%20name.png", b"space".as_slice()),
+        ] {
+            assert_eq!(
+                inline_asset_uri(&ctx, src),
+                Some(format!("data:image/png;base64,{}", base64_encode(expected))),
+                "{src}"
+            );
+        }
+        for src in [
+            "../assets/../scan.png",
+            "../elsewhere/scan.png",
+            "https://example.com/assets/scan.png",
+            "data:image/png;base64,eA==",
+        ] {
+            assert_eq!(inline_asset_uri(&ctx, src), None, "{src}");
+        }
+        store.close();
+    }
+
+    #[test]
     fn print_asset_inlining_enforces_per_file_and_shared_export_budgets() {
         let dir = std::env::temp_dir().join(format!("tine-print-budget-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

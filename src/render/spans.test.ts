@@ -17,6 +17,12 @@ function decodeSm(attrs: { "data-sm"?: string } | undefined): [number, number, n
 }
 
 describe("span offset helpers", () => {
+  it("uses OG's ECMAScript trim set when rebasing NEL and BOM source bytes", () => {
+    expect("\u0085Title".trimStart()).toBe("\u0085Title");
+    expect("\ufeffTitle".trimStart()).toBe("Title");
+    expect(rebulletedSourceByteToRawByte("\u0085Title", 2)).toBe(0);
+    expect(rebulletedSourceByteToRawByte("\ufeffTitle", 2)).toBe(3);
+  });
   it("turns symmetric inline literal delimiters into an exact body span", () => {
     expect(literalSpanAttrs("code", [10, 16])).toEqual({ "data-so": "11", "data-se": "15" });
     expect(literalSpanAttrs("文", [4, 11])).toEqual({ "data-so": "6", "data-se": "9" });
