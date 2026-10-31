@@ -5,7 +5,10 @@ import { Rich } from "../i18n/Rich";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 export { ClozeMacro, TweetMacro, VideoMacro, YoutubeTimestamp, ZoteroMacro, youtubeTimestampMacroFor } from "./MediaMacros";
 import { TableWrap } from "./TableWrap";
-import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { reservedGroupHeight } from "../reservedGroupHeight";
+import { preserveAboveViewport } from "../scrollContainer";
+import { SurfaceContext } from "./Block";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
@@ -720,6 +723,27 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
   const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
   let queryEl: HTMLDivElement | undefined;
+  // The query itself remounts before parsing/execution can produce group shells.
+  // Keep its complete measured box through that asynchronous gap as well (#810).
+  const hostSurface = useContext(SurfaceContext);
+  let hasAnswer = false;
+  createComputed(() => { hasAnswer = !!displayed(); });
+  const reservedQuery = reservedGroupHeight(() => props.blockId === undefined ? undefined
+    : JSON.stringify(["query-macro", hostSurface, props.blockId, props.body]), () => queryEl, () => hasAnswer);
+  const [answerShell, setAnswerShell] = createSignal(false);
+  let queryAlive = true;
+  onCleanup(() => { queryAlive = false; });
+  createEffect(() => {
+    if (!displayed()) setAnswerShell(false);
+    // The keyed group shells restore their own spacers in onMount. Keep the
+    // enclosing reserve until that commit finishes; a transient short box can
+    // otherwise clamp scrollTop at the bottom even if restored in the same frame.
+    else queueMicrotask(() => {
+      if (!queryAlive) return;
+      if (queryEl) preserveAboveViewport(queryEl, () => setAnswerShell(true), undefined, true);
+      else setAnswerShell(true);
+    });
+  });
   const closeDisplay = () => {
     setEditRequest(null);
     queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
@@ -908,6 +932,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   return (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>

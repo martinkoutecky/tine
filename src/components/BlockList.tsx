@@ -19,6 +19,7 @@ import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from ".
 import { Block, CollapseSurfaceContext, SurfaceContext } from "./Block";
 import { elementFromPointIn, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
 import { createOutlineWindowGeometry, createOutlineWindowModel } from "./outlineWindowModel";
+import { batchViewportChanges, preserveAboveViewport, cachedScrollContainer } from "../scrollContainer";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -160,16 +161,15 @@ function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
   let container!: HTMLDivElement;
   const [width, setWidth] = createSignal(900);
   const [font, setFont] = createSignal("16px sans-serif");
-  const callbacks = new WeakMap<Element, (near: boolean) => void>();
-  // Created on first use from the list's own window: an IntersectionObserver's
-  // implicit root is its realm's viewport (OG-MULTIWINDOW P1).
+  const callbacks = new WeakMap<Element, (entry: IntersectionObserverEntry) => void>();
+  // Created after insertion from the list's own realm and vertical scroller.
   let observer: IntersectionObserver | null | undefined;
   onCleanup(() => observer?.disconnect());
-  const observe = (host: HTMLElement, callback: (near: boolean) => void) => {
+  const observe = (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => {
     if (observer === undefined) {
-      observer = newIntersectionObserver(host, (entries) => {
-        for (const entry of entries) callbacks.get(entry.target)?.(entry.isIntersecting);
-      }, { rootMargin: "600px 0px" });
+      observer = newIntersectionObserver(host, (entries) => batchViewportChanges(() => {
+        for (const entry of entries) callbacks.get(entry.target)?.(entry);
+      }), { root: cachedScrollContainer(host), rootMargin: "600px 0px" });
     }
     callbacks.set(host, callback); observer?.observe(host);
     return () => { observer?.unobserve(host); callbacks.delete(host); };
@@ -186,7 +186,7 @@ function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
   }</For></div>;
 }
 
-function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (near: boolean) => void) => () => void }): JSX.Element {
+function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => () => void }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
   const folds = () => {
@@ -205,14 +205,14 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
     return !!id && model().members.has(id);
   };
   const mounted = () => near() || forced() || active() || printingOutline();
-  const remember = () => {
+  const remember = (measuredHeight?: number, measuredWidth?: number) => {
     if (!host?.isConnected || !untrack(mounted)) return;
-    const h = host.getBoundingClientRect().height;
+    const h = measuredHeight ?? host.getBoundingClientRect().height;
     if (h <= 0) return;
     setHeight(h);
     const key = cacheKey();
     heights.delete(key);
-    heights.set(key, { width: host.clientWidth, structure: untrack(() => model().structure), version: untrack(() => geometry().version()), height: h });
+    heights.set(key, { width: measuredWidth ?? host.clientWidth, structure: untrack(() => model().structure), version: untrack(() => geometry().version()), height: h });
     if (heights.size > 512) heights.delete(heights.keys().next().value!);
   };
   createEffect(() => {
@@ -233,15 +233,17 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
   });
   onMount(() => {
     if (typeof IntersectionObserver === "undefined") return;
-    const stopObserving = props.observe(host, (isNear) => {
-      if (isNear) {
-        setNear(true);
-        setForced(false);
-      } else if (!printingOutline()) {
-        remember();
-        setNear(false);
-        // A reveal stays mounted until it has actually scrolled into view.
-      }
+    const stopObserving = props.observe(host, (entry) => {
+      preserveAboveViewport(host, () => {
+        if (entry.isIntersecting) {
+          setNear(true);
+          setForced(false);
+        } else if (!printingOutline()) {
+          remember(entry.boundingClientRect?.height, entry.boundingClientRect?.width);
+          setNear(false);
+          // A reveal stays mounted until it has actually scrolled into view.
+        }
+      }, undefined, false, entry, 600);
     });
     // A fast scroll + immediate pointer action can precede the next IO callback.
     // Mount before the shared document-level selection/drop hit test executes.
@@ -257,8 +259,9 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
     };
     host.addEventListener("mousemove", warm, true);
     host.addEventListener("mousedown", press, true);
-    const resize = newResizeObserver(host, () => {
-      if (untrack(mounted)) remember();
+    const resize = newResizeObserver(host, entries => {
+      const size = entries[0]?.borderBoxSize?.[0];
+      if (untrack(mounted)) remember(size?.blockSize, size?.inlineSize);
       else {
         const cached = heights.get(cacheKey());
         if (cached && cached.width !== host.clientWidth) { setHeight(0); }

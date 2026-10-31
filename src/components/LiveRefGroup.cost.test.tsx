@@ -35,7 +35,8 @@ describe("I-25 result groups defer membership work until visible", () => {
     const read = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
     const root = document.createElement("div");
     document.body.appendChild(root);
-    const dispose = render(() => <LiveRefGroup page="Source" kind="page" blocks={blocks()} surface={surface} />, root);
+    const dispose = render(() => <LiveRefGroup page="Source" kind="page" blocks={blocks()} surface={surface}
+      heightKey="result-owner" hostBlockId="host" />, root);
     try {
       expect(observed.size).toBe(1);
       expect(idReads, "I-25: an offscreen LiveRefGroup must not build row maps, root sets or resources").toBe(0);

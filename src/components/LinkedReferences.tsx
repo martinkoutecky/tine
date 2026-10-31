@@ -553,6 +553,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
                     data-inpage-find-surface={`linked:${props.name}:${group().kind}:${group().page}`}
                   >
                     <LiveRefGroup
+                      heightKey={`page-refs:${props.name}`}
                       page={group().page}
                       kind={group().kind}
                       blocks={group().blocks}

@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scrolling upward through a long page now keeps the reading position when unseen outline windows or block bodies replace estimated spacers, including pages with collapsed embeds. Prefetch margins now use each pane's actual scroller, and remounted query and reference groups reserve their measured height (#810).
 - In the experimental CodeMirror editor, clicking into the text of a block that also holds a code block with long lines no longer makes the block wider than its column (UI-CM6-WIDE-CODE-WIDENS-BLOCK).
 - On Linux, middle-clicking a link while editing another block now only opens the link. The middle-click selection was also pasted at the caret of the block being edited.
 - A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).

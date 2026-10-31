@@ -1,6 +1,7 @@
 import { listenForOutlinePrint, printingOutline } from "./outlineViewport";
-import { createSignal, onCleanup } from "solid-js";
+import { createSignal, onCleanup, onMount } from "solid-js";
 import { observeNear, renderedBlocks, unobserveNear } from "./lazyObserve";
+import { preserveAboveViewport } from "./scrollContainer";
 
 /** One observer registration/cleanup per placeholder. Missing ids render eagerly;
  * supplied ids latch on first intersection and render eagerly on remount. Body
@@ -12,15 +13,31 @@ export function createNearBlockMount(props: { blockId?: string }, latch: "captur
   const blockId = props.blockId;
   const [near, setNear] = createSignal(blockId == null || renderedBlocks.has(blockId));
   let element: Element | undefined;
+  let mounted = false;
   function observe(el: Element) {
+    if (element && element !== el) unobserveNear(element);
     element = el;
-    observeNear(el, () => {
-      const id = latch === "current" ? props.blockId : blockId;
-      if (id != null) renderedBlocks.add(id);
-      setNear(true);
-    });
+    // A placeholder can first appear after mount (for example after printing).
+    // Its ref still precedes insertion, so admit it after this DOM commit.
+    if (mounted) queueMicrotask(() => { if (mounted && element === el) register(el); });
   };
-  onCleanup(() => { if (element) unobserveNear(element); });
+  // JSX refs run before insertion. Resolve the scroller only after this body's
+  // ancestors are attached, just like LiveRefGroup and outline windows (#810).
+  onMount(() => {
+    mounted = true;
+    if (element) register(element);
+  });
+  function register(el: Element) {
+    observeNear(el, (entry) => {
+      // The placeholder itself is replaced; its parent survives the swap.
+      preserveAboveViewport(el.parentElement ?? el, () => {
+        const id = latch === "current" ? props.blockId : blockId;
+        if (id != null) renderedBlocks.add(id);
+        setNear(true);
+      }, undefined, false, entry, 1200);
+    });
+  }
+  onCleanup(() => { mounted = false; if (element) unobserveNear(element); });
   observe.near = () => near() || printingOutline();
   return observe;
 }
