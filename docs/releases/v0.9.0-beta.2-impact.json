@@ -250,6 +250,36 @@
         "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
         "refs": []
       }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it). The 0.1 s fade is kept, but it now runs as an ordinary page animation instead of a compositor opacity animation (an earlier attempt that kept a standing compositing layer did not help on every GPU, so that layer is gone again). Not yet confirmed on the reporter's GPU.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CARRY-REVEAL-FLICKER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-CARRY-REVEAL-FLICKER. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "tests/ui-regressions/catalog.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
     }
   ]
 }
