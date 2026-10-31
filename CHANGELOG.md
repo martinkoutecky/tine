@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.3] - 2026-10-31
+
 ### Added
 
 - Clone a graph from an HTTPS git URL from Welcome or the graph menu, with the same device sign-in as git sync. Tine opens the remote's default branch with its upstream set; automatic commits and sync stay off.
