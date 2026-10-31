@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Where the comment column is not shown (narrow windows, journals, the sidebar, references), a block's comments now appear directly under the block, before its other children, instead of after its whole subtree (#110, UI-MARGIN-INLINE-UNDER-BLOCK). The file keeps them where they were written. A comment in the column also stays beside its passage while the commented block is edited (UI-MARGIN-POS-EDIT-JUMP).
+- Block embeds in published read-only apps now show their source block's children and grandchildren. Collapsed sources can be expanded while viewing the export.
 - A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).
 - Typing DONE over a bare DOING task with a LOGBOOK now closes its clock. Marker commands also recognize the bare task before its hidden history, keeping one marker and the existing clocks (#741).
 - On Linux, middle-clicking a link while editing another block now only opens the link. The middle-click selection was also pasted at the caret of the block being edited.
