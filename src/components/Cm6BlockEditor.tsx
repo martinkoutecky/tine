@@ -1,4 +1,4 @@
-// Experimental editor. No CM syntax parser is configured: lsdoc supplies all spans.
+// Experimental editor. lsdoc owns structural spans; highlight.js supplies code tokens.
 import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
@@ -8,6 +8,7 @@ import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { cm6CaretReveal } from "../editor/cm6CaretReveal";
 import { cm6EmptyCaret } from "../editor/cm6EmptyCaret";
+import { cm6CodeHighlight, refreshCodeHighlight } from "../editor/cm6CodeHighlight";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
@@ -231,6 +232,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         if (transactions.some(tr => tr.isUserEvent("select"))) enterBody();
       },
       state: EditorState.create({ doc: shown(), extensions: [
+        cm6CodeHighlight(state => {
+          if (isCalc()) return [];
+          const projected = code();
+          if (projected) return [{ from: 0, to: state.doc.length, lang: projected.lang }];
+          return codeFences(state.doc.toString(), format).filter(f => f.lang !== "calc" && f.openEnd < f.closeStart)
+            .map(f => ({ from: f.openEnd, to: Math.min(f.closeStart, state.doc.length), lang: f.kind === "example" ? "" : f.lang }));
+        }),
         decorations, wrapping.of(!isCalc() && (!codeEditing() || codeWrapping()) ? EditorView.lineWrapping : []),
         editability.of([EditorState.readOnly.of(!current()), EditorView.editable.of(current())]), completion.inputSelection, typing.filter,
         spellcheck.of(EditorView.contentAttributes.of({ spellcheck: String(spellcheckEnabled()) })),
@@ -426,6 +434,11 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   createEffect(() => {
     if (parserReady()) untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
+  });
+  const highlightContext = createMemo(() => JSON.stringify([parserReady(), isCalc(), code()?.lang]));
+  createEffect(() => {
+    highlightContext();
+    untrack(() => view?.dispatch({ effects: refreshCodeHighlight.of(null) }));
   });
   createEffect(() => {
     headingLevel();
