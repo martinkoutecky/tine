@@ -168,9 +168,10 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh810-embed-scroll.mjs": {
-      "contracts":[{"class":"core-operation","userOutcome":"On a long page with several expanded block embeds, scrolling down and back up with the wheel does not move the blocks in view: no visible block jumps by a large amount when an outline window holding an embed scrolls back into view (GH #810).","blocking":true}],
+      "contracts":[{"class":"core-operation","userOutcome":"On a long page, scrolling past expanded embeds or query results and upward through unseen windows keeps the reading position. The collapsed-embed variant also preserves it. Remounted query/reference groups retain measured geometry, and pane scrollers admit lazy content before visibility (GH #810).","blocking":true}],
       "acceptableVariations":["Small settling shifts of a few pixels while rows are first measured and the exact frame timing may vary; the jump measured is a visible block moving by 40 px or more between consecutive frames."],
-      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 (Chromium scroll anchoring); estimates for outline windows or embeds never seen before."],
+      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 or real mobile devices."],
+      "variants":["GH810_FRESH_UP=1 GH810_MULTILINE=1 GH810_CHILDREN=40: jump to the bottom without measuring intermediate windows, then scroll upward; compare viewport displacement after subtracting explicitly applied scroll inputs (8px tolerance).","GH810_FRESH_UP=1 GH810_COLLAPSED=1: same unseen-window journey with collapsed embeds.","GH810_GEOMETRY=1 (dev server only): native remount geometry of reference/query rows and complete query shells, plus implicit/explicit root admission 500px before visibility in main/split/sidebar-shaped scrollers at narrow and desktop widths.","GH810_SURFACE=query: query result groups in the long outline instead of embeds."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {

@@ -1,4 +1,7 @@
-import { For, Show, createEffect, createMemo, createSignal, onMount, onCleanup, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onMount, onCleanup, untrack, useContext, type JSX } from "solid-js";
+import { SurfaceContext } from "./Block";
+import { reservedGroupHeight } from "../reservedGroupHeight";
+import { preserveAboveViewport } from "../scrollContainer";
 import type { RefGroup, PageKind } from "../types";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
@@ -77,15 +80,22 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
 export function QueryGroup(props: QueryGroupProps): JSX.Element {
   const [near, setNear] = createSignal(false);
   let element: HTMLDivElement | undefined;
+  const surface = useContext(SurfaceContext);
+  const reserved = reservedGroupHeight(() => {
+    const g = props.group();
+    return !g || !props.hostBlockId ? undefined : JSON.stringify([
+      "query-group", surface, props.hostBlockId, g.kind, g.path ?? g.page, g.blocks.length, !!props.flat,
+    ]);
+  }, () => element, near);
   onMount(() => {
     if (!element) return;
     const node = element;
-    observeNear(node, () => setNear(true));
+    observeNear(node, entry => preserveAboveViewport(node, () => setNear(true), undefined, false, entry, 1200));
     onCleanup(() => unobserveNear(node));
   });
   return (
     <div ref={element} class="query-group" classList={{ "query-group-flat": props.flat }}
-      style={!near() ? { "min-height": `${(1 + (props.group()?.blocks.length ?? 0)) * 1.9}em` } : undefined}>
+      style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${(1 + (props.group()?.blocks.length ?? 0)) * 1.9}em` } : undefined}>
       <Show when={near()}><MountedQueryGroup {...props} /></Show>
     </div>
   );
