@@ -8,6 +8,17 @@ replace that file between the final comparison and rename; mandatory cross-proce
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
+On Android shared storage a rename over a page makes MediaProvider's FUSE keep
+the replaced file's mtime on the new one, so every later version keeps the
+first one's and a sync client's rescan can miss a same-size edit (GH #811, run
+41181752203: 0 of 4 same-size saves moved it). On Android,
+`atomic_file.rs#rename_replace` therefore sets the destination's mtime back to
+the source's after the rename (`utimensat`, as rename(2) keeps it). It is best
+effort: the rename has landed, so a failure leaves MediaProvider's mtime and
+reports nothing. Unit cost (I-25), Android only, per replacing rename: one
+`lstat` of the source and one `utimensat` (one FUSE SETATTR); 0 bytes, 0 files,
+0 transport bytes, for 1 and 60 blocks alike (counted from the code).
+
 A failed config read opens the graph read-only: existing files remain readable,
 page DTOs carry read-only, and transactions reject every mutation before disk
 steps. Repair `config.edn` externally and refresh/reopen to resume writes using
