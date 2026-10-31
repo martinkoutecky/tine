@@ -13,6 +13,7 @@ import { setToasts, toasts } from "../toasts";
 import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";
 import * as mediaEditorSettings from "../mediaEditorSettings";
+import { SheetCellContext } from "../sheet/context";
 
 beforeAll(async () => {
   await initParser();
@@ -74,6 +75,172 @@ function filePasteEvent(files: File[], text = ""): Event {
 async function settle() {
   for (let i = 0; i < 6; i++) await tick();
 }
+
+function uriPasteEvent(uri: string, text = "", html = "", extraTypes: string[] = []): Event {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: {
+    getData: (type: string) => ({ "text/uri-list": uri, "text/plain": text, "text/html": html })[type] ?? "",
+    items: [],
+    types: ["text/uri-list", ...extraTypes],
+  } });
+  return event;
+}
+
+describe("GH #813 web URI paste", () => {
+  it.each(["md", "org"] as const)("keeps ordinary HTML link insertion in %s", async (format) => {
+    loadSingle(page("URI", [blk("uri", "before after")], { format }));
+    startEditing("uri", 7);
+    const native = vi.spyOn(backend(), "clipboardFiles").mockRejectedValue(new Error("no files"));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(7, 7);
+      editor.paste(uriPasteEvent("https://tine.page\r\n", "https://tine.page", '<a href="https://tine.page">Tine</a>'));
+      await settle();
+      expect(doc.byId.uri.raw).toBe(format === "md" ? "before [Tine](https://tine.page)after" : "before [[https://tine.page][Tine]]after");
+      expect(native).not.toHaveBeenCalled();
+      expect(toasts().filter((toast) => toast.kind === "error")).toEqual([]);
+    } finally { dispose(); }
+  });
+
+  it("wraps selected text with a web URL instead of importing a file", async () => {
+    loadSingle(page("URI", [blk("uri", "Tine")]));
+    startEditing("uri", 0);
+    const native = vi.spyOn(backend(), "clipboardFiles").mockRejectedValue(new Error("no files"));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(0, 4);
+      editor.paste(uriPasteEvent("https://tine.page", "https://tine.page"));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("[Tine](https://tine.page)");
+      expect(native).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it("inserts uri-list-only web URLs and strips comments and CRLF", async () => {
+    loadSingle(page("URI", [blk("uri", "before after")]));
+    startEditing("uri", 7);
+    const native = vi.spyOn(backend(), "clipboardFiles");
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(7, 7);
+      editor.paste(uriPasteEvent("# source\r\nhttps://tine.page\r\n\r\n"));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("before https://tine.pageafter");
+      expect(native).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it.each(["code", "sheet"])("keeps multiple URI-only web URLs literal in a %s editor", async (surface) => {
+    loadSingle(page("URI", [blk("uri", surface === "code" ? "```text\nkeep\n```" : "keep")]));
+    startEditing("uri", 0);
+    const native = vi.spyOn(backend(), "clipboardFiles");
+    const { root, dispose } = mount(() => <SheetCellContext.Provider value={surface === "sheet" ? { gridId: "grid", row: 0, col: 0 } : null}><Block id="uri" /></SheetCellContext.Provider>);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(0, 4);
+      editor.paste(uriPasteEvent("# copied links\r\nhttps://tine.page\r\nhttps://example.org\r\n"));
+      await settle();
+      const urls = "https://tine.page\nhttps://example.org";
+      expect(doc.byId.uri.raw).toBe(surface === "code" ? "```text\n" + urls + "\n```" : urls);
+      expect(native).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it.each(["empty", "unavailable"])("recovers usable text when a Files sentinel's native read is %s", async (result) => {
+    loadSingle(page("URI", [blk("uri", "before after")]));
+    startEditing("uri", 7);
+    const native = vi.spyOn(backend(), "clipboardFiles");
+    if (result === "empty") native.mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    else native.mockRejectedValue(new Error("no files"));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(7, 7);
+      const event = uriPasteEvent("https://tine.page", "https://tine.page", "", ["Files"]);
+      editor.paste(event);
+      expect(event.defaultPrevented).toBe(true);
+      await settle();
+      expect(doc.byId.uri.raw).toBe("before https://tine.pageafter");
+      expect(native).toHaveBeenCalledOnce();
+      expect(toasts().filter((toast) => toast.kind === "error")).toEqual([]);
+    } finally { dispose(); }
+  });
+
+  it("prefers real native files even when a Files payload also offers a web URL", async () => {
+    loadSingle(page("URI", [blk("uri", "")]));
+    startEditing("uri", 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [{ path: "/tmp/report.pdf", name: "report.pdf", size: 3 }], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("report.pdf");
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      maybeEditorIn(root)!.paste(uriPasteEvent("https://tine.page", "https://tine.page", "", ["Files"]));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("![report.pdf](../assets/report.pdf)");
+    } finally { dispose(); }
+  });
+
+  it("recovers HTML formatting after an empty native read", async () => {
+    loadSingle(page("URI", [blk("uri", "")]));
+    startEditing("uri", 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      maybeEditorIn(root)!.paste(uriPasteEvent("https://tine.page", "Tine", '<a href="https://tine.page">Tine</a>', ["Files"]));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("[Tine](https://tine.page)");
+    } finally { dispose(); }
+  });
+
+  it("does not land delayed text recovery after the user changes the editor", async () => {
+    loadSingle(page("URI", [blk("uri", "keep")]));
+    startEditing("uri", 4);
+    let finishRead!: (value: { files: []; skipped: number; truncated: boolean }) => void;
+    vi.spyOn(backend(), "clipboardFiles").mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.paste(uriPasteEvent("https://tine.page", "https://tine.page", "", ["Files"]));
+      editor.type(" typing");
+      finishRead({ files: [], skipped: 0, truncated: false });
+      await settle();
+      expect(doc.byId.uri.raw).toBe("keep typing");
+    } finally { dispose(); }
+  });
+
+  it.each(["file:///Users/me/report.pdf", "https://tine.page\r\nfile:///tmp/report.pdf", "C:\\Users\\me\\report.pdf"])("keeps local and mixed URI lists on asset import: %s", async (uri) => {
+    loadSingle(page("URI", [blk("uri", "")]));
+    startEditing("uri", 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [{ path: "/tmp/report.pdf", name: "report.pdf", size: 3 }], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("report.pdf");
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const event = uriPasteEvent(uri, uri);
+      maybeEditorIn(root)!.paste(event);
+      expect(event.defaultPrevented).toBe(true);
+      await settle();
+      expect(doc.byId.uri.raw).toBe("![report.pdf](../assets/report.pdf)");
+    } finally { dispose(); }
+  });
+
+  it.each(["local", "gnome", "skipped", "truncated", "file-object"])("does not recover text when there is file evidence: %s", async (evidence) => {
+    loadSingle(page("URI", [blk("uri", "keep")]));
+    startEditing("uri", 4);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: evidence === "skipped" ? 1 : 0, truncated: evidence === "truncated" });
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const event = evidence === "file-object"
+        ? filePasteEvent([{ name: "folder", type: "", size: 0, arrayBuffer: async () => new ArrayBuffer(0) } as File], "https://tine.page")
+        : uriPasteEvent(evidence === "local" ? "file:///tmp/report.pdf" : "https://tine.page", "https://tine.page", "", ["Files", ...(evidence === "gnome" ? ["x-special/gnome-copied-files"] : [])]);
+      maybeEditorIn(root)!.paste(event);
+      expect(event.defaultPrevented).toBe(true);
+      await settle();
+      expect(doc.byId.uri.raw).toBe("keep");
+    } finally { dispose(); }
+  });
+});
 
 describe("asset paste durability", () => {
   it("binds a picked upload to the graph selected before the picker", async () => {

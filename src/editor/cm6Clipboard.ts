@@ -1,3 +1,4 @@
+import { clipboardEventFlavors } from "./clipboardFlavors";
 import type { EditorView } from "@codemirror/view";
 import { guardedCommands } from "./cm6Commands";
 import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
@@ -121,12 +122,18 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (raw) { if (text) literal(v, text); return true; }
     // Claim companion path text synchronously; accept paths only from native ingress.
-    const types = Array.from(e.clipboardData?.types ?? []);
-    const files = Array.from(e.clipboardData?.items ?? []).filter(item => item.kind === "file")
-      .map(item => item.getAsFile()).filter((file): file is File => file !== null);
-    if (files.length || types.some(type => type === "Files" || type === "text/uri-list" || type === "x-special/gnome-copied-files")) {
-      void ctx.assets.pasteClipboardFiles(files); return true;
+    const html = e.clipboardData?.getData("text/html") ?? "";
+    const { eventFiles, ...flavors } = clipboardEventFlavors(e.clipboardData, text);
+    if (flavors.hasFiles) {
+      const before = v.state;
+      void ctx.assets.pasteClipboardFiles(eventFiles, flavors.canFallbackToText ? () => {
+        if (v.state.doc.eq(before.doc) && v.state.selection.eq(before.selection)) pasteText(e, v, flavors.text, html, true);
+      } : undefined);
+      return true;
     }
+    return pasteText(e, v, flavors.text, html, flavors.text !== text);
+  };
+  const pasteText = (e: ClipboardEvent, v: EditorView, text: string, html: string, insertPlain: boolean) => {
     const source = v.state.doc.toString(), s = v.state.selection.main;
     const code = codeFenceOnly(source, ctx.format) !== null;
     const syntaxSensitive = ctx.literal() || ctx.sheet || calcSource(source) !== null || code
@@ -144,7 +151,6 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     if (slot && text !== "" && normalizeClipboardText(text) !== normalizeClipboardText(slot.text)) clearClipboardPayload();
     const grid = structuralSheetPasteNode(text);
     if (grid) { insertOutline(v, [grid], "sheet-outline-paste", true); return true; }
-    const html = e.clipboardData?.getData("text/html") ?? "";
     const structured = syntaxSensitive ? null : structuredHtmlPaste(html, text, ctx.format);
     if (structured) {
       if (structured.inlineText !== null) literal(v, structured.inlineText);
@@ -165,6 +171,8 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     }
     const video = videoPasteMacro(text);
     if (video && s.empty) { literal(v, video); return true; }
+    // URI-only payloads and asynchronous recovery have no browser text default.
+    if (insertPlain && text) { literal(v, text); return true; }
     ctx.assets.pasteImage(e);
     return false;
   };

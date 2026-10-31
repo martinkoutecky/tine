@@ -10,6 +10,7 @@ import { editorIn } from "../tests/editorDriver";
 import { focusedEditorCommandBridge } from "../editorCommandBridge";
 import { installKeybindings } from "../keybindings";
 import * as clipboard from "../clipboard";
+import { backend } from "../backend";
 
 let dispose: (() => void) | undefined;
 beforeEach(() => {
@@ -52,6 +53,22 @@ it.each(["typing", "read-only", "replacement graph"])("retires an async paste-as
   resolve("https://example.org");
   await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
   expect(node("land").raw).toBe(change === "typing" ? "new input" : change === "read-only" ? "original" : "replacement");
+});
+
+it.each([
+  ["a URI-only list", ["text/uri-list"], "", null],
+  ["a Files sentinel with a failed native read", ["Files", "text/plain"], "https://example.org/a", new Error("no files")],
+])("GH #813: pasting a web URL as %s inserts it", async (_label, types, plain, nativeError) => {
+  const { editor } = mount("x");
+  editor.select(1);
+  const native = vi.spyOn(backend(), "clipboardFiles");
+  if (nativeError) native.mockRejectedValue(nativeError);
+  const data: Record<string, string> = { "text/plain": plain, "text/uri-list": "https://example.org/a\r\n" };
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: { types, items: [], getData: (type: string) => data[type] ?? "" } });
+  editor.element.dispatchEvent(event);
+  await vi.waitFor(() => expect(editor.value()).toBe("xhttps://example.org/a"));
+  expect(event.defaultPrevented).toBe(true);
 });
 
 function mount(raw = "visible\nid:: retained") {

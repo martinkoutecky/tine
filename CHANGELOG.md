@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
+- Queries with `query-table:: true` now show their results in published read-only apps. Query exports also keep the table's chosen columns and starting sort.
 - Typing `1. ` inside a code or calculator block now keeps it as literal text instead of removing the fence and turning the block into a numbered list.
 - Typing in large pages and query results avoids rescanning unrelated block text for the compact Today task count, in-page find, query column choices, and sheet table and board fields.
 - `tine export static` explains a zero-page public selection and names `public:: true` and `--all-pages`.
@@ -48,6 +49,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A **Reload window** command, unbound, for reloading the app on purpose (#797).
 - Page menu: **Copy as ▸ → Copy page embed** copies `{{embed [[Page]]}}`, the page counterpart of a block's **Copy block embed** (GH #418).
 - The Guide (Find and revisit → Query text (TQL)) now says you can let an AI assistant write your TQL, with a short prompt to copy: what TQL is, where its reference lives, and what you want to find (#551).
+- Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
 
 ## [0.9.0-beta.3] - 2026-10-31
 

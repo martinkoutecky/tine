@@ -515,6 +515,21 @@ fn close_query_result(
     result
 }
 
+/// Match QueryMacro's parser request. Legacy columns and sort stay in the
+/// block text for the renderer; only query-table affects the parsed reading.
+/// Publication owns baking this exact key, rather than making the reader
+/// guess which differently configured query's answer it can reuse.
+fn query_parse_property(key: &str) -> bool {
+    key.starts_with("tine.") || key == "query-table"
+}
+
+fn legacy_table_property(key: &str) -> bool {
+    matches!(
+        key,
+        "query-properties" | "query-sort-by" | "query-sort-desc"
+    )
+}
+
 fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<Vec<Value>> {
     let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
     let names: HashSet<_> = corpus
@@ -545,7 +560,7 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
                 let properties: Vec<_> = block
                     .properties()
                     .into_iter()
-                    .filter(|(key, _)| key.starts_with("tine."))
+                    .filter(|(key, _)| query_parse_property(key))
                     .collect();
                 let context = ExecutionContext {
                     current_page: Some(page.name.clone()),
@@ -632,7 +647,10 @@ pub(crate) fn snapshot_at(
         };
         let mut raw = format!("{{{{{macro_name} {}}}}}", request.argument.trim());
         for (key, value) in &request.properties {
-            if key.starts_with("tine.") && !key.contains('\n') && !value.contains('\n') {
+            if (query_parse_property(key) || legacy_table_property(key))
+                && !key.contains('\n')
+                && !value.contains('\n')
+            {
                 raw.push_str(&format!("\n  {key}:: {}", value.trim()));
             }
         }
@@ -673,9 +691,14 @@ pub(crate) fn snapshot_at(
         };
         if with_query {
             let view = anchored_view(parsed, parsed.query.anchor);
+            let properties: Vec<_> = request
+                .properties
+                .iter()
+                .filter(|(key, _)| query_parse_property(key))
+                .collect();
             queries.push(
                 json!({ "host": home, "argument": request.argument, "dialect": request.dialect,
-                "properties": request.properties, "parsed": parsed, "context": context,
+                "properties": properties, "parsed": parsed, "context": context,
                 "executed_context": executed_context, "view": view, "result": result }),
             );
         }

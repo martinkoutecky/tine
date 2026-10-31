@@ -134,3 +134,91 @@ fn current_page_template_substitution_is_shared_by_lists_sheets_and_baked_querie
         check("(and (task TODO) <% current page %>)", sheet);
     }
 }
+
+#[test]
+fn published_query_keys_preserve_authored_table_and_tine_views() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("graph");
+    let out = dir.path().join("output");
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(&out).unwrap();
+    let mut host = String::from("public:: true\n");
+    let cases = [
+        ("(task TODO)", "", false),
+        ("(task TODO)", "query-table:: true", true),
+        ("(task TODO)", "query-table:: false", false),
+        ("(task TODO) table", "", true),
+        ("(task TODO) {:table-view? true}", "", true),
+        (
+            "(task TODO)",
+            "query-table:: true\n  tine.view:: list",
+            true,
+        ),
+        (
+            "(task TODO)",
+            "query-table:: true\n  tine.view:: table",
+            true,
+        ),
+        (
+            "(task TODO)",
+            "query-table:: true\n  tine.view:: board\n  tine.group-by:: state",
+            true,
+        ),
+        (
+            "(task TODO)",
+            "query-table:: true\n  tine.view:: search",
+            true,
+        ),
+    ];
+    for (argument, properties, _) in cases {
+        host.push_str(&format!("- {{{{query {argument}}}}}\n  {properties}\n  query-properties:: [:owner :block]\n  query-sort-by:: owner\n  query-sort-desc:: false\n"));
+    }
+    fs::write(root.join("pages/Public.md"), &host).unwrap();
+    fs::write(
+        root.join("pages/Tasks.md"),
+        "public:: true\n- TODO Zebra\n  owner:: Zoe\n- TODO Alpha\n  owner:: Ada\n",
+    )
+    .unwrap();
+    fs::write(root.join("pages/Private.md"), "- TODO secret\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let bundle = vec![("index.html".into(), b"<html><head></head></html>".to_vec())];
+    publish_live(&store, &out, "Views", false, &bundle).unwrap();
+    let snapshot: Value =
+        serde_json::from_slice(&fs::read(out.join("views/app/snapshot.json")).unwrap()).unwrap();
+    let records = snapshot["queries"].as_array().unwrap();
+    assert_eq!(records.len(), cases.len());
+    for (argument, properties, legacy_table) in cases {
+        let expected: Vec<_> = properties
+            .lines()
+            .filter_map(|line| line.trim().split_once(":: "))
+            .collect();
+        let record = records
+            .iter()
+            .find(|record| {
+                record["argument"] == argument && record["properties"] == json!(expected)
+            })
+            .expect("bake precisely the request the macro parser receives");
+        assert_eq!(
+            record["parsed"]["legacy_table"].as_bool().unwrap_or(false),
+            legacy_table
+        );
+        assert_eq!(record["result"]["total"], 2);
+        assert!(!record["result"].to_string().contains("secret"));
+    }
+    let public = snapshot["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Public")
+        .unwrap();
+    assert!(public["blocks"][1]["raw"]
+        .as_str()
+        .unwrap()
+        .contains("query-properties:: [:owner :block]"));
+    assert!(public["blocks"][1]["raw"]
+        .as_str()
+        .unwrap()
+        .contains("query-sort-desc:: false"));
+    store.close();
+}

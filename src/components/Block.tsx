@@ -98,6 +98,7 @@ import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { pushToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
+import { clipboardEventFlavors } from "../editor/clipboardFlavors";
 import { captureBinding, bindingCurrent } from "../binding";
 import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
 import { EditorAutocomplete } from "./EditorAutocomplete";
@@ -2727,22 +2728,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // File managers commonly include path text alongside the real file-list
     // clipboard flavor. Claim the paste synchronously so those paths never land
     // as text; actual paths are accepted only from the native clipboard API.
-    const clipboardItems = Array.from(e.clipboardData?.items ?? []);
-    const eventFiles = clipboardItems
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    const clipboardTypes = Array.from(e.clipboardData?.types ?? []);
-    const hasFileFlavor =
-      eventFiles.length > 0 ||
-      clipboardTypes.some((type) =>
-        type === "Files" || type === "text/uri-list" || type === "x-special/gnome-copied-files"
-      );
-    if (hasFileFlavor) {
+    const { eventFiles, ...flavors } = clipboardEventFlavors(e.clipboardData, text);
+    if (flavors.hasFiles) {
       e.preventDefault();
-      void pasteClipboardFiles(eventFiles);
+      const [value, from, to] = [ref.value, ref.selectionStart, ref.selectionEnd];
+      void pasteClipboardFiles(eventFiles, flavors.canFallbackToText ? () => {
+        if (ref.value === value && ref.selectionStart === from && ref.selectionEnd === to) pasteTextClipboard(e, flavors.text, html, true);
+      } : undefined);
       return;
     }
+    pasteTextClipboard(e, flavors.text, html, flavors.text !== text);
+  };
+
+  const pasteTextClipboard = (e: ClipboardEvent, text: string, html: string, insertPlain = false) => {
     const start = ref.selectionStart;
     const syntaxSensitive = sheetCell || isCalc() || codeShown() !== null || caretInFence(ref.value, start, pageFmt())
       || caretOnOpeningFence(ref.value, start, pageFmt()) || caretInDisplayMath(ref.value, start, pageFmt());
@@ -2839,20 +2837,15 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       queueMicrotask(updateSel);
       return;
     }
-    // Single-line/no text: maybe an image on the OS clipboard. Two paths:
-    //   1) The paste event's OWN image data (a DataTransferItem of kind "file",
-    //      type image/*). Chromium (Windows WebView2) and WKWebView (macOS)
-    //      expose it here and normalize Windows' CF_DIBV5/bitmap formats — the
-    //      ones screenshot tools like PixPin emit (#43) — into a clean PNG far
-    //      more reliably than the Rust arboard plugin does. Read it directly.
-    //   2) Linux WebKitGTK does NOT expose image data in the paste event, so
-    //      fall back to reading the OS clipboard via the Tauri plugin.
-    // The DataTransfer is only valid synchronously, so grab the File now (its
-    // reference stays live for the async arrayBuffer read).
-    // No image File in the event → try the OS clipboard (the Linux path). Show an
-    // immediate "Pasting image…" hint when the clipboard clearly holds one (so
-    // there's no dead 1–2s), then render it instantly from the in-memory bytes
-    // and write to disk in the background.
+    // URI-only payloads and asynchronous recovery have no browser text default.
+    if (insertPlain && text) {
+      e.preventDefault();
+      pasteLiteralText(text);
+      return;
+    }
+    // File/image event items were handled above. WebKitGTK can expose image
+    // bytes without a file flavor, so retain the native image-reader fallback.
+    // Single-line plain text still uses the browser's synchronous paste default.
     assets.pasteImage(e);
   };
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {

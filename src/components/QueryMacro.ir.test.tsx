@@ -39,7 +39,8 @@ import { applyChangeSummary } from "../changeSummary";
 import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { resetQueryTextOpenForTests } from "../navSettings";
 import { startEditing } from "../editorController";
-import { publishedBackend } from "../publishedBackend";
+import { publishedBackend, type PublishedSnapshot } from "../publishedBackend";
+import { queryExportRequest, setQueryExportRequest } from "../ui";
 
 // These component fixtures do not bind a page host. Their source edits update
 // the working set; native coverage exercises actual publication and the epoch
@@ -184,6 +185,79 @@ it("a query in a published export renders its rows without a change subscription
     expect(root.textContent).not.toContain("read-only published export");
   } finally { dispose(); host.registerQuerySubscription = original; }
 });
+
+it("the export dialog receives the query's legacy columns and sort", async () => {
+  load("{{query (task TODO)}}\nquery-table:: true\nquery-properties:: [:owner :block]\nquery-sort-by:: owner\nquery-sort-desc:: false");
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+  setQueryExportRequest(null);
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    const actions = await vi.waitFor(() => {
+      const found = root.querySelector<HTMLDetailsElement>(".qc-actions");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    actions.open = true;
+    actions.dispatchEvent(new Event("toggle"));
+    const button = await vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLButtonElement>(".qc-menu button")].find(button => button.textContent?.includes("Export"));
+      expect(found).toBeDefined();
+      return found!;
+    });
+    button.click();
+    expect(queryExportRequest()?.properties).toEqual([
+      ["query-table", "true"], ["query-properties", "[:owner :block]"],
+      ["query-sort-by", "owner"], ["query-sort-desc", "false"],
+    ]);
+  } finally { dispose(); setQueryExportRequest(null); }
+});
+
+it.each(["", "query-table:: true", "query-table:: true\ntine.view:: list", "tine.view:: table", "tine.view:: board", "tine.view:: search"])(
+  "published query renders its authored view and local table sort (%s)", async property => {
+    const legacy = property === "query-table:: true";
+    const raw = `{{query (task TODO)}}\n${property}\nquery-properties:: [:owner :block]\nquery-sort-by:: owner\nquery-sort-desc:: false`;
+    load(raw, { readOnly: true });
+    const pairs = property.split("\n").filter(Boolean).map(line => line.split(":: ") as [string, string]);
+    const view = pairs.find(([key]) => key === "tine.view")?.[1] as ViewSettings["view"] | undefined;
+    const answer = groups();
+    answer[0].blocks[0].properties = [["owner", "Zoe"]];
+    answer[0].blocks.push({ id: "alpha", raw: "TODO Another row", collapsed: false, children: [], properties: [["owner", "Ada"]] });
+    setDoc("byId", "alpha", node("alpha", "TODO Another row\nowner:: Ada"));
+    const parsed: ParsedQuery = { query: { anchor: "block", filter: { kind: "true" },
+      source: { kind: "og", original: "(task TODO)", og_options: "" } }, view: view ? { view } : {}, legacy_table: property.includes("query-table:: true") };
+    const snapshot: PublishedSnapshot = {
+      schema: 1, name: "Views", exported_at: "", home: "Sheet", pages: [], entries: [],
+      backlinks: {}, block_ref_counts: {}, aliases: [], icons: {},
+      queries: [{ host: "Sheet", argument: "(task TODO)", dialect: "macro_query", properties: pairs,
+        parsed, context: { current_page: "Sheet" }, executed_context: { current_page: "Sheet" },
+        view: parsed.view, result: blockRunResult(answer) }],
+    };
+    const api = publishedBackend(async () => snapshot);
+    vi.spyOn(backend(), "parseQuery").mockImplementation(api.parseQuery);
+    vi.spyOn(backend(), "queryRun").mockImplementation(api.queryRun);
+    const meta = document.createElement("meta"); meta.name = "tine-published"; meta.content = "snapshot.json"; document.head.append(meta);
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("2"));
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      expect(root.textContent).toContain("Another row");
+      expect(root.textContent).not.toContain("This export answers only");
+      expect(root.querySelector(".qc-actions, .qc-edit")).toBeNull();
+      expect(root.querySelector(".query-table") !== null).toBe(legacy);
+      if (view === "table") expect(root.querySelector(".sheet-table")).not.toBeNull();
+      if (view === "board") expect(root.querySelector(".sheet-board")).not.toBeNull();
+      if (view === "search") expect(root.querySelectorAll(".query-search-hit")).toHaveLength(2);
+      if (legacy) {
+        expect([...root.querySelectorAll(".query-table th")].map(th => th.textContent?.replace(/[▲▼]/g, "").trim())).toEqual(["owner", "Content"]);
+        const owners = () => [...root.querySelectorAll(".query-table tbody tr")].map(tr => tr.querySelector("td")?.textContent);
+        expect(owners()).toEqual(["Ada", "Zoe"]);
+        root.querySelector<HTMLElement>(".query-table th")!.click();
+        expect(owners()).toEqual(["Zoe", "Ada"]);
+      }
+      expect(doc.byId.query.raw).toBe(raw);
+    } finally { dispose(); meta.remove(); }
+  },
+);
 
 it.each(["(and)", "(sort-by created-at)"])("restores the empty state after removing the last builder condition (%s)", async (blank) => {
   load("{{query (task TODO)}}");
