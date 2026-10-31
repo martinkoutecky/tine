@@ -67,6 +67,10 @@ export function Rendered(props: {
   // (GH #454).
   refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
+  // A host that owns the click (a sheet cell: select on press, edit on double-click or
+  // through its own caret mapping) shows the body with the block's chips and properties
+  // but starts no edit gesture of its own.
+  inertBody?: boolean;
 }): JSX.Element {
   // In a query result, Scheduled/Deadline resolve the result row again at commit.
   const resultTarget = useContext(ResultWriteTargetContext);
@@ -148,7 +152,7 @@ export function Rendered(props: {
     <Show
       when={!macro()}
       fallback={
-        <div class="block-content macro-host" onMouseDown={onMouseDown}>
+        <div class="block-content macro-host" onMouseDown={props.inertBody ? undefined : onMouseDown}>
           <DeferredStandaloneMacro blockId={props.id} raw={node().raw}>
             <Switch>
               <Match when={macro()!.kind === "query"}>
@@ -172,7 +176,7 @@ export function Rendered(props: {
       data-rendered-block={annotation() ? undefined : props.id}
       classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onMouseDown={onMouseDown}
+      onMouseDown={props.inertBody ? undefined : onMouseDown}
     >
       {props.refCountBadge}
       {/* One gate for the whole leading chip group: every chip below needs a

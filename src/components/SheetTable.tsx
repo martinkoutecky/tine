@@ -12,6 +12,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, 
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
+import { AstBody } from "../render/body";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
@@ -1120,6 +1121,20 @@ export function resetSheetRowVirtualizationForTests() {
   renderedSheetRows.clear();
 }
 
+/** The row's block as the page draws it: Markdown lists, code, quotes and tables are rendered, not shown
+ *  as source (GH #551). An empty title keeps the em dash `tableRowTitle` gives it. */
+function TitleBody(props: { row: FormulaEvalRow; format: "md" | "org" }): JSX.Element {
+  const placeholder = () => {
+    const title = tableRowTitle(props.row);
+    return title.trim() === "" || title === "—" ? title : null;
+  };
+  return (
+    <Show when={placeholder() === null} fallback={<InlineText text={placeholder() ?? ""} format={props.format} />}>
+      <AstBody raw={rowRaw(props.row)} format={props.format} />
+    </Show>
+  );
+}
+
 function TitleCell(props: {
   query: boolean;
   ownerId: string;
@@ -1215,10 +1230,10 @@ function TitleCell(props: {
               when={props.near}
               fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <Show when={props.query} fallback={<InlineText text={tableRowTitle(props.row)} format={fmt()} />}>
+              <Show when={props.query} fallback={<TitleBody row={props.row} format={fmt()} />}>
                 <QueryResultTask row={props.row} />
                 <button type="button" class="query-result-open" onClick={(event) => openQueryResult(props.row, event)}>
-                  <InlineText text={tableRowTitle(props.row)} format={fmt()} />
+                  <TitleBody row={props.row} format={fmt()} />
                 </button>
               </Show>
             </Show>

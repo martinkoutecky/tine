@@ -3,7 +3,6 @@ import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, childIds, depthOf, formatForBlock, node as docNode } from "../document";
-import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
@@ -37,9 +36,10 @@ import { setColumnWidth } from "../sheet/mutations";
 import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner, startEditing } from "../editorController";
-import { openSheetContextMenu } from "../ui";
+import { openSheetContextMenu, zoomInto } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import { Editor, SurfaceContext } from "./Block";
+import { Rendered, detectMacro } from "./Rendered";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
@@ -789,6 +789,10 @@ function SheetBlock(props: {
     return value ? effectiveHeadingLevel(value, depthOf(props.id)) : null;
   });
   const config = createMemo(() => (facets() ? sheetConfig(facets()!.properties) : null));
+  const macro = createMemo(() => {
+    const n = node();
+    return n ? detectMacro(n.raw, fmt()) : null;
+  });
   const children = () => node()?.children ?? [];
   const editing = () => {
     const cell = props.cell;
@@ -816,23 +820,49 @@ function SheetBlock(props: {
     <Show when={node()}>
       {(n) => (
         <>
-          <div
-            class="sheet-cell-body"
-            ref={bodyRef}
-            onMouseDown={onNestedMouseDown}
-          >
-            <Show
-              when={editing() && props.cell}
-              fallback={<AstBody raw={n().raw} format={fmt()} headingLevel={headingLevel()} />}
-            >
-              {(cell) => (
-                <SheetCellContext.Provider value={cell()}>
-                  <SurfaceContext.Provider value={cellSurfaceKey(cell().gridId, cell().surfaceId)}>
-                    <Editor id={props.id} />
-                  </SurfaceContext.Provider>
-                </SheetCellContext.Provider>
-              )}
+          <div class="sheet-cell-line">
+            <Show when={props.nested}>
+              {/* The page's bullet: a block inside a cell is an ordinary child block (ADR 0031). */}
+              <span
+                class="bullet-container sheet-nested-bullet"
+                onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onClick={(e) => { e.stopPropagation(); zoomInto(props.id); }}
+              >
+                <span class="bullet" />
+              </span>
             </Show>
+            <div
+              class="sheet-cell-body"
+              ref={bodyRef}
+              onMouseDown={onNestedMouseDown}
+            >
+              <Show
+                when={editing() && props.cell}
+                fallback={
+                  // The page's own block body: task marker and checkbox, priority, SCHEDULED/DEADLINE,
+                  // properties, macros. The cell keeps the click (select, then edit), so the body is inert.
+                  <Rendered
+                    id={props.id}
+                    node={n}
+                    fmt={fmt}
+                    facets={() => facets()!}
+                    headingLevel={headingLevel}
+                    macro={macro}
+                    owner={props.cell ? cellOwner(props.cell) : undefined}
+                    inertBody
+                  />
+                }
+              >
+                {(cell) => (
+                  <SheetCellContext.Provider value={cell()}>
+                    <SurfaceContext.Provider value={cellSurfaceKey(cell().gridId, cell().surfaceId)}>
+                      <Editor id={props.id} />
+                    </SurfaceContext.Provider>
+                  </SheetCellContext.Provider>
+                )}
+              </Show>
+            </div>
           </div>
           <Show when={children().length > 0 || config()?.view === "grid" || config()?.view === "table" || config()?.view === "board"}>
             <SheetContainerOverlayContext.Provider value={null}>
@@ -863,7 +893,7 @@ function SheetOutline(props: { ids: readonly string[]; depth: number; cell?: She
     <div class="sheet-nested-lines">
       <For each={props.ids}>
             {(id) => (
-          <div class="sheet-nested-line" style={{ "padding-left": `${Math.max(0, props.depth) * 14}px` }}>
+          <div class="sheet-nested-line">
             <SheetBlock id={id} depth={props.depth + 1} cell={props.cell} nested />
           </div>
         )}
