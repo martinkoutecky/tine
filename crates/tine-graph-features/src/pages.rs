@@ -508,7 +508,16 @@ fn rename_page_after_inventory(
         // S2, DESIGN §3.1, §3.5), planned again until the host applies it:
         // flush first, except an interrupted title completion, which refuses
         // unsaved input as today. `config.edn`'s home page is a post step.
-        multi_rename(store, host, old, first, &plan, unsaved_paths)
+        multi_rename(
+            store,
+            host,
+            old,
+            first,
+            &plan,
+            unsaved_paths,
+            #[cfg(test)]
+            false,
+        )
     })
 }
 
@@ -524,6 +533,7 @@ fn multi_rename(
     mut first: RenamePlan,
     plan: &dyn Fn() -> io::Result<RenamePlan>,
     unsaved_paths: &[String],
+    #[cfg(test)] allow_single: bool,
 ) -> io::Result<Option<RenameReport>> {
     let input = first.input();
     let expected = first.pages(store)?;
@@ -540,7 +550,12 @@ fn multi_rename(
         || {
             built.replace(None);
             let mut plan = plan()?;
-            if plan.single(store)?.is_some() || plan.input() != input {
+            let single = plan.single(store)?.is_some();
+            // The isolated D4 cost probe compares this writer with the
+            // special writer before any production routing changes.
+            #[cfg(test)]
+            let single = single && !allow_single;
+            if single || plan.input() != input {
                 replan.set(true);
                 return Ok(None);
             }
@@ -1394,3 +1409,7 @@ mod merge_payload;
 #[cfg(test)]
 #[path = "pages_snapshot_tests.rs"]
 mod snapshot_tests;
+
+#[cfg(test)]
+#[path = "pages_rename_cost_tests.rs"]
+mod rename_cost_tests;
