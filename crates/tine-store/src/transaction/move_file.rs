@@ -845,6 +845,9 @@ mod spelling_tests {
             b"- body\n"
         );
         assert!(!dir.path().join("logseq/.tine-respell").exists());
+        // The move published before the first complete view is deferred into
+        // it (first_view.rs); wait for that view, as a reader would.
+        store.whole_graph().unwrap();
         assert!(store.snapshot_knows(&store.graph.root.join("pages/Old.md")));
         assert_eq!(
             store.graph.storage_diag.snapshot()["caseMovesFinishedAtLaunch"]["completed"],
