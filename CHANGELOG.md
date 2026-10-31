@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Block embeds in published read-only apps now show their source block's children and grandchildren. Collapsed sources can be expanded while viewing the export.
 - A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).
 - Typing DONE over a bare DOING task with a LOGBOOK now closes its clock. Marker commands also recognize the bare task before its hidden history, keeping one marker and the existing clocks (#741).
 - A block inside a grid cell now looks and works as it does on a page (#782). Task markers with their checkbox, priorities, SCHEDULED and DEADLINE chips and properties show in the cell and in every block nested under it, however deep; ticking a checkbox in a cell saves the new marker. Nested blocks have the page's bullet and indent one fixed step per level instead of a step that grew with each level, so deep outlines no longer run off the cell. A sub-grid inside a cell is unchanged.

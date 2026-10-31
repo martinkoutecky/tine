@@ -2,7 +2,7 @@ import { For, Show, createComputed, createEffect, createMemo, createResource, cr
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, blockWritable, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
@@ -194,7 +194,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
       // A runtime locator stays valid on that page when Copy block ref stamps
       // its first authored id; the row keeps its live key until the next load.
       const source = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) }, { navigation: true });
-      return source === id && blockWritable(id) ? docNode(id) : undefined;
+      // Hydration needs source identity, not write permission. Published pages
+      // are read-only too: Block guards edits and uses presentation-only folds,
+      // while the shallow membership DTO has no descendants to render.
+      return source === id ? docNode(id) : undefined;
     }
     const source = resolveResultRow({ id, dto, page: props.page, kind: props.kind, path: props.path }, "mount");
     return source?.id === id ? source : undefined;
