@@ -74,6 +74,12 @@ it("the Beta Guide covers git sign-in, divergence, repair and phone lifecycle", 
   for (const detail of ["**Sign in**", "**Commit and sync automatically**", "**both have new commits**", "**Copy the git command**", "**Turn off line-ending conversion for this repository**", "When you switch to another app", "at most once per interval", "never starts bringing in changes while in the background"]) expect(files).toContain(detail);
 });
 
+it("onboarding documents explicit clone and init with git optional and automation off", () => {
+  const files = guide("files-external-edits-backups");
+  for (const detail of ["**Clone a graph from a git URL**", "**Make this graph a git repository**", "Git is optional", "without changing any page file", "default branch", "non-empty destination", "same private file", "sync stay **Off**", "**Empty remote HTTPS URL**", "**Finish repository setup**", "A non-empty remote is refused"]) expect(files).toContain(detail);
+  expect(files).not.toContain("Tine never creates or clones");
+});
+
 it("the Beta Guide makes quick-share links discoverable on phones", () => {
   const share = guide("share-pages");
   for (const detail of ["On Android and iOS", "**Link**", "**Connect GitHub**", "compatible reader"]) expect(share).toContain(detail);

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-git-clone-init.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Settings makes a non-git graph a repository with ignore rules and its first commit, preserving page bytes, then signs in and publishes it to an empty local HTTPS remote with upstream set. Cloning from the authenticated fixture uses that same device token store and opens the default branch with upstream ready. Both leave automatic commits and sync off.","blocking":false,"authority":"D-20261031-GCL; UI-GIT-INIT-GRAPH; UI-GIT-CLONE-GRAPH"}],
+      "acceptableVariations": ["Folder-picker chrome, dialog geometry, commit IDs and transfer latency may vary. The native folder picker alone returns the fixture parent; git commands, TLS and token storage remain real."],
+      "nonRequirements": ["No real graph or account data, external network host, pixel assertions, native boundary enumeration, remote creation API, SSH, branch choice, multi-remote management, Android/iOS device certification or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh741-render-isolation.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A block render throw exposes editable raw text in its place, leaves healthy blocks live, permits a durable repair, and keeps page navigation away and back working.","blocking":false,"authority":"GH #741 F1; UI-GH741-BLOCK-RENDER-ISOLATION; OG block-content catch-error"}],
       "acceptableVariations": ["Error wording, block geometry, render timing and file-save latency may vary."],

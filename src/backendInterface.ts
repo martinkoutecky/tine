@@ -109,6 +109,11 @@ export interface Backend {
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  the named child of `dir`, reusing only an empty directory. */
   createGraph(dir: string, name: string): Promise<string | { root: string; display_root: string }>;
+  /** One-off setup; tokens use the same private device store as sync. */
+  gitCloneGraph(dir: string, url: string): Promise<import("./backendTypes").GitCloneResult>;
+  gitSetupSignIn(url: string, username: string, token: string): Promise<void>;
+  gitInitGraph(remoteUrl?: string): Promise<GitAutocommitStatus>;
+  gitFinishSetup(remoteUrl: string): Promise<GitAutocommitStatus>;
   /** First unused notes, notes-2, … child name, supplied by Rust. */
   suggestGraphName(dir: string): Promise<string>;
   /** The whole name inventory (physical pages/journals, aliases, reference-only

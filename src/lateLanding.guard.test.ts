@@ -114,6 +114,7 @@ const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "ser
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
+  "gitCloneGraph", "gitInitGraph", "gitSetupSignIn", "gitFinishSetup",
   "markPageSeen", "markGraphSeen", "forgetSeenPage", "forgetSeenState",
   "retryOwnerProtection",
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
