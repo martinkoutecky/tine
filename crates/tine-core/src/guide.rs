@@ -2185,6 +2185,8 @@ mod og_20d_guide_tests {
         let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
         for concepts in [
             vec!["handle", "fingerprint", "id::", "stale"],
+            vec!["handle", "printed name", "title::", "file you read"],
+            vec!["1 mib", "tine edit", "frame-too-large", "before changing"],
             vec!["author::", "agent", "--author", "tine_author"],
             vec!["app open", "typed", "saved first", "window", "stale"],
             vec!["--journal", "creating", "standard input"],

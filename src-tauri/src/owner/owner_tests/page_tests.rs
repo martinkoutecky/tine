@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+fn page_show_uses_the_indexed_name_during_a_title_change() {
+    for org in [false, true] {
+        let graph = Graph::new();
+        graph.store.stop_watcher_for_tests();
+        let file = if org {
+            "pages/source.org"
+        } else {
+            "pages/source.md"
+        };
+        let source = if org {
+            "#+TITLE: Indexed\n#+ALIAS: Shortcut\n* same\n"
+        } else {
+            "title:: Indexed\nalias:: Shortcut\n\n- same\n"
+        };
+        seed(&graph, &[(file, source), ("pages/Other.md", "- same\n")]);
+        let slot = graph.slot();
+        let changed = source.replace("Indexed", "Other");
+        std::fs::write(graph.root.join(file), &changed).unwrap();
+        // No refresh: the title in the current bytes names a different file.
+        for name in ["Indexed", "Shortcut", "indexed"] {
+            let read = verb(&slot, "page.show", json!({"name":name})).unwrap();
+            assert_eq!(read["text"], changed);
+            assert_eq!(read["page"]["name"], "Indexed");
+        }
+        let read = verb(&slot, "page.show", json!({"name":"Indexed"})).unwrap();
+        let handle = format!(
+            "{}/{}",
+            read["page"]["name"].as_str().unwrap(),
+            block_handle(&read, 0)
+        );
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle":handle,"text":"changed through the read handle"}),
+        )
+        .unwrap();
+        assert!(std::fs::read_to_string(graph.root.join(file))
+            .unwrap()
+            .contains("changed through the read handle"));
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join("pages/Other.md")).unwrap(),
+            "- same\n"
+        );
+    }
+}
+
+#[test]
 fn page_create_rename_delete_and_lazy_reference_helpers() {
     let graph = Graph::new();
     let slot = graph.slot();

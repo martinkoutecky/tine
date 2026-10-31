@@ -421,6 +421,10 @@ missed in the checkpoint (a cold-start `tine://` link, GH #181). The public oper
 surface is 57 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+`InventoryScope::File(PageId)` extends the existing inventory question with
+one file's name in the captured view (O(log P + C) for C name claimants,
+no file reads or new index).
+The operation count stays 57; this adds no operation or persisted record.
 A git pull adds `PagePlan::replace_page_bytes` (ADR 0078 §4): a host
 operation's revision-guarded raw-bytes page replacement, with the page input
 checks of `create` and no round trip, since Tine serializes nothing.

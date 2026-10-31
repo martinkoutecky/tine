@@ -19,6 +19,8 @@ icon:: ⌨️
 	- Choose a graph with `--graph GRAPH` (or `-g GRAPH`) on each command. Otherwise Tine uses `TINE_GRAPH`, then the nearest folder around your working directory with a `logseq/` subfolder. Example: `tine page show "Project notes" --graph ~/notes`.
 	- `tine status` shows whether the app or `serve` owns the graph and what it is doing.
 	- `tine page show "Page name"` reads a page's outline. `tine journal` reads today; `tine journal 2026-10-13` reads a specific day that already exists.
+	- Use the page name printed by the read when forming a block handle. If another editor just changed `title::`, that printed name can briefly differ from the title in the text, so the handle still addresses the file you read.
+	- Requests without block text are limited to 1 MiB, including any extra fields a script sends. `tine add`, `tine edit` and `tine prop` allow larger requests for block text; a request over its limit fails with `frame-too-large` before changing the graph.
 	- `tine block show UUID` reads a block and its descendants using its persisted `id::` UUID. `tine refs "Page name"` shows linked references; `tine refs UUID --block` finds references to a persisted block id.
 	- `tine search "meeting"` searches page names and block text as the app does. `--pages N` and `--blocks N` set the result limits; `0` switches that category off.
 	- `tine query '(task TODO)'` runs the text inside a Logseq simple or advanced query macro. `tine query "task = 'TODO'" --tql` runs the text inside a Tine query macro. [[Features/Queries]] explains the query forms and their supported scope; read diagnostics when a query cannot run whole.

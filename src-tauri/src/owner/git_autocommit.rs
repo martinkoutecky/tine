@@ -29,7 +29,7 @@
 //! Repacking deletes only loose objects contained in the pack it
 //! just wrote and fsynced (git's `prune-packed`), never unreachable ones.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
@@ -690,36 +690,9 @@ fn entry_for(
 
 // ---- repacking -------------------------------------------------------------
 
-fn loose_object_count(objects: &Path) -> usize {
-    let mut count = 0;
-    for byte in 0..=255u8 {
-        if let Ok(dir) = std::fs::read_dir(objects.join(format!("{byte:02x}"))) {
-            count += dir.count();
-        }
-    }
-    count
-}
-
-/// The ids of the loose objects under `objects`.
-fn loose_objects(objects: &Path) -> Vec<Oid> {
-    let mut out = Vec::new();
-    for byte in 0..=255u8 {
-        let hex = format!("{byte:02x}");
-        let Ok(entries) = std::fs::read_dir(objects.join(&hex)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(rest) = name.to_str().filter(|r| r.len() == 38) else {
-                continue;
-            };
-            if let Ok(oid) = Oid::from_str(&format!("{hex}{rest}")) {
-                out.push(oid);
-            }
-        }
-    }
-    out
-}
+#[path = "git_pack_index.rs"]
+mod pack_index;
+use pack_index::{idx_oids, loose_object_count, loose_objects};
 
 /// Pack the loose objects into one new pack, then delete only the loose
 /// objects that pack holds (git's `repack -d` without `-a`, then
@@ -751,6 +724,8 @@ fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
     }
     let objects = gitdir.join("objects");
     let pack_dir = objects.join("pack");
+    #[cfg(test)]
+    repack_test_hook::at("pack-create");
     guard.check_path(&pack_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&pack_dir).map_err(|e| e.to_string())?;
     let loose = loose_objects(&objects);
@@ -767,6 +742,8 @@ fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
             .insert_object(*oid, None)
             .map_err(|e| e.to_string())?;
     }
+    #[cfg(test)]
+    repack_test_hook::at("pack-write");
     guard.check_path(&pack_dir).map_err(|e| e.to_string())?;
     builder.write(&pack_dir, 0o444).map_err(|e| e.to_string())?;
     let name = builder
@@ -778,23 +755,33 @@ fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
     // Do not reopen the final read-only files for sync_all: on Windows
     // FlushFileBuffers requires GENERIC_WRITE and fails with Access denied.
     // builder.write already made their contents durable before publishing.
+    #[cfg(test)]
+    repack_test_hook::at("pack-sync");
     sync_dir(&pack_dir, guard)?;
     let packed = idx_oids(&std::fs::read(&idx).map_err(|e| e.to_string())?)?;
     let mut removed = 0;
     for oid in loose.iter().filter(|oid| packed.contains(oid.as_bytes())) {
         let hex = oid.to_string();
         let file = objects.join(&hex[..2]).join(&hex[2..]);
+        #[cfg(test)]
+        repack_test_hook::at("object-unlink");
         if remove_object(&file, guard).is_ok() {
             removed += 1;
         }
     }
     for byte in 0..=255u8 {
         let dir = objects.join(format!("{byte:02x}"));
+        #[cfg(test)]
+        repack_test_hook::at("fanout-remove");
         guard.check_path(&dir).map_err(|e| e.to_string())?;
         let _ = std::fs::remove_dir(dir);
     }
     Ok(Some(removed))
 }
+
+#[cfg(test)]
+#[path = "git_repack_hook_tests.rs"]
+mod repack_test_hook;
 
 /// Delete a loose object file. git writes them read-only, which on Windows
 /// refuses the unlink until the attribute is cleared (as git-for-windows
@@ -817,30 +804,6 @@ fn sync_dir(dir: &Path, guard: &super::git_run::GitMutationGuard) -> Result<(), 
     guard.check_path(dir).map_err(|e| e.to_string())?;
     tine_store::directory_durability::sync_directory_entry(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))
-}
-
-/// The object ids a version-2 SHA-1 pack index lists.
-fn idx_oids(idx: &[u8]) -> Result<HashSet<[u8; 20]>, String> {
-    const HEADER: &[u8] = b"\xfftOc\0\0\0\x02";
-    let bad = || "not a version-2 pack index".to_string();
-    if idx.len() < 8 + 1024 || &idx[..8] != HEADER {
-        return Err(bad());
-    }
-    let fanout = |i: usize| {
-        let at = 8 + i * 4;
-        u32::from_be_bytes([idx[at], idx[at + 1], idx[at + 2], idx[at + 3]]) as usize
-    };
-    let count = fanout(255);
-    let start = 8 + 1024;
-    let end = start + count * 20;
-    // Ids, CRCs, offsets, then two 20-byte trailers at least.
-    if idx.len() < end + count * 8 + 40 {
-        return Err(bad());
-    }
-    Ok(idx[start..end]
-        .chunks_exact(20)
-        .map(|c| c.try_into().expect("20 bytes"))
-        .collect())
 }
 
 // ---- structural operations ---------------------------------------------------

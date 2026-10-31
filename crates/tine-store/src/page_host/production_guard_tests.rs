@@ -104,6 +104,9 @@ fn dircreate_swap_during_save_keeps_input_in_durable_device_draft() {
                 fs::rename(&swap, detached).unwrap();
                 if swap_root {
                     fs::create_dir(&swap).unwrap();
+                    // A missing parent would make mkdir fail even without
+                    // the identity recheck, hiding a removed guard.
+                    fs::create_dir(swap.join("pages")).unwrap();
                 } else {
                     std::os::unix::fs::symlink(destination, swap).unwrap();
                 }
@@ -132,7 +135,9 @@ fn dircreate_swap_during_save_keeps_input_in_durable_device_draft() {
         );
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         if swap_root {
-            assert_eq!(fs::read_dir(&f.graph).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(&f.graph).unwrap().count(), 1);
+            assert!(f.graph.join("pages").is_dir());
+            assert!(!f.graph.join("pages/sub").exists());
         }
     }
 }
