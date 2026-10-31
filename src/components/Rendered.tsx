@@ -25,6 +25,7 @@ import { HIDE_ALL, splitProps } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 import { OccurrenceHostContext } from "../refOccurrence";
 import type { Span } from "../render/ast";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 
 // The rendered (non-editing) body of one block: header facets, body, chips and
 // properties. Extracted from Block.tsx (og-F) with no behaviour change.
@@ -53,7 +54,13 @@ export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "
 // macro detection of this very block, so they arrive as accessors instead of
 // being recomputed here: one store read, one parent walk, one facet lookup and
 // one macro detection per block rather than two (master 0350c00b6).
-export function Rendered(props: {
+export function Rendered(props: Parameters<typeof RenderedContent>[0]): JSX.Element {
+  // One Solid boundary per displayed block, no extra healthy DOM, parser work,
+  // graph reads or writes. The editor is outside it, so raw text remains repairable.
+  return <BlockRenderBoundary raw={props.node().raw}><RenderedContent {...props} /></BlockRenderBoundary>;
+}
+
+function RenderedContent(props: {
   id: string;
   node: () => ReadonlyNode;
   fmt: () => "md" | "org";

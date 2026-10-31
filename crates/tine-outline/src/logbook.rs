@@ -508,6 +508,23 @@ mod tests {
     }
 
     #[test]
+    fn gh741_bare_task_with_history_clocks_out() {
+        for format in [LogbookFormat::Markdown, LogbookFormat::Org] {
+            let old = "DOING\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]\n:END:";
+            let next = old.replacen("DOING", "DONE", 1);
+            let closed = apply_edit_transition_at(
+                old,
+                &next,
+                format,
+                true,
+                true,
+                ts(2026, 6, 25, 10, 2, 3, 4),
+            );
+            assert_eq!(closed, "DONE\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 10:02:03] =>  01:02:03\n:END:");
+        }
+    }
+
+    #[test]
     fn clock_in_then_clock_out_writes_exact_og_seconds_format() {
         let raw = "TODO Ship logbook\nSCHEDULED: <2026-06-25 Thu>\nDEADLINE: <2026-06-26 Fri>\nowner:: martin\nBody stays below";
         let start = ts(2026, 6, 25, 9, 0, 0, 4);

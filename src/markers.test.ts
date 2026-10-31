@@ -5,6 +5,7 @@ import { clearSeededFacets, facetsOf } from "./render/facets";
 import { MARKERS, OPEN_MARKERS, DONE_MARKERS, matchLeadingMarker, leadingMarker, taskCheckboxState } from "./markers";
 import { cycleMarker, leadingMarker as leadingMarkerViaEditor, setMarker } from "./editor/marker";
 import { setPriority } from "./editor/format";
+import { visibleBody } from "./render/block";
 
 describe("task markers (single source of truth)", () => {
   it("matches the backend set (crates/tine-core/src/doc.rs MARKERS) — keep in sync", () => {
@@ -71,6 +72,18 @@ describe("task markers (single source of truth)", () => {
     expect(matchLeadingMarker("WAIT-LIST item")).toBeNull();
     expect(matchLeadingMarker("TODO real task")?.marker).toBe("TODO");
     expect(matchLeadingMarker("DONE")?.marker).toBe("DONE"); // bare marker at end-of-input
+  });
+
+  it.each(["md", "org"] as const)("GH741 recognizes a bare task title before its accepted LOGBOOK (%s)", format => {
+    const raw = "DOING\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+    expect(matchLeadingMarker(raw, format)).toEqual({ marker: "DOING", start: 0, end: 5 });
+    expect(facetsOf(raw, format).marker).toBe("DOING");
+    expect(visibleBody(raw, format).join("").trim()).toBe("");
+    expect(cycleMarker(raw, "now").raw.split("\n")[0].trim()).toBe("DONE");
+    expect(setMarker(raw, "DONE").split("\n")[0]).toBe("DONE ");
+    for (const prose of ["DOING\nbody", "DOING: sentence", "DOING\n```\n:LOGBOOK:\n:END:\n```", "> DOING\n> :LOGBOOK:\n> :END:"]) {
+      expect(matchLeadingMarker(prose, format)).toBeNull();
+    }
   });
 
   // lsdoc parity (DUP-7, 2026-08-25 duplication audit). Every case is
