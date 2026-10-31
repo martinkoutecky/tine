@@ -1,0 +1,79 @@
+# PROBE ONLY (branch probe/d4-rename-timing, never merged): single-page rename
+# cost, special path vs multi_rename, per desktop OS (DEAD-CODE D4).
+name: probe-d4-rename-timing
+
+on:
+  push:
+    branches: ["probe/d4-rename-timing"]
+
+permissions:
+  contents: read
+
+jobs:
+  timing:
+    name: D4 rename timing / ${{ matrix.os }} / defender ${{ matrix.defender }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, defender: image }
+          - { os: windows-latest, defender: "on" }
+          - { os: ubuntu-latest, defender: none }
+          - { os: macos-latest, defender: none }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Disk and environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = @()
+          $out += "TEMP=$env:TEMP"
+          $out += (Get-PhysicalDisk | Format-Table -AutoSize FriendlyName,MediaType,BusType,Size | Out-String)
+          $out += (Get-Volume | Where-Object DriveLetter | Format-Table -AutoSize DriveLetter,FileSystemType,FileSystemLabel,Size,SizeRemaining | Out-String)
+          $out += (Get-Partition | Format-Table -AutoSize DiskNumber,PartitionNumber,DriveLetter,Size | Out-String)
+          try { $out += (Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AntivirusEnabled,AMRunningMode | Out-String) } catch { $out += "Get-MpComputerStatus failed: $_" }
+          try { $out += (Get-MpPreference | Format-List ExclusionPath | Out-String) } catch { $out += "Get-MpPreference failed: $_" }
+          $out += (Get-CimInstance Win32_ComputerSystem | Format-List Model,Manufacturer,NumberOfLogicalProcessors | Out-String)
+          $out += (Get-CimInstance Win32_DiskDrive | Format-List Model,InterfaceType,MediaType,Size | Out-String)
+          $out | Tee-Object -FilePath disk-info.txt
+      - name: Disk and environment (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          { echo "TMPDIR=${TMPDIR:-unset}"; lsblk -o NAME,ROTA,TYPE,SIZE,MODEL,FSTYPE,MOUNTPOINT; findmnt -T /tmp; df -T /tmp; nproc; cat /sys/block/*/queue/write_cache 2>/dev/null; } 2>&1 | tee disk-info.txt
+      - name: Disk and environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          { echo "TMPDIR=${TMPDIR:-unset}"; df -h "$TMPDIR" /; diskutil info / ; sysctl -n machdep.cpu.brand_string hw.ncpu; } 2>&1 | tee disk-info.txt
+      - name: Build the probe (release)
+        run: cargo test --release -p tine-graph-features --lib --no-run
+      # Shipped-Windows Defender defaults (real-time on, no C:/D: exclusions),
+      # after the build so only the measurement runs under it (GH #623 scripts).
+      - name: Defender ON
+        if: matrix.defender == 'on'
+        shell: pwsh
+        run: |
+          . ./.github/scripts/defender.ps1
+          Enable-DefenderForBench
+          Start-Sleep -Seconds 60
+          Show-DefenderProof 'ON' | Out-File -Append disk-info.txt
+          Get-MpComputerStatus | Format-List AMRunningMode,RealTimeProtectionEnabled,OnAccessProtectionEnabled | Out-String | Tee-Object -Append -FilePath disk-info.txt
+          (Get-MpPreference).ExclusionPath | Out-String | Tee-Object -Append -FilePath disk-info.txt
+      - name: D4 rename timing probe
+        shell: bash
+        run: |
+          cargo test --release -p tine-graph-features --lib pages::rename_cost_tests::single_vs_multi_cost_gate -- --ignored --exact --nocapture 2>&1 | tee timing.txt
+          exit "${PIPESTATUS[0]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: d4-rename-timing-${{ matrix.os }}-defender-${{ matrix.defender }}-attempt${{ github.run_attempt }}
+          path: |
+            timing.txt
+            disk-info.txt
+          retention-days: 30
