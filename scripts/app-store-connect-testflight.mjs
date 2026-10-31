@@ -418,7 +418,8 @@ async function publishLink() {
       attributes: {
         publicLinkEnabled: true,
         publicLinkLimitEnabled: true,
-        publicLinkLimit: 100,
+        // Martin 10/31 (TF-FULL): 100 filled up; Apple allows up to 10,000.
+        publicLinkLimit: 1000,
       },
     },
   });
