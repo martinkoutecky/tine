@@ -16,6 +16,18 @@ trap 'adb logcat -d -v threadtime > "$out/logcat.txt" 2>&1 || true' EXIT
 
 device=/data/local/tmp/tine-git-tests
 shared=/sdcard/Documents/tine-git-storage
+# GH #811: emulators leave MediaProvider's Android FUSE passthrough off
+# (persist.sys.fuse.passthrough.enable unset); devices commonly turn it on.
+# Its reads copy the backing file's mtime/ctime into the FUSE inode
+# (fs/fuse/passthrough.c fuse_file_accessed), so test with it on as well.
+if [ "${TINE_FUSE_PASSTHROUGH:-}" = 1 ]; then
+  adb root > /dev/null
+  adb wait-for-device
+  adb shell setprop persist.sys.fuse.passthrough.enable true
+  adb reboot
+  adb wait-for-device
+  until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
+fi
 adb push "$bin" "$device/tine_lib_tests" > /dev/null
 adb push "$store_bin" "$device/tine_store_integration" > /dev/null
 adb shell "chmod 755 $device/tine_lib_tests $device/tine_store_integration && mkdir -p $device/tmp $shared"
@@ -67,6 +79,8 @@ failed=0
 # Page saves through the page host publish on shared storage (GH #811): the
 # app data stays app-private, as on a phone.
 run_bin tine_store_integration store-shared-storage "TINE_HOST_FS_ROOT=$shared" gh811_graph_volume_save
+# The passthrough run is for the page saves only.
+[ "${TINE_FUSE_PASSTHROUGH:-}" = 1 ] && exit "$failed"
 run shared-storage "TINE_HOST_FS_ROOT=$shared TINE_EXPECT_FUSE=1" owner::git_autocommit::mobile_tests
 for line in 'GIT-STORAGE result=PASS' 'GIT-KILL result=PASS'; do
   grep -q "$line" "$out/shared-storage.txt" || { echo "missing: $line" >&2; failed=1; }

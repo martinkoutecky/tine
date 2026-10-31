@@ -510,7 +510,7 @@ jobs:
   # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
   # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
   android-git-storage:
-    name: Android git on shared storage (API ${{ matrix.image || matrix.api }})
+    name: Android git on shared storage (API ${{ matrix.label || matrix.image || matrix.api }})
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -530,6 +530,12 @@ jobs:
             target: google_apis
             # Its first boot took longer than 300 s (run 41176377346).
             boot: 900
+          # With MediaProvider's Android FUSE passthrough on, as on devices
+          # (the script turns it on and reboots; page saves only).
+          - api: 36
+            target: google_apis
+            passthrough: true
+            label: 36-passthrough
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -577,6 +583,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Run the git tests with the graph on shared storage
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TINE_FUSE_PASSTHROUGH: ${{ matrix.passthrough && '1' || '' }}
         with:
           api-level: ${{ matrix.api }}
           system-image-api-level: ${{ matrix.image || matrix.api }}
@@ -590,7 +598,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-git-storage-api${{ matrix.image || matrix.api }}-${{ github.run_attempt }}
+          name: android-git-storage-api${{ matrix.label || matrix.image || matrix.api }}-${{ github.run_attempt }}
           path: artifacts/android-git-storage
           if-no-files-found: warn
           retention-days: 14
