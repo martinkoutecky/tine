@@ -904,7 +904,6 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/conflicts.rs",
     "crates/tine-graph-features/src/journals.rs",
     "crates/tine-graph-features/src/pdf.rs",
-    "crates/tine-graph-features/src/live_conflict.rs",
     "crates/tine-graph-features/src/guide.rs",
     "src-tauri/src/state.rs",
     "src-tauri/src/backup/restore.rs",
