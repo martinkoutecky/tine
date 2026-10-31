@@ -134,6 +134,7 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
 /// Cost O((J + D) log(J + D) + R + returned page bytes), plus indexed alias
 /// lookups for date-shaped names on completion. J is journal files, R indexed reference names,
 /// D referenced dates. No reference-content scan or graph file write.
+#[cfg(any(test, feature = "test-faults"))]
 pub fn feed_page(
     store: &Store,
     limit: usize,
@@ -142,7 +143,7 @@ pub fn feed_page(
     feed_page_through(store, limit, before_day, None, false)
 }
 
-/// As [`feed_page`], extending the window through an already displayed day.
+/// As `feed_page`, extending the window through an already displayed day.
 /// Late referenced days can be inserted without dropping the visible suffix.
 /// `include_references` waits via the ordinary whole-graph read; false never
 /// consults the graph. Only returned journal bodies are read in either mode.
@@ -454,11 +455,12 @@ fn stem(entry: &FileEntry) -> Option<&str> {
 /// Dated journal ids newest first, once per day, through `cutoff`. Future days
 /// stay addressable as pages. Listing entries that cannot be read are skipped.
 /// Cost O(J log J).
+#[cfg(any(test, feature = "test-faults"))]
 pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<(Day, PageId)>> {
     Ok(feed_days_through(store, cutoff)?.0)
 }
 
-/// [`feed_journals_desc_through`] plus the listing's unreadable entries.
+/// `feed_journals_desc_through` plus the listing's unreadable entries.
 fn feed_days_through(store: &Store, cutoff: Day) -> io::Result<(Vec<(Day, PageId)>, Vec<String>)> {
     let (files, unreadable) = listing(store)?;
     let mut days = BTreeMap::new();

@@ -80,6 +80,8 @@ clap_mangen = "0.2"
 # backup/tests.rs: NFC/NFD page names in a zip round trip.
 unicode-normalization = "0.1"
 tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
+# host_retirement.rs and the quick-share tests call GF test-support helpers.
+tine-graph-features = { path = "../crates/tine-graph-features", features = ["test-faults"] }
 
 # Mobile + Windows: open http/mailto URLs via the OS — an ACTION_VIEW Intent on
 # Android (GH #49), ShellExecute on Windows (GH #215; `explorer <url>` opens a

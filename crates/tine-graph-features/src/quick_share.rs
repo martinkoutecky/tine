@@ -169,6 +169,7 @@ pub fn looks_like_gist_id(text: &str) -> bool {
 }
 
 /// [`seal`] under a fresh key, share id and nonce from the OS CSPRNG.
+#[cfg(any(test, feature = "test-faults"))]
 pub fn seal_fresh(payload: &[u8]) -> io::Result<Sealed> {
     seal_fresh_as(payload, fresh_share_id()?)
 }

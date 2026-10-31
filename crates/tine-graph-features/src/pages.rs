@@ -382,6 +382,7 @@ pub fn delete_page_expected(
 /// touching N files takes N+1 sorted path locks for one move; namespace moves
 /// take one additional destination lock per moved file. Conflict retry: four
 /// complete plans maximum, then `WouldBlock`.
+#[cfg(any(test, feature = "test-faults"))]
 pub fn rename_page_expected(
     store: &Store,
     host: &PageHost,
@@ -403,7 +404,7 @@ pub fn rename_page_expected(
     .map(|_| ())
 }
 
-/// [`rename_page_expected`] when `merge_into` is `None`. Otherwise rename onto
+/// `rename_page_expected` when `merge_into` is `None`. Otherwise rename onto
 /// the existing page `merge_into` the user confirmed, as OG `merge-pages!`
 /// (master GH #327); `merge_into` must be the sole file claiming the new name,
 /// directly or as its alias. The source's blocks append to that survivor, its
@@ -411,7 +412,7 @@ pub fn rename_page_expected(
 /// the survivor's: aliases are united, the survivor wins another clash, and the
 /// source title and clashing lines move with the blocks as one ordinary block.
 /// References and namespace descendants are renamed as by
-/// [`rename_page_expected`], and the source goes to graph trash in the last
+/// `rename_page_expected`, and the source goes to graph trash in the last
 /// step, so a crash never leaves a reference to a name with no live page. A
 /// crash between the survivor write and the trash completes from the host
 /// operation's draft at relaunch, as `merge_pages` does; a retry of a merge
