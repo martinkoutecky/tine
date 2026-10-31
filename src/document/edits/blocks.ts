@@ -73,7 +73,7 @@ function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: Outl
   return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page]);
 }
 
-export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
+export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean; markerBaseline?: string }) {
   if (!blockWritable(id)) return;
   const prev = doc.byId[id].raw;
   const page = pageByName(doc.byId[id].page);
@@ -86,7 +86,7 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
     opts?.timetracking === false
       ? raw
       : applyMarkerTransition(
-          prev,
+          opts?.markerBaseline ?? prev,
           raw,
           formatForBlock(id),
           timetrackingEnabled(),

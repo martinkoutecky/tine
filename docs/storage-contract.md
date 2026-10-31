@@ -434,7 +434,7 @@ AVL with entries inside shared nodes; other spellings keep exact string keys.
 The writer and loader share the page namespace and child-id derivation.
 Warm launch decodes those rows without rebuilding the index
 from blocks. A malformed owner slot declines the whole disposable checkpoint
-and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once.
+and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once. FORMAT 20 (GH #741 F2: a bare marker title before a LOGBOOK drawer parses as a task) supersedes 19 once; the body shape is unchanged.
 There is no additional per-edit file or byte write: the page save protocol
 is unchanged. The checkpoint remains one postcard+zstd app-data file, rewritten
 on the existing idle cadence (60 s quiet, at least 5 min between writes,

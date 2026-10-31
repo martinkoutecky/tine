@@ -5,6 +5,7 @@ import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
@@ -121,7 +122,7 @@ import { parserReady } from "../render/parse";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
-import { setMarker } from "../editor/marker";
+import { leadingMarker, setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 import { templateToOutline, prepareTemplateVars } from "../editor/templateVars";
 import {
@@ -710,6 +711,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
+  // Keep the last accepted task state while a typed marker passes through
+  // incomplete text (DOING -> D -> DO -> DON -> DONE). All editor entry methods
+  // still use setRaw's single clock writer and the current, reattached history.
+  let markerBaseline = node().raw;
   const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
@@ -741,7 +746,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     autosize();
     rawBeforeLastCommit = node().raw;
-    keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, next, setRawOpts));
+    if (leadingMarker(node().raw, pageFmt())) markerBaseline = node().raw;
+    keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, next, { ...setRawOpts, markerBaseline }));
   };
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
@@ -3291,7 +3297,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   }
   return (
     <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
-      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></div>}</Show>
+      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></BlockRenderBoundary></div>}</Show>
       <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
@@ -3330,7 +3336,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         rows={1}
       />
       </div>
-      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><AstBody raw={after()} format={pageFmt()} /></div>}</Show>
+      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><BlockRenderBoundary raw={after()}><AstBody raw={after()} format={pageFmt()} /></BlockRenderBoundary></div>}</Show>
       <Show when={isCalc()}>
         <div class="calc-results">
           <For each={calcRows()}>

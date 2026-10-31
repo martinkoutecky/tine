@@ -12,6 +12,7 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
 import {
@@ -44,7 +45,7 @@ import {
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { formulaReferenceName, boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
-import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
+import { fieldIdsForRecords, recordFacets, rowRaw } from "../sheet/tableFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { graphEpoch } from "../graphSession";
@@ -874,6 +875,7 @@ function BoardCard(props: {
       <Show
         when={editing()}
         fallback={
+          <BlockRenderBoundary raw={rowRaw(props.row)}>
           <Show
             when={near()}
             fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
@@ -884,6 +886,7 @@ function BoardCard(props: {
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
           </Show>
+          </BlockRenderBoundary>
         }
       >
         <SheetCellContext.Provider value={cell()}>

@@ -25,6 +25,7 @@ import { HIDE_ALL, splitProps } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 import { OccurrenceHostContext } from "../refOccurrence";
 import type { Span } from "../render/ast";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 
 // The rendered (non-editing) body of one block: header facets, body, chips and
 // properties. Extracted from Block.tsx (og-F) with no behaviour change.
@@ -53,7 +54,13 @@ export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "
 // macro detection of this very block, so they arrive as accessors instead of
 // being recomputed here: one store read, one parent walk, one facet lookup and
 // one macro detection per block rather than two (master 0350c00b6).
-export function Rendered(props: {
+export function Rendered(props: Parameters<typeof RenderedContent>[0]): JSX.Element {
+  // One Solid boundary per displayed block, no extra healthy DOM, parser work,
+  // graph reads or writes. The editor is outside it, so raw text remains repairable.
+  return <BlockRenderBoundary raw={props.node().raw}><RenderedContent {...props} /></BlockRenderBoundary>;
+}
+
+function RenderedContent(props: {
   id: string;
   node: () => ReadonlyNode;
   fmt: () => "md" | "org";
@@ -67,6 +74,10 @@ export function Rendered(props: {
   // (GH #454).
   refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
+  // A host that owns the click (a sheet cell: select on press, edit on double-click or
+  // through its own caret mapping) shows the body with the block's chips and properties
+  // but starts no edit gesture of its own.
+  inertBody?: boolean;
 }): JSX.Element {
   // In a query result, Scheduled/Deadline resolve the result row again at commit.
   const resultTarget = useContext(ResultWriteTargetContext);
@@ -148,7 +159,7 @@ export function Rendered(props: {
     <Show
       when={!macro()}
       fallback={
-        <div class="block-content macro-host" onMouseDown={onMouseDown}>
+        <div class="block-content macro-host" onMouseDown={props.inertBody ? undefined : onMouseDown}>
           <DeferredStandaloneMacro blockId={props.id} raw={node().raw}>
             <Switch>
               <Match when={macro()!.kind === "query"}>
@@ -172,7 +183,7 @@ export function Rendered(props: {
       data-rendered-block={annotation() ? undefined : props.id}
       classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onMouseDown={onMouseDown}
+      onMouseDown={props.inertBody ? undefined : onMouseDown}
     >
       {props.refCountBadge}
       {/* One gate for the whole leading chip group: every chip below needs a

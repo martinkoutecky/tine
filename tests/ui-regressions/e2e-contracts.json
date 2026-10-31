@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-gh741-render-isolation.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A block render throw exposes editable raw text in its place, leaves healthy blocks live, permits a durable repair, and keeps page navigation away and back working.","blocking":false,"authority":"GH #741 F1; UI-GH741-BLOCK-RENDER-ISOLATION; OG block-content catch-error"}],
+      "acceptableVariations": ["Error wording, block geometry, render timing and file-save latency may vary."],
+      "nonRequirements": ["No private graph, exact pixels, timing benchmarks, native enumeration of page-boundary reset already covered in component tests, platform certification or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh800-save-then-copy.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A routed page with both a refused save (its file changed on disk under unsaved input) and a sync conflict copy shows the save conflict's review first, then the copy's comparison; both Applies go through, never the save-conflict-first refusal, and the draft, the disk change and the copy all survive, the replaced versions recoverable.","blocking":false,"authority":"UI-CONFLICT-SAVE-THEN-COPY; GH #800"}],
       "acceptableVariations": ["Page geometry, latency, the attempt that wins the save race, copy timestamp and recovery filenames may vary."],
@@ -910,6 +916,15 @@
         "Exact note geometry, result DOM structure or row order."
       ],
       "stability":"burn-in"
+    },
+    "scripts/e2e-cells-results-render.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "A block inside a grid cell looks and behaves as the same block does on a page: nested children at every depth with a steady indent and a bullet, task markers with a working checkbox, priority, SCHEDULED chips and properties, and a hosted sub-grid; ticking a task in a cell saves the DONE marker.", "blocking": true, "authority": "ADR 0031 (a cell holds ordinary blocks); editable-everywhere principle, Martin 2026-10-23; GH #782" },
+        { "class": "core-operation", "userOutcome": "A Markdown list inside a query result's block is drawn as a list in the List and Table views, not as source text; Board cards show the block's first line.", "blocking": true, "authority": "OG query results render the block body as the page does; GH #551 item 3" }
+      ],
+      "acceptableVariations": ["Cell height, the exact indent step (any steady step under 45px), bullet size and chip styling may evolve while nesting, markers, chips, properties and the checkbox stay visible and working.", "The Table title cell may clamp long bodies."],
+      "nonRequirements": ["Pixel-exact match with the outline, collapse state of nested blocks inside a cell, or the legacy table view."],
+      "stability": "burn-in"
     },
     "scripts/e2e-query-nested-rows.mjs": {
       "contracts": [

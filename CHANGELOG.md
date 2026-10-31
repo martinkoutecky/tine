@@ -14,6 +14,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).
+- Typing DONE over a bare DOING task with a LOGBOOK now closes its clock. Marker commands also recognize the bare task before its hidden history, keeping one marker and the existing clocks (#741).
+- A block inside a grid cell now looks and works as it does on a page (#782). Task markers with their checkbox, priorities, SCHEDULED and DEADLINE chips and properties show in the cell and in every block nested under it, however deep; ticking a checkbox in a cell saves the new marker. Nested blocks have the page's bullet and indent one fixed step per level instead of a step that grew with each level, so deep outlines no longer run off the cell. A sub-grid inside a cell is unchanged.
+- The Table view of a query (and of a block's children) draws each block as the page does (#551). A Markdown list, quote, code block or table inside a result used to appear as source text (`* apples * pears`); it is now rendered.
 - Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
 - On Android, saving a page that already exists on shared storage no longer stays unconfirmed ("Couldn't save … yet; Tine keeps trying") on devices whose storage refreshes a file's times when it is read (#811).
 - On Android shared storage, a page saved again now gets a new modification time each time, so Syncthing and other sync apps notice edits that keep the file the same size (before, the page kept its first version's time on devices with the newer storage mode). The diagnostics report counts each time-reset that failed (#811).

@@ -32,6 +32,7 @@ import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { JournalSectionsHeader, TodaySections } from "./TodaySections";
 import { SheetTable } from "./SheetTable";
@@ -1295,7 +1296,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
                   </span>
                 </div>
                 <div class="block-content-wrapper" onClick={editPreamble}>
-                  <div class="block-content"><InlineText text={content()} format={props.page.format} /></div>
+                  <BlockRenderBoundary raw={content()}><div class="block-content"><InlineText text={content()} format={props.page.format} /></div></BlockRenderBoundary>
                 </div>
               </div>
             </div>

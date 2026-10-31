@@ -394,7 +394,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
         <PaneScroller paneId={props.paneId} router={props.router} class={props.scrollerClass}
           identifyPane={!props.scrollerClass}>
-          <FailureBoundary region="This page">
+          <FailureBoundary region="This page" resetKey={route()}>
             <PaneContent router={props.router} />
           </FailureBoundary>
         </PaneScroller>

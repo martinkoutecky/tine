@@ -2,7 +2,7 @@
  * Only mounted parents register; IO reports boundary crossings, with no scroll
  * listener, page traversal, model-sized cache or per-frame JavaScript. Mount
  * costs O(rendered ancestor depth), label changes O(this block's text). */
-import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { ErrorBoundary, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { newIntersectionObserver, windowOf } from "../windowRealm";
 import { revealOutlineBlock } from "../outlineViewport";
 import { visibleBody } from "../render/block";
@@ -65,7 +65,7 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
           breadcrumb renders it (marks, links and block refs, not raw syntax). */}
       <span class="sticky-ancestor-toggle" aria-hidden="true" />
       <span class="sticky-ancestor-bullet" aria-hidden="true"><span class="sticky-ancestor-dot" /></span>
-      <span class="sticky-ancestor-label"><InlineText text={visibleBody(props.raw, formatForBlock(props.id))[0] || "…"} format={formatForBlock(props.id)} /></span>
+      <span class="sticky-ancestor-label"><ErrorBoundary fallback={error => <span title={String(error)}>{props.raw.split("\n", 1)[0] || "…"}</span>}><InlineText text={visibleBody(props.raw, formatForBlock(props.id))[0] || "…"} format={formatForBlock(props.id)} /></ErrorBoundary></span>
     </button>
   </div>;
 }

@@ -68,7 +68,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 19 (HB4 / HI1): exact block owners, serialized in load-time runtime-id
 /// space by the idle writer and decoded directly on warm launch. Page-grouped
 /// binary runtime UUIDs keep this one development format bump compact.
-pub(crate) const FORMAT: u32 = 19;
+/// 20 (GH #741 F2): a bare marker title followed by a LOGBOOK drawer now parses
+/// as a task, so its projection, task facets and task query answers change for
+/// unchanged graph files; older disposable caches rebuild.
+pub(crate) const FORMAT: u32 = 20;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

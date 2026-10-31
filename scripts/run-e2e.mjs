@@ -134,6 +134,7 @@ const suites = {
     ["query-sheet", "scripts/e2e-query-sheet.mjs", {}],
     ["query-sheet-input", "scripts/e2e-query-sheet-input.mjs", {}],
     ["query-nested-rows", "scripts/e2e-query-nested-rows.mjs", {}],
+    ["cells-results-render", "scripts/e2e-cells-results-render.mjs", {}],
     ["query-bare-hint", "scripts/e2e-query-bare-hint.mjs", {}],
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
