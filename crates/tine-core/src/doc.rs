@@ -187,6 +187,7 @@ impl BlockProjection {
     }
 
     /// Whether this block references page `name` under page-name normalization.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn refs_contains(&self, name: &str) -> bool {
         self.refs_contains_norm(&crate::refs::normalize(name))
     }
@@ -194,6 +195,7 @@ impl BlockProjection {
     /// Like [`Self::refs_contains`] but takes an already-[`crate::refs::normalize`]d
     /// target — for hot loops testing ONE target against every block, so the
     /// normalize is hoisted out of the per-block loop instead of repeated.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn refs_contains_norm(&self, normalized: &str) -> bool {
         self.refs_norm().iter().any(|r| r == normalized)
     }
@@ -1686,12 +1688,5 @@ impl CheckpointBlock {
             property_ref_config: None,
             proj,
         }
-    }
-}
-
-impl DocBlock {
-    /// Whether this block's projection memo is populated.
-    pub fn projection_is_built(&self) -> bool {
-        self.proj.get().is_some()
     }
 }

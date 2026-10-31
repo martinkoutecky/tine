@@ -232,20 +232,6 @@ pub struct Term {
 /// A conjunction of terms (all must be satisfied). Groups are OR-ed together.
 pub type AndGroup = Vec<Term>;
 
-/// Mirrored behavioral examples displayed by Ctrl+K. Tests execute every row so
-/// visible help cannot describe syntax the Rust matcher does not implement.
-pub const SEARCH_SYNTAX_EXAMPLES: &[(&str, &str, &str)] = &[
-    ("foo bar", "bar then foo", "foo only"),
-    ("foo OR bar", "bar only", "neither"),
-    ("foo -draft", "foo ready", "foo draft"),
-    (
-        "\"exact phrase\"",
-        "an exact phrase here",
-        "exact other phrase",
-    ),
-    ("/[A-Z]{3}/", "ABC", "abc"),
-];
-
 /// A parsed query, ready to test blocks/page-names against.
 #[derive(Debug, Clone)]
 pub enum Matcher {
@@ -684,6 +670,20 @@ mod tests {
         assert!(hit("hello", "well HELLO there"));
         assert!(!hit("hello", "goodbye"));
     }
+
+    /// Mirrored behavioral examples displayed by Ctrl+K. Tests execute every row so
+    /// visible help cannot describe syntax the Rust matcher does not implement.
+    const SEARCH_SYNTAX_EXAMPLES: &[(&str, &str, &str)] = &[
+        ("foo bar", "bar then foo", "foo only"),
+        ("foo OR bar", "bar only", "neither"),
+        ("foo -draft", "foo ready", "foo draft"),
+        (
+            "\"exact phrase\"",
+            "an exact phrase here",
+            "exact other phrase",
+        ),
+        ("/[A-Z]{3}/", "ABC", "abc"),
+    ];
 
     #[test]
     fn visible_syntax_examples_match_the_documented_behavior() {

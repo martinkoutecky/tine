@@ -880,6 +880,7 @@ const NOT_MERGEABLE: &str = "the two edits no longer merge cleanly";
 ///   - Removed    → pulled in only on `theirs`/`both`.
 /// `merged` is the fourth Modified outcome and needs a base — see
 /// [`merge_blocks3`].
+#[cfg(any(test, feature = "test-faults"))]
 pub fn merge_blocks(
     mine: &[DocBlock],
     theirs: &[DocBlock],

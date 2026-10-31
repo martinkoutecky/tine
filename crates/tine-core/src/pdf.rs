@@ -443,6 +443,7 @@ pub fn hls_page_document(pdf_filename: &str, label: &str, highlights: &[Highligh
     hls_page_document_for_format(pdf_filename, label, highlights, Format::Md)
 }
 
+#[cfg(any(test, feature = "test-faults"))]
 pub fn hls_page_document_for_format(
     pdf_filename: &str,
     label: &str,

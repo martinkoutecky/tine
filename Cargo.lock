@@ -5142,6 +5142,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlparser",
+ "tine-core",
  "tine-outline",
  "tine-search",
  "unicode-normalization",

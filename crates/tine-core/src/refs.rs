@@ -166,6 +166,7 @@ pub fn block_id(raw: &str, is_org: bool) -> Option<String> {
 /// BALANCED parens, so a URL that contains parens — `((uuid))`, `…/Foo_(bar)` — is
 /// captured whole instead of stopping at the first `)`. Returns (label, target,
 /// bytes consumed); only ASCII brackets are matched, so byte slicing is safe.
+#[cfg(test)]
 pub fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
     let bytes = rest.as_bytes();
     if bytes.first() != Some(&b'[') {
@@ -198,6 +199,7 @@ pub fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
 }
 
 /// The inner uuid if `url` is exactly a `((uuid))` block-ref target.
+#[cfg(test)]
 pub fn as_block_ref(url: &str) -> Option<&str> {
     url.trim()
         .strip_prefix("((")
@@ -357,6 +359,7 @@ fn tag_for(to: &str) -> String {
 /// `tags::` lines inside a code fence are skipped (literal text, like inline
 /// refs in code). Whitespace, commas, and the `key::` prefix are preserved
 /// verbatim for byte-exact round-tripping of everything but the matched name.
+#[cfg(test)]
 pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> String {
     let mut map = std::collections::HashMap::with_capacity(1);
     map.insert(normalize(from), to.to_string());

@@ -15,7 +15,6 @@ mod plain_match;
 mod signature;
 pub use signature::{BlockSignature, ReferenceFilter};
 
-pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
 // This small module also compiles into lsdoc-wasm; keep one built-in answer.
@@ -97,6 +96,7 @@ pub struct ReferenceSourceProjection {
 
 impl ReferenceSourceProjection {
     /// Borrow this build result as a [`ReferenceSource`].
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn as_source(&self) -> ReferenceSource<'_> {
         ReferenceSource {
             explicit: &self.explicit,
@@ -878,6 +878,7 @@ impl<'a> ReferenceNeedles<'a> {
     }
 }
 
+#[cfg(any(test, feature = "test-faults"))]
 pub fn occurrences_of_kind_bounded(
     raw: &str,
     projection: ReferenceSource<'_>,
@@ -974,6 +975,7 @@ pub fn occurrences_of_kind_prepared(
     }
 }
 
+#[cfg(any(test, feature = "test-faults"))]
 pub fn occurrences_of_kind(
     raw: &str,
     projection: ReferenceSource<'_>,
@@ -987,6 +989,7 @@ pub fn occurrences_of_kind(
 
 /// Cheap membership path used once a result construction budget is closed.
 /// It performs no occurrence/string construction and stops at the first hit.
+#[cfg(any(test, feature = "test-faults"))]
 pub fn has_occurrence_kind(
     raw: &str,
     projection: ReferenceSource<'_>,

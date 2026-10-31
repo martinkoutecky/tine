@@ -651,25 +651,6 @@ pub struct ReferenceBlockEvidence {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReferenceDiagnosticTrace {
-    pub page: String,
-    pub kind: PageKind,
-    pub block_id: String,
-    pub occurrences: Vec<ReferenceOccurrence>,
-    pub included_linked: bool,
-    pub included_unlinked: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclusion_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReferenceDiagnostics {
-    pub engine_version: String,
-    pub target: String,
-    pub traces: Vec<ReferenceDiagnosticTrace>,
-}
-
 /// A named template (a block with `template:: <name>`) and the blocks to insert.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
