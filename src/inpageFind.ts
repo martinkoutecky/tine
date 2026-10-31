@@ -113,7 +113,6 @@ export const inPageFindOpen = state.open;
 export const inPageFindQuery = state.query;
 export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;
-export const inPageFindPaneId = state.paneId;
 
 /** Count shared retired days once, even when several visible panes show Journals.
  * Find walks loaded roots only and never reads an unloaded day. */

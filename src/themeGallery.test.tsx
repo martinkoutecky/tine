@@ -7,7 +7,6 @@ import {
   applyThemeColors,
   applyThemeStyle,
   ensureThemeStyle,
-  selectedGalleryTheme,
   selectedThemeColors,
   selectedThemePresentation,
   selectedThemeStyle,
@@ -53,14 +52,14 @@ describe("theme gallery style layer", () => {
   it("applies a bundled theme and Default clears the managed node", () => {
     applyTheme("nord");
 
-    expect(selectedGalleryTheme()).toBe("nord");
+    expect(selectedThemeColors()).toBe("nord");
 
     const theme = document.getElementById(THEME_GALLERY_STYLE_ID);
     if (theme) theme.textContent = "html { --scratch-theme: 1; }";
 
     applyTheme("");
 
-    expect(selectedGalleryTheme()).toBe("");
+    expect(selectedThemeColors()).toBe("");
     expect(theme?.textContent).toBe("");
   });
 
@@ -84,7 +83,7 @@ describe("theme gallery style layer", () => {
 
     applyTheme(installed.key);
 
-    expect(selectedGalleryTheme()).toBe(installed.key);
+    expect(selectedThemeColors()).toBe(installed.key);
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toContain("#010203");
     expect(managedStyleIds()).toEqual([LS_SHIM_STYLE_ID, THEME_GALLERY_STYLE_ID, CUSTOM_CSS_STYLE_ID]);
     await uninstallThemePackage(installed.key);
@@ -183,7 +182,7 @@ describe("theme gallery style layer", () => {
     applyThemeRevocations(new Set([installed.key]));
     applyTheme(installed.key);
 
-    expect(selectedGalleryTheme()).toBe("");
+    expect(selectedThemeColors()).toBe("");
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await expect(installThemePackage(manifest)).rejects.toThrow(/revoked/);
     await uninstallThemePackage(installed.key);
@@ -209,7 +208,7 @@ describe("theme gallery style layer", () => {
     await initThemePackages(new Set([installed.key]));
     await initThemeGallery();
 
-    expect(selectedGalleryTheme()).toBe("");
+    expect(selectedThemeColors()).toBe("");
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await uninstallThemePackage(installed.key);
   });

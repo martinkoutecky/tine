@@ -1,7 +1,7 @@
 import { msg } from "../../i18n";
 import { type Format } from "../../types";
 import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE, splitLogbook, isEditorEmpty } from "../../editor/properties";
-import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
+import { type ClipboardBlock, type ClipboardPayloadSlot, consumeClipboardCutGrant } from "../../clipboard";
 import { doc, Node, formatForPage, freshId, setDoc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "../model";
 import { graphTransitioning } from "../../ui";
 import { pageInstanceGeneration } from "../instance";
@@ -258,7 +258,7 @@ export function pasteClipboardPayload(
   slot: ClipboardPayloadSlot,
 ): Promise<string | null> {
   const authority = captureClipboardPasteAuthority(targetId);
-  const grant = slot.op === "cut" ? consumeCutGrant(slot.generation) : null;
+  const grant = slot.op === "cut" ? consumeClipboardCutGrant(slot.generation) : null;
   if (!authority) return Promise.resolve(null);
   const owner = ownedWhen(() => clipboardPasteAuthorityCurrent(authority));
 

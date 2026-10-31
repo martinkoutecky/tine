@@ -3,7 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "../clipboard";
+import { clearClipboardPayload, copyBlockOutline, peekClipboardPayload } from "../clipboard";
 import { setCopyIncludeSubtree } from "../copySettings";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
@@ -22,7 +22,7 @@ import { openAsLoaded } from "./hostConflict.test.support";
 beforeAll(() => initParser());
 
 afterEach(() => {
-  clearClipboardSlot();
+  clearClipboardPayload();
   resetStore();
   setGraphMeta(null);
   setCopyIncludeSubtree(true);
@@ -212,7 +212,7 @@ describe("private block payload paste necessity", () => {
       }));
       paste(textarea, "- payload");
       expect(doc.byId[host].raw).toBe("- payload");
-      expect(peekClipboardSlot()?.op).toBe("cut");
+      expect(peekClipboardPayload()?.op).toBe("cut");
       expect(doc.byId["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]).toBeUndefined();
     } finally {
       dispose();
@@ -233,7 +233,7 @@ describe("private block payload paste necessity", () => {
     ));
     try {
       paste(maybeEditorIn(root)!, "foreign text");
-      expect(peekClipboardSlot()).toBeNull();
+      expect(peekClipboardPayload()).toBeNull();
     } finally {
       dispose();
     }
@@ -257,7 +257,7 @@ describe("private block payload paste necessity", () => {
       const textarea = maybeEditorIn(root)!;
       textarea.select(4, 4);
       paste(textarea, "- payload");
-      expect(peekClipboardSlot()?.op).toBe("cut");
+      expect(peekClipboardPayload()?.op).toBe("cut");
       expect(doc.byId["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]).toBeUndefined();
     } finally {
       dispose();
@@ -282,7 +282,7 @@ describe("private block payload paste necessity", () => {
       const textarea = maybeEditorIn(root)!;
       textarea.select(4, 4);
       paste(textarea, "foreign text");
-      expect(peekClipboardSlot()).toBeNull();
+      expect(peekClipboardPayload()).toBeNull();
     } finally {
       dispose();
     }

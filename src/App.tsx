@@ -1353,7 +1353,7 @@ export function App(): JSX.Element {
         // First-run onboarding covers the (empty) app when no graph is configured;
         // it renders before Toasts so a "couldn't create graph" toast shows on top.
         welcome={<FailureBoundary region="Welcome"><WelcomeLayer
-          mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
+          mandatory={firstLoadDone() && !graphMeta()}
           optionalOpen={welcomeOpen()}
           onClose={closeWelcome}
         /></FailureBoundary>}

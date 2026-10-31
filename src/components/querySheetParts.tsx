@@ -258,23 +258,6 @@ export function QuerySentence(props: {
 
 // Row and group model — the tree, as the sheet draws it
 
-/** The 13 field types a row can be (§7.4's P3 vocabulary). */
-export const FILTER_TYPES: { kind: BuilderLeafKind; label: import("../i18n").Msg }[] = [
-  { kind: "page", label: msg("query-query-sheet-parts-page-tag-reference") },
-  { kind: "task", label: msg("query-query-sheet-parts-task-marker") },
-  { kind: "priority", label: msg("query-query-sheet-parts-priority") },
-  { kind: "property", label: msg("query-query-sheet-parts-property") },
-  { kind: "scheduled", label: msg("query-query-sheet-parts-scheduled") },
-  { kind: "deadline", label: msg("query-query-sheet-parts-deadline") },
-  { kind: "journal", label: msg("query-query-sheet-parts-in-a-journal-page") },
-  { kind: "between", label: msg("query-query-sheet-parts-between-dates") },
-  { kind: "content", label: msg("query-query-sheet-parts-full-text-search") },
-  { kind: "onPage", label: msg("query-query-sheet-parts-on-page") },
-  { kind: "namespace", label: msg("query-query-sheet-parts-in-namespace") },
-  { kind: "pageProperty", label: msg("query-query-sheet-parts-page-property") },
-  { kind: "pageTags", label: msg("query-query-sheet-parts-page-tags") },
-];
-
 export const FIELD_LABELS: Record<BuilderLeafKind, import("../i18n").Msg> = {
   page: msg("query-filter-page-tag-reference"),
   task: msg("query-filter-task-marker"),

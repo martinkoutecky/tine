@@ -9,7 +9,7 @@ import { navReuseTabs, setNavReuseTabs } from "./navSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "./localFileSettings";
 import { spellcheckEnabled, setSpellcheckEnabled } from "./spellcheckSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy } from "./editor/linkDefault";
-import { selectedGalleryTheme, applyTheme } from "./themeGallery";
+import { selectedThemeColors, applyTheme } from "./themeGallery";
 import { setSmoothScroll, smoothScrollEnabled } from "./smoothScroll";
 import { initThemePackages } from "./themes/manager";
 
@@ -58,10 +58,10 @@ it("restores editor and navigation settings on a rejected write", async () => {
 
 it("restores the selected gallery theme when persistence fails", async () => {
   vi.spyOn(backend(), "setAppString").mockRejectedValue(new Error("disk full"));
-  const before = selectedGalleryTheme();
+  const before = selectedThemeColors();
   applyTheme(before === "nord" ? "solarized" : "nord");
   await flush();
-  expect(selectedGalleryTheme()).toBe(before);
+  expect(selectedThemeColors()).toBe(before);
   expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
 });
 

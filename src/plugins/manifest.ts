@@ -8,7 +8,6 @@ import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./s
  *  last package version they accept. 0.3 adds the `color` setting type. */
 export const SUPPORTED_PLUGIN_API_VERSIONS = ["0.2", "0.3"] as const;
 export type PluginApiVersion = (typeof SUPPORTED_PLUGIN_API_VERSIONS)[number];
-export const PLUGIN_API_VERSION: PluginApiVersion = "0.3";
 export const isSupportedPluginApiVersion = (value: unknown): value is PluginApiVersion =>
   (SUPPORTED_PLUGIN_API_VERSIONS as readonly unknown[]).includes(value);
 

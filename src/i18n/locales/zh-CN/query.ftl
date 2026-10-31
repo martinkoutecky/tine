@@ -265,31 +265,7 @@ query-query-sheet-parts-click-to-edit-this-query = 点击编辑此查询
 
 query-query-sheet-parts-edit-query-filter = 编辑查询筛选条件
 
-query-query-sheet-parts-page-tag-reference = 页面 / 标签引用
-
 query-query-sheet-parts-task-marker = 任务标记
-
-query-query-sheet-parts-priority = 优先级
-
-query-query-sheet-parts-property = 属性
-
-query-query-sheet-parts-scheduled = 计划日期
-
-query-query-sheet-parts-deadline = 截止日期
-
-query-query-sheet-parts-in-a-journal-page = 位于日记页面
-
-query-query-sheet-parts-between-dates = 日期范围
-
-query-query-sheet-parts-full-text-search = 全文搜索
-
-query-query-sheet-parts-on-page = 所在页面
-
-query-query-sheet-parts-in-namespace = 所在命名空间
-
-query-query-sheet-parts-page-property = 页面属性
-
-query-query-sheet-parts-page-tags = 页面标签
 
 query-query-sheet-parts-drag-to-reorder-or-into-another-group-or-use-the = 拖动调整顺序或移入其他分组，也可使用上下方向键
 

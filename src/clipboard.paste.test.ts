@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import {
-  clearClipboardSlot,
+  clearClipboardPayload,
   copyBlockOutline,
-  peekClipboardSlot,
+  peekClipboardPayload,
   type ClipboardBlock,
   type ClipboardPayloadData,
 } from "./clipboard";
@@ -105,7 +105,7 @@ async function record(
 }
 
 async function paste(target = HOST): Promise<string | null> {
-  const slot = peekClipboardSlot();
+  const slot = peekClipboardPayload();
   expect(slot).not.toBeNull();
   return pasteClipboardPayload(target, slot!);
 }
@@ -118,7 +118,7 @@ beforeEach(() => {
 afterEach(() => {
   failing = () => false;
   if (historyPageOnlyMode()) toggleUndoRedoMode();
-  clearClipboardSlot();
+  clearClipboardPayload();
   resetStore();
   setGraphMeta(null);
   setGraphTransitioning(false);
@@ -148,7 +148,7 @@ describe("clipboard payload insertion and identity validation", () => {
         await flushPage("Source");
         expect(files.get("Source")!.blocks).toHaveLength(0);
       }
-      clearClipboardSlot();
+      clearClipboardPayload();
       resetStore();
     }
   });
@@ -265,7 +265,7 @@ describe("clipboard payload insertion and identity validation", () => {
     await copyBlockOutline("copy", "- new", payload);
     rejectFirst(new Error("clipboard denied"));
     await expect(first).rejects.toThrow("clipboard denied");
-    expect(peekClipboardSlot()?.text).toBe("- new");
+    expect(peekClipboardPayload()?.text).toBe("- new");
   });
   it("retires an immediate cut before the debounce and preserves identity", async () => {
     await seed([page("Paste", [
@@ -360,12 +360,12 @@ describe("clipboard payload insertion and identity validation", () => {
     ];
     for (const [index, sample] of cases.entries()) {
       resetStore();
-      clearClipboardSlot();
+      clearClipboardPayload();
       await seed([page("Source", [block(ID1, `old\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
       const payload = buildClipboardPayload([ID1])!;
       payload.blocks = [{ raw: sample.raw, sourceFormat: "md", children: sample.child ? [sample.child] : [] }];
       await record("cut", `- root ${index}`, payload);
-      if (sample.graph) (peekClipboardSlot() as any).graph = sample.graph;
+      if (sample.graph) (peekClipboardPayload() as any).graph = sample.graph;
       deleteBlock(ID1);
 
       await paste();
@@ -378,7 +378,7 @@ describe("clipboard payload insertion and identity validation", () => {
   it("fails closed on one-source flush failure, eviction, and same-name path rebind", async () => {
     const run = async (arrange: () => void | Promise<void>) => {
       resetStore();
-      clearClipboardSlot();
+      clearClipboardPayload();
       await seed([
         page("Source", [block(ID1, `source\nid:: ${ID1}`)], { id: "pages/source.md" }),
         page("Target", [block(HOST, "")]),
@@ -428,7 +428,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
   it("strips the whole multi-page payload when only one source flush fails", async () => {
     resetStore();
-    clearClipboardSlot();
+    clearClipboardPayload();
     await seed([
       page("One", [block(ID1, `one\nid:: ${ID1}`)]),
       page("Two", [block(ID2, `two\nid:: ${ID2}`)]),
@@ -479,7 +479,7 @@ describe("clipboard payload insertion and identity validation", () => {
     vi.mocked(backend().resolveBlocks).mockRejectedValueOnce(new Error("first validation fails"));
 
     await paste();
-    expect(peekClipboardSlot()?.op).toBe("copy");
+    expect(peekClipboardPayload()?.op).toBe("copy");
     const first = roots("Target")[0];
     expect(first).not.toBe(ID1);
 
@@ -605,7 +605,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
     await expect(pending).resolves.toBeNull();
     expect(roots("Target")).toEqual([HOST]);
-    expect(peekClipboardSlot()?.op).toBe("copy");
+    expect(peekClipboardPayload()?.op).toBe("copy");
   });
 
   it("aborts when the target page instance reloads during validation", async () => {

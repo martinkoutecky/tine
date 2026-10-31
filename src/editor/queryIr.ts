@@ -179,15 +179,6 @@ export interface ScopedDisplaySettings {
   unreadable_settings?: string[];
 }
 
-/** The Display half of a `run_graph_search` request (§7.6, Q3). */
-export interface GraphSearchDisplayOptions {
-  pageMatchScope?: FriendlyPageMatchScope;
-  pageView?: ViewSettings;
-  blockView?: ViewSettings;
-}
-
-export type GraphSearchConsumer = "non_interactive" | "ctrl_k" | "search_tab";
-
 /** `query_parse`'s answer. */
 export interface ParsedQuery extends ScopedDisplaySettings {
   /** Rust reads Logseq options, query-table and the trailing table marker. */

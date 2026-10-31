@@ -50,9 +50,3 @@ export function fontPresence(name: string, measure: TextMeasurer = canvasMeasure
   }
   return result;
 }
-
-/** Test seam: forget memoized answers and the cached canvas. */
-export function resetFontPresenceForTests(): void {
-  memo.clear();
-  canvasContext = undefined;
-}

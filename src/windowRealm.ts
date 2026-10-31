@@ -277,11 +277,6 @@ export function elementFromPointIn(target: RealmTarget, x: number, y: number): E
   return typeof doc.elementFromPoint === "function" ? doc.elementFromPoint(x, y) : null;
 }
 
-export function elementsFromPointIn(target: RealmTarget, x: number, y: number): Element[] {
-  const doc = documentOf(target);
-  return typeof doc.elementsFromPoint === "function" ? doc.elementsFromPoint(x, y) : [];
-}
-
 export function createRangeIn(target?: RealmTarget): Range {
   return documentOf(target).createRange();
 }
@@ -290,11 +285,6 @@ export function createRangeIn(target?: RealmTarget): Range {
 export function viewportOf(target?: RealmTarget): { width: number; height: number; dpr: number; visual: VisualViewport | null } {
   const win = windowOf(target);
   return { width: win.innerWidth, height: win.innerHeight, dpr: win.devicePixelRatio || 1, visual: win.visualViewport ?? null };
-}
-
-export function matchMediaIn(target: RealmTarget, query: string): MediaQueryList | null {
-  const win = windowOf(target);
-  return typeof win.matchMedia === "function" ? win.matchMedia(query) : null;
 }
 
 /** `querySelector` across every registered document, main first. */
@@ -411,10 +401,6 @@ const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
 export function isHTMLElementNode(value: unknown): value is HTMLElement {
   return isElementNode(value) && value.namespaceURI === XHTML_NS;
-}
-
-export function isTextNode(value: unknown): value is Text {
-  return !!value && typeof value === "object" && (value as Node).nodeType === 3;
 }
 
 export function isNodeValue(value: unknown): value is Node {

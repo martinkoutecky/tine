@@ -371,15 +371,6 @@ export function rawWithOrderListType(raw: string, value: string | null, format: 
   return joinProps(visible, property, format);
 }
 
-/** Preserve a source's explicit list type; otherwise inherit the target's.
- * This is OG's common move/insert rule (`outliner/core.cljs:420-433,536-555`
- * at 6e7afa8eb), shared by drag and every structural outline insertion below. */
-export function rawWithInheritedOrderListType(raw: string, format: Format, targetId: string | null | undefined): string {
-  if (orderListTypeFromRaw(raw, format) !== null) return raw;
-  const targetType = targetId ? blockProperty(targetId, ORDER_KEY) : null;
-  return targetType === null ? raw : rawWithOrderListType(raw, targetType, format);
-}
-
 function setOwnNumberedList(id: string, enabled: boolean, visibleText?: string): boolean {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return false;

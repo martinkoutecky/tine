@@ -90,13 +90,6 @@ export function normalizeClipboardText(text: string): string {
   return lf.endsWith("\n") ? lf.slice(0, -1) : lf;
 }
 
-// Concise stage-B read API named by the CB1 contract. Keep the descriptive
-// names above for call-site readability and backwards-compatible focused tests.
-export const peekClipboardSlot = peekClipboardPayload;
-export const consumeCutGrant = consumeClipboardCutGrant;
-export const clearClipboardSlot = clearClipboardPayload;
-export const normalize = normalizeClipboardText;
-
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 

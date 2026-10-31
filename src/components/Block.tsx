@@ -11,7 +11,7 @@ import { Show, Switch, Match, For, createMemo, createSignal, createContext, useC
 import { autocompleteFacets, backend } from "../backend";
 import { pinyinMatchingEnabled } from "../launcherRanking";
 import { reportUiFailure } from "../uiFailure";
-import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
+import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
 import {
   detectTrigger,
   applyCompletion,
@@ -2740,9 +2740,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const start = ref.selectionStart;
     const syntaxSensitive = sheetCell || isCalc() || codeShown() !== null || caretInFence(ref.value, start, pageFmt())
       || caretOnOpeningFence(ref.value, start, pageFmt()) || caretInDisplayMath(ref.value, start, pageFmt());
-    const slot = peekClipboardSlot();
+    const slot = peekClipboardPayload();
     if (!syntaxSensitive) {
-      if (slot && text !== "" && normalize(text) === normalize(slot.text)) {
+      if (slot && text !== "" && normalizeClipboardText(text) === normalizeClipboardText(slot.text)) {
         e.preventDefault();
         // Association is intentionally text-only and can replay the user's last
         // private block copy when a foreign clipboard happens to contain equal
@@ -2759,7 +2759,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // A non-empty observed replacement makes stale private data unusable even
     // if a later external clipboard happens to restore the old text. Matching
     // text in a syntax-sensitive surface is only a bypass, not a replacement.
-    if (slot && text !== "" && normalize(text) !== normalize(slot.text)) clearClipboardSlot();
+    if (slot && text !== "" && normalizeClipboardText(text) !== normalizeClipboardText(slot.text)) clearClipboardPayload();
     // A structural sheet copy (multiple grid cells) pasted into a block editor
     // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
     // text (Martin's nit). Only fires when the clipboard is exactly our own
