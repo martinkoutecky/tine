@@ -163,14 +163,6 @@ export function propertyFilter(
   return rel("props", pred);
 }
 
-/** `(page-property …)` — the same predicate read through the page. */
-export function pagePropertyFilter(
-  key: string,
-  value: string | PropertyValueTest | null,
-): Filter {
-  return throughPage(propertyFilter(key, value));
-}
-
 // Typed operators (SPEC §7.4, §9 P2)
 
 /** **A UI operator IDENTITY — not a `CmpOp` (SPEC §7.4, design §2.4).**

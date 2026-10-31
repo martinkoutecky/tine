@@ -6,7 +6,6 @@ import {
   joinProps,
   readPropertyValue,
   splitProps,
-  upsertPropertyLine,
   BUILTIN_HIDE,
   rawOffsetToVisibleOffset,
   isPageHeaderPropertiesOnly,
@@ -16,6 +15,11 @@ import {
   HIDE_ALL,
   isEditablePropertyKey,
 } from "./properties";
+
+/** Page-property upsert as production delivers it (`setPageProperty`):
+ * `pagePartsWithProperty`; "" there is null (no nonblank content) here. */
+const upsertPropertyLine = (block: string | null, key: string, value: string | null): string | null =>
+  pagePartsWithProperty([block ?? ""], "md", key, value)[0] || null;
 
 describe("canonical Markdown page-header grammar (GH #163)", () => {
   it("accepts Unicode/plugin keys and preserves internal blank separators", () => {

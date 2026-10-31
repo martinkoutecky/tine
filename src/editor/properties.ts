@@ -378,48 +378,6 @@ export function readPropertyValue(block: string | null, key: string): string | n
   return null;
 }
 
-/** Add / replace / remove a `key:: value` line. A null or empty value removes
- *  the key. Replace the first matching line in place and preserve every
- *  unrelated line and blank separator byte-for-byte; page-property grouping
- *  and order are user data, not disposable formatting. Duplicate matching
- *  keys retain the prior single-value behavior and collapse to the first slot.
- *  Returns null when no nonblank content remains. */
-export function upsertPropertyLine(
-  block: string | null,
-  key: string,
-  value: string | null
-): string | null {
-  const v = value == null ? null : value.trim();
-  const lines = block == null || block === "" ? [] : block.split("\n");
-  const out: string[] = [];
-  let matched = false;
-  const raw = block ?? "";
-  const decoder = new TextDecoder();
-  const bytes = new TextEncoder().encode(raw);
-  const lineIndices = new Map<number, number>();
-  let byteStart = 0;
-  const encoder = new TextEncoder();
-  lines.forEach((line, i) => { lineIndices.set(byteStart, i); byteStart += encoder.encode(line).length + 1; });
-  const regions = blockRegions(raw);
-  if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
-  const accepted = new Map(regions.properties.filter((p) => p.primary)
-    .map((p) => [lineIndices.get(p.line[0]), p]));
-  for (const [index, line] of lines.entries()) {
-    const p = accepted.get(index);
-    if (p && p.key.toLowerCase() === key.toLowerCase()) {
-      if (!matched && v) out.push(`${line.slice(0, decoder.decode(bytes.subarray(p.line[0], p.key_range[1])).length)}:: ${v}${line.endsWith("\r") ? "\r" : ""}`);
-      matched = true;
-      continue;
-    }
-    out.push(line);
-  }
-  // Actual Logseq `frontend.util.page-property/insert-property` prepends a new
-  // page property and replaces an existing one in place.  Keep that ordering
-  // contract instead of inventing a Tine-local append rule.
-  if (!matched && v) out.unshift(`${key}:: ${v}`);
-  return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
-}
-
 /** One page property line: `key` (Org keys lowercased, as OG/mldoc store
  *  them), trimmed `value`, and `line`, its 0-based line index in the text. */
 export interface PagePropertyEntry {

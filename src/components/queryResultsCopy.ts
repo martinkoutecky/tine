@@ -18,20 +18,10 @@ export function uniqueResultRoots(blocks: BlockDto[]): BlockDto[] {
   return blocks.filter(block => !descendants.has(block.id) && !seen.has(block.id) && !!seen.add(block.id));
 }
 
-/** The manager's GH #387 format: page/date titles wrap the result trees,
- * which go through the same Copy / export as dialog as outline selections. */
-export function queryResultsCopyNodes(groups: RefGroup[], pages: Pick<PageEntry, "name">[] = []): ExportNode[] {
-  return [
-    ...pages.map((page) => ({ raw: page.name, format: formatForPage(page.name), children: [] })),
-    ...groups.map((group) => {
-      const format = formatForPage(group.page);
-      return { raw: group.page, format, children: blockDtosToExportNodes(uniqueResultRoots(group.blocks), format) };
-    }),
-  ];
-}
-
 /** Read selected source pages once each, sequentially. Selection is frozen at
- * invocation and graph ownership covers every await and modal opening. */
+ * invocation and graph ownership covers every await and modal opening. The
+ * manager's GH #387 format: page/date titles wrap the result trees, which go
+ * through the same Copy / export as dialog as outline selections. */
 export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageEntry, "name">[] = []): Promise<void> {
   const owner = graphOwner();
   const forest: ExportNode[] = pages.map(page => ({ raw: page.name, children: [] }));

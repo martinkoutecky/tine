@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { HTML_PASTE_LIMITS, structuredHtmlOutline } from "./htmlPaste";
+import { HTML_PASTE_LIMITS, structuredHtmlPaste } from "./htmlPaste";
+
+const structuredHtmlOutline = (html: string, plain: string, format: "md" | "org" = "md") =>
+  structuredHtmlPaste(html, plain, format)?.outline ?? null;
 
 describe("structuredHtmlOutline", () => {
   it.each(["md", "org"] as const)("keeps the reporter's copied link in %s", (format) => {

@@ -3,7 +3,11 @@ import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import type { BlockDto, QueryExportBatch } from "../types";
 import type { ExportNode } from "../editor/exportText";
-import { warmExportResolutions } from "./ExportModal";
+import { warmExportResolutionsOwned } from "./ExportModal";
+import { graphOwner } from "../owned";
+
+const warmExportResolutions = (nodes: ExportNode[], warmed: Parameters<typeof warmExportResolutionsOwned>[1]) =>
+  warmExportResolutionsOwned(nodes, warmed, graphOwner());
 import { setToasts, toasts } from "../toasts";
 import { bumpGraphEpoch } from "../graphSession";
 

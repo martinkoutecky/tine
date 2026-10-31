@@ -190,13 +190,6 @@ export function parseJournalWith(s: string, fmt: string): JournalDateParts | nul
   return parts;
 }
 
-/// Whether `name` is a journal date in the graph's title format (or a common
-/// default) — so a `[[name]]` link / quick-switch pick opens the journal, not an
-/// empty page. Mirrors the backend's `safe-journal-title-formatters` leniency.
-export function isJournalTitle(name: string): boolean {
-  return journalParts(name) !== null;
-}
-
 /** Parse a journal title as a local Date from the active format, default title
  * format, ISO or underscore date. Returns null on invalid/unrecognized input.
  * O(title length), independent of graph size; never reads a page. */
@@ -208,6 +201,10 @@ function journalParts(name: string): JournalDateParts | null {
   return null;
 }
 
+/// A `[[name]]` link / quick-switch pick opens the journal (not an empty page)
+/// when `name` is a journal date in the graph's title format or a common
+/// default: `pageIndex.linkPageKind` asks this. Mirrors the backend's
+/// `safe-journal-title-formatters` leniency.
 export function parseJournalTitle(name: string): Date | null {
   const parts = journalParts(name);
   return parts ? localCalendarDate(parts.y, parts.m - 1, parts.d) : null;

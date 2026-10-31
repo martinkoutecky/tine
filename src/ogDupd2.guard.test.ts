@@ -33,7 +33,7 @@ it("I-12 D17: journal format grammar belongs to native date::Format", () => {
   const source = readFileSync("src/journal.ts","utf8");
   expect(callsImported("src/journal.ts", "parse_journal_format_json", "src/render/wasm/lsdoc_wasm", "parseJournalWith"), "I-12: imitate parseJournalWith's parse_journal_format_json").toBe(true);
   expect(source).not.toMatch(/function daysInMonth|function ordinal|const MONTHS|const matchName/);
-  expect(source).toContain("return journalParts(name) !== null");
+  expect(source).toContain("const parts = journalParts(name);");
 });
 it("I-12 D19: repeaters and schedule reads use parser planning.date; imitate editor/repeat.ts scheduleParts", () => {
   expect(regexes("src/editor/repeat.ts"), "I-12: read planning.date, never regex timestamp/cookie recognition").toEqual([]);

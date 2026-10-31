@@ -5,7 +5,6 @@ import { JOURNAL_TITLE_FORMATS } from "./journalTitleFormats";
 import ogFormats from "../tests/fixtures/og-journal-formats.json";
 import {
   formatJournal,
-  isJournalTitle,
   parseJournalWith,
   setJournalTitleFormat,
   parseJournalTitle,
@@ -14,6 +13,8 @@ import {
   localDayRolloverDelay,
   type JournalDateParts,
 } from "./journal";
+
+const isJournalTitle = (name: string): boolean => parseJournalTitle(name) !== null;
 
 it("inverts a valid journal day key in years below 100", () => {
   const day = localDateFromDayKey(10102);

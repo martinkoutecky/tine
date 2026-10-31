@@ -1,7 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { inlineText, parseBody } from "../render/facets";
-import { resetStore, undo } from "../document";
+import { blockPageReadOnly, formatForBlock, insertOutlineAfter, node as docNode, resetStore, undo, withUndoUnit } from "../document";
+import { visibleBody } from "../render/block";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
@@ -11,8 +12,7 @@ import {
   convertGridToPipeTable,
   convertPipeTableToGrid,
   escapedPipeCellsRoundTrip,
-  gridVisibleMatrix,
-  insertMatrixGridAfter,
+  matrixGridNode,
 } from "./conversions";
 
 beforeAll(() => initParser());
@@ -61,6 +61,20 @@ function grid(raw = "Grid\ntine.view:: grid", matrix: readonly (readonly string[
 function rawMatrix(id: string): string[][] {
   return (doc.byId[id]?.children ?? []).map((rowId) =>
     (doc.byId[rowId]?.children ?? []).map((cellId) => doc.byId[cellId]?.raw ?? ""),
+  );
+}
+
+// The production drop path (filedrop.ts) inserts `matrixGridNode` through
+// `insertOutlineAfter` inside its own undo unit; these mirror that for the test.
+function insertMatrixGridAfter(afterId: string, title: string, matrix: readonly (readonly string[])[]): string | null {
+  const target = docNode(afterId);
+  if (!target || blockPageReadOnly(afterId)) return null;
+  return withUndoUnit("file-drop", [target.page], () => insertOutlineAfter(afterId, [matrixGridNode(title, matrix)]));
+}
+
+function gridVisibleMatrix(id: string): string[][] {
+  return (docNode(id)?.children ?? []).map((rowId) =>
+    (docNode(rowId)?.children ?? []).map((cellId) => visibleBody(docNode(cellId)?.raw ?? "", formatForBlock(cellId)).join("\n")),
   );
 }
 
