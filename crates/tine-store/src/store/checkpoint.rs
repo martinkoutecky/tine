@@ -737,6 +737,7 @@ impl Signal {
     }
 
     /// Ask for a checkpoint now and wait for its outcome.
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn request_and_wait(&self) -> CheckpointWrite {
         let ticket = self.ticket();
         let mut state = self.state.lock().unwrap();

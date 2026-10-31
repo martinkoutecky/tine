@@ -3,7 +3,7 @@
 // counter is the number of times `doc.byId` is enumerated during the command.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "./clipboard";
+import { clearClipboardPayload, copyBlockOutline, peekClipboardPayload } from "./clipboard";
 import { buildClipboardPayload, deleteBlock, loadFeed, pasteClipboardPayload, redo, resetStore, undo } from "./document";
 import { doc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "./document/model";
 import { initParser } from "./render/parse";
@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
 afterEach(() => {
-  clearClipboardSlot();
+  clearClipboardPayload();
   resetStore();
   setGraphMeta(null);
   vi.restoreAllMocks();
@@ -68,12 +68,12 @@ async function cutPasteSetup(count: number): Promise<string[]> {
 describe("preserved clipboard identity checks are one pass (master 8c495c1ce)", () => {
   it("cut-paste of 200 preserved ids enumerates the loaded document a constant number of times", async () => {
     const small = await cutPasteSetup(2);
-    const smallCalls = await enumerations(() => pasteClipboardPayload(HOST, peekClipboardSlot()!));
+    const smallCalls = await enumerations(() => pasteClipboardPayload(HOST, peekClipboardPayload()!));
     expect(small.every((id) => doc.byId[id]?.page === "Target")).toBe(true);
-    resetStore(); clearClipboardSlot();
+    resetStore(); clearClipboardPayload();
 
     const ids = await cutPasteSetup(200);
-    const bigCalls = await enumerations(() => pasteClipboardPayload(HOST, peekClipboardSlot()!));
+    const bigCalls = await enumerations(() => pasteClipboardPayload(HOST, peekClipboardPayload()!));
 
     expect(ids.every((id) => doc.byId[id]?.page === "Target")).toBe(true);
     expect(bigCalls).toBe(smallCalls);
@@ -82,7 +82,7 @@ describe("preserved clipboard identity checks are one pass (master 8c495c1ce)", 
 
   it("redo of 200 preserved ids enumerates the loaded document a constant number of times", async () => {
     const ids = await cutPasteSetup(200);
-    await pasteClipboardPayload(HOST, peekClipboardSlot()!);
+    await pasteClipboardPayload(HOST, peekClipboardPayload()!);
     undo();
 
     const calls = await enumerations(() => redo());

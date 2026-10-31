@@ -157,14 +157,3 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   }
   return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
 }
-
-/** Paths for exactly the sanitized image sequence, derived by the same DOM
- * owner as presentation (no source regex). O(fragment bytes/nodes). */
-export function rawHtmlLocalImages(text: string): (string | null)[] {
-  return rawHtmlPresentation(text).localImages;
-}
-
-/** Safe HTML insertion string, without iframe dispatch. O(fragment bytes/nodes). */
-export function sanitizeRawHtml(html: string): string {
-  return rawHtmlPresentation(html).html;
-}

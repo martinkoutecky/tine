@@ -2,10 +2,9 @@ import { msg, type Msg } from "../i18n";
 import { splitProps, BUILTIN_HIDE } from "../editor/properties";
 import type { OutlineNode } from "../editor/outline";
 import type { Inline, TableBlock } from "../render/ast";
-import { visibleBody } from "../render/block";
 import { inlineText, parseBody } from "../render/facets";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
-import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
+import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { pushToast } from "../toasts";
 import { sheetConfigFromRaw } from "./config";
 
@@ -252,18 +251,4 @@ export function matrixGridNode(title: string, matrix: readonly (readonly string[
       children: row.map((cell) => ({ raw: cell, children: [] })),
     })),
   };
-}
-
-export function insertMatrixGridAfter(afterId: string, title: string, matrix: readonly (readonly string[])[]): string | null {
-  const target = docNode(afterId);
-  if (!target || blockPageReadOnly(afterId)) return null;
-  return withUndoUnit("sheet:drop-delimited-grid", [target.page], () =>
-    insertOutlineAfter(afterId, [matrixGridNode(title, matrix)]),
-  );
-}
-
-export function gridVisibleMatrix(id: string): string[][] {
-  return (docNode(id)?.children ?? []).map((rowId) =>
-    (docNode(rowId)?.children ?? []).map((cellId) => visibleBody(docNode(cellId)?.raw ?? "", formatForBlock(cellId)).join("\n")),
-  );
 }

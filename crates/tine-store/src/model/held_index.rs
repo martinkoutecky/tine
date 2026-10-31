@@ -1,6 +1,6 @@
 //! Pages a page host holds (STEP3 §5, R13, A-V4, A-H1, A-H2). While a
-//! host holds a page, its publication consumer (or a reservation's
-//! transaction) is the page's only index writer, and everything installed
+//! host holds a page, its publication consumer is the page's only
+//! index writer, and everything installed
 //! about the page comes from the bytes that writer last published
 //! (`derived.rs`, (G)): a newer disk read installed there could be
 //! overwritten by an older host event still on its way to the consumer

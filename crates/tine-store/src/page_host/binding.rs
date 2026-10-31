@@ -282,7 +282,7 @@ pub struct MailNotice {
     /// (§5). Search and references may lag the file meanwhile.
     pub index_error: bool,
     /// The page's file could not be read three times running after a
-    /// watcher change or a retained writer's release; the driver keeps
+    /// watcher change; the driver keeps
     /// retrying, and the notice clears once a read succeeds (§5, §7).
     pub observe_error: bool,
     /// Another page file claims this page's name or could own it unreadably

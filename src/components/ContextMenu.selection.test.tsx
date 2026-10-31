@@ -6,7 +6,7 @@ import { initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { selectBlock, extendSelectionTo, resetStore, pageByName, undo, pasteClipboardPayload, selectedIds, blockProperty } from "../document";
-import { clearClipboardSlot, peekClipboardSlot } from "../clipboard";
+import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { openContextMenu, closeContextMenu, closeExportModal, exportModal } from "../ui";
 import { setGraphMeta } from "../graphSession";
 import { clearTransientLayersForTest } from "../transientLayers";
@@ -28,7 +28,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   dispose?.(); dispose = undefined;
-  closeContextMenu(); closeExportModal(); clearClipboardSlot(); resetStore();
+  closeContextMenu(); closeExportModal(); clearClipboardPayload(); resetStore();
   setGraphMeta(null); clearTransientLayersForTest(); vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
@@ -55,15 +55,15 @@ describe("selection context menu (GH #591)", () => {
     click("Copy block");
     await vi.waitFor(() => expect(backend().writeRich).toHaveBeenCalled());
     expect(vi.mocked(backend().writeRich).mock.calls[0][0]).toBe("- One\n\t- Child\n- Two");
-    expect(peekClipboardSlot()!.blocks.map(b => b.raw.split("\n")[0])).toEqual(["One", "Two"]);
-    expect(peekClipboardSlot()!.blocks[0].children).toHaveLength(1);
+    expect(peekClipboardPayload()!.blocks.map(b => b.raw.split("\n")[0])).toEqual(["One", "Two"]);
+    expect(peekClipboardPayload()!.blocks[0].children).toHaveLength(1);
     expect(raws()).toEqual(["One", "Two", ""]);
   });
   it("cuts the complete selected forest, including hidden children, and pastes the same tree", async () => {
     load(true); open(); click("Cut block");
     await vi.waitFor(() => expect(raws()).toEqual([""]));
     expect(vi.mocked(backend().writeRich).mock.calls[0][0]).toBe("- One\n\t- Child\n- Two");
-    await pasteClipboardPayload("host", peekClipboardSlot()!);
+    await pasteClipboardPayload("host", peekClipboardPayload()!);
     expect(raws()).toEqual(["One", "Two"]);
     expect(doc.byId[A].children).toEqual([child]);
     expect(doc.byId[child].raw).toBe(`Child\nid:: ${child}`);

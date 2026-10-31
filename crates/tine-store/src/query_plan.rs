@@ -1157,6 +1157,7 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model:
     groups
 }
 
+#[cfg(test)]
 pub(crate) fn page_hits_to_entries(hits: Vec<QueryHit>) -> Vec<PageEntry> {
     hits.into_iter()
         .filter_map(|hit| match hit {

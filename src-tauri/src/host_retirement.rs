@@ -808,7 +808,7 @@ mod tests {
         assert!(f.closed());
     }
 
-    /// A census writer (STEP3 §7) as its command runs it
+    /// A page writer (STEP3 §7) as its command runs it
     /// (`commands.rs` `rename_page`): page a renamed to `to` through the host
     /// of `slot`, on `slot` as a worker that captured it finds it.
     fn late_writer(slot: &GraphSlot, to: &str) -> Result<(), String> {
@@ -821,9 +821,9 @@ mod tests {
             .map_err(|error| error.to_string())
     }
 
-    /// REVIEW-3b-P1 B1: a retained writer that captured the old slot before
+    /// REVIEW-3b-P1 B1: a page writer that captured the old slot before
     /// its root was adopted gets the stale-binding outcome under the gate.
-    /// It never writes past the adopted host's reservation.
+    /// It never writes past the adopted host's hold.
     #[test]
     fn review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation() {
         let f = Fixture::new("late-writer");

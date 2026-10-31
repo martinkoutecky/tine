@@ -1320,6 +1320,7 @@ impl ReadSnapshot {
             ReferenceCandidatePages::unfiltered(
                 self.pages.iter().cloned().collect(),
                 false,
+                #[cfg(test)]
                 full_page_count,
             )
         };
@@ -1339,6 +1340,7 @@ impl ReadSnapshot {
                     .cloned()
                     .collect(),
                 true,
+                #[cfg(test)]
                 full_page_count,
             )
         } else {
@@ -1361,6 +1363,7 @@ impl ReadSnapshot {
             ReferenceCandidatePages {
                 pages: selected,
                 indexed: true,
+                #[cfg(test)]
                 full_page_count,
                 filter,
                 signatures,
@@ -1509,7 +1512,7 @@ impl ReadSnapshot {
     }
 
     /// Every slot the block index lists for `uuid`, ascending (index oracle).
-    #[cfg(any(test, feature = "test-faults"))]
+    #[cfg(test)]
     pub(crate) fn block_owner_slots(&self, uuid: &str) -> Vec<usize> {
         self.block_owner_page(uuid);
         self.block_index
@@ -2276,9 +2279,11 @@ impl SnapshotExplicitIndex {
 
 pub(crate) struct ReferenceCandidatePages {
     pub pages: Vec<(PageEntry, Arc<Document>)>,
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether the candidate index narrowed the pages; when it did, the
+    /// pages already are the referrers (`Store::explicit_referrers`).
     pub indexed: bool,
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The graph's page count when the request ran (test probe).
+    #[cfg(test)]
     pub full_page_count: usize,
     /// Plain-text queries only: the per-block prefilter, and (parallel to
     /// `pages`) each page's block signatures. `None` means every block is a
@@ -2291,11 +2296,12 @@ impl ReferenceCandidatePages {
     fn unfiltered(
         pages: Vec<(PageEntry, Arc<Document>)>,
         indexed: bool,
-        full_page_count: usize,
+        #[cfg(test)] full_page_count: usize,
     ) -> Self {
         Self {
             pages,
             indexed,
+            #[cfg(test)]
             full_page_count,
             filter: None,
             signatures: Vec::new(),

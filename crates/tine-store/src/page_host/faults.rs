@@ -4,7 +4,7 @@
 //! syncs are counted at the same seam (`cost_counters`).
 pub use super::io::Phase;
 
-/// The bound a host operation's caller and a retained writer wait for
+/// The bound a host operation's caller waits for
 /// (Finding B, M6), for tests that time it.
 pub use super::binding::OPERATION_WAIT;
 

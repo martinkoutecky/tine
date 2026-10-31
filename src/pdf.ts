@@ -82,4 +82,3 @@ export const HL_COLOR_SOLID: Record<string, string> = {
   purple: "#a86ff0",
 };
 
-export const HL_COLORS = ["yellow", "green", "blue", "red", "purple"];

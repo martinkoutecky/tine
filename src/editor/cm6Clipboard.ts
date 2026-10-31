@@ -1,6 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 import { guardedCommands } from "./cm6Commands";
-import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
+import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
 import { insertOutlineAfter, insertOutlineChildren, node, outlineFits, pasteClipboardPayload, replaceEmptyBlockWithOutline, sanitizeOutlineIdsForPaste, withUndoUnit } from "../document";
 import { startEditing } from "../editorController";
 import { pasteAsLinkEdit } from "../blockRefActions";
@@ -132,8 +132,8 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     const syntaxSensitive = ctx.literal() || ctx.sheet || calcSource(source) !== null || code
       || caretInFence(source, s.from, ctx.format) || caretOnOpeningFence(source, s.from, ctx.format)
       || caretInDisplayMath(source, s.from, ctx.format);
-    const slot = peekClipboardSlot();
-    if (!syntaxSensitive && slot && text !== "" && normalize(text) === normalize(slot.text)) {
+    const slot = peekClipboardPayload();
+    if (!syntaxSensitive && slot && text !== "" && normalizeClipboardText(text) === normalizeClipboardText(slot.text)) {
       void readOwned(graphOwner(() => ctx.current()), pasteClipboardPayload(ctx.id, slot)).then(result => {
         if (result.kind === "stale") return;
         const lastId = result.value;
@@ -141,7 +141,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
       }).catch(error => reportUiFailure("clipboard-association", error));
       return true;
     }
-    if (slot && text !== "" && normalize(text) !== normalize(slot.text)) clearClipboardSlot();
+    if (slot && text !== "" && normalizeClipboardText(text) !== normalizeClipboardText(slot.text)) clearClipboardPayload();
     const grid = structuralSheetPasteNode(text);
     if (grid) { insertOutline(v, [grid], "sheet-outline-paste", true); return true; }
     const html = e.clipboardData?.getData("text/html") ?? "";

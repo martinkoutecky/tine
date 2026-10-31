@@ -196,27 +196,6 @@ export function initializeWorkspaces(): Promise<void> {
   });
 }
 
-/** Flush the live session, snapshot it into the active workspace and persist
- * the registry. Session failure toasts and rejects before registry persistence.
- * Registry failure rejects and rereads persisted state when possible. Cost follows
- * session and registry bytes. */
-export function saveActiveWorkspace(): Promise<void> {
-  return enqueue(async (scope) => {
-    await scope.after(writeOwned(scope.owner, flushSession()));
-    const current = registry();
-    const next: WorkspaceRegistry = {
-      ...current,
-      workspaces: current.workspaces.map((workspace) =>
-        workspace.id === current.activeId
-          ? { ...workspace, blob: buildPersistedSession() }
-          : workspace
-      ),
-    };
-    await persist(next, scope);
-    install(next);
-  });
-}
-
 /** Flush the current session, save it in the registry, persist the
  * target as active, then apply the target session to the UI. Unknown ID rejects.
  * Registry failure rejects and attempts a disk reread. If applying the target

@@ -1,6 +1,6 @@
 import { blockRegions, editBlock } from "./render/parse";
 import { expect, it } from "vitest";
-import { readPropertyValue, upsertPropertyLine, pagePropertyEntries } from "./editor/properties";
+import { readPropertyValue, pagePropertyEntries } from "./editor/properties";
 import { isPropertyLine } from "./render/block";
 import { propertyOccurrences } from "./sheet/renameField";
 import { pageRefsInText } from "./render/pageRefs";
@@ -9,7 +9,7 @@ it("D05 property editing and hiding use accepted grammar and source spans", () =
   expect(isPropertyLine("foo::bar")).toBe(false);
   expect(isPropertyLine("klíč:: hodnota")).toBe(true);
   expect(readPropertyValue("```\nfoo:: ghost\n```\nfoo:: real", "foo")).toBe("real");
-  expect(upsertPropertyLine("```\nfoo:: ghost\n```\nfoo:: real", "foo", "new")).toBe("```\nfoo:: ghost\n```\nfoo:: new");
+  expect(editBlock("```\nfoo:: ghost\n```\nfoo:: real", "md", { kind: "property", key: "foo", value: "new" })).toBe("```\nfoo:: ghost\n```\nfoo:: new");
   expect(propertyOccurrences("row\n  klíč:: hodnota", "md").map(p => p.key)).toEqual(["klíč"]);
 });
 it("D06 page aliases exclude parser-owned Org literals", () => {

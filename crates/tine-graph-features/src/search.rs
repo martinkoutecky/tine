@@ -25,6 +25,7 @@ struct LaneEntry {
 }
 
 impl SearchLanes {
+    #[cfg(test)]
     fn begin<'a>(&'a self, lane: Option<&'a str>) -> SearchLease<'a> {
         self.begin_sequenced(lane, None)
     }

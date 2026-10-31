@@ -110,7 +110,7 @@ describe("OG-P12 parser-owned properties, references and header spans", () => {
     expect(lineReader).toContain("acceptedPropertyLine(line)");
     expect(propertyOrMarkerScanners(lineReader)).toEqual([]);
     const props = readFileSync("src/editor/properties.ts", "utf8");
-    for (const name of ["readPropertyValue", "upsertPropertyLine", "pagePropertyEntries"]) {
+    for (const name of ["readPropertyValue", "pagePropertyEntries"]) {
       const start = props.indexOf(`export function ${name}`);
       const next = props.indexOf("\nexport ", start + 1);
       expect(propertyOrMarkerScanners(props.slice(start, next < 0 ? undefined : next))).toEqual([]);

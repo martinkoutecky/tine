@@ -904,7 +904,6 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/conflicts.rs",
     "crates/tine-graph-features/src/journals.rs",
     "crates/tine-graph-features/src/pdf.rs",
-    "crates/tine-graph-features/src/live_conflict.rs",
     "crates/tine-graph-features/src/guide.rs",
     "src-tauri/src/state.rs",
     "src-tauri/src/backup/restore.rs",
@@ -1055,8 +1054,8 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 } else if *line == "}" && !test_file {
                     test_code = false;
                 }
-                // The retained-writer surface (approved by Martin 2026-10-10) is named only
-                // where a census writer reserves from a host or the binding
+                // The host-operation surface (approved by Martin 2026-10-10) is named only
+                // where a page writer hands a host an operation or the binding
                 // keeps one (STEP3 §7). Exactly one production path starts a
                 // host, `graph.rs` `launch_host`: the graph-window binding
                 // (`load_graph_for_label`, step 3b P2b) and the command-line

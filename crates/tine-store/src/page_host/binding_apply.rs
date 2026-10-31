@@ -105,9 +105,9 @@ impl PageHost {
     /// Run `op` as one host operation (DESIGN §3.1). Admission is one
     /// decision on the driver under the operation's path locks: unsaved
     /// input refuses (`Input::Refuse`) or is saved first (`Input::Flush`);
-    /// a page busy in another operation or reservation waits, at most
+    /// a page busy in another operation waits, at most
     /// `OPERATION_WAIT` from entry (`Busy`), while a flush waits for the
-    /// save as a reservation's does (`bounded`: past the deadline
+    /// save as an operation's does (`bounded`: past the deadline
     /// only a page held by a rename refuses); a page whose content is not
     /// the operation's expected content refuses (`Changed`). Then waits
     /// for the operation's answer and every page's publication, as

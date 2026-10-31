@@ -1,8 +1,8 @@
-//! Census writers with a page host (STEP3 §7, R6). With no unsaved input, a
-//! writer under the host's reservations writes exactly its changes (pinned
+//! Page writers (host operations) with a page host (STEP3 §7, R6). With no
+//! unsaved input, a writer's host operation writes exactly its changes (pinned
 //! to what the deleted no-host write wrote, host-only-writer S1); a rename
-//! writes the renamed graph; and a page another reservation holds blocks
-//! the writer until it is released.
+//! writes the renamed graph; and a page another operation holds (a test
+//! pause) blocks the writer until it is released.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -176,8 +176,8 @@ fn with_a_host(
 
 /// Every rename is the page host's (STEP3 §7, the plain no-host rename is
 /// deleted): a single page with a file is the host's own operation, then
-/// `config.edn`; a name with no file, a namespace and a merge are retained
-/// transactions under reservations. Each writes exactly these bytes (the
+/// `config.edn`; a name with no file, a namespace and a merge are host
+/// operations too. Each writes exactly these bytes (the
 /// plain rename's, which they were pinned equal to before its deletion).
 #[test]
 fn page_renames_with_a_host_write_the_renamed_graph() {
@@ -242,7 +242,7 @@ fn page_renames_with_a_host_write_the_renamed_graph() {
             Some("- see [[Start]] and [[Spirit]] and [[Ns/child]]\n"),
         )])
     );
-    // A namespace and a merge: retained transactions under reservations.
+    // A namespace and a merge: host operations.
     let (report, bytes) = with_a_host("namespace", &files, rename("Ns", "Space", None));
     ok(report);
     assert_eq!(
@@ -455,8 +455,8 @@ fn other_census_writers_with_a_host_write_their_changes() {
     }
 }
 
-/// A writer reserves the pages it touches: while another reservation holds
-/// `page`, `write` waits, and it writes once that reservation is released;
+/// A writer's host operation claims the pages it touches: while a test pause
+/// holds `page`, `write` waits, and it writes once that pause is released;
 /// `written` then holds.
 fn waits_for_a_reservation(
     label: &str,
@@ -486,17 +486,13 @@ fn waits_for_a_reservation(
                 finished.recv_timeout(Duration::from_millis(500)),
                 Err(mpsc::RecvTimeoutError::Timeout)
             ),
-            "R6: {label} wrote while another reservation holds {page}"
+            "R6: {label} wrote while another test pause holds {page}"
         );
-        assert_eq!(
-            tree(&dir),
-            before,
-            "{label}: wrote under a held reservation"
-        );
+        assert_eq!(tree(&dir), before, "{label}: wrote under a held test pause");
         drop(held);
         // Join the actual completion event. Copying the Guide runs a host
         // operation for every page plus an asset transaction; its total I/O
-        // time is not the reservation contract. Each host operation retains
+        // time is not the pause contract. Each host operation retains
         // its own bounded admission/publication wait and returns any failure.
         writer.join().expect("the writer panicked").unwrap();
     });
@@ -544,8 +540,8 @@ fn the_guide_copy_waits_for_a_reservation_of_its_page() {
     );
 }
 
-/// A-R3: a writer reserves only the pages it writes. While another
-/// reservation holds `held`, a page the writer leaves untouched, `write`
+/// A-R3: a writer's host operation claims only the pages it writes. While another
+/// test pause holds `held`, a page the writer leaves untouched, `write`
 /// finishes without waiting for it.
 fn finishes_while_held<T: Send>(
     host: &PageHost,

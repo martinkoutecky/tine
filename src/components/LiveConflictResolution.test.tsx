@@ -263,7 +263,6 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     await conflictedDraft("open draft");
     expect(liveConflictObjects().map((c) => [c.page_name, c.live?.base_rev])).toEqual([["P", "r1"]]);
     const opened: unknown[] = [];
-    vi.spyOn(api, "listSyncConflicts").mockResolvedValue([]);
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <ConflictOverview router={{ openPageTarget: (t: unknown) => opened.push(t) } as unknown as PaneRouter} />, root);
@@ -286,7 +285,6 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     await conflictedDraft();
     setConflictInventory({ sync_conflicts: [{ path: COPY, base_name: "P", base_path: PATH, kind: "page", tag: "sync-conflict-20261028-222343-ABCDEFG", preview: "" }], vcs_markers: [], queue: [copy] });
     vi.spyOn(api, "conflictInventory").mockImplementation(() => new Promise(() => {}));
-    vi.spyOn(api, "listSyncConflicts").mockImplementation(() => new Promise(() => {}));
     vi.spyOn(api, "mergeLiveConflict").mockImplementation(async (_p, draft) => ({ ...draft, blocks: [block("p1", "mine + theirs")] }));
     const copyDiff = vi.spyOn(api, "syncConflictDiff").mockImplementation(async () =>
       ({ base_rev: disk.rev, conflict_rev: "copy-rev", rows: [{ id: "0", kind: "modified", mine: view("mine + theirs"), theirs: view("copy"), children: [] }],

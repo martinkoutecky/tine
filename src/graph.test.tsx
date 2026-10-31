@@ -168,7 +168,6 @@ async function loadHarness(
     appNow: () => new Date(),
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
     setJournalTitleFormat: journal?.setJournalTitleFormat ?? vi.fn(),
-    isJournalTitle: () => false,
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));

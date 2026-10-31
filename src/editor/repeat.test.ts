@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { hasRepeater, rollRepeat, cycleMarkerSmart, toggleTaskDone, markerLabelClickable, toggleMarkerLabel } from "./repeat";
+import { rollRepeat, cycleMarkerSmart, toggleTaskDone, markerLabelClickable, toggleMarkerLabel } from "./repeat";
+
+/** A parser-owned planning repeater exists exactly when `rollRepeat` rolls it. */
+const hasRepeater = (raw: string, format: "md" | "org"): boolean => rollRepeat(raw, "todo", format) !== null;
 
 describe("repeaters", () => {
   it("threads Org through planning and protects Org literal repeaters", () => {

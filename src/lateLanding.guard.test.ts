@@ -114,13 +114,13 @@ const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "ser
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
-  "markPageSeen", "markGraphSeen", "forgetSeenPage", "forgetSeenState",
+  "markPageSeen", "markGraphSeen", "forgetSeenState",
   "retryOwnerProtection",
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
   "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageSaveNow",
-  "setGuideAnnounced", "renamePage", "publishHtml", "publishQuery", "publishLive", "setFavorites",
+  "setGuideAnnounced", "renamePage", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
   "setStartOfWeek", "editAssetExternal", "editCustomCss", "editGlobalCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
@@ -160,7 +160,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "taggedPages", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
-  "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath", "listSyncConflicts",
+  "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath",
   "syncConflictDiff", "duplicateJournalDiff", "conflictInventory", "vcsMarkerConflictDiff", "liveConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
   "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "pdfAssetSource", "streamAsset",
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder", "readCssFile", "saveCssFile", "revealExport",

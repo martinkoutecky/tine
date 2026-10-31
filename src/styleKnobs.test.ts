@@ -9,9 +9,9 @@ import {
   knobIsSet,
   knobOutput,
   validKnobValue,
-  validateKnobTable,
   type StyleKnob,
 } from "./styleKnobs";
+import { validateKnobTable } from "./styleKnobs.test.support";
 
 // Style knobs (GH #610 item 3, KNOBS-DESIGN gates K1-K5). The pure half: the
 // table schema, what may reach CSS, and the guards. The DOM half is

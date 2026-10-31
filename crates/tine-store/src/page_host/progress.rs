@@ -271,7 +271,7 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     /// Every held page's save policy (M4: kept per visited key).
     times: BTreeMap<PageKey, Timing>,
     /// Held pages that are dirty and not in conflict: the save candidates,
-    /// whatever currently blocks them (busy, gated, reserved, not due).
+    /// whatever currently blocks them (busy, gated, not due).
     saves: BTreeSet<PageKey>,
     /// Keys, held or not, whose desired draft (a page at risk, else none)
     /// differs from the live logical draft: the draft candidates, whatever
@@ -411,7 +411,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
 
     /// The earliest time an idle host has timed work: a save or draft
     /// refresh deadline, or a retry. A page whose save or draft is blocked
-    /// (conflict, reservation, a busy worker or job) contributes nothing:
+    /// (conflict, a busy worker or job) contributes nothing:
     /// whatever unblocks it wakes the driver, so an expired deadline is
     /// never spun on (STEP3 §1). Walks the save and draft candidates only.
     pub fn next_deadline(&self) -> Option<u64> {
@@ -445,7 +445,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
     /// progress tracker has read them (D-10: the vector does not grow).
     /// During a stop, a dirty page that can be saved is saved at once and
     /// before any draft of it; it is drafted only if that save fails, so a
-    /// page that cannot be saved (conflict, reserved) never waits (§6 step 3).
+    /// page that cannot be saved (conflict) never waits (§6 step 3).
     fn save_first(&self, key: &str, page: &Page) -> bool {
         self.stopping
             .as_ref()

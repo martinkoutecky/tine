@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, it } from "vitest";
+import { publishedBackend } from "./publishedBackend";
 import { PUBLISHED_ABSENT_METHODS, PUBLISHED_ANSWERED_METHODS,
-  PUBLISHED_CONSTANT_METHODS, PUBLISHED_REFUSED_METHODS, publishedBackend } from "./publishedBackend";
+  PUBLISHED_CONSTANT_METHODS, PUBLISHED_REFUSED_METHODS } from "./publishedBackend.methods.test.support";
 
 // A newly added native Backend method needs an explicit published answer,
 // quiet browser constant, absence, or refusal. The Proxy cannot make that

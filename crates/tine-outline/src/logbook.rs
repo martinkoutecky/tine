@@ -243,6 +243,7 @@ pub fn clock_summary_seconds(raw: &str, is_org: bool) -> u64 {
         .sum()
 }
 
+#[cfg(test)]
 pub fn clock_summary_compact(raw: &str, is_org: bool) -> String {
     format_compact_duration(clock_summary_seconds(raw, is_org))
 }

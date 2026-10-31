@@ -129,10 +129,3 @@ export function pageIconOwnerPath(name: string, value: string): string {
   return "";
 }
 
-/** `pageIcon(name)` as a label prefix ("🏁 "), or "" when the page has no icon property.
- *  Sidebar rows (Favorites, Recent, All pages) and right-sidebar item titles label
- *  themselves with it, as OG does (GH #346). */
-export function pageIconPrefix(name: string): string {
-  const icon = pageIcon(name);
-  return icon ? `${icon} ` : "";
-}

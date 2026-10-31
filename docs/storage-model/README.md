@@ -296,11 +296,11 @@ These four kinds of durability evidence have different boundaries:
 | OS process abort/reopen | Bytes already visible to the OS survive termination of the writing process, remain live/recoverable, and can be reopened/retried. | `tests/i02_crash_gaps.rs`, including `generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals`, plus the existing transaction, rewritten-move, undo and feature abort journeys. On Unix the generated worker must terminate with SIGABRT; a panic does not count. The OS and its page cache keep running. |
 | Filesystem/platform power-survival assumptions | No native test here certifies device/controller cache behavior or actual power survival on every shipped filesystem. | [ASSUMPTIONS.md](ASSUMPTIONS.md), platform directory-sync/no-replace implementations and their directed tests state the premises. Neither a successful sync API nor process abort discharges those premises. |
 
-F3 adds a separate semantic oracle, rather than forcing retained transactions
+F3 adds a separate semantic oracle, rather than forcing store transactions
 or restore into the host model. `crates/tine-store/tests/conformance_f3.rs`
 generates Markdown/Org fixtures and constructs exact expected rename/merge
 bytes from typed pieces. It calls the actual graph-feature entry points:
-single-page host rename, retained namespace rename/rename-merge, and the
+single-page host rename, host namespace rename/rename-merge, and the
 distinct host `merge_pages` operation (which preserves inbound references). It
 covers explicit titles/aliases, ambiguous title twins, namespace descendants,
 journal referrers, a clean held referrer, block references, Unicode/space

@@ -541,15 +541,6 @@ export interface QueryPageScope {
   path?: string;
 }
 
-/** Result of an advanced (datalog) query: matched groups + which clause heads
- *  ran vs were ignored (`supported` is false only when nothing in the subset matched). */
-export interface AdvancedQueryResult {
-  groups: RefGroup[];
-  ran: string[];
-  ignored: string[];
-  supported: boolean;
-}
-
 export interface GraphMeta {
   default_journal_queries?: { title: string | null; body: string; error: string | null; seed?: string | null }[];
   disable_scheduled_and_deadline_query?: boolean;

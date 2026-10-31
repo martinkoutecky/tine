@@ -7,7 +7,7 @@
 //! path locks its next step needs (`Host::lacks_locks`) and returns before
 //! any side effect; the driver drops the state mutex, takes those path locks,
 //! retakes the state mutex and polls again. That poll recomputes the next
-//! legal step from the current state, so an admission, reservation or
+//! legal step from the current state, so an admission or
 //! observation that arrived meanwhile is honoured; a step needing other locks
 //! releases everything and replans.
 //!
@@ -55,7 +55,7 @@ pub(super) enum Owner {
     Consumer,
 }
 
-/// A watcher read or a released reservation the driver must observe (§5, §7).
+/// A watcher read the driver must observe (§5, §7).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Observation {
     pub failures: u32,
@@ -183,9 +183,9 @@ impl<F: HostIo, C: Clock> State<F, C> {
         self.progress.poll()
     }
 
-    /// A busy page is observed after its job, worker step or reservation
+    /// A busy page is observed after its job or worker step
     /// ends; until then its observation is blocked and contributes no
-    /// deadline (the job's progress or the release wakes the driver).
+    /// deadline (the job's progress wakes the driver).
     fn observable(&self, key: &str) -> bool {
         let host = &self.progress.host;
         let retried = |(_, retry): &(u32, Instant)| *retry <= Instant::now();
@@ -300,7 +300,7 @@ pub(super) struct Shared<F: HostIo, C: Clock> {
     stop: AtomicBool,
     /// The driver thread returned or unwound: nothing will answer a caller.
     ended: AtomicBool,
-    /// Pauses a retained writer's flush before its first check (tests, N1).
+    /// Pauses a host operation's flush before its first check (tests, N1).
     #[cfg(test)]
     pub flush_pause: Mutex<Option<crate::store::TestPause>>,
     /// Commands deferred on the store writer after the driver's last pass
@@ -410,7 +410,7 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
     }
 
     /// Run `action` on the driver under the state mutex and wake it: the
-    /// wake source for admission, reservations and switches.
+    /// wake source for admission and switches.
     pub fn call<R: Send + 'static>(
         &self,
         action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,

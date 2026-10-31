@@ -1,7 +1,7 @@
 //! Page rename, stray rescue, merge and deletion (a deletion is the page
 //! host's, STEP3 §12, after this client's identity checks). The caller names
-//! the operation; this client resolves identities and commits one guarded
-//! store transaction or hands the page host one operation. It needs no graph path, lock,
+//! the operation; this client resolves identities and hands the page host one
+//! operation (or commits a guarded non-page transaction). It needs no graph path, lock,
 //! cache state, or write protocol.
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,7 @@ mod rename_plan;
 use rename_plan::{plan_rename, RenamePlan};
 
 impl RenamePlan {
-    /// Input policy stays at the census writer boundary (STEP3 §7).
+    /// Input policy of the host operation (STEP3 §7).
     fn input(&self) -> Input {
         if self.moved_titles_to_rebind.is_empty() {
             Input::Flush
@@ -146,7 +146,7 @@ fn error(kind: io::ErrorKind, message: &str) -> io::Error {
 }
 
 /// A rename still finishing holds these pages: the host rename's `Busy`,
-/// and a retained writer's past its bound (M6). In-scope scenario: a disk
+/// and a host operation's past its bound (M6). In-scope scenario: a disk
 /// error keeps failing the rename's writes, or an external editor or a sync
 /// service conflicted a referrer (`docs/storage-contract.md`, I-8).
 pub(crate) fn rename_busy() -> io::Error {
@@ -382,6 +382,7 @@ pub fn delete_page_expected(
 /// touching N files takes N+1 sorted path locks for one move; namespace moves
 /// take one additional destination lock per moved file. Conflict retry: four
 /// complete plans maximum, then `WouldBlock`.
+#[cfg(any(test, feature = "test-faults"))]
 pub fn rename_page_expected(
     store: &Store,
     host: &PageHost,
@@ -403,7 +404,7 @@ pub fn rename_page_expected(
     .map(|_| ())
 }
 
-/// [`rename_page_expected`] when `merge_into` is `None`. Otherwise rename onto
+/// `rename_page_expected` when `merge_into` is `None`. Otherwise rename onto
 /// the existing page `merge_into` the user confirmed, as OG `merge-pages!`
 /// (master GH #327); `merge_into` must be the sole file claiming the new name,
 /// directly or as its alias. The source's blocks append to that survivor, its
@@ -411,7 +412,7 @@ pub fn rename_page_expected(
 /// the survivor's: aliases are united, the survivor wins another clash, and the
 /// source title and clashing lines move with the blocks as one ordinary block.
 /// References and namespace descendants are renamed as by
-/// [`rename_page_expected`], and the source goes to graph trash in the last
+/// `rename_page_expected`, and the source goes to graph trash in the last
 /// step, so a crash never leaves a reference to a name with no live page. A
 /// crash between the survivor write and the trash completes from the host
 /// operation's draft at relaunch, as `merge_pages` does; a retry of a merge
@@ -972,7 +973,7 @@ fn commit_home_after(
 
 /// A rename's `:default-home` move: `logseq/config.edn` (the meta area,
 /// never a page file) in its own transaction after the host's operation,
-/// so no page reservation applies; a merged source (`merged_old`) keeps it
+/// so no page-host fence applies; a merged source (`merged_old`) keeps it
 /// (`home_after`). The new home name, if it moved.
 fn commit_home(
     store: &Store,

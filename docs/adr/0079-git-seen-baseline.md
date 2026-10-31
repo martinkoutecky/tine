@@ -39,7 +39,7 @@ and attribution decides: when the user (Tine or an external tool committing
 as the user) renamed or created the file, its blocks at the new path are the
 user's and show nothing; when someone else did, they are theirs and show.
 Tine's own rename, merge and delete drop the old page's record (by page key
-and moved/trashed path, `forget_page`, also the `forget_seen_page` command);
+and moved/trashed path, `forget_page`);
 the record is device-local, so a failure there is logged and never fails the
 page operation. A leave mark that arrives after that drop names a path
 no longer on disk and writes nothing, so it cannot re-create the dropped

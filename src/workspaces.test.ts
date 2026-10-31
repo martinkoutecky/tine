@@ -15,7 +15,6 @@ import {
   initializeWorkspaces,
   renameWorkspace,
   resetWorkspacesForTest,
-  saveActiveWorkspace,
   switchWorkspace,
   workspaces,
 } from "./workspaces";
@@ -279,7 +278,7 @@ describe("named workspace switching", () => {
       [undefined, undefined],
     ]);
   });
-  it("never calls a graph writer across save, switch, new, rename, and delete", async () => {
+  it("never calls a graph writer across switch, new, rename, and delete", async () => {
     resetPaneLayoutToSingle(pages(["Byte-identical page"]));
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
     vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
@@ -288,7 +287,6 @@ describe("named workspace switching", () => {
     const writes = spyPageWrites();
 
     await initializeWorkspaces();
-    await saveActiveWorkspace();
     await renameWorkspace("default", "One");
     const secondId = await createWorkspace("Two");
     await switchWorkspace("default");

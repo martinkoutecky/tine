@@ -118,7 +118,7 @@ fn header(share_id: &[u8; 16]) -> [u8; HEADER_LEN] {
 }
 
 /// Encrypt `payload` under the given secrets: `b64u(H || nonce || C)`.
-/// Deterministic, for fixtures; production seals through [`seal_fresh`].
+/// Deterministic, for fixtures; production seals through `seal_fresh_as`.
 pub fn seal(payload: &[u8], key: &[u8; 32], share_id: &[u8; 16], nonce: &[u8; 12]) -> String {
     let h = header(share_id);
     let mut sealed = payload.to_vec();
@@ -169,6 +169,7 @@ pub fn looks_like_gist_id(text: &str) -> bool {
 }
 
 /// [`seal`] under a fresh key, share id and nonce from the OS CSPRNG.
+#[cfg(any(test, feature = "test-faults"))]
 pub fn seal_fresh(payload: &[u8]) -> io::Result<Sealed> {
     seal_fresh_as(payload, fresh_share_id()?)
 }

@@ -9,7 +9,7 @@ import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
 import { extendSelectionTo, pageByName, resetStore, selectBlock, undo } from "./document";
-import { clearClipboardSlot } from "./clipboard";
+import { clearClipboardPayload } from "./clipboard";
 import { BUILTIN_KEYS, commandDefaults, installKeybindings, paletteCommands } from "./keybindings";
 import { closeSwitcher, switcherOpen, switcherPrefill } from "./ui";
 import { editingId, endEdit, startEditing } from "./editorController";
@@ -48,7 +48,7 @@ afterEach(() => {
   resetTabsToJournals(); // a route left on page "P" would reload it over the next fixture
   endEdit("blur");
   closeSwitcher();
-  clearClipboardSlot();
+  clearClipboardPayload();
   resetStore();
   setGraphMeta(null);
   setToasts([]);

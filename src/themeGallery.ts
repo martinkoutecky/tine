@@ -32,8 +32,6 @@ export const selectedThemeColors = () => composition().colors;
 export const selectedThemeTypography = () => composition().typography;
 /** The active host-owned presentation presets (ADR 0059). */
 export const selectedThemePresentation = selectedPresentation;
-/** The single selected theme as the Settings gallery shows it: its colors. */
-export const selectedGalleryTheme = selectedThemeColors;
 export { galleryThemes };
 
 const PRESENTATION_ATTRIBUTES = {

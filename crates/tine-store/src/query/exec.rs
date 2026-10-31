@@ -1252,7 +1252,7 @@ pub(crate) fn query_ir(
 }
 
 /// Same production entry body, with the sampled day explicit for conformance.
-#[cfg(any(test, feature = "test-faults"))]
+#[cfg(test)]
 pub(crate) fn query_ir_on_day(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,

@@ -410,8 +410,8 @@ fn a_spelling_move_while_the_driver_waits_replans_on_the_new_lock() {
         std::thread::yield_now();
     }
     std::thread::sleep(Duration::from_millis(50));
-    // Under its reservation the writer moves the entry and respells the key,
-    // then releases the reservation and the old spelling's lock.
+    // Holding the page, the writer moves the entry and respells the key,
+    // then releases the page and the old spelling's lock.
     d.shared.with_state_for_tests(|s| {
         s.progress.host.fs.spell("a.md", "A.md");
         s.progress.host.locks.insert("a.md".into(), lock_b.clone());

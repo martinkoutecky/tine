@@ -42,10 +42,11 @@
 //! can also make an edit copy O(P) in-memory page pointers.
 //!
 //! Hostile-input contract (I-22): page and config inputs are capped at 64 MiB.
-//! Pages admit at most 512 outline/list levels, 512 nested closed callouts,
-//! 1,024 parsed-tree levels, and 512 matched inline delimiter levels within one
-//! source line; exactly 512 outline levels are allowed. Org headlines also
-//! stop at level 512, including empty and tab-separated headings. Long runs
+//! Pages admit at most 128 outline/list levels, 128 nested closed callouts,
+//! and 128 matched inline delimiter levels within one source line
+//! (`model::PARSE_INPUT_MAX_DEPTH`, the outline kernel's
+//! `OUTLINE_MAX_DEPTH`); exactly 128 outline levels are allowed. Org headlines
+//! also stop at level 128, including empty and tab-separated headings. Long runs
 //! of Org quote markers are refused before projection. Unmatched punctuation
 //! across lines does not accumulate depth. The EDN parser has its own 128-level
 //! value bound. The `tine-graph-features` export renderer flattens descendants

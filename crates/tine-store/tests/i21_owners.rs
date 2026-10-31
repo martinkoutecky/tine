@@ -142,7 +142,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // -1 UI-CENSUS-18: the unused graph_source_files command was removed.
         // +1 D-20261019-AL2: page_alias_group waits for the initial load like
         // resolve_page, awaited by its command future.
-        38,
+        // -1 dead-code wave: the deleted `publish_html` command (graph export
+        // goes through publish_live).
+        37,
         "command future",
         "caller awaits blocking result",
     ),
@@ -200,7 +202,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // each awaited by its own command future like the six before them.
         // +1 step 3b R6: merge_live_conflict, likewise.
         // -1 step 3b P2b: the deleted `resolve_live_conflict` command.
-        8,
+        // -1 dead-code wave: the deleted `list_sync_conflicts` command
+        // (`conflict_inventory` carries the sync copies).
+        7,
         "command future",
         "caller awaits blocking result",
     ),

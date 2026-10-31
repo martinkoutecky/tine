@@ -43,6 +43,7 @@ mod save;
 mod state_census_tests;
 #[cfg(test)]
 mod tests;
+// The name is historical: this is now an edit-kind census of host operations.
 #[cfg(test)]
 mod writer_census_tests;
 
@@ -333,7 +334,7 @@ enum Event {
         page: PageKey,
         payload: String,
     },
-    /// A driver observation (watcher read or released reservation) failed a
+    /// A driver observation (a watcher read) failed a
     /// third time; it keeps retrying with the save backoff (STEP3 §7).
     ObserveError(PageKey),
     /// The page's observed disk state changed (an Open read, an adopted or
@@ -417,7 +418,7 @@ struct DraftWorker {
     failures: u32,
     recover_notice: bool,
     /// A caller's rename, full or references-only (a deletion writes no
-    /// page): a retained writer waits for it at most `OPERATION_WAIT` (M6).
+    /// page): another host operation waits for it at most `OPERATION_WAIT` (M6).
     rename: bool,
 }
 

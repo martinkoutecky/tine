@@ -89,7 +89,6 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const PDF: &str = include_str!("../../crates/tine-graph-features/src/pdf.rs");
     const GUIDE: &str = include_str!("../../crates/tine-graph-features/src/guide.rs");
     const JOURNALS: &str = include_str!("../../crates/tine-graph-features/src/journals.rs");
-    const FEATURES: &str = include_str!("../../crates/tine-graph-features/src/lib.rs");
     let routes = [
         (
             "rename_page",
@@ -150,8 +149,8 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     let destinations = [
         // A rename's transaction is `rename_transaction`: a rename of
         // several pages plans it as a host operation (`multi_rename`), a
-        // case-only spelling moves run on the host driver
-        // (`commit_rename`); a single page's rename is the host's.
+        // case-only spelling moves run on the host driver;
+        // a single page's rename is the host's.
         (PAGES, "rename_page_after_inventory", "multi_rename("),
         (PAGES, "multi_rename", "rename_transaction("),
         (
@@ -175,7 +174,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "page_plan(Some(tine_store::EditKind::ReplacePage))",
         ),
         // The migration's transaction is `migrate_one`, one per eligible
-        // proposal (under a page host's reservation of its two pages).
+        // proposal (a non-page transaction: it refuses when either file is a page).
         (JOURNALS, "migrate_journal_filenames", "migrate_one("),
         (
             JOURNALS,
@@ -188,19 +187,9 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "page_plan(Some(tine_store::EditKind::RenamePage))",
         ),
         (
-            FEATURES,
-            "trash_current",
-            "trash_transaction(",
-        ),
-        (
             JOURNALS,
             "trash_journal_file",
             "page_plan(Some(tine_store::EditKind::DeletePage))",
-        ),
-        (
-            FEATURES,
-            "trash_transaction",
-            "transaction(Some(tine_store::EditKind::DeletePage))",
         ),
         // Both two-file folds (a sync copy, a duplicate journal day) write
         // through the one shared `fold_pair`.
@@ -270,16 +259,16 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
 
 #[test]
 fn writer_guard_rejects_a_missing_kind_path() {
-    let altered = "fn trash_current() { store.transaction(None); }";
+    let altered = "fn trash_journal_file() { store.page_plan(None); }";
     assert!(!calls(
-        body(altered, "trash_current"),
-        "transaction(Some(tine_store::EditKind::DeletePage))"
+        body(altered, "trash_journal_file"),
+        "page_plan(Some(tine_store::EditKind::DeletePage))"
     ));
-    let generic =
-        "fn trash_transaction<'a>() { store.transaction(Some(tine_store::EditKind::DeletePage)); }";
+    let kinded =
+        "fn trash_journal_file() { store.page_plan(Some(tine_store::EditKind::DeletePage)); }";
     assert!(calls(
-        body(generic, "trash_transaction"),
-        "transaction(Some(tine_store::EditKind::DeletePage))"
+        body(kinded, "trash_journal_file"),
+        "page_plan(Some(tine_store::EditKind::DeletePage))"
     ));
 }
 

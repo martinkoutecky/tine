@@ -238,31 +238,7 @@ query-query-sheet-parts-click-to-edit-this-query = Click to edit this query
 
 query-query-sheet-parts-edit-query-filter = Edit query filter
 
-query-query-sheet-parts-page-tag-reference = Page / tag reference
-
 query-query-sheet-parts-task-marker = Task marker
-
-query-query-sheet-parts-priority = Priority
-
-query-query-sheet-parts-property = Property
-
-query-query-sheet-parts-scheduled = Scheduled
-
-query-query-sheet-parts-deadline = Deadline
-
-query-query-sheet-parts-in-a-journal-page = In a journal page
-
-query-query-sheet-parts-between-dates = Between dates
-
-query-query-sheet-parts-full-text-search = Full-text search
-
-query-query-sheet-parts-on-page = On page
-
-query-query-sheet-parts-in-namespace = In namespace
-
-query-query-sheet-parts-page-property = Page property
-
-query-query-sheet-parts-page-tags = Page tags
 
 query-query-sheet-parts-drag-to-reorder-or-into-another-group-or-use-the = Drag to reorder or into another group, or use the up and down arrow keys
 

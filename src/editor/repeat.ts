@@ -60,13 +60,8 @@ interface MarkerTimeOptions {
   withSeconds: boolean;
 }
 
-/** True when parser-owned planning contains a supported repeater.
- * O(planning entries) on the warm block parse; literals never supply planning. */
-export function hasRepeater(raw: string, format: Format): boolean {
-  return blockRegions(raw, format).planning.some(p => p.kind !== "Closed" && repetition(p.date as TimestampPoint) !== null);
-}
-
-/** Advance accepted planning and reset the marker. Completion-time `. +` and
+/** Advance accepted planning and reset the marker; null when no parser-owned
+ * planning holds a supported repeater (literals never supply planning). Completion-time `. +` and
  * catch-up `++` policies retain the existing calendar rollover semantics.
  * One cached parse; O(planning entries + catch-up steps). */
 export function rollRepeat(raw: string, workflow: Workflow, format: Format): string | null {

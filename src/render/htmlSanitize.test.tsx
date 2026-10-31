@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeRawHtml } from "./htmlSanitize";
+import { rawHtmlPresentation } from "./htmlSanitize";
+
+/** Safe HTML insertion string, without iframe dispatch. */
+const sanitizeRawHtml = (html: string): string => rawHtmlPresentation(html).html;
 import fixtures from "../../fixtures/html-sanitize-cases.json";
 
 // The SAME fixtures the Rust/ammonia export runs (crates/tine-core/src/html_sanitize.rs).

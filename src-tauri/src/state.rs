@@ -50,8 +50,8 @@ pub(crate) struct GraphSlot {
     pub(crate) concord_ledger: std::sync::OnceLock<crate::concord_ledger::ConcordLedger>,
     /// Focus rescans waiting for this binding's dispatch thread (family 10).
     pub(crate) rescan: crate::watcher::RescanCursor,
-    /// The binding's page host (STEP3 §6–7). Census writers run under its
-    /// reservations while one runs (`running`). Its write lock is the
+    /// The binding's page host (STEP3 §6–7). Page writers hand it their
+    /// operations while one runs (`running`). Its write lock is the
     /// binding's host transition gate (plan v3 S8): a backup restore holds
     /// it across stop, file restore and relaunch, and retirement and
     /// adoption take it, so each waits for the others' outcome.
@@ -196,8 +196,8 @@ impl GraphSlot {
         }
     }
 
-    /// The host slot, read for a census writer's whole call: a restore
-    /// cannot take the host out from under the writer's reservation, and a
+    /// The host slot, read for a page writer's whole call: a restore
+    /// cannot take the host out from under the writer, and a
     /// writer waits for a restore's outcome (S8). A revoked slot refuses
     /// here, under the gate, before the writer starts (B1).
     pub(crate) fn host_slot(&self) -> Result<std::sync::RwLockReadGuard<'_, PageHostSlot>, String> {

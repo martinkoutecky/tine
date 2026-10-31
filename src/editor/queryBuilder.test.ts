@@ -42,7 +42,6 @@ import {
   moveSibling,
   namespaceFilter,
   onPageFilter,
-  pagePropertyFilter,
   pageRefFilter,
   pageTagsFilter,
   planningFilter,
@@ -74,8 +73,8 @@ it("treats an empty or as false, matching the engine", () => {
   expect(isEmptyFilter({ kind: "or", items: [] })).toBe(false);
   expect(isEmptyFilter({ kind: "and", items: [] })).toBe(true);
 });
+import { forEachFilter } from "./queryIr.test.support";
 import {
-  forEachFilter,
   type Cardinality,
   type Filter,
   type ObservedType,
@@ -85,6 +84,12 @@ import {
 const A = pageRefFilter("A");
 const B = pageRefFilter("B");
 const C = pageRefFilter("C");
+/** `(page-property …)`: the property predicate read through the owning page.
+ * Production builds it via `encodePropertyLeaf({ throughPage: true })`. */
+const pagePropertyFilter = (key: string, value: Parameters<typeof propertyFilter>[1]): Filter => ({
+  kind: "leaf",
+  leaf: { kind: "rel", rel: "page", quant: "any", pred: propertyFilter(key, value) },
+});
 
 // **The shapes are the contract with `crates/tine-core/src/query/og.rs`.**
 // A chip added here and the same filter typed as OG text must be the SAME IR, or

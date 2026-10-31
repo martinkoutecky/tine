@@ -2,7 +2,9 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "./parse";
 import { InlineText } from "./inline";
-import { sanitizeRawHtml } from "./htmlSanitize";
+import { rawHtmlPresentation } from "./htmlSanitize";
+
+const sanitizeRawHtml = (html: string): string => rawHtmlPresentation(html).html;
 
 // GH #243: Logseq-style colored spans. OG (security.cljs DOMPurify, default
 // config) keeps `style` on hiccup/raw HTML, so `[:span {:style "color: red"} "x"]`

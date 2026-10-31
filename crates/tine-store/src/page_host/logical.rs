@@ -28,8 +28,8 @@ pub(super) struct TestKnobs {
     /// draft worker does not advance while set.
     pub(super) paused: bool,
     /// A window Submit keeps the edit debounce, as before PERF-FIXES D1, for
-    /// a test whose scenario needs a submitted page to stay dirty (unsaved,
-    /// closed or reserved before its save). Production submits save at once.
+    /// a test whose scenario needs a submitted page to stay dirty (unsaved
+    /// or closed before its save). Production submits save at once.
     pub(super) submits_wait: bool,
     /// `begin_draft`: the model's single-page `draftSync`, which never
     /// retires an operation vehicle whole.

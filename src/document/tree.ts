@@ -14,10 +14,6 @@ export function rootsOf(id: string): string[] {
   return p ? p.roots : [];
 }
 
-export function indexInSiblings(id: string): number {
-  return rootsOf(id).indexOf(id);
-}
-
 /** Page-local preorder without DTO copies. Scopes omit missing nodes and can
  * override collapse; ordinary page/feed order retains missing root ids. O(visible nodes). */
 function visitVisible(ids: readonly string[], visit: (id: string) => void, scope?: OutlineScope): void {

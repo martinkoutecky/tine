@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { localImagePath, rawHtmlLocalImages } from "./htmlSanitize";
+import { localImagePath, rawHtmlPresentation } from "./htmlSanitize";
+
+/** Paths for exactly the sanitized image sequence (the DOM owner of presentation). */
+const rawHtmlLocalImages = (text: string): (string | null)[] => rawHtmlPresentation(text).localImages;
 
 describe("localImagePath — classify a raw-HTML <img> src", () => {
   it("web / data / blob URLs are not local", () => {

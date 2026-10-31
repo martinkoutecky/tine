@@ -934,7 +934,7 @@ fn trash_copy(store: &Store, copy: &FileId, rev: FileRev) -> io::Result<Option<(
 }
 
 /// Recoverably trash only a sync copy, with four revision-guard retries. The
-/// copy is no page, so neither a host operation nor a reservation fences
+/// copy is no page, so no host operation fences
 /// it. Cost O(copy bytes) per attempt.
 pub fn trash_sync_conflict(
     store: &Store,
@@ -1117,7 +1117,7 @@ pub fn resolve_vcs_marker_conflict(
     const EXHAUSTED: &str = "marker file changed repeatedly during resolve";
     let file = id(store, rel)?;
     let page = store.as_page(&file).ok_or_else(invalid_path)?;
-    // A retained writer (STEP3 §7): unsaved input on the page is refused as
+    // A host operation (STEP3 §7): unsaved input on the page is refused as
     // a change on disk would be.
     let refused = |_: &str| changed("file");
     // The review's text, read now. Scenario: the VCS or an external editor

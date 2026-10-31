@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import { closeExportModal, exportModal } from "../ui";
-import { openQueryResultsCopy, queryResultsCopyNodes } from "./queryResultsCopy";
+import { openQueryResultsCopy } from "./queryResultsCopy";
 import { bumpGraphEpoch } from "../graphSession";
 import type { BlockDto, RefGroup } from "../types";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
@@ -9,10 +9,15 @@ import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, children, collapsed: false });
 afterEach(() => { vi.restoreAllMocks(); closeExportModal(); });
 
-it("copies duplicate matched descendants only once under the journal date title", () => {
+it("copies duplicate matched descendants only once under the journal date title", async () => {
   const child = block("c", "Child");
-  const groups: RefGroup[] = [{ page: "Oct 13th, 2026", kind: "journal", blocks: [block("p", "Parent", [child]), child] }];
-  expect(queryResultsCopyNodes(groups)).toEqual([{ raw: "Oct 13th, 2026", format: "md", children: [
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue({ id: "journals/2026_10_13.md", name: "Oct 13th, 2026", title: "Oct 13th, 2026", kind: "journal", pre_block: null,
+    blocks: [block("p", "Parent", [child])] });
+  const groups: RefGroup[] = [{ page: "Oct 13th, 2026", kind: "journal", path: "journals/2026_10_13.md", blocks: [block("p", "Parent", [child]), child] }];
+  adoptResults(groups, captureResultsTicket());
+  await openQueryResultsCopy(groups);
+  const modal = exportModal();
+  expect(modal && "nodes" in modal && modal.nodes).toMatchObject([{ raw: "Oct 13th, 2026", format: "md", children: [
     { raw: "Parent", format: "md", children: [{ raw: "Child", format: "md", children: [] }] },
   ] }]);
 });

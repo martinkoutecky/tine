@@ -163,28 +163,6 @@ pub(crate) fn page_renamed(
     page_gone(app, slot, Some(old), &moved);
 }
 
-/// Explicit scoped forget, for the UI (same rule as [`page_gone`]).
-#[tauri::command]
-pub(crate) async fn forget_seen_page(
-    page_key: String,
-    path: String,
-    app: tauri::AppHandle,
-    state: crate::state::GraphContext<'_>,
-) -> Result<(), String> {
-    let slot = crate::state::slot_for_context(&state)?;
-    crate::state::off_ui(move || {
-        let data =
-            crate::graph::checkpoint_app_data(&app).ok_or("No app-data directory is available.")?;
-        let path = (!path.is_empty()).then_some(path.as_str());
-        let key = (!page_key.is_empty()).then_some(page_key.as_str());
-        if key.is_none() && path.is_none() {
-            return Err("seen needs a page key or path".into());
-        }
-        imp::forget_page(&data, &slot.root_key, key, path)
-    })
-    .await
-}
-
 #[tauri::command]
 pub(crate) async fn forget_seen_state(
     app: tauri::AppHandle,

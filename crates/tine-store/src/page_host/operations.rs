@@ -256,7 +256,7 @@ impl<F: HostIo> Host<F> {
         {
             return Disposition::Refused;
         }
-        // D4 with no chaining: a running order's or reservation's pages wait
+        // D4 with no chaining: a running order's pages wait
         // for its end.
         if self.order.touches(&keys) {
             return Disposition::Waiting;

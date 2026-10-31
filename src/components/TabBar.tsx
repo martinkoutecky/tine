@@ -89,7 +89,6 @@ type ActiveStripDragSession = { cancel: () => void };
 let activeStripDragSession: ActiveStripDragSession | null = null;
 
 export const tabDragState = activeTabDrag;
-export const tabDropTarget = currentTabDropTarget;
 
 function cssEsc(s: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");

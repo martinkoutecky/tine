@@ -26,11 +26,14 @@ sqlparser = { version = "0.62", features = ["visitor"] }
 [features]
 # Exposes allocation counters to downstream crates' tests (tine-store).
 test-counters = []
-# Test-only fault hooks for downstream crates' tests (tine-store); a shipped
-# build never enables it.
+# Test-only fault hooks and test-support helpers (items only tests call, such
+# as `DocBlock::refs_contains`) for this crate's integration tests and
+# downstream crates' tests (tine-store); a shipped build never enables it.
 test-faults = []
 
 [dev-dependencies]
+# The integration tests link the library without `cfg(test)`.
+tine-core = { path = ".", features = ["test-faults"] }
 libc = "0.2"
 pretty_assertions = "1"
 

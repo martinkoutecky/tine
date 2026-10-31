@@ -371,11 +371,7 @@ async function warmQueryMacros(
  * batch, and page embeds can read whole pages. Cost grows with refs, queries
  * and embedded page content. Failed resolutions generally leave the literal
  * macro for export; stale graph ownership stops later phases. */
-export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
-  return warmExportResolutionsOwned(nodes, warmed, graphOwner());
-}
-
-async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map()): Promise<void> {
+export async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map()): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
   const seenRefs = new Set<string>(), seenMacros = new Set<string>();

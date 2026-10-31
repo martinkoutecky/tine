@@ -46,7 +46,7 @@ impl std::fmt::Display for Busy {
 impl std::error::Error for Busy {}
 
 /// Preflight conflicts consume the same bounded retry as admission's Changed.
-/// Other Why values retain the transaction path's refusal mapping.
+/// Other Why values keep the refusal mapping of a non-page transaction.
 pub(crate) fn plan(tx: tine_store::PagePlan<'_>) -> io::Result<HostOp> {
     tx.plan().map_err(|why| match why {
         tine_store::Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, Replan),

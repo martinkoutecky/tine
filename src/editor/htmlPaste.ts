@@ -33,12 +33,8 @@ function withinDomBounds(root: ParentNode): boolean {
 }
 
 /** Deterministically preserve explicit clipboard HTML structure. Returns null
- * when HTML is absent, unsafe/oversized, or no richer than the plain flavor. */
-export function structuredHtmlOutline(html: string, plain: string, format: Format = "md"): OutlineNode[] | null {
-  return structuredHtmlPaste(html, plain, format)?.outline ?? null;
-}
-
-/** Keep inline HTML out of outline insertion: its text belongs at the caret. */
+ * when HTML is absent, unsafe/oversized, or no richer than the plain flavor.
+ * Keep inline HTML out of outline insertion: its text belongs at the caret. */
 export function structuredHtmlPaste(html: string, plain: string, format: Format = "md"): { outline: OutlineNode[]; inlineText: string | null } | null {
   if (!html.trim() || new TextEncoder().encode(html).byteLength > HTML_PASTE_LIMITS.inputBytes) return null;
   const safe = DOMPurify.sanitize(html, {

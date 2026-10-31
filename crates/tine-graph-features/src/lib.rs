@@ -209,21 +209,11 @@ fn trash_current(
         Err(StoreError::NotFound) => return Err(io::Error::new(io::ErrorKind::NotFound, missing)),
         Err(error) => return Err(store_error(error)),
     };
-    Ok(commit_retry(trash_transaction(store, id, rev).commit())?.then_some(()))
-}
-
-fn trash_transaction<'a>(
-    store: &'a Store,
-    id: &FileId,
-    rev: tine_store::FileRev,
-) -> tine_store::Transaction<'a> {
-    let mut tx = if store.as_page(id).is_some() {
-        store.transaction(Some(tine_store::EditKind::DeletePage))
-    } else {
-        store.transaction(None)
-    };
+    // Only called for a file that is not a page (`Store::as_page`); a page
+    // is trashed through a host operation.
+    let mut tx = store.transaction(None);
     tx.trash(id, rev, tine_store::TrashIf::Any);
-    tx
+    Ok(commit_retry(tx.commit())?.then_some(()))
 }
 
 #[cfg(test)]

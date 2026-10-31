@@ -247,9 +247,9 @@ fn highlight_writes_with_a_host_write_their_changes() {
     assert!(changes.is_empty(), "{changes:#?}");
 }
 
-/// Hold `held` under another reservation while `write` runs on another
+/// Hold `held` under another test pause while `write` runs on another
 /// thread: it does not write `held` (and has not returned) within 500 ms;
-/// `during` then runs, the reservation is released, and `write` finishes.
+/// `during` then runs, the pause is released, and `write` finishes.
 fn while_held(
     host: &PageHost,
     root: &Path,
@@ -268,7 +268,7 @@ fn while_held(
         assert_eq!(
             fs::read_to_string(root.join(held)).ok(),
             before,
-            "{held} was written while another reservation holds it"
+            "{held} was written while another test pause holds it"
         );
         assert!(
             early.is_err(),
@@ -287,7 +287,7 @@ fn while_held(
 /// name encodes (`%` here), the annotation page is created under its
 /// encoded file, outside the unencoded names the writer used to reserve.
 /// With a host, the operation names the page it writes, so the host admits
-/// that page: a reservation of it holds the writer's page write until it
+/// that page: a test pause of it holds the writer's page write until it
 /// is released.
 #[test]
 fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {

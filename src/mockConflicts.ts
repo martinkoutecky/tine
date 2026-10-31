@@ -77,9 +77,6 @@ export function conflictDemoBodies(): BlockDto[][] {
 }
 
 export const mockConflictApi = {
-  async listSyncConflicts() {
-    return listSyncConflicts();
-  },
   async syncConflictDiff() {
     return syncConflictDiff();
   },

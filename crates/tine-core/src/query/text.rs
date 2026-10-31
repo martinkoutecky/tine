@@ -4,14 +4,8 @@
 //! `query` module, og's one answerer for them; master's SQL framing helpers
 //! and raw-path visible projections are execution-side (SQL) and not ported.
 
-/// SQL `LIKE` over an already-folded haystack; the caller folds the pattern
-/// the same way. `%` matches any run (including empty), `_` exactly one
-/// Unicode scalar, `\` escapes the following scalar, and the match is anchored
-/// at both ends. An unpaired trailing `\` makes the pattern match nothing
-/// (SQLite's `ESCAPE` rejects it).
-///
-/// Compiles the pattern and runs [`LikePattern::matches`]; an evaluator that
-/// tests one pattern against many haystacks compiles it once instead.
+/// Test shorthand: compile `pattern` and run [`LikePattern::matches`] once.
+#[cfg(test)]
 pub fn like_matches(haystack: &str, pattern: &str) -> bool {
     LikePattern::compile(pattern).matches(haystack)
 }
@@ -60,7 +54,12 @@ pub fn reencode_like_escape(pattern: &str, escape: char) -> String {
     out
 }
 
-/// A compiled SQL `LIKE` pattern (semantics of [`like_matches`]).
+/// A compiled SQL `LIKE` pattern over an already-folded haystack; the caller
+/// folds the pattern the same way. `%` matches any run (including empty), `_`
+/// exactly one Unicode scalar, `\` escapes the following scalar, and the match
+/// is anchored at both ends. An unpaired trailing `\` makes the pattern match
+/// nothing (SQLite's `ESCAPE` rejects it). An evaluator that tests one pattern
+/// against many haystacks compiles it once.
 ///
 /// The pattern is split on `%` into segments; greedy leftmost placement of
 /// each `%`-separated segment is exact (a later placement never helps an
