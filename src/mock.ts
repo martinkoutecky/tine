@@ -439,6 +439,19 @@ if (typeof location !== "undefined" && /[?&]aliasgroups\b/.test(location.search)
 if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
   NAMED.push(
     {
+      name: "CM6 code highlight regression",
+      kind: "page",
+      title: "CM6 code highlight regression",
+      pre_block: null,
+      blocks: [
+        b("Click a code body to edit it. Its syntax colours stay visible."),
+        b("```js\n// JavaScript — Unicode stays intact: 文😀\nconst greeting = 'Hello, world!';\nfunction greet(name) {\n  return `${greeting} ${name}`;\n}\ngreet('Tine');\n```"),
+        b("```python\n# Python — same colours in the editor and the view\ndef greet(name):\n    message = 'Hello, world!'\n    return f'{message} {name}'\n\nprint(greet('Tine'))\n```"),
+        b("Before the mixed fence.\n```js\nconst answer = 42;\nanswer.toString();\n```\nAfter the mixed fence."),
+        b("```js\n" + Array.from({ length: 100 }, (_, i) => `// Step ${i}\nconst value${i} = ${i};\nvalue${i}.toString();`).join("\n") + "\n```"),
+      ],
+    },
+    {
       name: "Preamble regression",
       kind: "page",
       title: "Preamble regression",
