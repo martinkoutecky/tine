@@ -510,7 +510,7 @@ jobs:
   # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
   # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
   android-git-storage:
-    name: Android git on shared storage (API ${{ matrix.label || matrix.image || matrix.api }})
+    name: Android git on shared storage (API ${{ matrix.label || matrix.api }})
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -520,18 +520,15 @@ jobs:
         api: [33, 35]
         target: [default]
         # Android 16, the GH #811 reporter's, on the Google APIs image (the
-        # MediaProvider module devices ship). 36.1 is Android 16 QPR2, whose
-        # MediaProvider can use the kernel's FUSE passthrough when exposed.
+        # MediaProvider module devices ship). The 36.1 (16 QPR2) image did
+        # not boot on the hosted runner in 900 s (run 41177019433).
         include:
           - api: 36
             target: google_apis
-          - api: 36
-            image: "36.1"
-            target: google_apis
-            # Its first boot took longer than 300 s (run 41176377346).
-            boot: 900
           # With MediaProvider's Android FUSE passthrough on, as on devices
-          # (the script turns it on and reboots; page saves only).
+          # (the script turns it on and reboots; page saves only). Red until
+          # the GH #811 publication-check fix lands: a replaced page's saves
+          # stay Uncertain (run 41177645677).
           - api: 36
             target: google_apis
             passthrough: true
@@ -587,10 +584,9 @@ jobs:
           TINE_FUSE_PASSTHROUGH: ${{ matrix.passthrough && '1' || '' }}
         with:
           api-level: ${{ matrix.api }}
-          system-image-api-level: ${{ matrix.image || matrix.api }}
           arch: x86_64
           target: ${{ matrix.target }}
-          emulator-boot-timeout: ${{ matrix.boot || 300 }}
+          emulator-boot-timeout: 300
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN"
@@ -598,7 +594,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-git-storage-api${{ matrix.label || matrix.image || matrix.api }}-${{ github.run_attempt }}
+          name: android-git-storage-api${{ matrix.label || matrix.api }}-${{ github.run_attempt }}
           path: artifacts/android-git-storage
           if-no-files-found: warn
           retention-days: 14

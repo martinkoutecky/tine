@@ -84,8 +84,10 @@ fn sync_client(dir: &Path, stop: Arc<AtomicBool>) -> std::thread::JoinHandle<u64
 /// One Tine-shaped publication with raw syscalls: hidden temporary written,
 /// fsynced and closed, renamed over (or onto) `target`, the handle's stamp
 /// read after the rename, the folder synced, then the path's stamp. Returns
-/// the two stamps and the stamps 100 ms and 1 s later.
-fn publish(target: &Path, bytes: &[u8]) -> [String; 4] {
+/// the two stamps, the stamps 100 ms and 1 s later, and the handle's stamp
+/// taken again after its read (Android FUSE passthrough copies the backing
+/// file's times into the inode on a read: fs/fuse/passthrough.c).
+fn publish(target: &Path, bytes: &[u8]) -> [String; 5] {
     let temporary = target.with_file_name(format!(
         ".{}.tine-tmp",
         target.file_name().unwrap().to_string_lossy()
@@ -102,6 +104,7 @@ fn publish(target: &Path, bytes: &[u8]) -> [String; 4] {
     let mut handle = fs::File::open(target).unwrap();
     let opened = handle.metadata().unwrap();
     std::io::Read::read_to_end(&mut handle, &mut Vec::new()).unwrap();
+    let read = handle.metadata().unwrap();
     drop(handle);
     // diagnostic only: Windows cannot open a folder without backup semantics
     let _ = fs::File::open(target.parent().unwrap()).and_then(|d| d.sync_all());
@@ -109,7 +112,13 @@ fn publish(target: &Path, bytes: &[u8]) -> [String; 4] {
         std::thread::sleep(Duration::from_millis(wait));
         fs::symlink_metadata(target).map_or_else(|e| format!("lstat failed: {e}"), |m| describe(&m))
     };
-    [describe(&opened), after(0), after(100), after(900)]
+    [
+        describe(&opened),
+        after(0),
+        after(100),
+        after(900),
+        describe(&read),
+    ]
 }
 
 /// The premise of the post-sync publication check (M3-1): a file's metadata
@@ -122,6 +131,7 @@ fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
     let _integration_guard = crate::integration_lock();
     let dir = volume();
     let mut mismatches = Vec::new();
+    let mut after_read = 0;
     for client in [false, true] {
         let stop = Arc::new(AtomicBool::new(false));
         let worker = client.then(|| sync_client(dir.path(), stop.clone()));
@@ -131,11 +141,12 @@ fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
                 ("replace", "r.md".into()),
             ] {
                 let target = dir.path().join(name);
-                let [opened, path, later, last] =
+                let [opened, path, later, last, read] =
                     publish(&target, format!("- {kind} {round}\n").as_bytes());
                 let line = format!(
-                    "client={client} {kind} round={round}\n  handle: {opened}\n  path:   {path}\n  +100ms: {later}\n  +1s:    {last}"
+                    "client={client} {kind} round={round}\n  handle: {opened}\n  path:   {path}\n  +100ms: {later}\n  +1s:    {last}\n  read:   {read}"
                 );
+                after_read += usize::from(read != path);
                 if round == 0 || opened != path || path != later || later != last {
                     println!("GH811-STAMP {line}");
                 }
@@ -149,6 +160,10 @@ fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
             println!("GH811-STAMP sync client passes: {}", worker.join().unwrap());
         }
     }
+    println!(
+        "GH811-STAMP handle-vs-path mismatches: {}; after-read handle vs path: {after_read}",
+        mismatches.len()
+    );
     assert!(
         mismatches.is_empty(),
         "handle and path metadata differ:\n{}",
