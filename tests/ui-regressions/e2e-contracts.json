@@ -257,6 +257,12 @@
       "nonRequirements":["Native certification outside Linux WebKitGTK (macOS overlay scrollbars are covered by the same geometry but unmeasured), and touch devices, which scroll by swipe."],
       "stability":"burn-in"
     },
+    "scripts/e2e-textarea-numbered-fence.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Typing 1. followed by a space in a routed code or calculator body keeps that prefix literal, saves the fenced block and reopens its body without turning it into a numbered list.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"The edit preserves the saved fence and every unrelated file byte.","blocking":true,"authority":"Textarea numbered-fence lane body-projection preservation contract."}],
+      "acceptableVariations":["Editor styling, calculator result presentation and save latency may vary while the literal text and saved wrapper survive."],
+      "nonRequirements":["Exact pixels, all syntax/metadata boundaries already covered by render tests, native certification outside Linux WebKitGTK, or manager burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sidebar-crumbs.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet, and each ancestor crumb opens that block (plain click: its page; Shift: the sidebar) (GH #440, #779).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
