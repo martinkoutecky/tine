@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
+- Queries with `query-table:: true` now show their results in published read-only apps. Query exports also keep the table's chosen columns and starting sort.
 - Typing `1. ` inside a code or calculator block now keeps it as literal text instead of removing the fence and turning the block into a numbered list.
 - Typing in large pages and query results avoids rescanning unrelated block text for the compact Today task count, in-page find, query column choices, and sheet table and board fields.
 - `tine export static` explains a zero-page public selection and names `public:: true` and `--all-pages`.
