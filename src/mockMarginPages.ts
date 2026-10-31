@@ -40,5 +40,27 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) =>
         b("A closing block after the commented paragraph."),
       ],
     ],
+    [
+      // MARGIN-POS (2026-10-31): a comment on a block with a deep subtree (GH
+      // #110: inline, it must show right under the block, not after "def"); a
+      // passage on a later line of a wrapped paragraph, with replies by two other
+      // authors; and an adjacent block whose thread the tall one pushes down.
+      "Margin position regression", [
+        b("123 needs a source", [
+          b("456"),
+          b("789"),
+          b("abc", [b("def")]),
+          b("Which source?\nquote:: needs a source\nauthor:: Ellis"),
+        ]),
+        b("This paragraph runs long enough to wrap onto several lines in the reading column, so that the passage the comment quotes sits well below the top of its block, which is where the thread must stay when the block is edited and when it is not.", [
+          b("Say which block.\nquote:: when the block is edited", [
+            b("The commented one.\nauthor:: claude"),
+            b("Agreed.\nauthor:: Codex"),
+            b("Then I will reword it."),
+          ]),
+        ]),
+        b("A short block right below.", [b("Short?\nquote:: right below")]),
+      ],
+    ],
   ];
 }

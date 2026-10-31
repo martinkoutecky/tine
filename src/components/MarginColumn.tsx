@@ -17,7 +17,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, 
 import { Block } from "./Block";
 import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
-import { countMarginMeasurePass, isCommentId, MARGIN_MIN_PANE_WIDTH, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
+import { countMarginMeasurePass, isCommentId, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
 import { node as docNode, type FeedPage } from "../document";
 import { newResizeObserver, requestFrame } from "../windowRealm";
 
@@ -61,6 +61,22 @@ export function createMarginSurface(opts: {
     onCleanup(() => observer?.disconnect());
   });
   const active = createMemo(() => hasComment() && paneWidth() >= MARGIN_MIN_PANE_WIDTH);
+  // A pane with room to spare beside the reading column gives it to the threads
+  // (Martin 2026-10-31): the column grows from 280 px up to a readable maximum,
+  // never taking width from the outline.
+  createEffect(() => {
+    const width = paneWidth();
+    if (!active()) return;
+    const outline = opts.outline();
+    const inner = outline?.closest<HTMLElement>(".main-content-inner");
+    if (!inner) return;
+    const style = inner.ownerDocument.defaultView?.getComputedStyle(inner);
+    const content = style ? parseFloat(style.getPropertyValue("--tine-main-content-max-width") || style.getPropertyValue("--ls-main-content-max-width")) : NaN;
+    const wide = !!inner.closest(".wide-mode");
+    const column = marginColumnWidth(width, wide || !Number.isFinite(content) ? null : content);
+    inner.style.setProperty("--margin-column-width", `${column}px`);
+    onCleanup(() => inner.style.removeProperty("--margin-column-width"));
+  });
 
   const [rows, setRows] = createSignal<readonly { parentId: string; row: HTMLElement }[]>([]);
   const [activeComment, setActiveComment] = createSignal<string | null>(null);
@@ -98,8 +114,12 @@ export function createMarginSurface(opts: {
       if (mark) {
         anchor = mark.getBoundingClientRect().top;
         offsets.set(id, anchor - rowTop);
-      } else if (t.row.querySelector("textarea")) {
-        anchor = rowTop + (offsets.get(id) ?? 0);
+      } else if (t.row.classList.contains("editing")) {
+        // Any editor (the textarea, or the CodeMirror editor, which has none)
+        // drops the marks: keep the thread where its passage last was, clamped
+        // to the row (MARGIN-POS, Martin 2026-10-31: threads jumped to the
+        // block's top on entering edit and back on leaving it).
+        anchor = rowTop + Math.min(offsets.get(id) ?? 0, Math.max(0, t.row.offsetHeight - 1));
       }
       const index = untrack(() => docNode(t.parentId)?.children.indexOf(id) ?? 0);
       items.push({ id, t, anchor: anchor - origin, height: t.el.offsetHeight, index });

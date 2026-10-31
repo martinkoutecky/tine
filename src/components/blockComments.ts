@@ -4,9 +4,9 @@
 import { useContext } from "solid-js";
 import type { OutlineScope } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
-import { isOwnAuthor } from "../commentIdentity";
+import { AUTHOR_TINTS, authorTint, isOwnAuthor } from "../commentIdentity";
 import { isCommentId, marginNext, marginPrev } from "../margin";
-import { nextVisible, prevVisible } from "../document";
+import { commentsFirst, nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 
@@ -28,11 +28,19 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   // Slice 2b: a comment and its replies draw no bullet or fold arrow; the author
   // chip is their handle (drag, block menu).
   const bulletless = () => commentSelector() !== null || inThread();
-  const commentClasses = () => ({
-    "comment-card": commentSelector() !== null && !inThread(),
-    "comment-in-thread": bulletless(),
-    authored: author() !== null,
-  });
+  const commentClasses = () => {
+    const by = author();
+    const classes: Record<string, boolean> = {
+      "comment-card": commentSelector() !== null && !inThread(),
+      "comment-in-thread": bulletless(),
+      authored: by !== null,
+    };
+    // Someone else's comment or reply gets its own background, one tint per name
+    // (Martin 2026-10-31: the chip alone did not tell them apart).
+    const tint = by !== null && bulletless() ? authorTint(by) : -1;
+    for (let i = 0; i < AUTHOR_TINTS; i++) classes[`author-tint-${i}`] = i === tint;
+    return classes;
+  };
   return { commentSelector, author, showsAuthor, bulletless, commentClasses };
 }
 
@@ -40,11 +48,12 @@ const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || s
 
 /** Slice 2: on a page whose comments are drawn in the margin, the main column's
  * outline leaves them out (the count marker stands for them). Inside a margin
- * thread, without a margin, and in reference and embed copies every child is drawn. */
+ * thread, without a margin, and in reference and embed copies every child is
+ * drawn, the comments first, right under their block (commentOrder.ts). */
 export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: () => "md" | "org") {
   const place = useContext(MarginContext);
   const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
-  const outlineChildren = () => (main() ? node().children.filter((id) => !isCommentId(id, fmt())) : node().children);
+  const outlineChildren = () => (main() ? node().children.filter((id) => !isCommentId(id, fmt())) : commentsFirst(node().children));
   const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt())) : []);
   return { outlineChildren, marginComments };
 }

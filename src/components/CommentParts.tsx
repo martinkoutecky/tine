@@ -10,6 +10,7 @@ import { DialogActions } from "./DialogActions";
 import { t } from "../i18n";
 import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
+import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
 import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { internalLinkMouseDown } from "../linkGesture";
@@ -77,7 +78,7 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
   return (
     <span
       class="author-chip"
-      classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined }}
+      classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined, ...tintClasses(props.author) }}
       title={props.author !== null ? t("comment-written-by", { author: props.author }) : t("comment-written-by-you")}
       onMouseDown={onMouseDown}
       onContextMenu={e => {
@@ -90,6 +91,13 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
       {props.author ?? t("comment-author-you")}
     </span>
   );
+}
+
+function tintClasses(author: string | null): Record<string, boolean> {
+  const tint = author === null ? -1 : authorTint(author);
+  const classes: Record<string, boolean> = {};
+  for (let i = 0; i < AUTHOR_TINTS; i++) classes[`author-tint-${i}`] = i === tint;
+  return classes;
 }
 
 /** Delete shares the first line but consumes its gesture without placing a caret. */
