@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
+import { IDENTITIES } from "../scripts/lib/app-identity.mjs";
 import { msixVersion } from "../scripts/lib/msix-version.mjs";
+
+// The Store package ships the released identity (msix.yml runs set-app-identity release).
+const RELEASE_ID = IDENTITIES.release.identifier;
 
 describe("Store version mapping", () => {
   it.each([["0.7.0", "0.7.0.0"], ["1.2.3", "1.2.3.0"]])("maps %s", (input, output) => {
@@ -35,8 +39,8 @@ describe("MSIX manifest and workflow contract", () => {
   it("unvirtualizes exactly Tine's three AppData folders and nothing else (D-20261031-MSV)", () => {
     const excluded = [...manifest.matchAll(/<virtualization:ExcludedDirectory>([^<]+)<\/virtualization:ExcludedDirectory>/g)].map((m) => m[1]);
     expect(excluded).toEqual([
-      "$(KnownFolder:RoamingAppData)\\page.tine.Tine",
-      "$(KnownFolder:LocalAppData)\\page.tine.Tine",
+      `$(KnownFolder:RoamingAppData)\\${RELEASE_ID}`,
+      `$(KnownFolder:LocalAppData)\\${RELEASE_ID}`,
       "$(KnownFolder:LocalAppData)\\tine-owners",
     ]);
     expect(manifest).toContain('xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"');
@@ -62,6 +66,6 @@ describe("MSIX manifest and workflow contract", () => {
     expect(workflow).toContain("--no-sign");
     // The installed package proves where writes land: the three folders real, a control folder virtualized.
     expect(workflow).toContain("Flexible virtualization proof");
-    for (const dir of ["page.tine.Tine", "tine-owners", "tine-msix-virt-control"]) expect(workflow).toContain(dir);
+    for (const dir of [RELEASE_ID, "tine-owners", "tine-msix-virt-control"]) expect(workflow).toContain(dir);
   });
 });
