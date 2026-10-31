@@ -813,6 +813,10 @@ mod spelling_tests {
             fs::write(path, text).unwrap();
         }
         let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        // Establish the pre-recovery snapshot before launch moves the entry.
+        // Recovery must publish into that view; racing initial loading made
+        // snapshot_knows depend on whether the first snapshot existed yet.
+        store.whole_graph().unwrap();
         let app_data = tempfile::tempdir().unwrap();
         let host = crate::PageHost::start_for_tests(&store, app_data.path()).unwrap();
         drop(host);

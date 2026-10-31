@@ -69,13 +69,20 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "page.show" => {
             let PageArgs { name } = parse(args)?;
             let graph = whole_graph(slot)?;
-            page_answer(slot, resolve_page(&graph, &name)?, "page")
+            let id = resolve_page(&graph, &name)?;
+            let names = graph.inventory(InventoryScope::File(&id));
+            page_answer(
+                slot,
+                id,
+                "page",
+                names.0.first().map(|entry| entry.name.as_str()),
+            )
         }
         "journal" => {
             let JournalArgs { date } = parse(args)?;
             let day = journal_day(slot, date.as_deref())?;
             let id = slot.store.journal_id(Day(day.ordinal_key()));
-            page_answer(slot, id, "journal")
+            page_answer(slot, id, "journal", None)
         }
         "block.show" => {
             let BlockArgs { uuid, max_nodes } = parse(args)?;
@@ -547,7 +554,12 @@ fn bounded(
     Some(kept)
 }
 
-fn page_answer(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
+fn page_answer(
+    slot: &GraphSlot,
+    id: PageId,
+    kind: &str,
+    indexed_name: Option<&str>,
+) -> Result<Value, ErrorBody> {
     // The host lock is held for the read only (A-K3: nothing under it takes it again).
     let read = crate::page_commands::with_host(slot, |host| host.read(&id))
         .map_err(|_| busy())?
@@ -574,6 +586,11 @@ fn page_answer(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorB
     let mut doc = to_value(&parsed.doc)?;
     if let Some(fields) = doc.as_object_mut() {
         fields.insert("blocks".into(), blocks);
+        // Handles must use the name that resolved to this file, even when
+        // current title bytes already claim another file's indexed name.
+        if let Some(name) = indexed_name {
+            fields.insert("name".into(), json!(name));
+        }
     }
     Ok(ok(
         kind,

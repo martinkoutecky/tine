@@ -31,6 +31,14 @@ in `tine-agents/specs/campaigns/2026-10-cli/PROTOCOL.md`; this file owns the *co
 Column *presence*: `always` (present, never null), `nullable` (always present, may be
 `null`), `optional` (omitted when it does not apply).
 
+Request lines other than `block.edit`, `block.add`, and `block.prop` are limited
+to 1 MiB, including ignored fields. Oversized requests answer `frame-too-large`,
+`admitted: false`, and close the connection before dispatch, even for status.
+Those three block-text verbs retain the `8 × MAX_PARSE_BYTES + 1 MiB` envelope.
+Because JSON permits `verb` after `args`, framing initially uses the larger
+envelope for every request; the non-text limit is checked after decoding.
+This does not reduce the framing allocation bound.
+
 ### Spelling: `rev` and `revision`
 
 Two different things, two names, used the same way in JSON and text:
@@ -87,6 +95,12 @@ The fields of both:
 
 Read by the text output: `page.name`, `page.pre_block`,
 `page.blocks[].raw`, `page.blocks[].children`, `page.blocks[].properties`.
+
+For `page.show` on an indexed file, `page.name` is its name in the view used to resolve the
+read, including when the request used an alias or different capitalization.
+The current bytes can already declare a different title before the index
+observes it. Keeping the indexed name makes handles address the file read;
+`text`, `rev`, and the parsed title still describe the current bytes.
 
 **Pages the parser refuses.** `page show` and `journal` parse the page's bytes before they build
 the payload, and the store's parse validation refuses bytes that are not valid UTF-8, an outline

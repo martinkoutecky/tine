@@ -223,6 +223,16 @@ fn violations(files: &[(String, String)], feature_module: &dyn Fn(&str) -> bool)
                 ));
                 continue;
             }
+            let running = &source[at..];
+            let optional_trash = module == Some("conflicts")
+                && segments.last() == Some(&"trash_sync_conflict")
+                && running.starts_with("host_slot()?.running().ok()");
+            if !running.starts_with("host_slot()?.running()?") && !optional_trash {
+                found.push(format!(
+                    "{site}: propagate running()?; only conflicts::trash_sync_conflict accepts running().ok()"
+                ));
+                continue;
+            }
             let statement = statement(source, open);
             if statement.matches("host_slot()").count() != 1 {
                 found.push(format!("{site}: the statement takes host_slot() twice"));
@@ -312,17 +322,17 @@ fn no_call_path_reacquires_the_host_slot_while_holding_it() {
 fn a_planted_reacquisition_fails_the_guard() {
     let planted = r#"
 fn ok_writer(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, &a)
         .map_err(|error| error.to_string());
 }
 fn bound(slot: &GraphSlot) {
     let held = slot.host_slot();
 }
 fn twice(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), slot.host_slot()?.running());
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, slot.host_slot()?.running()?);
 }
 fn nested(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, &a)
         .map_err(|_| report(slot));
 }
 fn report(slot: &GraphSlot) -> String {
@@ -333,14 +343,14 @@ fn helper(slot: &GraphSlot) -> String {
     String::new()
 }
 fn callback(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, &a)
         .map_err(report);
 }
 fn local(slot: &GraphSlot) {
     own_writer(&slot.store, slot.host_slot()?.running());
 }
 fn registry(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, &a)
         .map_err(|_| bound_windows(state));
 }
 fn bound_windows(state: &AppState) -> usize {
@@ -353,7 +363,7 @@ fn read(slot: &GraphSlot) {
     let _ = slot.host.read();
 }
 fn standard(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, &a)
         .map(|_| std::fs::read(path));
 }
 "#;
@@ -376,6 +386,30 @@ fn standard(slot: &GraphSlot) {
             "bound_windows takes the host lock or the registry and runs under the gate",
         ],
         "{found:?}"
+    );
+}
+
+#[test]
+fn only_conflict_copy_trash_may_tolerate_a_missing_running_host() {
+    let planted = r#"
+fn bare(slot: &GraphSlot) {
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a);
+}
+fn ignored(slot: &GraphSlot) {
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running().ok(), &a);
+}
+fn required(slot: &GraphSlot) {
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running()?, &a);
+}
+fn conflict_copy(slot: &GraphSlot) {
+    tine_graph_features::conflicts::trash_sync_conflict(&slot.store, slot.host_slot()?.running().ok(), &a);
+}
+"#;
+    let found = violations(&[("planted.rs".into(), planted.into())], &|_| true);
+    assert_eq!(
+        found.len(),
+        2,
+        "bare and ignored running-host failures must be rejected: {found:?}"
     );
 }
 

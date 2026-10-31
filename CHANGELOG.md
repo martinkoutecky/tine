@@ -33,6 +33,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- CLI `page show` keeps the indexed page name when another editor has just changed its title, so a block handle formed from the read cannot accidentally edit a different file (CLI-REVIEW-8).
+- CLI requests without block text again enforce their 1 MiB limit before running; block add, edit and property writes keep their larger text allowance (CLI-REVIEW-8).
 - A block inside a grid cell now looks and works as it does on a page (#782). Task markers with their checkbox, priorities, SCHEDULED and DEADLINE chips and properties show in the cell and in every block nested under it, however deep; ticking a checkbox in a cell saves the new marker. Nested blocks have the page's bullet and indent one fixed step per level instead of a step that grew with each level, so deep outlines no longer run off the cell. A sub-grid inside a cell is unchanged.
 - The Table view of a query (and of a block's children) draws each block as the page does (#551). A Markdown list, quote, code block or table inside a result used to appear as source text (`* apples * pears`); it is now rendered.
 - Ctrl/Cmd+R and F5 no longer reload the whole app on Windows (#797). The webview's built-in reload ran on a stray Ctrl+R, discarded the screen state, and could not be changed in Settings → Keyboard shortcuts. Tine now consumes these keys; while editing, Ctrl/Cmd+R is **Comment on selected text**, which is listed there and can be rebound or cleared, and **Reload window** reloads on request.

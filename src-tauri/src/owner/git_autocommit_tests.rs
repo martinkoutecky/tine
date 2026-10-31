@@ -5,6 +5,130 @@ use super::*;
 use git2::{Repository, Signature};
 use std::fs;
 
+/// Each substitution happens after open_checked and all earlier boundaries,
+/// so an opening refusal cannot stand in for a later mutation guard.
+#[cfg(unix)]
+fn check_repack_metadata_boundary(boundary: &'static str) {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let checked = open_checked(&f.work).unwrap();
+    if boundary == "pack-write" {
+        // Keep the ODB readable: packbuilder reads it lazily at write.
+        // Redirect only the output directory after insertion completes.
+        let pack = f.repo.path().join("objects/pack");
+        let detached = f._dir.path().join("detached-pack");
+        let outside = f._dir.path().join("outside-pack");
+        fs::create_dir(&outside).unwrap();
+        let destination = outside.clone();
+        let reached = std::rc::Rc::new(std::cell::Cell::new(false));
+        let witnessed = reached.clone();
+        repack_test_hook::install(boundary, move || {
+            fs::rename(&pack, detached).unwrap();
+            std::os::unix::fs::symlink(destination, pack).unwrap();
+            witnessed.set(true);
+        });
+        let result = repack_guarded(&checked);
+        eprintln!("SB1 {boundary}: {result:?}");
+        assert!(result.is_err(), "{boundary}");
+        assert!(reached.get());
+        assert_eq!(
+            fs::read_dir(outside).unwrap().count(),
+            0,
+            "pack write escaped its metadata scope"
+        );
+        return;
+    }
+    let gitdir = f.repo.path().to_path_buf();
+    let detached = f._dir.path().join("detached-metadata");
+    let objects = loose_objects(&gitdir.join("objects"));
+    assert!(!objects.is_empty());
+    let files: Vec<_> = objects
+        .iter()
+        .map(|oid| {
+            let hex = oid.to_string();
+            PathBuf::from("objects").join(&hex[..2]).join(&hex[2..])
+        })
+        .collect();
+    let replacement = gitdir.clone();
+    let planted = files.clone();
+    let reached = std::rc::Rc::new(std::cell::Cell::new(false));
+    let witnessed = reached.clone();
+    repack_test_hook::install(boundary, move || {
+        fs::rename(&replacement, detached).unwrap();
+        fs::create_dir_all(replacement.join("objects")).unwrap();
+        if boundary != "pack-create" {
+            fs::create_dir(replacement.join("objects/pack")).unwrap();
+        }
+        for byte in 0..=255u8 {
+            fs::create_dir_all(replacement.join(format!("objects/{byte:02x}"))).unwrap();
+        }
+        for file in planted {
+            fs::write(replacement.join(file), b"replacement-owned").unwrap();
+        }
+        tine_store::directory_durability::take_synced_directories();
+        witnessed.set(true);
+    });
+    let result = repack_guarded(&checked);
+    eprintln!("SB1 {boundary}: {result:?}");
+    assert!(result.is_err(), "{boundary}");
+    assert!(reached.get(), "{boundary} must reach its own substitution");
+    assert!(
+        tine_store::directory_durability::take_synced_directories()
+            .iter()
+            .all(|dir| !dir.starts_with(&gitdir)),
+        "{boundary}: synced replacement metadata"
+    );
+    assert_eq!(
+        gitdir.join("objects/pack").exists(),
+        boundary != "pack-create"
+    );
+    if boundary != "pack-create" {
+        assert_eq!(
+            fs::read_dir(gitdir.join("objects/pack")).unwrap().count(),
+            0,
+            "{boundary}"
+        );
+    }
+    for file in files {
+        assert_eq!(
+            fs::read(gitdir.join(file)).unwrap(),
+            b"replacement-owned",
+            "{boundary}"
+        );
+    }
+    for byte in 0..=255u8 {
+        assert!(
+            gitdir.join(format!("objects/{byte:02x}")).is_dir(),
+            "{boundary}: removed replacement fanout"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sb1_repack_checks_pack_create() {
+    check_repack_metadata_boundary("pack-create");
+}
+#[cfg(unix)]
+#[test]
+fn sb1_repack_checks_pack_write() {
+    check_repack_metadata_boundary("pack-write");
+}
+#[cfg(unix)]
+#[test]
+fn sb1_repack_checks_pack_sync() {
+    check_repack_metadata_boundary("pack-sync");
+}
+#[cfg(unix)]
+#[test]
+fn sb1_repack_checks_object_unlink() {
+    check_repack_metadata_boundary("object-unlink");
+}
+#[cfg(unix)]
+#[test]
+fn sb1_repack_checks_fanout_remove() {
+    check_repack_metadata_boundary("fanout-remove");
+}
+
 #[test]
 fn precompose_refusal_applies_to_macos_and_ios() {
     assert_eq!(Unusable::Precompose.code(), "precompose");

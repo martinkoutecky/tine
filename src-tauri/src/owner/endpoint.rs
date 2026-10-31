@@ -686,6 +686,29 @@ mod local {
                     return;
                 }
             };
+            // Page-text writes need the larger envelope. Other requests keep
+            // the original cap, including status (which bypasses admission).
+            // The verb may occur last in JSON, so framing still buffers under
+            // TEXT_REQUEST_CAP before this semantic limit can be checked.
+            if line.len() > REQUEST_CAP
+                && !matches!(
+                    request.verb.as_str(),
+                    "block.edit" | "block.add" | "block.prop"
+                )
+            {
+                send(
+                    &mut writer,
+                    &error(
+                        request.id,
+                        ErrorBody::new(
+                            "frame-too-large",
+                            format!("a non-text request line is limited to {REQUEST_CAP} bytes"),
+                            false,
+                        ),
+                    ),
+                );
+                return;
+            }
             if request.verb == "owner.status" {
                 let ok = shared.handler.status(&shared.gate);
                 let reply = Reply {

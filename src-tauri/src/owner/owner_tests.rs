@@ -319,6 +319,27 @@ fn an_oversized_or_malformed_line_is_answered_and_closed() {
     assert!(raw(&graph.paths().socket, b"[1,2]\n").contains("malformed"));
 }
 
+#[test]
+fn non_text_requests_keep_the_one_mebibyte_limit() {
+    let graph = Graph::new();
+    let (_endpoint, _gate) = endpoint(&graph, Arc::new(graph.slot()));
+    for verb in ["owner.status", "pages", "page.show", "run.begin"] {
+        let mut conn = graph.connect();
+        let args = json!({"name":"a", "unused": "x".repeat(super::wire::REQUEST_CAP)});
+        match conn.call(verb, args) {
+            Err(Failure::Owner(body)) => {
+                assert_eq!(body.code, "frame-too-large", "{verb}");
+                assert_eq!(body.detail.unwrap()["admitted"], false);
+            }
+            other => panic!("{verb}: oversized non-text request reached dispatch: {other:?}"),
+        }
+        assert!(
+            conn.call("owner.status", Value::Null).is_err(),
+            "oversized frames close the connection"
+        );
+    }
+}
+
 /// Write `bytes`, half-close, and read whatever comes back.
 fn raw(socket: &Path, bytes: &[u8]) -> String {
     use std::io::{Read, Write};
@@ -630,6 +651,11 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("git_identity", include_str!("git_identity.rs")),
         ("git_ignore_setup", include_str!("git_ignore_setup.rs")),
         ("git_lifecycle", include_str!("git_lifecycle.rs")),
+        ("git_pack_index", include_str!("git_pack_index.rs")),
+        (
+            "git_repack_hook_tests",
+            include_str!("git_repack_hook_tests.rs"),
+        ),
         ("git_mobile_tests", include_str!("git_mobile_tests.rs")),
         ("git_pull", include_str!("git_pull.rs")),
         ("git_run", include_str!("git_run.rs")),
@@ -679,7 +705,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 30, "scan every owner/*.rs file");
+    assert_eq!(files, 32, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

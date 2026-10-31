@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "production_guard_tests.rs"]
 mod guard_tests;
+#[path = "production_crash_tests.rs"]
+mod production_crash_tests;
 #[path = "storage_acceptance_tests.rs"]
 mod storage_acceptance_tests;
 

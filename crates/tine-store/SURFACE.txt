@@ -333,6 +333,8 @@ field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
 ## WholeGraph: Names (ceiling: 17)
+# CLI read handles use InventoryScope::File(PageId) on the existing inventory
+# question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
 enum store::Resolved
 field store::InventoryEntry.name

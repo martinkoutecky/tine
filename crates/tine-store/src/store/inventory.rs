@@ -25,6 +25,8 @@ pub struct Inventory(pub Vec<InventoryEntry>);
 /// Which names a [`WholeGraph::inventory`] lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InventoryScope<'a> {
+    /// The file-claimed name of this page in this view, if present.
+    File(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
     /// Referenced journal dates, including dates without a file, once per day.
@@ -78,8 +80,26 @@ impl WholeGraph {
     /// nothing. The page header shows them (D-20261019-AL2). Cost
     /// O(component log P) over the snapshot's alias edges and real-name
     /// table; no parse and no disk access.
+    /// [`InventoryScope::File`] uses the existing page-position map and
+    /// resolves its name in this view: O(log P + C) for C name claimants,
+    /// with no document traversal or file reads. An absent page returns empty.
     pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
         match scope {
+            InventoryScope::File(id) => Arc::new(Inventory(
+                self.graph
+                    .pages
+                    .positions
+                    .get(id.as_str())
+                    .and_then(|&slot| self.graph.pages.get(slot))
+                    .map(|(entry, _)| InventoryEntry {
+                        name: entry.name.clone(),
+                        target: self.resolve(&entry.name, entry.kind == PageKind::Journal),
+                        is_journal: entry.kind == PageKind::Journal,
+                        day: entry.date_key.map(Day),
+                    })
+                    .into_iter()
+                    .collect(),
+            )),
             InventoryScope::All => self.full_inventory(),
             InventoryScope::ReferencedJournals => {
                 let mut entries: Vec<_> = self
