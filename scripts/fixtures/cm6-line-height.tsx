@@ -69,6 +69,8 @@ export const CASES: Record<string, string> = {
   embed: "{{embed [[Target]]}}",
   hr: "above the rule\n---\nbelow the rule",
   empty: "",
+  // CM6-WIDE: a long unwrapped code line beside prose must not widen the block when the prose is edited.
+  widecode: "Intro paragraph\n```\n[[Shared]] opens pages/Alpha.md      (pages/Zed.md would beat pages/alpha.md and this line goes on well past the column edge)\n```\nOutro paragraph",
 };
 // Facets the Rust backend would seed that the in-browser fixture must supply by hand.
 const DTO_EXTRA: Record<string, Record<string, unknown>> = {
@@ -132,7 +134,7 @@ function probe(id: string, kind: Kind) {
     shown: getComputedStyle(dc.parentElement!).display !== "none", native: getComputedStyle(box).caretColor }))(dc.getBoundingClientRect()) : null;
   return {
     chips, inl, drawnCaret,
-    boxH: +r.height.toFixed(2), hostH: +hostRect.height.toFixed(2), childY: +(child.getBoundingClientRect().top - rowRect.top).toFixed(2),
+    boxH: +r.height.toFixed(2), hostH: +hostRect.height.toFixed(2), boxW: +r.width.toFixed(2), hostW: +hostRect.width.toFixed(2), childY: +(child.getBoundingClientRect().top - rowRect.top).toFixed(2),
     lineHeight: cs.lineHeight, fontSize: cs.fontSize, cls: box.className, val: (box as HTMLTextAreaElement).value ?? box.textContent!.slice(0, 120),
     lines: [...new Map(lines.map(t => [t.top, t])).values()].sort((a, b) => a.top - b.top),
   };

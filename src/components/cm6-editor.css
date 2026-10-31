@@ -18,6 +18,10 @@
 .cm6-block-editor .cm-editor .cm-content { caret-color: currentColor; }
 .cm6-block-editor .cm-line { padding: 0; }
 .cm6-block-editor .cm-scroller { font: inherit; overflow: visible; }
+/* `.cm-content` is a flex item of the scroller, so its automatic minimum width is its min-content width: a concealed
+   code block's longest unwrapped line (its `pre` scrolls in the view) widened the whole block while the prose beside
+   it was edited (CM6-WIDE). Let it shrink to the column, as the rendered block does. */
+.cm6-block-editor .cm-content { min-width: 0; }
 .cm6-preview { cursor: text; }
 /* A concealed page reference is drawn by the read renderer, brackets included when the graph preference shows them
    (they were hidden here, which made the line 24px narrower than the view until the caret reached it). */
