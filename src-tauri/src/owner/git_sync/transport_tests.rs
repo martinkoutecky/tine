@@ -66,6 +66,195 @@ fn operation() -> Operation {
     .unwrap()
 }
 
+#[test]
+fn clone_default_branch_sets_upstream_and_refuses_nonempty_target() {
+    let f = Fixture::new();
+    let root = f._dir.path().join("cloned");
+    assert_eq!(operation().clone_graph(&f.url, &root), Outcome::UpToDate);
+    let repo = Repository::open(&root).unwrap();
+    assert_eq!(repo.head().unwrap().shorthand().unwrap(), "main");
+    assert_eq!(
+        repo.branch_upstream_name("refs/heads/main")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "refs/remotes/origin/main"
+    );
+    assert_eq!(repo.head().unwrap().target(), Some(f.base));
+    assert_eq!(fs::read(root.join("pages/a.md")).unwrap(), b"- base\n");
+    assert_eq!(operation().fetch(&root), Outcome::UpToDate);
+    assert!(
+        matches!(operation().clone_graph(&f.url, &root), Outcome::Refused(m) if m.contains("not empty"))
+    );
+    assert_eq!(fs::read(root.join("pages/a.md")).unwrap(), b"- base\n");
+    crate::git_setup::tests::report_footprint("clone", &root);
+}
+
+#[test]
+fn clone_uses_the_remote_default_branch_even_when_it_is_not_main() {
+    let f = Fixture::new();
+    f.bare
+        .reference("refs/heads/notes", f.base, false, "fixture")
+        .unwrap();
+    f.bare.set_head("refs/heads/notes").unwrap();
+    let root = f._dir.path().join("cloned");
+    assert_eq!(operation().clone_graph(&f.url, &root), Outcome::UpToDate);
+    let repo = Repository::open(&root).unwrap();
+    assert_eq!(repo.head().unwrap().shorthand().unwrap(), "notes");
+    assert_eq!(
+        repo.branch_upstream_name("refs/heads/notes")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "refs/remotes/origin/notes"
+    );
+    assert_eq!(operation().fetch(&root), Outcome::UpToDate);
+}
+
+#[test]
+fn clone_refuses_a_remote_without_commits_and_points_to_initial_setup() {
+    let f = Fixture::new();
+    f.bare
+        .find_reference("refs/heads/main")
+        .unwrap()
+        .delete()
+        .unwrap();
+    let root = f._dir.path().join("cloned");
+    assert!(
+        matches!(operation().clone_graph(&f.url, &root), Outcome::Refused(m) if m.contains("no commits") && m.contains("Make this graph a git repository"))
+    );
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    assert!(root.join(".git").is_dir());
+}
+
+fn initial_graph(f: &Fixture, url: &str) -> PathBuf {
+    let root = f._dir.path().join("initial-graph");
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::write(root.join("pages/a.md"), b"- first graph\r\n").unwrap();
+    crate::git_setup::tests::initialize_fixture(&root, &f._dir.path().join("device"), url);
+    root
+}
+
+#[test]
+fn initial_setup_pushes_to_empty_remote_and_sets_upstream_with_resumable_confirmation() {
+    let f = Fixture::new();
+    f.bare
+        .find_reference("refs/heads/main")
+        .unwrap()
+        .delete()
+        .unwrap();
+    let root = initial_graph(&f, &f.url);
+    assert!(initial_push_pending(&root));
+    assert_eq!(operation().push_initial(&root), Outcome::UpToDate);
+    let repo = Repository::open(&root).unwrap();
+    let tip = repo.head().unwrap().target().unwrap();
+    assert_eq!(f.bare.head().unwrap().target(), Some(tip));
+    assert_eq!(repo.refname_to_id("refs/remotes/origin/main").unwrap(), tip);
+    assert!(!initial_push_pending(&root));
+    assert_eq!(operation().fetch(&root), Outcome::UpToDate);
+    assert_eq!(
+        fs::read(root.join("pages/a.md")).unwrap(),
+        b"- first graph\r\n"
+    );
+    crate::git_setup::tests::report_footprint("init+empty remote", &root);
+    // A process interrupted after server acceptance but before local tracking
+    // publication can confirm precisely that commit, without another commit.
+    repo.find_reference("refs/remotes/origin/main")
+        .unwrap()
+        .delete()
+        .unwrap();
+    assert!(initial_push_pending(&root));
+    assert_eq!(operation().push_initial(&root), Outcome::UpToDate);
+    assert!(!initial_push_pending(&root));
+}
+
+#[test]
+fn initial_setup_refuses_a_nonempty_remote_and_can_keep_only_local_history() {
+    let f = Fixture::new();
+    let root = initial_graph(&f, &f.url);
+    assert!(
+        matches!(operation().push_initial(&root), Outcome::Refused(m) if m.contains("not empty"))
+    );
+    assert_eq!(f.bare.head().unwrap().target(), Some(f.base));
+    assert!(initial_push_pending(&root));
+    configure_initial_remote(&root, "").unwrap();
+    assert!(!initial_push_pending(&root));
+    assert_eq!(
+        fs::read(root.join("pages/a.md")).unwrap(),
+        b"- first graph\r\n"
+    );
+}
+
+#[test]
+fn clone_refuses_folding_tree_before_checkout_including_directories_and_nfc() {
+    for names in [
+        ["A.md", "a.md"],
+        ["É.md", "E\u{301}.md"],
+        ["Folder/a.md", "folder/b.md"],
+    ] {
+        let f = Fixture::new();
+        // Build the colliding tree in memory, so the fixture also runs on a
+        // folding host. No reliance on the host representing both names.
+        let blob = f.repo.blob(b"- name\n").unwrap();
+        let mut builder = git2::build::TreeUpdateBuilder::new();
+        for name in names {
+            builder.upsert(name, blob, git2::FileMode::Blob);
+        }
+        let empty = f.repo.treebuilder(None).unwrap().write().unwrap();
+        let tree = f
+            .repo
+            .find_tree(
+                builder
+                    .create_updated(&f.repo, &f.repo.find_tree(empty).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+        let signature = Signature::now("Fixture", "fixture@example.invalid").unwrap();
+        let oid = f
+            .repo
+            .commit(None, &signature, &signature, "colliding names", &tree, &[])
+            .unwrap();
+        f.repo
+            .reference("refs/heads/main", oid, true, "fixture")
+            .unwrap();
+        // Publish objects to a new bare remote through libgit2's local fetch.
+        let mut remote = f
+            .bare
+            .remote_anonymous(&reqwest::Url::from_file_path(&f.root).unwrap().to_string())
+            .unwrap();
+        remote
+            .fetch(&["+refs/heads/main:refs/heads/main"], None, None)
+            .unwrap();
+        let root = f._dir.path().join("cloned");
+        assert!(
+            matches!(operation().clone_on_volume(&f.url, &root, Some(true)), Outcome::Refused(m) if m.contains("Unicode normalization"))
+        );
+        assert!(!root.join("pages").exists());
+        assert_eq!(
+            fs::read_dir(root).unwrap().count(),
+            1,
+            "only .git, no half-checked-out files"
+        );
+    }
+}
+
+#[test]
+fn clone_url_names_are_literal_components_and_https_credentials_are_refused() {
+    assert_eq!(
+        super::clone::repository_name("https://example.invalid/me/notes.git").unwrap(),
+        "notes"
+    );
+    for url in [
+        "https://u:secret@example.invalid/a.git",
+        "https://example.invalid/a.git?token=secret",
+        "https://example.invalid/a%2fb.git",
+        "ssh://example.invalid/a.git",
+        "https://example.invalid/",
+    ] {
+        assert!(super::clone::repository_name(url).is_err(), "{url}");
+    }
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -532,6 +721,70 @@ impl Drop for Server {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[test]
+fn https_clone_uses_the_existing_private_token_store_after_auth_required() {
+    let f = Fixture::new();
+    let server = Server::start(&f, "auth", "");
+    let root = f._dir.path().join("cloned");
+    assert_eq!(
+        server
+            .operation(None)
+            .0
+            .clone_graph(&server.remote(), &root),
+        Outcome::AuthRequired
+    );
+    let app_data = f._dir.path().join("private-device-data");
+    let tokens = credentials::Tokens::new(&app_data);
+    tokens
+        .sign_in(&server.url, "token-user", "fixture-token")
+        .unwrap();
+    let options = TransportOptions {
+        test_root_pem: Some(fs::read(certs().path().join("ca.pem")).unwrap()),
+        ..TransportOptions::default()
+    };
+    let op = Operation::new(Arc::new(tokens), Arc::new(AtomicBool::new(false)), &options).unwrap();
+    assert_eq!(op.clone_graph(&server.remote(), &root), Outcome::UpToDate);
+    assert_eq!(fs::read(root.join("pages/a.md")).unwrap(), b"- base\n");
+    let config = fs::read_to_string(root.join(".git/config")).unwrap();
+    assert!(!config.contains("fixture-token"));
+    assert!(!root.join(credentials::FILE).exists());
+}
+
+#[test]
+fn https_initial_setup_uses_existing_token_store_and_retries_without_another_commit() {
+    let f = Fixture::new();
+    f.bare
+        .find_reference("refs/heads/main")
+        .unwrap()
+        .delete()
+        .unwrap();
+    let server = Server::start(&f, "auth", "");
+    let root = initial_graph(&f, &server.remote());
+    let repo = Repository::open(&root).unwrap();
+    let tip = repo.head().unwrap().target();
+    assert_eq!(
+        server.operation(None).0.push_initial(&root),
+        Outcome::AuthRequired
+    );
+    assert!(initial_push_pending(&root));
+    let tokens = credentials::Tokens::new(f._dir.path().join("device-token"));
+    tokens
+        .sign_in(&server.url, "token-user", "fixture-token")
+        .unwrap();
+    let options = TransportOptions {
+        test_root_pem: Some(fs::read(certs().path().join("ca.pem")).unwrap()),
+        ..TransportOptions::default()
+    };
+    let op = Operation::new(Arc::new(tokens), Arc::new(AtomicBool::new(false)), &options).unwrap();
+    assert_eq!(op.push_initial(&root), Outcome::UpToDate);
+    assert_eq!(repo.head().unwrap().target(), tip);
+    assert_eq!(f.bare.head().unwrap().target(), tip);
+    assert!(!initial_push_pending(&root));
+    assert!(!fs::read_to_string(root.join(".git/config"))
+        .unwrap()
+        .contains("fixture-token"));
 }
 
 #[test]

@@ -21,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block embeds are back to one bullet, as in 0.8 (#417, #748). In 0.9.0-beta.1 a block embed showed two bullets, one for the block holding `{{embed ((…))}}` and one for the embedded block. Now the embedded block's bullet sits where the embed does, and dragging it, **Tab**/**Shift+Tab**, **Move block up/down**, selecting it and its menu act on the block holding the embed on that page; its text and children are still the source's. Moving it up or down therefore no longer moves the source block on its own page or shows the "moved in" notice (GH #641); page embeds, Linked References and query results keep that behaviour. Folding the embedded block is still remembered per page; folding a block further inside the embed now folds that source block on its own page and in every embed of it, as in Logseq. A block with its own text besides the embed keeps its own bullet.
 ### Added
 
+- Clone a graph from an HTTPS git URL from Welcome or the graph menu, with the same device sign-in as git sync. Tine opens the remote's default branch with its upstream set; automatic commits and sync stay off.
+- Make the open graph a git repository from Settings → Graph, with Tine's ignore rules and a first commit that preserves page files. Optionally publish that commit to an empty HTTPS remote using the existing sign-in. Git stays optional, and automatic commits and sync stay off.
 - **Zoom in on block** and **Zoom out one level** commands (#799). Both are in the command palette and in Settings → Keyboard shortcuts, and start unbound so you choose the keys (OG's own keys are Tine's Back / Forward). Zoom in acts on the selected block or the block you are editing and keeps the caret in it; Zoom out steps from a zoomed block to its parent, then to the page, and does nothing on the page itself, so it can be pressed repeatedly. Each works in the pane you are in, including a split pane.
 - A **Reload window** command, unbound, for reloading the app on purpose (#797).
 - Page menu: **Copy as ▸ → Copy page embed** copies `{{embed [[Page]]}}`, the page counterpart of a block's **Copy block embed** (GH #418).
@@ -44,10 +46,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- The experimental CodeMirror editor keeps code syntax highlighting while editing, using the rendered view's languages and theme colours (UI-CM6-CODE-HIGHLIGHT).
 - Scrolling upward through a long page now keeps the reading position when unseen outline windows or block bodies replace estimated spacers, including pages with collapsed embeds. Prefetch margins now use each pane's actual scroller, and remounted query and reference groups reserve their measured height (#810).
 - In the experimental CodeMirror editor, clicking into the text of a block that also holds a code block with long lines no longer makes the block wider than its column (UI-CM6-WIDE-CODE-WIDENS-BLOCK).
 - On Linux, middle-clicking a link while editing another block now only opens the link. The middle-click selection was also pasted at the caret of the block being edited.
 - Where the comment column is not shown (narrow windows, journals, the sidebar, references), a block's comments now appear directly under the block, before its other children, instead of after its whole subtree (#110, UI-MARGIN-INLINE-UNDER-BLOCK). The file keeps them where they were written. A comment in the column also stays beside its passage while the commented block is edited (UI-MARGIN-POS-EDIT-JUMP).
+- Block embeds in published read-only apps now show their source block's children and grandchildren. Collapsed sources can be expanded while viewing the export.
 - A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).
 - Typing DONE over a bare DOING task with a LOGBOOK now closes its clock. Marker commands also recognize the bare task before its hidden history, keeping one marker and the existing clocks (#741).
 - CLI `page show` keeps the indexed page name when another editor has just changed its title, so a block handle formed from the read cannot accidentally edit a different file (CLI-REVIEW-8).

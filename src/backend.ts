@@ -303,6 +303,10 @@ class TauriBackend implements Backend {
   createGraph(dir: string, name: string) {
     return this.call<{ root: string; display_root: string }>("create_graph", { dir, name });
   }
+  gitCloneGraph(dir: string, url: string) { return this.call<import("./backendTypes").GitCloneResult>("git_clone_graph", { dir, url }); }
+  gitSetupSignIn(url: string, username: string, token: string) { return this.call<void>("git_setup_sign_in", { url, username, token }); }
+  gitInitGraph(remoteUrl?: string) { return this.call<GitAutocommitStatus>("git_init_graph", { remoteUrl: remoteUrl || null }); }
+  gitFinishSetup(remoteUrl: string) { return this.call<GitAutocommitStatus>("git_finish_setup", { remoteUrl }); }
   suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {
     return this.call<import("./types").PageInventory>("page_inventory");

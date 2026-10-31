@@ -659,13 +659,17 @@ fn every_content_mutation_has_a_reviewed_owner() {
             );
         }
         if domain == "create-root" {
-            assert_eq!(
-                key,
+            // D-20261031-GCL adds one explicit new-root writer: libgit2 clone
+            // after destination admission. Neither owner may mutate an existing
+            // graph's page files; their named tests prove empty-target refusal.
+            assert!([
+                ("crates/tine-store/src/store.rs", "Store::create_graph"),
                 (
-                    "crates/tine-store/src/store.rs".into(),
-                    "Store::create_graph".into()
-                )
-            );
+                    "src-tauri/src/owner/git_sync/clone.rs",
+                    "Operation::clone_on_volume"
+                ),
+            ]
+            .contains(&(key.0.as_str(), key.1.as_str())));
         }
         if domain == "container" {
             assert_eq!(
@@ -841,7 +845,13 @@ fn oracle_rows_cover_the_mutating_phase_list_and_exceptions_are_pinned() {
         .collect();
     assert_eq!(
         roots,
-        [("crates/tine-store/src/store.rs", "Store::create_graph")]
+        [
+            (
+                "src-tauri/src/owner/git_sync/clone.rs",
+                "Operation::clone_on_volume"
+            ),
+            ("crates/tine-store/src/store.rs", "Store::create_graph"),
+        ]
     );
     let containers: BTreeSet<_> = rows
         .iter()

@@ -27,6 +27,7 @@ import { writeClipboardText } from "../clipboard";
 import { canRevealInFileManager } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
+import { CloneGraphDialog } from "./CloneGraphDialog";
 import { ResourceFailure } from "./ResourceFailure";
 import { queryAllWindows } from "../windowRealm";
 
@@ -289,6 +290,7 @@ export function GraphSwitcher(props: {
   actions: GraphNavigationActions;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [cloning, setCloning] = createSignal(false);
   let alive = true;
   onCleanup(() => { alive = false; });
   const [knownGraphsResource, { refetch }] = createResource(() => backend().listKnownGraphs());
@@ -417,8 +419,10 @@ export function GraphSwitcher(props: {
                 .catch((error) => pushToast(msg("sidebar-couldn-t-create-the-graph", { error: String(error) }), "error"));
             }}
           >{t("sidebar-new-graph")}</div>
+          <div class="ctx-item" onClick={() => { close(); setCloning(true); }}>{t("git-clone-label")}</div>
         </div>
       </Show>
+      <Show when={cloning()}><CloneGraphDialog onClose={() => setCloning(false)} onOpened={props.onActiveNavigationComplete} /></Show>
     </div>
   );
 }

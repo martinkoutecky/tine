@@ -947,6 +947,16 @@ export interface MessageArgs {
   "formula-trim-spaces": {};
   "formula-true": {};
   "formula-year": {};
+  "git-clone-change-location": {};
+  "git-clone-label": {};
+  "git-clone-open": {};
+  "git-clone-open-failed": { "path": string | number };
+  "git-clone-sign-in": {};
+  "git-init-failed": { "error": string | number };
+  "git-init-finish": {};
+  "git-init-label": {};
+  "git-init-pending": {};
+  "git-init-remote": {};
   "git-settings-branch": { "branch": string | number };
   "git-settings-hint": {};
   "git-settings-ignore-added": { "path": string | number; "which": string | number };
@@ -983,6 +993,10 @@ export interface MessageArgs {
   "git-settings-token": {};
   "git-settings-unusable": { "message": string | number };
   "git-settings-username": {};
+  "git-setup-https": {};
+  "git-setup-off": {};
+  "git-setup-url": {};
+  "git-setup-working": {};
   "git-stale-lock-notice-title": {};
   "git-sync-auth-required": {};
   "git-sync-busy": {};

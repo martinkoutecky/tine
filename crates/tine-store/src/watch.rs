@@ -603,7 +603,10 @@ impl Core {
             ..FileFacts::default()
         };
         for (path, value) in snapshot.iter() {
-            facts.lens.push(value.len);
+            // A retry baseline (`retry_baseline`) holds u64::MAX, not a size.
+            if value.len != u64::MAX {
+                facts.lens.push(value.len);
+            }
             facts.conflict_named += u64::from(tine_core::model::path_is_sync_conflict(path));
             let stem_nfc = path
                 .file_stem()
@@ -2212,6 +2215,43 @@ mod tests {
                 "the release kept the owner's row over a change it forwarded"
             );
         }
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A path whose last observation failed keeps a retry baseline with
+    /// `len == u64::MAX`. The diagnostics dump summed it as a file size: two
+    /// such paths overflowed (a panic in debug builds, a wrapped `fileBytes`
+    /// in release ones). Seen as a flaky GH #811 sync-client test.
+    #[test]
+    fn diagnostics_skip_retry_baselines_in_file_sizes() {
+        let root = fs::canonicalize(temp_root("retry-diag")).unwrap();
+        fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        fs::write(root.join("pages/b.md"), "- bb\n").unwrap();
+        fs::write(root.join("pages/c.md"), "- ccc\n").unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Poll,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        store.whole_graph().unwrap();
+        {
+            let mut snapshot = store.watch.core.snapshot.lock().unwrap();
+            assert!(snapshot.len() >= 3, "the scan saw the pages");
+            for name in ["pages/a.md", "pages/b.md"] {
+                let path = root.join(name);
+                let before = snapshot.get(&path).cloned();
+                assert!(before.is_some(), "{name} is in the snapshot");
+                retry_baseline(&mut snapshot, &path, before.as_ref());
+            }
+        }
+        let bytes = store.diagnostics()["shape"]["fileBytes"].clone();
+        assert_eq!(bytes["max"].as_u64(), Some(6), "{bytes}");
+        assert_eq!(bytes["sum"].as_u64(), Some(6), "{bytes}");
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

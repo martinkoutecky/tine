@@ -454,6 +454,13 @@ concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).
 The operation count stays 57; this adds no operation or persisted record.
+
+Clone setup (D-20261031-GCL) shares GS1's existing Unicode candidate rule through
+`file_kind::fold_entry_name`, so a folding volume refuses a colliding remote
+tree before checkout. This pure name helper takes no Store or transaction and
+does not add an operation to the count. Init uses the existing guarded non-page
+transaction for `.gitignore` and existing autocommit staging; it writes no page
+file. Clone writes only in its new, empty destination before binding the graph.
 A git pull adds `PagePlan::replace_page_bytes` (ADR 0078 §4): a host
 operation's revision-guarded raw-bytes page replacement, with the page input
 checks of `create` and no round trip, since Tine serializes nothing.
