@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sourceOptions, sourceOriginal } from "./queryIr";
 import {
   ANCHORS,
   ATTRS,
@@ -32,9 +33,7 @@ import {
   assertMirrorsIr,
   forEachFilter,
   isInvalid,
-  sourceOptions,
-  sourceOriginal,
-} from "./queryIr";
+} from "./queryIr.test.support";
 import type {
   Bounds,
   Diagnostic,
@@ -276,7 +275,7 @@ describe("the TypeScript mirror of the Rust query IR", () => {
   });
 });
 it("validates finite statistics cells and every marker in the shared wire fixtures", async () => {
-  const { isQueryStatistics } = await import("./queryIr");
+  const { isQueryStatistics } = await import("./queryIr.test.support");
   for (const result of [resultBlock, resultPage]) {
     expect(isQueryStatistics(result.statistics)).toBe(true);
     expect(isQueryStatistics(JSON.parse(JSON.stringify(result.statistics)))).toBe(true);

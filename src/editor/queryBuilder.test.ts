@@ -74,8 +74,8 @@ it("treats an empty or as false, matching the engine", () => {
   expect(isEmptyFilter({ kind: "or", items: [] })).toBe(false);
   expect(isEmptyFilter({ kind: "and", items: [] })).toBe(true);
 });
+import { forEachFilter } from "./queryIr.test.support";
 import {
-  forEachFilter,
   type Cardinality,
   type Filter,
   type ObservedType,
