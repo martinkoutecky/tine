@@ -72,7 +72,7 @@ export function editorAssets(ctx: {
   /** Import file-manager paths without materializing their bytes in the WebView.
    * If a platform exposes only browser File objects, save those sequentially so
    * at most one bounded byte buffer/base64 IPC payload is live at a time. */
-  const pasteClipboardFiles = async (eventFiles: File[]) => {
+  const pasteClipboardFiles = async (eventFiles: File[], recoverText?: () => void) => {
     const editorToken = captureAssetEditorToken();
     const owner = bindingOwner();
     const toastId = pushToast(msg("editor-block-pasting-files"), "info");
@@ -86,6 +86,11 @@ export function editorAssets(ctx: {
         return { files: [], skipped: 0, truncated: false };
       }));
       if (nativeResult.kind === "stale") return; const native = nativeResult.value;
+      if (!native.files.length && !eventFiles.length && !native.skipped && !native.truncated && recoverText) {
+        nativeUnavailable = false;
+        if (assetEditorCurrent(editorToken)) recoverText();
+        return;
+      }
       if (native.files.length) {
         skipped += native.skipped;
         for (const file of native.files) {
