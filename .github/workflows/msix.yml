@@ -73,7 +73,7 @@ jobs:
           if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw 'Test signature missing or wrong' }
           $sha = git rev-parse HEAD
           $version = ([xml](Get-Content msix-stage/x64/AppxManifest.xml)).Package.Identity.Version
-          @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'disabled' } | ConvertTo-Json | Set-Content msix-output/receipt.json
+          @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'flexible: 3 excluded directories (D-20261031-MSV)' } | ConvertTo-Json | Set-Content msix-output/receipt.json
           $files = @(Get-ChildItem msix-output -File | Where-Object Name -ne 'SHA256SUMS')
           if ($files.Count -lt 4) { throw "expected 4 artifacts to hash, found $($files.Count)" }
           $files | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS
@@ -90,6 +90,51 @@ jobs:
           Select-String -Path $report -Pattern 'Result="FAIL|Result="WARNING' | ForEach-Object { $_.Line.Trim() }
           if ($result -ne 'PASS') { throw "WACK overall result: $result" }
           Write-Host 'WACK overall result: PASS'
+      - name: Flexible virtualization proof (installed test package)
+        run: |
+          # D-20261031-MSV: writes to Tine's three folders reach the real AppData and survive uninstall;
+          # any other AppData write stays in the package container and is removed with it.
+          $build = [Environment]::OSVersion.Version.Build
+          Write-Host "OS build $build"
+          if ($build -lt 22000) { throw "flexible virtualization needs Windows 11 (build 22000+); this runner is $build" }
+          Add-AppxPackage -Path msix-output/TineOutline-test-signed.msixbundle
+          $pkg = Get-AppxPackage -Name MartinKouteck.TineOutline
+          if (-not $pkg) { throw 'test package did not install' }
+          $pfn = $pkg.PackageFamilyName
+          $cache = Join-Path $env:LOCALAPPDATA "Packages\$pfn\LocalCache"
+          $marker = "msix-proof-$([guid]::NewGuid()).txt"
+          $real = @((Join-Path $env:APPDATA 'page.tine.Tine'), (Join-Path $env:LOCALAPPDATA 'page.tine.Tine'), (Join-Path $env:LOCALAPPDATA 'tine-owners'))
+          $control = Join-Path $env:APPDATA 'tine-msix-virt-control'
+          $virtualControl = Join-Path $cache 'Roaming\tine-msix-virt-control'
+          $writes = (@($real) + $control | ForEach-Object { "New-Item -ItemType Directory -Force -Path '$_' | Out-Null; Set-Content -Path (Join-Path '$_' '$marker') -Value ok" }) -join '; '
+          Invoke-CommandInDesktopPackage -PackageFamilyName $pfn -AppId Tine -Command powershell.exe -Args "-NoProfile -Command $writes" -PreventBreakaway
+          $deadline = (Get-Date).AddSeconds(90)
+          while (-not (Test-Path (Join-Path $virtualControl $marker)) -and -not (Test-Path (Join-Path $control $marker)) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+          foreach ($dir in $real) {
+            if (-not (Test-Path (Join-Path $dir $marker))) { throw "package write to $dir did not reach the real folder" }
+            Write-Host "real: $dir"
+          }
+          if (Test-Path (Join-Path $control $marker)) { throw "control write escaped virtualization: $control" }
+          if (-not (Test-Path (Join-Path $virtualControl $marker))) { throw "control write not found in the package container ($virtualControl)" }
+          Write-Host "virtualized: $control -> $virtualControl"
+          # Tine itself: launch the packaged app and check where its own first-run data goes.
+          Start-Process "shell:AppsFolder\$pfn!Tine"
+          $webview = Join-Path $env:LOCALAPPDATA 'page.tine.Tine\EBWebView'
+          $deadline = (Get-Date).AddSeconds(120)
+          while (-not (Test-Path $webview) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+          Start-Sleep -Seconds 10
+          Get-Process tine -ErrorAction SilentlyContinue | Stop-Process -Force
+          foreach ($dir in $real[0..1]) { Write-Host "== $dir"; Get-ChildItem $dir -Name -ErrorAction SilentlyContinue }
+          Write-Host "== $cache"; Get-ChildItem $cache -Recurse -Name -ErrorAction SilentlyContinue | Select-Object -First 40
+          if (-not (Test-Path $webview)) { throw "Tine's WebView2 data did not appear in the real $webview" }
+          foreach ($leak in @('Roaming\page.tine.Tine', 'Local\page.tine.Tine', 'Local\tine-owners')) {
+            if (Test-Path (Join-Path $cache $leak)) { throw "Tine data was virtualized into $leak" }
+          }
+          Remove-AppxPackage -Package $pkg.PackageFullName
+          Start-Sleep -Seconds 5
+          foreach ($dir in $real) { if (-not (Test-Path (Join-Path $dir $marker))) { throw "$dir lost its data on uninstall" } }
+          if (Test-Path (Join-Path $env:LOCALAPPDATA "Packages\$pfn")) { Write-Host "note: the package container still exists right after uninstall" }
+          Write-Host 'Flexible virtualization proof: PASS (three real folders, control virtualized, data kept on uninstall)'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TineOutline-msix-proof
