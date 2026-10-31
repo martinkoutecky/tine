@@ -518,6 +518,12 @@ jobs:
       fail-fast: false
       matrix:
         api: [33, 35]
+        target: [default]
+        # Android 16, the GH #811 reporter's: no AOSP default image is
+        # published for it, so the Google APIs image (Google's MediaProvider).
+        include:
+          - api: 36
+            target: google_apis
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -568,7 +574,7 @@ jobs:
         with:
           api-level: ${{ matrix.api }}
           arch: x86_64
-          target: default
+          target: ${{ matrix.target }}
           emulator-boot-timeout: 300
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none

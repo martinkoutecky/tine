@@ -33,6 +33,13 @@ done
 [ "$ready" = 1 ] || echo "shared storage never accepted a write" >&2
 adb shell getprop ro.build.version.sdk > "$out/sdk.txt"
 adb shell mount > "$out/mount.txt" || true
+# Which FUSE features MediaProvider can use on this kernel (GH #811: Android 16
+# MediaProvider adds upstream FUSE passthrough when fuse_passthrough reads
+# 'supported'), and what it chose.
+adb shell 'for f in /sys/fs/fuse/features/*; do echo "$f: $(cat "$f")"; done; uname -r; getprop | grep -i fuse' \
+  > "$out/fuse.txt" 2>&1 || true
+adb logcat -d -s FuseDaemon:* >> "$out/fuse.txt" 2>&1 || true
+cat "$out/fuse.txt"
 # Who the tests run as, and whom shared storage says owns its files (libgit2's
 # owner check, git_run::VERIFY_OWNER).
 adb shell "id; stat -c '%u:%g %A %n' $shared $device" > "$out/owners.txt" || true

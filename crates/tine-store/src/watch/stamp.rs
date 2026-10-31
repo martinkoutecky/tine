@@ -39,6 +39,38 @@ impl Stamp {
             && self.changed == other.changed
     }
 
+    /// How `actual` differs from this stamp, for the diagnostics of a failed
+    /// `same_metadata` publication check (GH #811): deltas only, no values.
+    pub(crate) fn change_to(&self, actual: &Stamp) -> crate::storage_diag::StampChange {
+        let delta = |expected: i128, actual: i128| {
+            i64::try_from(actual - expected).unwrap_or(if actual > expected {
+                i64::MAX
+            } else {
+                i64::MIN + 1
+            })
+        };
+        let nanos = |time: Option<SystemTime>| {
+            time.map(|time| match time.duration_since(SystemTime::UNIX_EPOCH) {
+                Ok(after) => after.as_nanos() as i128,
+                Err(before) => -(before.duration().as_nanos() as i128),
+            })
+        };
+        crate::storage_diag::StampChange {
+            modified_ns: (self.modified != actual.modified).then(|| {
+                match (nanos(self.modified), nanos(actual.modified)) {
+                    (Some(expected), Some(actual)) => delta(expected, actual),
+                    // One side has no time: a change with no measurable delta.
+                    _ => 0,
+                }
+            }),
+            size: (self.len != actual.len).then(|| delta(self.len.into(), actual.len.into())),
+            identity_device: self.identity >> 64 != actual.identity >> 64,
+            identity_file: self.identity as u64 != actual.identity as u64,
+            change_time_ns: (self.changed != actual.changed)
+                .then(|| delta(self.changed, actual.changed)),
+        }
+    }
+
     /// §5.4: racy when observed at `observed` (judged at observation time;
     /// a missing mtime is racy because nothing bounds it).
     pub(crate) fn racy_at(&self, observed: SystemTime) -> bool {

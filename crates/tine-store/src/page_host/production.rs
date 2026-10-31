@@ -49,6 +49,9 @@ pub(super) struct ProductionIo {
     /// The graph whose self-write markers a save sets before its file step
     /// (STEP3 §5): the watcher's echo handling for paths it still owns.
     pub(super) marks: Option<std::sync::Arc<crate::model::Graph>>,
+    /// The graph's storage counters (the host's, set at launch): which
+    /// publication proof an Uncertain page save could not make (GH #811).
+    pub(super) storage_diag: std::sync::Arc<crate::storage_diag::StorageCounters>,
     /// Draft I/O is down (plan v3 §4, B-Q1): every draft effect fails
     /// without touching the filesystem until a re-probe succeeds.
     down: Option<Down>,
@@ -134,6 +137,7 @@ impl ProductionIo {
             directories: BTreeMap::new(),
             launch_warnings: vec![],
             marks: None,
+            storage_diag: Default::default(),
             down: None,
             untouchable: Default::default(),
             trash_chain: None,
@@ -655,33 +659,55 @@ impl HostIo for ProductionIo {
         let path = self.page_path(page);
         // Sync acts on the parent, not the page. graph_sync checks that
         // directory and the root witness once at the actual sync boundary.
+        use crate::storage_diag::UncertainProof;
         let result = self
             .graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
+            .map_err(|error| (error, UncertainProof::DirectorySync))
             .and_then(|witness| {
                 if let Some(published) = self.publications.get(page) {
                     // One metadata call, no payload read/hash. Parent loss or
                     // replacement after rename must take the Uncertain path,
                     // including a platform's tolerated/no-op directory sync.
                     let current = crate::watch::stamp_metadata(&path);
-                    if !published
-                        .as_ref()
-                        .zip(current.as_ref())
-                        .is_some_and(|(expected, actual)| expected.same_metadata(actual))
-                    {
-                        return Err(IoFailure {
+                    // The toast names the failed check (GH #811: it named
+                    // no step, as this failure has no OS error).
+                    let (operation, proof) = match (published, &current) {
+                        (None, _) => (
+                            "publication check: no stamp after rename",
+                            UncertainProof::PublicationUnread,
+                        ),
+                        (Some(_), None) => (
+                            "publication check: no file after directory sync",
+                            UncertainProof::PublicationMissing,
+                        ),
+                        (Some(expected), Some(actual)) if !expected.same_metadata(actual) => (
+                            "publication check: changed before directory sync",
+                            UncertainProof::PublicationChanged(expected.change_to(actual)),
+                        ),
+                        _ => return Ok(witness),
+                    };
+                    return Err((
+                        IoFailure {
+                            kind: ErrorKind::Io,
                             completed: true,
-                            ..failure(io::Error::other(
-                                "published page changed before directory sync completed",
-                            ))
-                        });
-                    }
+                            operation: Some(operation),
+                            os_error: None,
+                        },
+                        proof,
+                    ));
                 }
                 Ok(witness)
             });
-        if result.is_ok() {
-            self.creation_rules.remove(page);
+        match result {
+            Ok(witness) => {
+                self.creation_rules.remove(page);
+                Ok(witness)
+            }
+            Err((error, proof)) => {
+                self.storage_diag.uncertain_proof(proof);
+                Err(error)
+            }
         }
-        result
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {

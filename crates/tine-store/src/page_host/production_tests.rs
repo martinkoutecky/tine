@@ -56,7 +56,7 @@ impl Fixture {
             graph,
             app,
             trash,
-            host: Host::new(io, locks),
+            host: shared_counters(Host::new(io, locks)),
         }
     }
 
@@ -147,7 +147,7 @@ impl Fixture {
             .into_iter()
             .map(|key| (key.into(), Arc::new(Mutex::new(()))))
             .collect();
-        let mut host = Host::new(io, locks);
+        let mut host = shared_counters(Host::new(io, locks));
         host.stop();
         assert!(matches!(
             host.launch(),
@@ -163,6 +163,13 @@ impl Fixture {
         reopened.drain();
         reopened
     }
+}
+
+/// One storage counter set for the host and its adapter, as `binding_launch`
+/// installs the graph's.
+fn shared_counters(mut host: Host<ProductionIo>) -> Host<ProductionIo> {
+    host.fs.storage_diag = host.storage_diag.clone();
+    host
 }
 
 #[test]
@@ -181,7 +188,16 @@ fn storage_diagnostics_count_outcomes_and_recovery() {
     assert_eq!(
         report["pageSaves"],
         serde_json::json!({
-            "published": 1, "uncertain": 1, "failedOrRefused": 1
+            "published": 1, "uncertain": 1, "failedOrRefused": 1,
+            "uncertainProof": {
+                "directorySync": 1, "publicationUnread": 0, "publicationMissing": 0,
+                "publicationChanged": 0,
+                "changedFields": {
+                    "modified": 0, "size": 0, "identityDevice": 0, "identityFile": 0,
+                    "changeTime": 0
+                },
+                "lastChange": null
+            }
         })
     );
     assert_eq!(report["draftsWritten"], 1);
@@ -192,6 +208,76 @@ fn storage_diagnostics_count_outcomes_and_recovery() {
     assert!(!text.contains("a.md"));
     assert!(!text.contains("private"));
     assert!(!text.contains(f.graph.to_str().unwrap()));
+}
+
+/// Run `page`'s save up to its directory sync, call `between`, then finish
+/// it: this save's outcome and the failed step its notice names.
+fn save_around_directory_sync(
+    f: &mut Fixture,
+    page: &str,
+    between: impl FnOnce(&Path),
+) -> (Outcome, Option<&'static str>) {
+    assert_eq!(f.host.start_save(page), Disposition::Pending);
+    let start = f.host.events.len();
+    while f.host.job.as_ref().unwrap().phase != SavePhase::DirectorySync {
+        f.host.advance_save();
+    }
+    between(&f.graph.join(page));
+    f.host.advance_save();
+    assert!(f.host.job.is_none());
+    f.host.events[start..]
+        .iter()
+        .find_map(|event| match event {
+            Event::SaveOutcome { outcome, cause, .. } => {
+                Some((*outcome, cause.and_then(|cause| cause.operation)))
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// GH #811: an Android 16 phone's saves all ended Uncertain and the toast
+/// named no step, as the M3-1 publication check has no OS error. Each failed
+/// check is named in the notice and counted by kind in the diagnostics; a
+/// change records which stamp fields differ, never their values.
+/// Scenario: sync delivery replaces the page between rename and sync.
+#[test]
+fn an_uncertain_save_names_the_failed_publication_check() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", |path| {
+        let delivered = path.with_file_name(".syncthing.a.md.tmp");
+        fs::write(&delivered, b"delivered, longer").unwrap();
+        fs::rename(&delivered, path).unwrap();
+    });
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+    let proof = &f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationChanged"], 1);
+    assert_eq!(proof["changedFields"]["size"], 1);
+    assert_eq!(proof["lastChange"]["sizeDelta"], 13);
+    #[cfg(unix)]
+    assert_eq!(proof["changedFields"]["identityFile"], 1);
+    assert_eq!(proof["changedFields"]["identityDevice"], 0);
+
+    f.edit("b.md", "mine too");
+    let (outcome, step) =
+        save_around_directory_sync(&mut f, "b.md", |path| fs::remove_file(path).unwrap());
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: no file after directory sync")
+    );
+    let report = f.host.storage_diag.snapshot();
+    let proof = &report["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationMissing"], 1);
+    assert_eq!(proof["publicationChanged"], 1);
+    assert_eq!(report["pageSaves"]["uncertain"], 2);
+    let text = report.to_string();
+    assert!(!text.contains("a.md") && !text.contains("mine"));
 }
 
 #[test]

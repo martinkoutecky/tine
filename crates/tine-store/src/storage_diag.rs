@@ -1,6 +1,6 @@
 //! Memory-only storage evidence. Each terminal outcome adds one relaxed
 //! atomic increment; no names, payloads, file I/O or extra locks enter here.
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering::Relaxed};
 
 // Directory sync has no graph context (it also serves private app-data).
 // Count API outcomes process-wide, without retaining paths or adding locks.
@@ -44,6 +44,113 @@ pub enum DraftAdoptionReason {
     UserRecovery,
 }
 
+/// The post-rename proof a page save could not make, so it ended Uncertain
+/// (GH #811: every save of one Android 16 phone was Uncertain and its toast
+/// named no step). Closed tokens; no names, paths or stamp values.
+#[derive(Clone, Copy)]
+pub(crate) enum UncertainProof {
+    /// The parent directory's sync failed (its step and errno are in the toast).
+    DirectorySync,
+    /// The post-rename read established no stamp for the published file.
+    PublicationUnread,
+    /// No regular file stood at the page path after the directory sync.
+    PublicationMissing,
+    /// The file at the page path had other metadata after the directory sync
+    /// than the post-rename read's handle (M3-1).
+    PublicationChanged(StampChange),
+}
+
+/// How the post-sync stamp differs from the publication stamp: which fields,
+/// and the time and size deltas (actual minus published), never the values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StampChange {
+    pub modified_ns: Option<i64>,
+    pub size: Option<i64>,
+    pub identity_device: bool,
+    pub identity_file: bool,
+    pub change_time_ns: Option<i64>,
+}
+
+/// `i64::MIN` stands for "no delta recorded" (never a real delta here).
+const NO_DELTA: i64 = i64::MIN;
+
+#[derive(Default)]
+struct UncertainProofs {
+    directory_sync: AtomicU64,
+    publication_unread: AtomicU64,
+    publication_missing: AtomicU64,
+    publication_changed: AtomicU64,
+    changed_modified: AtomicU64,
+    changed_size: AtomicU64,
+    changed_identity_device: AtomicU64,
+    changed_identity_file: AtomicU64,
+    changed_change_time: AtomicU64,
+    last_modified_ns: AtomicI64,
+    last_size: AtomicI64,
+    last_change_time_ns: AtomicI64,
+}
+
+impl UncertainProofs {
+    fn record(&self, proof: UncertainProof) {
+        let counter = match proof {
+            UncertainProof::DirectorySync => &self.directory_sync,
+            UncertainProof::PublicationUnread => &self.publication_unread,
+            UncertainProof::PublicationMissing => &self.publication_missing,
+            UncertainProof::PublicationChanged(change) => {
+                for (changed, counter) in [
+                    (change.modified_ns.is_some(), &self.changed_modified),
+                    (change.size.is_some(), &self.changed_size),
+                    (change.identity_device, &self.changed_identity_device),
+                    (change.identity_file, &self.changed_identity_file),
+                    (change.change_time_ns.is_some(), &self.changed_change_time),
+                ] {
+                    if changed {
+                        counter.fetch_add(1, Relaxed);
+                    }
+                }
+                self.last_modified_ns
+                    .store(change.modified_ns.unwrap_or(NO_DELTA), Relaxed);
+                self.last_size
+                    .store(change.size.unwrap_or(NO_DELTA), Relaxed);
+                self.last_change_time_ns
+                    .store(change.change_time_ns.unwrap_or(NO_DELTA), Relaxed);
+                &self.publication_changed
+            }
+        };
+        counter.fetch_add(1, Relaxed);
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        let delta = |value: &AtomicI64| match value.load(Relaxed) {
+            NO_DELTA => serde_json::Value::Null,
+            value => value.into(),
+        };
+        let changed = self.publication_changed.load(Relaxed);
+        // The deltas hold a value only once a change was recorded.
+        let last = (changed > 0).then(|| {
+            serde_json::json!({
+                "modifiedDeltaNs": delta(&self.last_modified_ns),
+                "sizeDelta": delta(&self.last_size),
+                "changeTimeDeltaNs": delta(&self.last_change_time_ns),
+            })
+        });
+        serde_json::json!({
+            "directorySync": self.directory_sync.load(Relaxed),
+            "publicationUnread": self.publication_unread.load(Relaxed),
+            "publicationMissing": self.publication_missing.load(Relaxed),
+            "publicationChanged": changed,
+            "changedFields": {
+                "modified": self.changed_modified.load(Relaxed),
+                "size": self.changed_size.load(Relaxed),
+                "identityDevice": self.changed_identity_device.load(Relaxed),
+                "identityFile": self.changed_identity_file.load(Relaxed),
+                "changeTime": self.changed_change_time.load(Relaxed),
+            },
+            "lastChange": last,
+        })
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct StorageCounters {
     pub published: AtomicU64,
@@ -57,6 +164,7 @@ pub(crate) struct StorageCounters {
     pub case_moves_kept_in_trash: AtomicU64,
     container_adoptions: AtomicU64,
     user_adoptions: AtomicU64,
+    uncertain_proofs: UncertainProofs,
 }
 
 impl StorageCounters {
@@ -68,6 +176,11 @@ impl StorageCounters {
         counter.fetch_add(1, Relaxed);
     }
 
+    /// Which proof a page save that ended Uncertain could not make (GH #811).
+    pub(crate) fn uncertain_proof(&self, proof: UncertainProof) {
+        self.uncertain_proofs.record(proof);
+    }
+
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         let report = serde_json::json!({
             "scope": "since-launch",
@@ -75,6 +188,8 @@ impl StorageCounters {
                 "published": self.published.load(Relaxed),
                 "uncertain": self.uncertain.load(Relaxed),
                 "failedOrRefused": self.failed.load(Relaxed),
+                // Page saves only; a deletion's Uncertain trash steps are not split.
+                "uncertainProof": self.uncertain_proofs.snapshot(),
             },
             "draftsWritten": self.drafts_written.load(Relaxed),
             "draftsRecovered": self.drafts_recovered.load(Relaxed),
