@@ -30,6 +30,7 @@ icon:: 🧮
 - ## `</> raw` — type it directly
 	- The **`</> raw`** button at the top-right of the editor switches from clickable faces to a plain text box, where you can type the expression yourself — for example `hours * 2` or `if(hours > 3, "focus block", "quick task")`. The chips below insert your fields, other formulas, and built-in functions at the cursor. Flip **Builder** back on whenever the text is something the faces can show again.
 - ## Honest limits
+	- Each formula value can display at most **262,144 characters**. Text concatenation and list joins that exceed this limit show a formula error instead of building an oversized result.
 	- The visual builder handles **one level**: a single IF/THEN/ELSE, simple comparisons, and a value that is at most one arithmetic step of two simple values (like `hours * 2`).
 	- Anything more nested — a formula inside a THEN branch, or arithmetic of arithmetic like `(hours + extra) * 2` — shows up as a small raw box instead of pretty faces. Use **`</> raw`** to type those directly; they still evaluate exactly the same, they just do not get a visual face.
 	- Formula values are **read-only** and are never saved onto your rows, so they always reflect the current data and round-trip cleanly back to Logseq.

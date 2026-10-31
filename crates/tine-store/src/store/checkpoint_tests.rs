@@ -142,6 +142,31 @@ fn write_checkpoint(root: &Path, cp: &Path) {
 }
 
 #[test]
+fn pre_ecmascript_editor_trim_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/Trim.md"),
+        "- \u{feff}TODO bom\n- \u{85}TODO nel\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 19 can retain marker/planning projections and query indexes built
+    // with Rust whitespace rather than OG's ECMAScript left trim.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&19_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    let read = store.page(&PageId::from("pages/Trim.md")).unwrap();
+    assert_eq!(read.doc.blocks[0].marker.as_deref(), Some("TODO"));
+    assert_eq!(read.doc.blocks[1].marker, None);
+    store.close();
+}
+
+#[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(
@@ -1027,7 +1052,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (19, GOLDEN),
+        (20, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

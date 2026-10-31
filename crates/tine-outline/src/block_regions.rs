@@ -310,7 +310,7 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Optio
     let lead = if document {
         0
     } else {
-        raw.len() - raw.trim_start().len()
+        raw.len() - crate::lsdoc_block_parse::trim_block_start(raw).len()
     };
     let wrapper = if document { 0 } else { 2 };
     let r = Range(
@@ -881,7 +881,7 @@ impl BlockRegions {
         splice(raw, edits)
     }
     fn title_end(&self, raw: &str, org: bool) -> usize {
-        let lead = raw.len() - raw.trim_start().len();
+        let lead = raw.len() - crate::lsdoc_block_parse::trim_block_start(raw).len();
         // If the first thing is a literal container, insert after it, never into it.
         if let Some(r) = self.literals.iter().find(|r| r.0 == lead) {
             whole_line(raw, *r).1

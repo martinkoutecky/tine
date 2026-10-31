@@ -92,14 +92,35 @@ pub(crate) async fn set_watch_mode(
     .await
 }
 
+/// Spotlight's page updates include edits made by this window.
+fn spotlight_events(change: &Change) -> crate::spotlight::Changed {
+    if change.origin == Origin::Own {
+        // Own publications intentionally have no Change::page entries. The
+        // existing answer envelope carries affected old/new name keys, including
+        // removals and title changes; Spotlight resolves them on its worker.
+        let answers = serde_json::to_value(change).expect("Change answer serialization");
+        return answers["summary"]["pages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|name| name.as_str().map(|name| (name.to_owned(), None, false)))
+            .collect();
+    }
+    window_events(change)
+        .0
+        .into_iter()
+        .map(|event| (event.name, Some(event.kind), event.removed))
+        .collect()
+}
+
 /// The v0.6.5 window events for one publication: `graph-changed` payloads in
 /// file order, and whether `conflicts-changed` is due. Own changes emit none.
 fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
+    if change.origin == Origin::Own {
+        return (Vec::new(), false);
+    }
     let mut events = Vec::new();
     let mut conflicts_dirty = false;
-    if change.origin == Origin::Own {
-        return (events, conflicts_dirty);
-    }
     for (id, kind, _) in &change.files {
         if id.as_str().starts_with("assets/") {
             continue; // the asset lane (`asset_event_payload`), never a page
@@ -444,15 +465,7 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
             .iter()
             .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, copies_changed) = window_events(&change);
-    crate::spotlight::observe(
-        app,
-        label,
-        slot,
-        events
-            .iter()
-            .map(|event| (event.name.clone(), event.kind, event.removed))
-            .collect(),
-    );
+    crate::spotlight::observe(app, label, slot, spotlight_events(&change));
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
     let pages = events.len();
     for (name, payload) in publication_event_payloads(events, binding_generation, &change) {
@@ -688,6 +701,11 @@ mod tests {
         let change = subscription.try_recv().unwrap().expect("host publication");
         assert_eq!(change.origin, Origin::Own);
         let (events, _) = window_events(&change);
+        // Spotlight indexes edits from this window too; those edits must still
+        // produce no external page-reload event.
+        assert!(events.is_empty());
+        let spotlight = spotlight_events(&change);
+        assert_eq!(spotlight, vec![("a".into(), None, false)]);
         let payloads = publication_event_payloads(events, 7, &change);
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0].0, "graph-changed-bulk");

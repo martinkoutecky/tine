@@ -51,6 +51,7 @@ icon:: 📱
   - The iPhone and iPad app uses the same mobile interface as Android, so the notes above about one route at a time, bullet context menus and desktop-only features apply there too.
   - **Share to Tine.** Pick **Tine** in the share sheet to send text, a web page, a link, or up to five images. The sheet confirms **Saved to Tine**. The next time you open Tine, the item becomes a block at the bottom of today's journal, exactly as on Android.
   - **Spotlight finds your pages.** Pages of the graph open in Tine show up in iPhone search by title, with a short excerpt, and tapping one opens it in Tine. Hidden pages are never added. Only the current graph is indexed, and switching graphs replaces the index.
+    - Edits made in Tine update Spotlight titles and excerpts while the graph is open.
   - **Shortcuts, Siri and the Home Screen.** The Shortcuts app and Siri offer **Add to Tine journal** (it saves without opening Tine, and the block appears the next time you open it), **Search Tine** and **Open page**. Long-press the app icon for **Today's journal**, **Quick capture** and **Search**.
   - **Plugins do not run on iOS yet.** Themes work; downloadable WebAssembly plugins stay off until Tine has the extra review surface Apple requires for them.
 - ## Shaping a shared item

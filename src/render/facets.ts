@@ -45,7 +45,7 @@ const EMPTY: Facets = {
 
 /** Parse a whole block body. `parseBlock` (→ wasm `parse_block_json`) ALREADY
  *  re-bullets like Rust `render::parse_block` (prepends `"- "`/`"* "` to
- *  `raw.trim_start()`), so lsdoc breaks the marker/priority/heading onto
+ *  OG's ECMAScript left trim), so lsdoc breaks the marker/priority/heading onto
  *  `blocks[0]` — we must NOT prepend a second bullet (that double-bullets, nesting
  *  the body as a list item). */
 export function parseBody(raw: string, format: Format): Block[] {

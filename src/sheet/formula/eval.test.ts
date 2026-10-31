@@ -36,6 +36,28 @@ it("evaluates a benign 5000-term formula without stack overflow", () => {
   expect(evalExpr(Array(5000).fill("1").join("+"))).toEqual(numberValue(5000));
 });
 
+it("bounds doubled formula output before a consumer flattens the rope", () => {
+  const limit = 256 * 1024; // same ceiling as generated macro text
+  const formulas: Record<string, Ast> = { f0: parseOk(JSON.stringify("A".repeat(4096))) };
+  for (let i = 1; i <= 8; i++) formulas[`f${i}`] = parseOk(`formula.f${i - 1} + formula.f${i - 1}`);
+  expect(evalExpr("formula.f6", {}, formulas)).toEqual(textValue("A".repeat(limit)));
+  expect(evalExpr("formula.f7.lower()", {}, formulas)).toEqual(errorValue(`Formula output exceeds ${limit} characters`));
+  expect(evalExpr('left + right', { left: textValue("x".repeat(limit - 1)), right: textValue("!") })).toEqual(textValue("x".repeat(limit - 1) + "!"));
+  expect(evalExpr('left + right', { left: textValue("x".repeat(limit)), right: textValue("!") })).toEqual(errorValue(`Formula output exceeds ${limit} characters`));
+});
+
+it("bounds field text, Unicode member output and list joins at the same ceiling", () => {
+  const limit = 256 * 1024;
+  const error = errorValue(`Formula output exceeds ${limit} characters`);
+  expect(evalExpr("body.lower()", { body: textValue("A".repeat(limit + 1)) })).toEqual(error);
+  expect(evalExpr("body.lower()", { body: textValue("İ".repeat(limit)) })).toEqual(error);
+  const list: FormulaValue = { kind: "list", values: [textValue("x"), textValue("y")] };
+  const atEdge = evalExpr("items.join(separator)", { items: list, separator: textValue("-".repeat(limit - 2)) });
+  expect(atEdge.kind).toBe("text");
+  if (atEdge.kind === "text") expect(atEdge.value.length).toBe(limit);
+  expect(evalExpr("items.join(separator)", { items: list, separator: textValue("-".repeat(limit - 1)) })).toEqual(error);
+});
+
 it("bounds hostile nested formula references", () => {
   const formulas: Record<string, Ast> = {};
   for (let i = 0; i < 5000; i++) formulas[`f${i}`] = { kind: "formulaRef", name: `f${i + 1}` };

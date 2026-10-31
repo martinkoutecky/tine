@@ -894,6 +894,16 @@ mod rename_guide_tests {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Export to PDF…** saves pending page edits"));
         assert!(tips.contains("stops the export and shows an error"));
+        assert!(tips.contains("including subfolders and different images that share a filename"));
+    }
+
+    #[test]
+    fn arrival_output_and_whitespace_limits_are_taught_in_the_guide() {
+        let formulas = include_str!("templates/formulas.md");
+        assert!(formulas.contains("**262,144 characters**"));
+        assert!(formulas.contains("Text concatenation and list joins"));
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("leading BOM and NEL characters"));
     }
 
     #[test]
@@ -1265,6 +1275,7 @@ mod rename_guide_tests {
             "**Launcher shortcuts and a Quick Settings tile.**",
             "The sheet confirms **Saved to Tine**.",
             "**Spotlight finds your pages.**",
+            "Edits made in Tine update Spotlight titles and excerpts",
             "Hidden pages are never added.",
             "**Add to Tine journal** (it saves without opening Tine, and the block appears the next time you open it)",
             "`:quick-capture-templates`",

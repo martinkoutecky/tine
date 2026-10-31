@@ -666,7 +666,7 @@ struct PlanningSourceLine<'a> {
 }
 
 /// The line-leading planning timestamps of ONE inline flow, by index into `inlines`.
-/// Map each parser span from the re-bulleted input (`"- " + raw.trim_start()`) to
+/// Map each parser span from the re-bulleted input (OG's ECMAScript left trim) to
 /// its original raw slice. A timestamp is line-leading when only horizontal
 /// whitespace, or an EARLIER line-leading planning timestamp of the same line,
 /// precedes it: `SCHEDULED: <a> DEADLINE: <b>` on one line is two planning
@@ -680,7 +680,7 @@ fn planning_lines<'a>(
     raw: &'a str,
 ) -> Vec<(usize, PlanningSourceLine<'a>)> {
     use lsdoc::ast::Inline;
-    let lead = raw.len() - raw.trim_start().len();
+    let lead = raw.len() - tine_outline::lsdoc_block_parse::trim_block_start(raw).len();
     // (index, text, line_start, end, line_end)
     let mut found: Vec<(usize, &'a str, usize, usize, usize)> = Vec::new();
     let mut last: Option<(usize, usize)> = None; // (line_start, end) of the previous accepted one
@@ -708,9 +708,12 @@ fn planning_lines<'a>(
         let line_start = raw[..start].rfind('\n').map_or(0, |i| i + 1);
         let line_end = raw[end..].find('\n').map_or(raw.len(), |i| end + i);
         let after_earlier = last.is_some_and(|(ls, e)| {
-            ls == line_start && raw.get(e..start).is_some_and(|t| t.trim().is_empty())
+            ls == line_start
+                && raw
+                    .get(e..start)
+                    .is_some_and(tine_outline::editor_text::js_blank)
         });
-        if !raw[line_start..start].trim().is_empty() && !after_earlier {
+        if !tine_outline::editor_text::js_blank(&raw[line_start..start]) && !after_earlier {
             continue;
         }
         found.push((index, text, line_start, end, line_end));
@@ -730,7 +733,9 @@ fn planning_lines<'a>(
                 index,
                 PlanningSourceLine {
                     text,
-                    has_trailing_body: !raw[run_end..line_end].trim().is_empty(),
+                    has_trailing_body: !tine_outline::editor_text::js_blank(
+                        &raw[run_end..line_end],
+                    ),
                     line_start,
                 },
             )
@@ -780,7 +785,7 @@ fn inline_is_break(i: &lsdoc::ast::Inline) -> bool {
 }
 
 fn inline_is_blank_text(i: &lsdoc::ast::Inline) -> bool {
-    matches!(i, lsdoc::ast::Inline::Plain { text, .. } if text.trim().is_empty())
+    matches!(i, lsdoc::ast::Inline::Plain { text, .. } if tine_outline::editor_text::js_blank(text))
 }
 
 fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {

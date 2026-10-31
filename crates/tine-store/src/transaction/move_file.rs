@@ -845,6 +845,9 @@ mod spelling_tests {
             b"- body\n"
         );
         assert!(!dir.path().join("logseq/.tine-respell").exists());
+        // Starting a host recovers the bytes, but the initial graph load is
+        // asynchronous. Inspect its snapshot only after that load reconciles.
+        store.whole_graph_reconciled().unwrap();
         assert!(store.snapshot_knows(&store.graph.root.join("pages/Old.md")));
         assert_eq!(
             store.graph.storage_diag.snapshot()["caseMovesFinishedAtLaunch"]["completed"],

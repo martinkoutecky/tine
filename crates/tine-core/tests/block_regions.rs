@@ -223,16 +223,19 @@ fn literal_blocks_and_open_fence_follow_the_parser() {
         raw.rfind("```").unwrap()
     );
     // Marker/priority spans are located inside the accepted header only.
-    let r = parse("\u{85}TODO [#A] x", false);
+    let r = parse("\u{feff}TODO [#A] x", false);
     assert_eq!(
-        r.header.marker_range.unwrap().slice("\u{85}TODO [#A] x"),
+        r.header.marker_range.unwrap().slice("\u{feff}TODO [#A] x"),
         "TODO"
     );
     assert_eq!(
-        r.header.priority_range.unwrap().slice("\u{85}TODO [#A] x"),
+        r.header
+            .priority_range
+            .unwrap()
+            .slice("\u{feff}TODO [#A] x"),
         "[#A]"
     );
-    assert!(parse("\u{feff}TODO x", false).header.marker.is_none());
+    assert!(parse("\u{85}TODO x", false).header.marker.is_none());
 }
 
 #[test]

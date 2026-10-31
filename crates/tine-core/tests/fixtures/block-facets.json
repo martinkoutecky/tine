@@ -1,5 +1,25 @@
 [
   {
+    "format": "md",
+    "raw": "Title\n\u0085SCHEDULED: <2026-10-22 Thu>",
+    "expected": { "deadline": null, "heading": null, "marker": null, "priority": null, "properties": [], "scheduled": null, "tags": [] }
+  },
+  {
+    "format": "md",
+    "raw": "Title\n\ufeffSCHEDULED: <2026-10-22 Thu>",
+    "expected": { "deadline": null, "heading": null, "marker": null, "priority": null, "properties": [], "scheduled": null, "tags": [] }
+  },
+  {
+    "format": "md",
+    "raw": "\u0085Title\nSCHEDULED: <2026-10-22 Thu>",
+    "expected": { "deadline": null, "heading": null, "marker": null, "priority": null, "properties": [], "scheduled": "2026-10-22 Thu", "tags": [] }
+  },
+  {
+    "format": "md",
+    "raw": "\ufeffTitle\nSCHEDULED: <2026-10-22 Thu>",
+    "expected": { "deadline": null, "heading": null, "marker": null, "priority": null, "properties": [], "scheduled": "2026-10-22 Thu", "tags": [] }
+  },
+  {
     "expected": {
       "deadline": null,
       "heading": null,

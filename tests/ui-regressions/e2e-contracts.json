@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-arrival-fresh-differential.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After bounded seeded native edits change task markers, links and text, the settled reference bodies and query membership agree with a fresh frontend on the same saved graph.","blocking":false,"authority":"Arrival audit L8-05; REG-ARRIVAL-FRESH-DIFFERENTIAL"}],
+      "acceptableVariations": ["Save and publication latency, runtime block keys, selection, page layout and result ordering may vary."],
+      "nonRequirements": ["No timing measurements, exhaustive random exploration, config/asset parity, graph-switch races, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh800-save-then-copy.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A routed page with both a refused save (its file changed on disk under unsaved input) and a sync conflict copy shows the save conflict's review first, then the copy's comparison; both Applies go through, never the save-conflict-first refusal, and the draft, the disk change and the copy all survive, the replaced versions recoverable.","blocking":false,"authority":"UI-CONFLICT-SAVE-THEN-COPY; GH #800"}],
       "acceptableVariations": ["Page geometry, latency, the attempt that wins the save race, copy timestamp and recovery filenames may vary."],
