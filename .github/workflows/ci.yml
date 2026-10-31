@@ -526,9 +526,9 @@ jobs:
           - api: 36
             target: google_apis
           # With MediaProvider's Android FUSE passthrough on, as on devices
-          # (the script turns it on and reboots; page saves only). Red until
-          # the GH #811 publication-check fix lands: a replaced page's saves
-          # stay Uncertain (run 41177645677).
+          # (the script turns it on and reboots; page saves only). Before the
+          # GH #811 publication-check fix a replaced page's saves stayed
+          # Uncertain here (runs 41177645677, 41179037543).
           - api: 36
             target: google_apis
             passthrough: true

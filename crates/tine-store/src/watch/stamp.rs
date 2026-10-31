@@ -39,6 +39,12 @@ impl Stamp {
             && self.changed == other.changed
     }
 
+    /// Whether `other` observed the same file identity (Unix dev/inode,
+    /// Windows creation time), whatever its times and size.
+    pub(crate) fn same_identity(&self, other: &Stamp) -> bool {
+        self.identity == other.identity
+    }
+
     /// How `actual` differs from this stamp, for the diagnostics of a failed
     /// `same_metadata` publication check (GH #811): deltas only, no values.
     pub(crate) fn change_to(&self, actual: &Stamp) -> crate::storage_diag::StampChange {

@@ -280,6 +280,127 @@ fn an_uncertain_save_names_the_failed_publication_check() {
     assert!(!text.contains("a.md") && !text.contains("mine"));
 }
 
+/// Step a save of `page` to its rename and run `during` inside the
+/// publication read: after its handle's pre-read metadata, before its bytes.
+fn save_with_publication_read(
+    f: &mut Fixture,
+    page: &str,
+    during: impl FnOnce(&Path) + 'static,
+) -> (Outcome, Option<&'static str>) {
+    assert_eq!(f.host.start_save(page), Disposition::Pending);
+    let start = f.host.events.len();
+    while f.host.job.as_ref().unwrap().phase != SavePhase::Rename {
+        f.host.advance_save();
+    }
+    let path = f.graph.join(page);
+    crate::model::READ_PARSE_BYTES_HOOK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || during(&path)));
+    });
+    for _ in 0..8 {
+        if f.host.job.is_none() {
+            break;
+        }
+        f.host.advance_save();
+    }
+    assert!(f.host.job.is_none());
+    assert!(
+        crate::model::READ_PARSE_BYTES_HOOK.with(|hook| hook.borrow().is_none()),
+        "the publication read ran the disturbance"
+    );
+    f.host.events[start..]
+        .iter()
+        .find_map(|event| match event {
+            Event::SaveOutcome { outcome, cause, .. } => {
+                Some((*outcome, cause.and_then(|cause| cause.operation)))
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// Move `path`'s modification time a minute on, bytes untouched (its change
+/// time moves with it).
+fn touch_times(path: &Path) {
+    let modified = fs::metadata(path).unwrap().modified().unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified + std::time::Duration::from_secs(60)))
+        .unwrap();
+}
+
+/// GH #811 root cause: on Android shared storage with MediaProvider's FUSE
+/// passthrough, the publication read itself copies the backing file's times
+/// into the inode (a rename over a page leaves the replaced file's mtime on
+/// the new one). Every replacement then failed the M3-1 check against the
+/// stamp taken before the read, and its retry replaced again, so every save
+/// of an existing page ended Uncertain. The check now compares the path with
+/// the same handle's stamp after the read.
+/// Scenario: the backing volume moves a file's times as it is read.
+#[test]
+fn gh811_times_that_move_during_the_publication_read_still_publish() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_with_publication_read(&mut f, "a.md", touch_times);
+    assert_eq!((outcome, step), (Outcome::Published, None));
+    assert!(f.host.pages["a.md"].clean());
+    assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
+    let proof = &f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationChanged"], 0);
+    // The watcher keeps the stamp taken before the bytes (GH #623): it
+    // describes those bytes, the later one may not.
+    let stamp = f.host.fs.take_stamp("a.md").unwrap();
+    assert_eq!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"mine")));
+    assert!(!stamp.same_metadata(&crate::watch::stamp_metadata(&f.graph.join("a.md")).unwrap()));
+}
+
+/// The post-read stamp is no looser for a replacement: a sync client renames
+/// its copy over the page while the publication read still reads the old
+/// file, and the path then names another file.
+/// Scenario: sync delivery replaces the page during the publication read.
+#[test]
+fn gh811_a_replacement_during_the_publication_read_stays_uncertain() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_with_publication_read(&mut f, "a.md", |path| {
+        let delivered = path.with_file_name(".syncthing.a.md.tmp");
+        fs::write(&delivered, b"theirs").unwrap();
+        fs::rename(&delivered, path).unwrap();
+    });
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+    let proof = &f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationChanged"], 1);
+    #[cfg(unix)]
+    assert_eq!(proof["changedFields"]["identityFile"], 1);
+    assert!(f.host.pages["a.md"].risk);
+}
+
+/// An in-place write that lands during the publication read changes the
+/// bytes read back: the watcher's stamp carries their revision, not the
+/// save's, so its own-write check (`note_own`) reconciles the page as an
+/// external change instead of adopting it.
+/// Scenario: an external editor rewrites the page in place during the read.
+#[test]
+fn gh811_an_in_place_write_during_the_publication_read_reaches_the_watcher() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, _) = save_with_publication_read(&mut f, "a.md", |path| {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.write_all(b"MINE").unwrap();
+        file.sync_all().unwrap();
+    });
+    assert_eq!(outcome, Outcome::Published, "the save's bytes landed first");
+    let stamp = f.host.fs.take_stamp("a.md").unwrap();
+    assert_eq!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"MINE")));
+    assert_ne!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"mine")));
+}
+
 #[test]
 fn storage_diagnostics_count_base_revision_refusal_once() {
     let mut f = Fixture::new();

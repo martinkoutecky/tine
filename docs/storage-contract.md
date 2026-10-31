@@ -245,10 +245,26 @@ root metadata probes, independent of text size: before directory creation,
 temp creation, base read, publication, the publication stamp read and directory
 sync, plus one file metadata probe after sync (seven path metadata/identity
 probes versus six before M3, for both 1 and 60 blocks). The publication read
-already captures the file's handle stamp; the new probe compares time, size,
-identity and change time against it without reading or hashing bytes. A missing,
-unreadable or changed publication witness returns Uncertain, retaining input
-risk for drafting/retry and watcher reconciliation. This check also runs after
+stamps its own handle twice: before its bytes, the watcher's own-write stamp
+(GH #623), and after them (GH #811). The post-sync probe compares time, size,
+identity and change time with the post-read stamp, and the two handle stamps
+must share one identity; it reads and hashes no bytes. Reading can itself move
+a file's times. On Android shared storage with MediaProvider's FUSE passthrough,
+a rename over a page leaves the replaced file's mtime on the new file, and the
+read copies the backing file's times into the inode, so a pre-read witness
+failed every replacement and its retry (GH #811). A change landing during the
+read is still caught: a replacement (honest sync clients replace by rename)
+gives the path another identity than the read's handle; an in-place write
+changes the bytes read back, whose revision the watcher's own-write check
+(`watch.rs#note_own`) compares with the saved bytes' and reconciles as an
+external change; an in-place write after the bytes and before the post-read
+stamp leaves the watcher's pre-read stamp stale, so that check re-stamps and
+rehashes the file. Unit cost (I-25): one handle `fstat` per page create or
+replace, 0 bytes, 0 files and 0 transport bytes, for 1 and 60 blocks alike
+(counted from the code: one `File::metadata` in
+`production.rs#read_published`). A missing, unreadable or changed publication
+witness returns Uncertain, retaining input risk for drafting/retry and watcher
+reconciliation. This check also runs after
 Unsupported sync and Windows's no-op sync; it adds no Windows directory flush.
 Windows file stamps use creation time as their identity witness, not the full
 directory FILE_ID_INFO. Publication-stamp capture after rename can itself race

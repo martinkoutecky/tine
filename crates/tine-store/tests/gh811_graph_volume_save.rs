@@ -122,16 +122,19 @@ fn publish(target: &Path, bytes: &[u8]) -> [String; 5] {
 }
 
 /// The premise of the post-sync publication check (M3-1): a file's metadata
-/// read through its open handle right after publication equals a later
+/// read through its open handle right after its bytes equals a later
 /// path-based read when nothing touched the file. Raw syscalls only, so a
 /// failure names the filesystem, not Tine. Creates and replacements, alone
-/// and beside a sync client working in the same folder.
+/// and beside a sync client working in the same folder. The handle's
+/// metadata before the read may differ (GH #811: Android FUSE passthrough
+/// reads copy the backing file's times into the inode); it is printed, not
+/// asserted.
 #[test]
 fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
     let _integration_guard = crate::integration_lock();
     let dir = volume();
     let mut mismatches = Vec::new();
-    let mut after_read = 0;
+    let mut before_read = 0;
     for client in [false, true] {
         let stop = Arc::new(AtomicBool::new(false));
         let worker = client.then(|| sync_client(dir.path(), stop.clone()));
@@ -146,11 +149,11 @@ fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
                 let line = format!(
                     "client={client} {kind} round={round}\n  handle: {opened}\n  path:   {path}\n  +100ms: {later}\n  +1s:    {last}\n  read:   {read}"
                 );
-                after_read += usize::from(read != path);
+                before_read += usize::from(opened != path);
                 if round == 0 || opened != path || path != later || later != last {
                     println!("GH811-STAMP {line}");
                 }
-                if opened != path {
+                if read != path {
                     mismatches.push(line);
                 }
             }
@@ -161,12 +164,12 @@ fn a_published_files_handle_and_path_metadata_agree_on_the_graph_volume() {
         }
     }
     println!(
-        "GH811-STAMP handle-vs-path mismatches: {}; after-read handle vs path: {after_read}",
+        "GH811-STAMP handle-vs-path mismatches: {before_read}; after-read handle vs path: {}",
         mismatches.len()
     );
     assert!(
         mismatches.is_empty(),
-        "handle and path metadata differ:\n{}",
+        "the handle's metadata after its read and the path's differ:\n{}",
         mismatches.join("\n")
     );
 }

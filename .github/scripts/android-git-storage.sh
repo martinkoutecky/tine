@@ -81,6 +81,8 @@ failed=0
 # Page saves through the page host publish on shared storage (GH #811): the
 # app data stays app-private, as on a phone.
 run_bin tine_store_integration store-shared-storage "TINE_HOST_FS_ROOT=$shared" gh811_graph_volume_save
+# The publication-read cases of the post-sync check, on the device volume.
+run_bin tine_store_lib store-publication-read "TINE_HOST_FS_ROOT=$shared" page_host::production_tests::gh811_
 # F-M3S-1: the supported-volume acceptance of the post-sync stamp check.
 run_bin tine_store_lib store-acceptance "TINE_STORAGE_ACCEPT_ROOT=$shared/accept" storage_acceptance_tests --ignored
 # The passthrough run is for the page saves only.

@@ -35,9 +35,10 @@ pub(super) struct ProductionIo {
     paths: BTreeMap<String, PathBuf>,
     /// `HostIo::take_stamp`'s stamps, per page key until taken.
     stamps: BTreeMap<String, crate::watch::Stamp>,
-    /// Publication metadata survives watcher stamp handoff until page_finish.
-    /// None means the post-rename read could not establish an identity.
-    publications: BTreeMap<String, Option<crate::watch::Stamp>>,
+    /// Publication metadata survives watcher stamp handoff until page_finish:
+    /// the publication read's handle stamps before and after its bytes
+    /// (GH #811). None means that read could not establish an identity.
+    publications: BTreeMap<String, Option<(crate::watch::Stamp, crate::watch::Stamp)>>,
     /// Each page key's current graph-relative spelling (STEP3 §2): a key
     /// resolved through a case alias at registration, or moved by the alias
     /// spelling move (Q4). The one table (B1); the store's held index reads
@@ -421,10 +422,27 @@ fn failure(error: io::Error) -> IoFailure {
 /// store's bounded reader: a page over the I-22 parse cap is a read failure,
 /// never an allocation of its whole length (audit L6-02).
 fn read_observed(path: &Path) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
-    let (bytes, metadata) = crate::model::read_parse_bytes_observed(path)?;
+    read_open(&mut fs::File::open(path)?)
+}
+
+fn read_open(input: &mut fs::File) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
+    let (bytes, metadata) = crate::model::read_parse_open_file(input)?;
     let stamp = crate::watch::stamp_from_metadata(&metadata);
     let rev = crate::FileRev::from_bytes(&bytes);
     Ok((bytes, stamp.map(|stamp| stamp.with_rev(Some(rev)))))
+}
+
+/// The publication read: [`read_observed`]'s pre-read stamp, for the
+/// watcher, and the same handle's stamp after the bytes, for the post-sync
+/// check (GH #811). Reading can itself move a file's times: on Android
+/// shared storage with FUSE passthrough the read copies the backing file's
+/// mtime and ctime into the inode, so only the post-read stamp still
+/// describes the file the path holds (storage contract, M3-1).
+fn read_published(path: &Path) -> io::Result<Option<(crate::watch::Stamp, crate::watch::Stamp)>> {
+    let mut input = fs::File::open(path)?;
+    let (_, before) = read_open(&mut input)?;
+    let after = crate::watch::stamp_from_metadata(&input.metadata()?);
+    Ok(before.zip(after))
 }
 
 /// A synced temporary file for `path`. The host's writes and syncs are
@@ -641,13 +659,13 @@ impl HostIo for ProductionIo {
         // their handle's stamp, instead of the watcher's open and hash. A
         // failed read leaves the watcher its own stamp.
         let path = self.page_path(page);
-        let stamp = self
+        let stamps = self
             .check_path(&path)
             .ok()
-            .and_then(|_| read_observed(&path).ok())
-            .and_then(|(_, s)| s);
-        self.publications.insert(page.into(), stamp.clone());
-        self.stamp(page, stamp);
+            .and_then(|_| read_published(&path).ok())
+            .flatten();
+        self.stamp(page, stamps.as_ref().map(|(before, _)| before.clone()));
+        self.publications.insert(page.into(), stamps);
         Ok(())
     }
 
@@ -668,9 +686,19 @@ impl HostIo for ProductionIo {
                     // One metadata call, no payload read/hash. Parent loss or
                     // replacement after rename must take the Uncertain path,
                     // including a platform's tolerated/no-op directory sync.
+                    // The path must still hold the file the publication read
+                    // read, unchanged since that read ended: its post-read
+                    // stamp (GH #811), on the handle whose pre-read stamp has
+                    // the same identity.
                     let current = crate::watch::stamp_metadata(&path);
                     // The toast names the failed check (GH #811: it named
                     // no step, as this failure has no OS error).
+                    let changed = |expected: &crate::watch::Stamp, actual: &crate::watch::Stamp| {
+                        (
+                            "publication check: changed before directory sync",
+                            UncertainProof::PublicationChanged(expected.change_to(actual)),
+                        )
+                    };
                     let (operation, proof) = match (published, &current) {
                         (None, _) => (
                             "publication check: no stamp after rename",
@@ -680,10 +708,12 @@ impl HostIo for ProductionIo {
                             "publication check: no file after directory sync",
                             UncertainProof::PublicationMissing,
                         ),
-                        (Some(expected), Some(actual)) if !expected.same_metadata(actual) => (
-                            "publication check: changed before directory sync",
-                            UncertainProof::PublicationChanged(expected.change_to(actual)),
-                        ),
+                        (Some((before, after)), _) if !before.same_identity(after) => {
+                            changed(before, after)
+                        }
+                        (Some((_, after)), Some(actual)) if !after.same_metadata(actual) => {
+                            changed(after, actual)
+                        }
                         _ => return Ok(witness),
                     };
                     return Err((
