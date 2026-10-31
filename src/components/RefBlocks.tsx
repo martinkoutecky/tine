@@ -10,6 +10,7 @@ import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { AstBody } from "../render/body";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { graphOwner } from "../owned";
@@ -209,6 +210,10 @@ function RefBlock(props: {
           </span>
         </div>
         <div class="block-content-wrapper">
+          <BlockRenderBoundary raw={props.block.raw} onOpen={() => {
+              if (props.onOpenBlock) props.onOpenBlock(blockDtoExternalId(props.block));
+              else openRefRoute(openInNewTab);
+            }}>
           <div
             class="block-content"
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
@@ -274,6 +279,7 @@ function RefBlock(props: {
               <span class="date-chip deadline"><CalGlyph /> {facets().deadline}</span>
             </Show>
           </div>
+          </BlockRenderBoundary>
         </div>
       </div>
       <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH && !folded()}>

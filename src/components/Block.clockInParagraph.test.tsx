@@ -5,7 +5,8 @@ import { render } from "solid-js/web";
 import { startEditing, endEdit, editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { pageByName, resetStore } from "../document";
+import { pageByName, resetStore, setRaw } from "../document";
+import { setMarker } from "../editor/marker";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { pageToDto } from "../document/convert";
@@ -60,6 +61,39 @@ function typeChar(ta: EditorDriver, ch: string) {
 }
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
+
+it.each(['md', 'org'] as const)('GH741 F2 typing DONE over bare DOING closes its clock (%s)', format => {
+  const { textarea, blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, true, format);
+  try {
+    textarea!.replaceText(''); textarea!.select(0, 0);
+    textarea!.reportInput({ bubbles: true, inputType: 'deleteContentBackward' });
+    for (const ch of 'DONE') typeChar(textarea!, ch);
+    const info = logbookInfo(doc.byId[blockId].raw, format);
+    expect(info.rows).toHaveLength(1);
+    expect(info.rows[0].end).not.toBeNull();
+    expect(doc.byId[blockId].raw.split('\n')[0]).toBe('DONE');
+  } finally { dispose(); }
+});
+
+it.each(['md', 'org'] as const)('GH741 F2 Ctrl+Enter on bare DOING completes it (%s)', format => {
+  const { textarea, blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, true, format);
+  try {
+    textarea!.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(doc.byId[blockId].raw.split('\n')[0].trim()).toBe('DONE');
+    expect(logbookInfo(doc.byId[blockId].raw, format).rows[0].end).not.toBeNull();
+  } finally { dispose(); }
+});
+
+it.each(['md', 'org'] as const)('GH741 F2 explicit marker command on full raw closes the bare task clock (%s)', format => {
+  const { blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, false, format);
+  try {
+    setRaw(blockId, setMarker(doc.byId[blockId].raw, 'DONE'));
+    expect(doc.byId[blockId].raw.split('\n')[0].trim()).toBe('DONE');
+    const info = logbookInfo(doc.byId[blockId].raw, format);
+    expect(info.rows).toHaveLength(1);
+    expect(info.rows[0].end).not.toBeNull();
+  } finally { dispose(); }
+});
 
 it('review r2 refused Org edit survives switching blocks', () => {
   const raw = `plain\n:PROPERTIES:\n:collapsed: false\n:END:\n:LOGBOOK:\n${CLOCK}\n:END:`;

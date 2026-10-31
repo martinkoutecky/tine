@@ -60,6 +60,54 @@ pub(crate) fn names_nothing(error: &io::Error) -> bool {
     )
 }
 
+// GH #811: the mtime reset after a replacing rename on Android is best
+// effort; its outcomes are counted process-wide, for the storage
+// diagnostics (`androidMtimeReset`, D-20261031-MTIME). Kept here, not in
+// `storage_diag`, because the app crate also includes this file.
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub(crate) static ANDROID_MTIME_RESET_SUCCEEDED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub(crate) static ANDROID_MTIME_RESET_FAILED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// `path`'s mtime without opening it (utimensat, the atime untouched): one
+/// FUSE SETATTR on Android shared storage, and no open there.
+#[cfg(target_os = "android")]
+fn set_modified_at(path: &Path, modified: std::time::SystemTime) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let since = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io::Error::other)?;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    let times = [
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_OMIT,
+        },
+        libc::timespec {
+            tv_sec: since.as_secs() as libc::time_t,
+            tv_nsec: since.subsec_nanos() as _,
+        },
+    ];
+    // SAFETY: a NUL-terminated path and two timespecs, as utimensat(2) takes.
+    let result = unsafe {
+        libc::utimensat(
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            times.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 /// Split at a short (at most 10-byte) extension a shortened name keeps.
 fn split_short_ext(name: &str) -> (&str, &str) {
     match name.rfind('.') {
@@ -112,7 +160,28 @@ pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
         target_os = "ios"
     ))]
     {
-        fs::rename(src, dst)
+        // GH #811: on Android shared storage a rename over a file leaves the
+        // replaced file's mtime on the new one (the kernel flushes the
+        // replaced FUSE inode's times by node id, and MediaProvider applies
+        // them at the path). Put the source's own mtime back, as rename(2)
+        // keeps it, so a sync client's rescan sees a same-size edit.
+        #[cfg(target_os = "android")]
+        let modified = fs::symlink_metadata(src).and_then(|metadata| metadata.modified());
+        fs::rename(src, dst)?;
+        #[cfg(target_os = "android")]
+        {
+            // The rename has landed; failing here would report a published
+            // file as unwritten. A failure leaves MediaProvider's mtime and
+            // is counted in the storage diagnostics (D-20261031-MTIME).
+            let reset = modified.and_then(|modified| set_modified_at(dst, modified));
+            let counter = if reset.is_ok() {
+                &ANDROID_MTIME_RESET_SUCCEEDED
+            } else {
+                &ANDROID_MTIME_RESET_FAILED
+            };
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(())
     }
     #[cfg(not(any(
         target_os = "linux",

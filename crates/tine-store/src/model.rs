@@ -167,7 +167,7 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
     read_parse_open_file(&mut input)
 }
 
-fn read_parse_open_file(input: &mut fs::File) -> io::Result<(Vec<u8>, fs::Metadata)> {
+pub(crate) fn read_parse_open_file(input: &mut fs::File) -> io::Result<(Vec<u8>, fs::Metadata)> {
     let metadata = input.metadata()?;
     let len = metadata.len();
     if len > PARSE_INPUT_MAX_BYTES {

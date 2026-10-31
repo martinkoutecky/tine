@@ -510,7 +510,7 @@ jobs:
   # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
   # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
   android-git-storage:
-    name: Android git on shared storage (API ${{ matrix.api }})
+    name: Android git on shared storage (API ${{ matrix.label || matrix.api }})
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -518,6 +518,21 @@ jobs:
       fail-fast: false
       matrix:
         api: [33, 35]
+        target: [default]
+        # Android 16, the GH #811 reporter's, on the Google APIs image (the
+        # MediaProvider module devices ship). The 36.1 (16 QPR2) image did
+        # not boot on the hosted runner in 900 s (run 41177019433).
+        include:
+          - api: 36
+            target: google_apis
+          # With MediaProvider's Android FUSE passthrough on, as on devices
+          # (the script turns it on and reboots; page saves only). Before the
+          # GH #811 publication-check fix a replaced page's saves stayed
+          # Uncertain here (runs 41177645677, 41179037543).
+          - api: 36
+            target: google_apis
+            passthrough: true
+            label: 36-passthrough
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -557,6 +572,13 @@ jobs:
             target/android-store-build.json | tail -n 1)
           test -x "$store"
           echo "TINE_ANDROID_STORE_TEST_BIN=$store" >> "$GITHUB_ENV"
+          # F-M3S-1 storage volume acceptance on shared storage (GH #811).
+          cargo test -p tine-store --lib --no-run --target x86_64-linux-android \
+            --message-format=json > target/android-store-lib-build.json
+          store_lib=$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.name == "tine_store") | .executable' \
+            target/android-store-lib-build.json | tail -n 1)
+          test -x "$store_lib"
+          echo "TINE_ANDROID_STORE_LIB_TEST_BIN=$store_lib" >> "$GITHUB_ENV"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -565,19 +587,21 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Run the git tests with the graph on shared storage
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TINE_FUSE_PASSTHROUGH: ${{ matrix.passthrough && '1' || '' }}
         with:
           api-level: ${{ matrix.api }}
           arch: x86_64
-          target: default
+          target: ${{ matrix.target }}
           emulator-boot-timeout: 300
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN"
+          script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN" "$TINE_ANDROID_STORE_LIB_TEST_BIN"
       - name: Upload device evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-git-storage-api${{ matrix.api }}-${{ github.run_attempt }}
+          name: android-git-storage-api${{ matrix.label || matrix.api }}-${{ github.run_attempt }}
           path: artifacts/android-git-storage
           if-no-files-found: warn
           retention-days: 14

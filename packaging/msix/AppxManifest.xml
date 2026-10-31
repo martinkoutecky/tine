@@ -2,8 +2,8 @@
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-         xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
-         IgnorableNamespaces="uap rescap desktop6">
+         xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+         IgnorableNamespaces="uap rescap virtualization">
   <Identity Name="MartinKouteck.TineOutline"
             Publisher="CN=5B2AC29F-AAE7-4DAB-BA53-1AD73037C7F6"
             Version="@VERSION@" ProcessorArchitecture="@ARCH@" />
@@ -11,12 +11,19 @@
     <DisplayName>TineOutline</DisplayName>
     <PublisherDisplayName>Martin Koutecký</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <!-- Decided 2026-10-12 (keeps backups on uninstall); Store approval pending. Controlled by unvirtualized in stage-msix.mjs. -->
-    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
-    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
+    <!-- D-20261031-MSV (Windows 11 flexible virtualization): only Tine's own three AppData folders are
+         unvirtualized, so backups and drafts survive uninstall and the Store app shares data and the
+         owner lock with GitHub installs and the CLI. Everything else, and the registry, stays virtualized. -->
+    <virtualization:FileSystemWriteVirtualization>
+      <virtualization:ExcludedDirectories>
+        <virtualization:ExcludedDirectory>$(KnownFolder:RoamingAppData)\page.tine.Tine</virtualization:ExcludedDirectory>
+        <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\page.tine.Tine</virtualization:ExcludedDirectory>
+        <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\tine-owners</virtualization:ExcludedDirectory>
+      </virtualization:ExcludedDirectories>
+    </virtualization:FileSystemWriteVirtualization>
   </Properties>
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26200.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26200.0" />
   </Dependencies>
   <Resources><Resource Language="en-us" /></Resources>
   <Applications>

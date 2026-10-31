@@ -462,6 +462,59 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 }
 
 pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
+    let mut blocks = parse_block_inner(raw, is_org);
+    restore_bare_task(raw, is_org, &mut blocks);
+    blocks
+}
+
+fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
+    // GH741: lsdoc accepts a bare task at EOF, but loses its marker when the
+    // hidden LOGBOOK follows. Repair that narrow parser shape at the shared
+    // AST boundary so facets, body rendering and clock writers all agree.
+    // lsdoc, rather than another spelling grammar, decides the title marker.
+    if !blocks
+        .iter()
+        .any(|b| matches!(b, Block::Drawer { name, .. } if name.eq_ignore_ascii_case("LOGBOOK")))
+    {
+        return;
+    }
+    let Some((title, _)) = raw.split_once('\n') else {
+        return;
+    };
+    let Some(Block::Bullet { marker, inline, .. } | Block::Heading { marker, inline, .. }) =
+        blocks.first_mut()
+    else {
+        return;
+    };
+    if marker.is_some() {
+        return;
+    }
+    let title_blocks = parse_block_inner(title, is_org);
+    if let Some(
+        Block::Bullet {
+            marker: Some(accepted),
+            inline: title_inline,
+            ..
+        }
+        | Block::Heading {
+            marker: Some(accepted),
+            inline: title_inline,
+            ..
+        },
+    ) = title_blocks.first()
+    {
+        // Continuation prose before the drawer must remain prose. Only the
+        // exact bare-marker header can become an empty task body.
+        if title_inline.is_empty()
+            && matches!(inline.as_slice(), [Inline::Plain { text, .. }] if text == accepted)
+        {
+            *marker = Some(accepted.clone());
+            inline.clear();
+        }
+    }
+}
+
+fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
@@ -483,6 +536,12 @@ pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
 
 #[allow(dead_code)] // the wasm crate needs block parsing only; tine-core uses the full projection
 pub fn parse_projection(raw: &str, is_org: bool) -> Projection {
+    let mut projection = parse_projection_inner(raw, is_org);
+    restore_bare_task(raw, is_org, &mut projection.blocks);
+    projection
+}
+
+fn parse_projection_inner(raw: &str, is_org: bool) -> Projection {
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
@@ -568,6 +627,22 @@ pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+
+    #[test]
+    fn gh741_backend_projection_and_render_ast_agree_on_bare_clocked_tasks() {
+        for is_org in [false, true] {
+            let raw = "DOING\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]\n:END:";
+            let blocks = parse_block(raw, is_org);
+            let projection = parse_projection(raw, is_org);
+            assert_eq!(
+                serde_json::to_value(&blocks).unwrap(),
+                serde_json::to_value(&projection.blocks).unwrap()
+            );
+            assert!(
+                matches!(blocks.first(), Some(Block::Bullet { marker: Some(m), inline, .. } | Block::Heading { marker: Some(m), inline, .. }) if m == "DOING" && inline.is_empty())
+            );
+        }
+    }
 
     #[test]
     fn actual_parsed_tree_depth_is_checked_and_drained_iteratively() {

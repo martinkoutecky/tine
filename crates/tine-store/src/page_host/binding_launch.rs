@@ -154,6 +154,7 @@ impl PageHost {
         );
         let spellings = io.spellings().clone();
         io.marks = Some(graph.clone());
+        io.storage_diag = graph.storage_diag.clone();
         io.store = Arc::downgrade(store);
         let mut host = Host::new(io, BTreeMap::new());
         host.storage_diag = graph.storage_diag.clone();
