@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- `tine export static` explains a zero-page public selection and names `public:: true` and `--all-pages`.
 - PDF and print exports keep images in nested asset folders distinct, including images with the same filename.
 - iPhone Spotlight search updates page titles and excerpts after edits made in Tine.
 - Editor parsing uses Logseq's whitespace rules consistently for planning dates and source offsets, including leading BOM and NEL characters.
@@ -17,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- `tine edit BLOCK TEXT` (including `TEXT` read from stdin with `-`) now refuses a supplied parser-owned LOGBOOK drawer without the read's `--rev`, preventing stale full buffers from replacing newer clock history. Plain text edits still retain current history without `--rev`.
 - Block embeds are back to one bullet, as in 0.8 (#417, #748). In 0.9.0-beta.1 a block embed showed two bullets, one for the block holding `{{embed ((…))}}` and one for the embedded block. Now the embedded block's bullet sits where the embed does, and dragging it, **Tab**/**Shift+Tab**, **Move block up/down**, selecting it and its menu act on the block holding the embed on that page; its text and children are still the source's. Moving it up or down therefore no longer moves the source block on its own page or shows the "moved in" notice (GH #641); page embeds, Linked References and query results keep that behaviour. Folding the embedded block is still remembered per page; folding a block further inside the embed now folds that source block on its own page and in every embed of it, as in Logseq. A block with its own text besides the embed keeps its own bullet.
 ### Added
 

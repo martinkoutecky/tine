@@ -10,6 +10,11 @@ row here that no payload carries, fails the build. Protocol, framing and handove
 in `tine-agents/specs/campaigns/2026-10-cli/PROTOCOL.md`; this file owns the *content* of
 `ok` replies and of errors.
 
+Standalone publication commands use plain text: `tine export static GRAPH --output PARENT`
+prints `Published N pages to PATH` on success. If public-page selection publishes zero pages,
+stderr also explains that no publishable page has `public:: true` and names `--all-pages` as the override.
+This warning keeps the successful export status (exit 0).
+
 ## One payload, two renderings
 
 - The owner's reply to a verb is `{"id":…,"ok":<payload>}` or `{"id":…,"error":<body>}`.
@@ -244,7 +249,8 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
 - **Blocks** are named by a **handle**: `PAGE/POS~FP` as a read prints it (see "The text outline"), or a block's
   `id::` UUID (graph-wide). The position is used when its fingerprint still matches; otherwise the one block on the
   page with that fingerprint; otherwise `stale`. A bare `PAGE/POS` (no fingerprint) is accepted only with `--rev`.
-- **`--rev REV`** (optional, every write): write only if the page is still at that rev; else `stale` with the
+- **`--rev REV`** (required for `block.edit` supplying a parsed LOGBOOK drawer; otherwise optional):
+  write only if the page is still at that rev; else `stale` with the
   current `detail.rev`.
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
   (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
@@ -269,11 +275,11 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   restores canonical placement so OG can read the retained properties, including repairing earlier split groups.
   If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
   remain ordinary text. A marker change writes the logbook as the app does.
-  Clients supplying LOGBOOK content must pass `--rev` from the read that supplied it. A clock-only change does
-  not change an editor-text fingerprint: without that revision, an old full buffer can replace newer history.
+  Clients supplying a parsed LOGBOOK drawer must pass `--rev` from the read that supplied it; otherwise the
+  owner refuses before saving (`refused:revision-required`, exit 6, `admitted: false`), saying to reread and
+  pass `--rev`. This applies to UUID and fingerprint handles too. A clock-only change does not change an
+  editor-text fingerprint: without that revision, an old full buffer could replace newer history.
   Plain visible-text edits retain the current history, including clock changes since the client's read.
-  The CLI currently permits explicit history replacement without `--rev`; the revision requirement is a client
-  concurrency obligation, not an enforced refusal.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
@@ -649,6 +655,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `page-exists` | page creation or rename would replace an existing file or alias |
 | `confirmation` | `page delete` needs `--yes` or `--force` |
 | `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
+| `revision-required` | `block.edit` supplies a parser-owned LOGBOOK drawer without the read's `--rev`; reread and pass that revision |
 | `git` | a run verb or `--run` write: the graph's git repository cannot take the run's commits (none, bare, a merge/rebase in progress, a detached HEAD, an ignored file, a libgit2 error) |
 | `git-busy` | a `--run` write while another git command holds the index (before any change), or inside a `git` object: the branch kept moving while a run write committed |
 | `merge` | `run.revert`: a page's Concord merge refused it (nothing changed); inside a page entry, the same for a page that changed between the check and its write |
