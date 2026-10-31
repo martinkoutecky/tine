@@ -587,6 +587,12 @@ mod destination_tests {
         fs::create_dir_all(root.join("assets")).unwrap();
         fs::write(root.join("pages/A.md"), b"- original\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        // Windows refuses a directory rename while a background read holds a
+        // file inside it open. Finish loading and join the watcher so this
+        // test's rename cannot race their reads; keep the store open to
+        // exercise restore's root-identity guard.
+        store.whole_graph().unwrap();
+        store.stop_watcher_for_tests();
         fs::rename(&root, data.path().join("moved")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
         let result = store.restore(
@@ -599,6 +605,7 @@ mod destination_tests {
             None,
         );
         let error = result.expect_err("must never restore into a replacement graph");
+        assert!(error.cause.message.contains("GraphRootMoved"), "{error:?}");
         assert!(
             error.done.recovery.is_empty(),
             "nothing reserved under the replacement"
