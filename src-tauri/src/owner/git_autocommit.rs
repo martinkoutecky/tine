@@ -55,6 +55,7 @@ const MIN_INTERVAL_MINUTES: u32 = 1;
 const MAX_INTERVAL_MINUTES: u32 = 24 * 60;
 /// How often the worker looks at the graph's publication revision.
 const TICK: Duration = Duration::from_secs(15);
+pub(crate) const INITIAL_MESSAGE: &str = "Tine: initial graph";
 /// Tine's commits between repacks (G9).
 const REPACK_COMMITS: u32 = 50;
 /// Loose objects that trigger a repack regardless (git's `gc.auto` default).
@@ -396,7 +397,7 @@ pub(crate) fn commit_now(root: &Path, message: &str) -> Result<Outcome, Unusable
 }
 
 /// [`commit_now`] for a caller that already holds [`RUN_LOCK`].
-pub(super) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
+pub(crate) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
     let repo = open_checked(root)?;
     if super::git_pull::defers_autocommit(&repo) {
         return Ok(Outcome::PullPending);
@@ -1368,80 +1369,9 @@ fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
 
 // ---- Settings ---------------------------------------------------------------------
 
-/// What Settings → Graph → Git shows.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct GitStatus {
-    /// Git features exist here: always in the app (all five targets, slice 3);
-    /// the browser mock and a published graph send `false`.
-    pub(crate) available: bool,
-    /// The graph is inside a git work tree.
-    pub(crate) repository: bool,
-    pub(crate) branch: Option<String>,
-    /// Why autocommit cannot run, when it cannot (`code`, message).
-    pub(crate) unusable: Option<(String, String)>,
-    pub(crate) policy: Policy,
-    pub(crate) interval_minutes: u32,
-    pub(crate) last: LastAttempt,
-    /// The tracked remote (read from the repository config), when sync can
-    /// run here.
-    pub(crate) remote: Option<super::git_sync::Remote>,
-    /// Why the sync options are refused (`code`, message), when they are.
-    pub(crate) sync_unusable: Option<(String, String)>,
-    pub(crate) line_endings: Option<super::git_sync::line_endings::Probe>,
-    /// The username this device signed in with for the remote's host.
-    pub(crate) signed_in: Option<String>,
-}
-
-pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
-    let checked = open_checked(root).and_then(|repo| {
-        let prefix = prefix_of(&repo);
-        if let Ok(index) = repo.repo.index() {
-            if has_skip_worktree(&index, &prefix) {
-                return Err(Unusable::Sparse);
-            }
-        }
-        Ok(repo)
-    });
-    let (repository, branch, unusable) = match checked {
-        Ok(repo) => (
-            true,
-            Some(repo.branch.trim_start_matches("refs/heads/").to_string()),
-            None,
-        ),
-        Err(Unusable::NotARepository) => (false, None, None),
-        Err(error) => (
-            true,
-            None,
-            Some((error.code().to_string(), error.message())),
-        ),
-    };
-    let (remote, sync_unusable) = match (&unusable, repository) {
-        (Some(why), _) => (None, Some(why.clone())),
-        (None, false) => (None, None),
-        (None, true) => match super::git_sync::remote(root) {
-            Ok(remote) => (Some(remote), None),
-            Err(super::git_sync::Outcome::Refused(why)) => (None, Some(("refused".into(), why))),
-            Err(other) => (None, Some(("refused".into(), format!("{other:?}")))),
-        },
-    };
-    let line_endings = sync_unusable
-        .as_ref()
-        .filter(|(code, why)| code == "conversion" || why.contains("conversion"))
-        .map(|_| super::git_sync::line_endings::probe(root));
-    GitStatus {
-        available: true,
-        repository,
-        branch,
-        unusable,
-        policy: settings.policy,
-        interval_minutes: (settings.interval.as_secs() / 60) as u32,
-        last: last_attempt(root),
-        remote,
-        sync_unusable,
-        line_endings,
-        signed_in: None,
-    }
-}
+#[path = "git_status.rs"]
+mod status;
+pub(crate) use status::{git_status, report_setup, GitStatus};
 
 #[path = "git_ignore_setup.rs"]
 mod ignore_setup;

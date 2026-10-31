@@ -18,6 +18,60 @@ function mount() {
   return { root, dispose };
 }
 
+it("makes the bound graph a repository and exposes its controls with automatic commits off", async () => {
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ repository: false, branch: null }));
+  let finish!: (s: GitAutocommitStatus) => void;
+  const init = vi.spyOn(backend(), "gitInitGraph").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-init]")).not.toBeNull());
+  root.querySelector<HTMLButtonElement>("[data-git-init]")!.click();
+  expect(root.querySelector<HTMLButtonElement>("[data-git-init]")!.disabled).toBe(true);
+  finish(repo());
+  await vi.waitFor(() => expect(root.querySelector<HTMLSelectElement>("[data-git-policy]")?.value).toBe("off"));
+  expect(init).toHaveBeenCalledOnce(); expect(root.querySelector("[data-git-init]")).toBeNull();
+  dispose();
+});
+
+it("shows init refusal and permits retry without changing the policy", async () => {
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ repository: false, branch: null }));
+  vi.spyOn(backend(), "gitInitGraph").mockRejectedValue(new Error("folder changed"));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-init]")).not.toBeNull());
+  root.querySelector<HTMLButtonElement>("[data-git-init]")!.click();
+  await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain("folder changed"));
+  expect(root.querySelector<HTMLButtonElement>("[data-git-init]")!.disabled).toBe(false);
+  expect(root.querySelector("[data-git-policy]")).toBeNull();
+  dispose();
+});
+
+it("passes the optional remote, offers existing sign-in on auth failure and finishes setup without another init", async () => {
+  const remote = { name: "origin", url: "https://example.org/me/graph.git", https_origin: "https://example.org" };
+  const pending = repo({ remote, setup_pending: true, last: { committed_at: null, commit: null, refused: null, stale_lock: null, sync: { running: false, code: "auth-required", message: null, path: null, at: 1, ok_at: null, failures: 1, persistent: true } } });
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ repository: false, branch: null }));
+  const init = vi.spyOn(backend(), "gitInitGraph").mockResolvedValue(pending);
+  vi.spyOn(backend(), "gitSignIn").mockResolvedValue({ ...pending, signed_in: "me" });
+  const finish = vi.spyOn(backend(), "gitFinishSetup").mockResolvedValue(repo({ remote }));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-initial-remote]")).not.toBeNull());
+  const url = root.querySelector<HTMLInputElement>("[data-git-initial-remote]")!;
+  url.value = remote.url; url.dispatchEvent(new Event("input", { bubbles: true }));
+  root.querySelector<HTMLButtonElement>("[data-git-init]")!.click();
+  await vi.waitFor(() => expect(root.textContent).toContain("Finish repository setup"));
+  expect(init).toHaveBeenCalledWith(remote.url);
+  expect(root.querySelector<HTMLSelectElement>("[data-git-policy]")!.disabled).toBe(true);
+  root.querySelector<HTMLButtonElement>("[data-git-sign-in-open]")!.click();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-sign-in-form]")).not.toBeNull());
+  root.querySelector<HTMLInputElement>("[data-git-username]")!.value = "me";
+  root.querySelector<HTMLInputElement>("[data-git-token]")!.value = "private-token";
+  root.querySelector("[data-git-sign-in-form]")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(root.querySelector("[data-git-sign-in-form]")).toBeNull());
+  root.querySelector<HTMLButtonElement>("[data-git-init]")!.click();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-init]")).toBeNull());
+  expect(finish).toHaveBeenCalledWith(remote.url); expect(init).toHaveBeenCalledOnce();
+  expect(root.querySelector<HTMLSelectElement>("[data-git-policy]")!.value).toBe("off");
+  dispose();
+});
+
 it("offers the conversion repair before sync can be enabled", async () => {
   vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ sync_unusable: ["refused", "core.autocrlf"], line_endings: { safe: true, differing: 0, sample: null, reason: null } }));
   const repair = vi.spyOn(backend(), "gitDisableLineEndings").mockResolvedValue(repo());

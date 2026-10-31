@@ -4,6 +4,11 @@ use std::path::Path;
 
 use tine_core::model::FileId;
 
+/// GS1's Unicode collision filter, also used before checking out a new clone.
+pub fn fold_entry_name(name: &str) -> String {
+    crate::model::entry_identity::fold_leaf(std::ffi::OsStr::new(name))
+}
+
 /// Whether two file identities are candidates for a case-only entry move: the same
 /// parent and different leaves equal under the store's Unicode fold.
 /// This proves neither alias identity nor destination absence. Publication

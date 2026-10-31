@@ -215,7 +215,7 @@ fn tell_window(slot: &GraphSlot, from: git2::Oid, to: git2::Oid) {
     link.pages_changed(pages);
 }
 
-fn network_outcome(outcome: Net) -> Cycle {
+pub(super) fn network_outcome(outcome: Net) -> Cycle {
     match outcome {
         Net::UpToDate => ok("up-to-date"),
         Net::Fetched { .. } => ok("up-to-date"),

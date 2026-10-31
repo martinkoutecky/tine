@@ -16,6 +16,7 @@ use git2::{AutotagOption, FetchOptions, FetchPrune, Oid, PushOptions, RemoteCall
 
 use super::git_run::{open_repo_at, raw_content_conversion, Repo, RUN_LOCK};
 
+pub(crate) mod clone;
 pub(crate) mod credentials;
 mod http;
 pub(crate) mod line_endings;
@@ -111,6 +112,71 @@ impl Operation {
     pub(crate) fn push_upstream(self, root: &Path) -> Outcome {
         let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         self.push_upstream_locked(root)
+    }
+
+    /// Explicit setup only: admit an empty remote (or our exact first commit
+    /// after an interrupted push), then use the ordinary non-forcing push.
+    pub(crate) fn push_initial(self, root: &Path) -> Outcome {
+        let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let mut first_tip = None;
+        let admitted = self.execute(|| {
+            let repo = checked(root)?;
+            let target = Target::read(&repo)?;
+            let head = repo.tip().map_err(|e| refused(&e.message))?.ok_or_else(|| refused("Make the first commit before publishing."))?;
+            if head.parent_count() != 0 || head.message_bytes() != super::git_autocommit::INITIAL_MESSAGE.as_bytes() {
+                return Err(refused("Repository setup can publish only Tine's first graph commit."));
+            }
+            let mut remote = validated_remote(&repo, &target.push_url)?;
+            let connection = remote.connect_auth(git2::Direction::Push, Some(self.callbacks()), None)
+                .map_err(|e| self.session.outcome(e))?;
+            for entry in connection.list().map_err(git_error)? {
+                if entry.oid().is_zero() { continue; }
+                if entry.oid() != head.id() || (entry.name() != "HEAD" && entry.name() != target.merge) {
+                    return Err(refused("The remote repository is not empty. Use an empty remote for repository setup; your local graph and first commit are safe."));
+                }
+            }
+            first_tip = Some(head.id());
+            Ok(Outcome::UpToDate)
+        });
+        if admitted != Outcome::UpToDate {
+            return admitted;
+        }
+        let pushed = self.push_upstream_expected(root, first_tip);
+        if pushed != Outcome::UpToDate {
+            return pushed;
+        }
+        // Anonymous push intentionally writes no tracking ref. Publish the
+        // accepted first tip once, so the next normal fetch/sync starts ready.
+        match (|| {
+            let repo = checked(root)?;
+            let target = Target::read(&repo)?;
+            target.check_ref(&repo)?;
+            let head = repo
+                .tip()
+                .map_err(|e| refused(&e.message))?
+                .ok_or_else(|| refused("The branch changed during setup."))?;
+            if Some(head.id()) != first_tip {
+                return Err(Outcome::Busy);
+            }
+            match repo.repo.find_reference(&target.tracking) {
+                Ok(reference) if reference.target() == Some(head.id()) => return Ok(()),
+                Ok(_) => return Err(Outcome::Busy),
+                Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+                Err(e) => return Err(git_error(e)),
+            }
+            repo.repo
+                .reference(
+                    &target.tracking,
+                    head.id(),
+                    false,
+                    "tine: publish initial graph",
+                )
+                .map_err(git_error)?;
+            Ok(())
+        })() {
+            Ok(()) => Outcome::UpToDate,
+            Err(error) => error,
+        }
     }
 
     /// Caller holds RUN_LOCK, including across any pre-pull autocommit/apply.
@@ -221,6 +287,10 @@ impl Operation {
     /// ref and the repository before anything is sent. So the OS ending the app
     /// during a slow upload leaves no `index.lock` behind (ADR 0078 slice 3).
     pub(crate) fn push_upstream_locked(self, root: &Path) -> Outcome {
+        self.push_upstream_expected(root, None)
+    }
+
+    fn push_upstream_expected(self, root: &Path, expected: Option<Oid>) -> Outcome {
         self.execute(|| {
             let repo = checked(root)?;
             let (target, head) = {
@@ -231,6 +301,9 @@ impl Operation {
                     .map_err(|e| Outcome::Refused(e.message))?
                     .ok_or_else(|| refused("commit the branch before syncing"))?
                     .id();
+                if expected.is_some_and(|tip| tip != head) {
+                    return Err(Outcome::Busy);
+                }
                 target.check_ref(&repo)?;
                 (target, head)
             };
@@ -379,6 +452,95 @@ pub(crate) fn push_pending(root: &Path) -> bool {
             .repo
             .graph_descendant_of(head.id(), tracking)
             .unwrap_or(false)
+}
+
+/// Existing git metadata is the resume record: our sole first commit, a
+/// configured upstream, and no tracking ref yet. No additional durable format.
+pub(crate) fn initial_push_pending(root: &Path) -> bool {
+    let Ok(repo) = config_checked(root) else {
+        return false;
+    };
+    let Ok(target) = Target::read(&repo) else {
+        return false;
+    };
+    let Ok(Some(head)) = repo.tip() else {
+        return false;
+    };
+    head.parent_count() == 0
+        && head.message_bytes() == super::git_autocommit::INITIAL_MESSAGE.as_bytes()
+        && repo
+            .repo
+            .find_reference(&target.tracking)
+            .is_err_and(|e| e.code() == git2::ErrorCode::NotFound)
+}
+
+/// Only during explicit first-commit setup: one optional origin, never a
+/// remote manager. Empty URL abandons publication while keeping local history.
+pub(crate) fn configure_initial_remote(root: &Path, url: &str) -> Result<(), Outcome> {
+    let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let repo = config_checked(root)?;
+    let head = repo
+        .tip()
+        .map_err(|e| refused(&e.message))?
+        .ok_or_else(|| refused("Make the first graph commit first."))?;
+    if head.parent_count() != 0
+        || head.message_bytes() != super::git_autocommit::INITIAL_MESSAGE.as_bytes()
+    {
+        return Err(refused(
+            "Only the initial graph commit can finish repository setup.",
+        ));
+    }
+    repo.guard
+        .check_git(&repo.repo, &repo.branch)
+        .map_err(git_error)?;
+    for file in ["config", "config.lock"] {
+        repo.guard
+            .check_path(&repo.repo.commondir().join(file))
+            .map_err(|e| refused(&format!("git config: {e}")))?;
+    }
+    let branch = repo
+        .branch
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| refused("HEAD must name a local branch."))?;
+    let mut config = repo
+        .repo
+        .config()
+        .map_err(git_error)?
+        .open_level(git2::ConfigLevel::Local)
+        .map_err(git_error)?;
+    if url.trim().is_empty() {
+        for key in [
+            "remote.origin.url".to_owned(),
+            "remote.origin.fetch".to_owned(),
+            "remote.origin.pushurl".to_owned(),
+            format!("branch.{branch}.remote"),
+            format!("branch.{branch}.merge"),
+        ] {
+            match config.remove(&key) {
+                Ok(()) => {}
+                Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+                Err(e) => return Err(git_error(e)),
+            }
+        }
+        return Ok(());
+    }
+    clone::repository_name(url)?;
+    config
+        .set_str("remote.origin.url", url)
+        .map_err(git_error)?;
+    config
+        .set_str("remote.origin.pushurl", url)
+        .map_err(git_error)?;
+    config
+        .set_str("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        .map_err(git_error)?;
+    config
+        .set_str(&format!("branch.{branch}.remote"), "origin")
+        .map_err(git_error)?;
+    config
+        .set_str(&format!("branch.{branch}.merge"), &repo.branch)
+        .map_err(git_error)?;
+    Ok(())
 }
 
 /// The tracked remote Settings names (Tine never changes remote configuration).

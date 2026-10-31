@@ -141,6 +141,8 @@ export interface SeenPageChanges {
     previous_sibling_path: SeenBlockPath | null;
   }[];
 }
+export type GitCloneResult = { kind: "cloned"; root: string } | { kind: "auth-required" };
+
 export interface GitAutocommitStatus {
   available: boolean;
   /** The graph is inside a git work tree. */
@@ -174,6 +176,8 @@ export interface GitAutocommitStatus {
   line_endings?: GitLineEndingsProbe | null;
   /** The username signed in for the remote's host on this device. */
   signed_in?: string | null;
+  /** Explicit setup still needs to publish its first commit to the empty remote. */
+  setup_pending?: boolean;
 }
 
 export interface BackupInfo {

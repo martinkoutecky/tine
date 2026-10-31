@@ -35,6 +35,7 @@ mod file_lock;
 mod flight;
 mod flight_store;
 mod git_settings;
+mod git_setup;
 mod graph;
 mod graph_verification;
 #[cfg(test)]
@@ -1267,6 +1268,10 @@ pub fn run() {
             tine_open_devtools,
             tray::tray_apply,
             git_settings::git_autocommit_status,
+            git_setup::git_clone_graph,
+            git_setup::git_init_graph,
+            git_setup::git_finish_setup,
+            git_setup::git_setup_sign_in,
             git_settings::set_git_autocommit,
             git_settings::git_sync_now,
             git_settings::git_disable_line_endings,

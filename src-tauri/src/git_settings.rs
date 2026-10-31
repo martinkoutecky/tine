@@ -168,6 +168,9 @@ pub(crate) fn set_autocommit(
     policy: Policy,
     interval_minutes: u32,
 ) -> Result<GitStatus, String> {
+    if policy.commits() && crate::owner::git_sync::initial_push_pending(&slot.root_key) {
+        return Err("Finish repository setup before enabling automatic commits or sync.".into());
+    }
     let settings = GitSettings {
         policy,
         interval: std::time::Duration::from_secs(

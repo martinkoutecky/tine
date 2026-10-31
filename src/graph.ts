@@ -733,12 +733,12 @@ async function openPickedGraphPath(path: string): Promise<LoadGraphPathOutcome> 
  * narrated journal seed is best effort and its failure does not change a
  * loaded outcome. Creation/opening errors toast and return aborted; picker/parent errors
  * reject. Cost follows graph creation, templates and the graph load. */
-export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
+export async function chooseNewGraphParent(forClone = false): Promise<{ kind: "chosen"; dir: string } | { kind: "aborted" }> {
   const owner = bindingOwner();
   const platform = await platformKind();
   if (!owner()) return { kind: "aborted" };
   let dir: string | null;
-  if (platform === "ios") {
+  if (platform === "ios" || (platform === "android" && forClone)) {
     const picked = await readOwned(owner, backend().pickGraphFolder());
     if (picked.kind === "stale") return { kind: "aborted" };
     if (picked.value.status === "refused") {
@@ -746,6 +746,14 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
         msg("graph-choose-a-folder-inside-on-my-iphone"),
         "info"
       );
+      return { kind: "aborted" };
+    }
+    if (picked.value.status === "local-folder-required") {
+      pushToast(msg("graph-tine-needs-a-folder-on-the-device-s"), "info");
+      return { kind: "aborted" };
+    }
+    if (picked.value.status === "permission-requested" || picked.value.status === "permission-needed") {
+      pushToast(msg("graph-grant-all-files-access-for-tine-then"), "info");
       return { kind: "aborted" };
     }
     dir = picked.value.status === "picked" ? picked.value.path : null;
@@ -777,6 +785,14 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     }
     dir = prepared.path ?? dir;
   }
+  return { kind: "chosen", dir };
+}
+
+export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
+  const owner = bindingOwner();
+  const chosen = await chooseNewGraphParent();
+  if (chosen.kind === "aborted" || !owner()) return { kind: "aborted" };
+  const dir = chosen.dir;
   let root: string;
   let displayRoot: string | undefined;
   try {

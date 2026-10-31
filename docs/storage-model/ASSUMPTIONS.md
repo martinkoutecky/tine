@@ -325,6 +325,16 @@ rows against ProductionIo's HostIo methods in `io.rs`. Own primitives are
 counted along with raw writes, namespace mutations and syncs. A primitive's
 body has its own row; its caller's domain supplies the target policy.
 
+D-20261031-GCL adds one named `create-root` exception alongside
+`Store::create_graph`: `git_sync/clone.rs`'s `Operation::clone_on_volume`.
+It admits only a new/empty nonsymlink destination and checks its complete
+tree for names a folding volume cannot distinguish before checkout. This
+does not authorize writes to existing graph pages. Libgit2's internal clone,
+checkout and cleanup syscalls retain their native check-to-call race scope;
+the ledger is not a per-syscall containment proof. Init's `.gitignore` and
+first commit reuse their existing guarded owners; its local git config and
+the initial push's tracking ref are separately entered in the ledger.
+
 Rows marked `unguarded:A-ID` are findings, not claims of containment. Each
 must point to an unguarded assumption here. Classification and syntactic guard
 presence remain reviewed evidence: the census provides no taint analysis, call
