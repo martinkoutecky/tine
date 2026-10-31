@@ -5,7 +5,7 @@ import { backend } from "../backend";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
-import { deleteSelection, ensurePageLoaded, isSelected, selectedIds, node, pageByName, resetStore } from "../document";
+import { deleteSelection, ensurePageLoaded, isDirty, isSelected, selectedIds, node, pageByName, resetStore } from "../document";
 import { route, tabs } from "../router";
 import { installKeybindings } from "../keybindings";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -174,15 +174,22 @@ describe("D-20261023-VQ: editable hover preview", () => {
     }
   });
 
-  it("a read-only source keeps the read-only copy with a local fold", async () => {
+  it("a read-only source refuses editing and folds only its view after hydration", async () => {
     const { card, dispose } = await openPeek(defaultBlocks, { read_only: true }, false);
     try {
       await advance(100);
-      expect(card.querySelector(".ls-block:not(.ref-block)")).toBeNull();
       expect(card.textContent).toContain("Child");
+      const content = card.querySelector<HTMLElement>(".block-content")!;
+      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      content.click();
+      await advance(0);
+      expect(editor()).toBeNull();
       card.querySelector<HTMLElement>(".collapse-toggle")!.click();
       await vi.waitFor(() => expect(popup()!.textContent).not.toContain("Child"));
       expect(node("e1")!.collapsed).toBe(false);
+      expect(node("e1")!.raw).toBe("Editable text");
+      expect(isDirty("Probe")).toBe(false);
     } finally {
       dispose();
     }
