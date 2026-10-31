@@ -73,6 +73,33 @@
   text-decoration: none;
 }
 
+/* Someone else's comment or reply sits on a background of its own, one tint per
+   author name (authorTint in src/commentIdentity.ts), and its chip takes the same
+   colour; yours stay on the card's accent tint. The mixes are against the theme's
+   own colours, so each tint reads in light and dark themes. */
+.author-tint-0 { --author-color: #d97706; }
+.author-tint-1 { --author-color: #059669; }
+.author-tint-2 { --author-color: #9333ea; }
+.author-tint-3 { --author-color: #db2777; }
+.author-tint-4 { --author-color: #0891b2; }
+.author-tint-5 { --author-color: #65a30d; }
+.author-tint-6 { --author-color: #4f46e5; }
+.author-tint-7 { --author-color: #ea580c; }
+.author-chip.agent[class*="author-tint-"] {
+  color: color-mix(in srgb, var(--author-color) 70%, var(--text-primary));
+  background: color-mix(in srgb, var(--author-color) 18%, transparent);
+}
+.ls-block.comment-in-thread[class*="author-tint-"] > .block-main {
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--author-color) 13%, var(--bg-primary, transparent));
+}
+.ls-block.comment-card[class*="author-tint-"] {
+  background: color-mix(in srgb, var(--author-color) 7%, var(--bg-primary, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--author-color) 22%, transparent);
+}
+
 /* "Not yours": a block an agent wrote keeps a quiet mark at its content edge. */
 .ls-block.authored > .block-main > .block-content-wrapper {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);

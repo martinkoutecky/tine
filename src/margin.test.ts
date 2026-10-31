@@ -7,7 +7,8 @@ import { resetStore } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { pageByName } from "./document/model";
 import type { BlockDto } from "./types";
-import { isCommentId, marginNext, marginPrev, pageHasComment, stackThreads, threadRootOf } from "./margin";
+import { isCommentId, marginColumnWidth, marginNext, marginPrev, MARGIN_COLUMN_MAX, MARGIN_COLUMN_MIN, pageHasComment, stackThreads, threadRootOf } from "./margin";
+import { commentsFirst, nextVisible, prevVisible } from "./document";
 
 function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   const properties = blockRegions(raw, "md").properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
@@ -34,6 +35,46 @@ describe("stacking threads in the margin", () => {
     expect(tops).toEqual([10, 68, 106, 200]);
     for (let i = 1; i < items.length; i++) expect(tops[i]).toBeGreaterThanOrEqual(tops[i - 1] + items[i - 1].height + 8);
     tops.forEach((top, i) => expect(top).toBeGreaterThanOrEqual(items[i].anchor));
+  });
+});
+
+describe("the column's width (MARGIN-WIDTH, Martin 2026-10-31)", () => {
+  it("takes the pane's spare width beside the reading column, between the two bounds", () => {
+    expect(marginColumnWidth(1000, 810)).toBe(MARGIN_COLUMN_MIN);
+    expect(marginColumnWidth(1200, 810)).toBe(1200 - 810 - 32 - 16);
+    expect(marginColumnWidth(1600, 810)).toBe(MARGIN_COLUMN_MAX);
+  });
+
+  it("stays at the narrow end in wide mode or with an unknown reading width", () => {
+    expect(marginColumnWidth(2400, null)).toBe(MARGIN_COLUMN_MIN);
+  });
+});
+
+describe("inline comments sit right under their block (MARGIN-POS, GH #110)", () => {
+  const ellis = () => [
+    block("p", "123 needs a source", [
+      block("a", "456"),
+      block("b", "789"),
+      block("c", "abc", [block("d", "def")]),
+      block("k", "Which source?\nquote:: needs a source", [block("kr", "This one.\nauthor:: claude")]),
+    ]),
+    block("after", "next"),
+  ];
+
+  it("orders a block's comments before its other children, each group as stored", () => {
+    load(ellis());
+    expect(commentsFirst(["a", "b", "c", "k"])).toEqual(["k", "a", "b", "c"]);
+    const plain = ["a", "b", "c"];
+    expect(commentsFirst(plain)).toBe(plain);
+  });
+
+  it("the arrow keys walk the order shown: block, its comment thread, then its children", () => {
+    load(ellis());
+    const order: string[] = [];
+    for (let at: string | null = "p"; at !== null; at = nextVisible(at)) order.push(at);
+    expect(order).toEqual(["p", "k", "kr", "a", "b", "c", "d", "after"]);
+    expect(prevVisible("a")).toBe("kr");
+    expect(prevVisible("k")).toBe("p");
   });
 });
 

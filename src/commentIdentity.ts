@@ -30,6 +30,18 @@ export function isOwnAuthor(author: string): boolean {
   return own !== "" && normalizeAuthorName(author).toLowerCase() === own.toLowerCase();
 }
 
+/** How many author tints the stylesheet defines (`.author-tint-0` …, comments.css). */
+export const AUTHOR_TINTS = 8;
+
+/** The tint of a comment written by `author` (someone other than you): stable for
+ * a name across sessions and devices, ignoring case and spacing, so each person in
+ * a shared graph keeps one colour. Pure. */
+export function authorTint(author: string): number {
+  let h = 0;
+  for (const ch of normalizeAuthorName(author).toLowerCase()) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  return h % AUTHOR_TINTS;
+}
+
 /** Apply now and persist; a failed save rolls back and toasts (writePreference). */
 export function setCommentAuthorName(value: string): void {
   writePreference(nameSig, setNameSig, normalizeAuthorName(value), (next) => backend().setAppString(KEY, next), "comment author name");

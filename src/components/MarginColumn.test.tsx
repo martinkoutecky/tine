@@ -237,6 +237,69 @@ describe("the margin column on a wide main pane", () => {
     }
   });
 
+  it("on a narrow pane draws a block's comments right under it, before its other children (GH #110)", () => {
+    const { pane, dispose } = mount(commented(), 800);
+    try {
+      const p = blockEl(outline(pane), "p")!;
+      const rows = [...p.querySelectorAll<HTMLElement>(":scope > .block-children-container .ls-block")].map((el) => el.dataset.blockId);
+      expect(rows).toEqual(["c1", "r1", "c2", "kid"]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("someone else's comment or reply has a background of its own; yours keep the card's", () => {
+    const { pane, dispose } = mount(commented(), 800);
+    try {
+      const tinted = (id: string) => [...blockEl(outline(pane), id)!.classList].filter((c) => c.startsWith("author-tint-"));
+      expect(tinted("r1")).toHaveLength(1);
+      expect(tinted("c1")).toEqual([]);
+      const chip = blockEl(outline(pane), "r1")!.querySelector(".author-chip")!;
+      expect(chip.classList.contains(tinted("r1")[0])).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("widens the column into the pane's spare width (MARGIN-WIDTH)", () => {
+    const { pane, dispose } = mount(commented(), 1600, () => (
+      <div class="main-content-inner" style={{ "--tine-main-content-max-width": "810px" }}><Host /></div>
+    ));
+    try {
+      const inner = pane.querySelector(".main-content-inner") as HTMLElement;
+      expect(inner.style.getPropertyValue("--margin-column-width")).toBe("440px");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps a thread beside its passage while the commented block is edited, in any editor (MARGIN-POS)", () => {
+    const real = Element.prototype.getBoundingClientRect;
+    const at = (top: number) => ({ top, bottom: top + 20, left: 0, right: 100, width: 100, height: 20, x: 0, y: top, toJSON() {} }) as DOMRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      return at(this.classList.contains("comment-quote-anchor") ? 40 : 0);
+    };
+    try {
+      const { pane, dispose } = mount(commented());
+      try {
+        expect(thread(pane, "c1")!.style.top).toBe("40px");
+        // An editor without a textarea (the CodeMirror editor) and without the
+        // rendered marks: the thread must not snap to the block's top.
+        const row = blockEl(outline(pane), "p")!.querySelector<HTMLElement>(":scope > .block-main")!;
+        Object.defineProperty(row, "offsetHeight", { configurable: true, get: () => 60 });
+        for (const mark of [...row.querySelectorAll(".comment-quote-anchor")]) mark.replaceWith(...mark.childNodes);
+        row.classList.add("editing");
+        resized(outline(pane));
+        flushFrames();
+        expect(thread(pane, "c1")!.style.top).toBe("40px");
+      } finally {
+        dispose();
+      }
+    } finally {
+      Element.prototype.getBoundingClientRect = real;
+    }
+  });
+
   it("switches to the margin when the pane widens past the breakpoint", () => {
     let width = 800;
     loadSingle({ name: PAGE, kind: "page", title: PAGE, pre_block: null, blocks: commented() });
