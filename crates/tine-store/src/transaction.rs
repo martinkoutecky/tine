@@ -633,7 +633,7 @@ impl<'a> PagePlan<'a> {
     /// raw content, unlike `save_page`'s structured `PageDto` serialization.
     /// Queueing bytes copies O(input bytes); commit writes and syncs them and
     /// can spend O(P) on publication metadata.
-    /// It checks target safety, UTF-8, the 64 MiB input cap, and the 512-level
+    /// It checks target safety, UTF-8, the 64 MiB input cap, and the 128-level
     /// source depth cap for page files, but does not run the Org round-trip
     /// editability check because no prior page is rewritten.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {

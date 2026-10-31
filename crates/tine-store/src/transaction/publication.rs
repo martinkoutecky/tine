@@ -245,7 +245,7 @@ impl PagePlan<'_> {
                         && source_plans
                             .get(&id)
                             .is_some_and(|&index| matches!(steps[index], Step::Rewrite { .. }));
-                    // A held page's reservation publishes its index, and
+                    // A held page's host publishes its index, and
                     // its row comes from those bytes (A-V4, (G)).
                     let graph = &self.store.graph;
                     let owned = graph.held_key(&path).and_then(|key| {

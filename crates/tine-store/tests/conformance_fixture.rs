@@ -118,7 +118,7 @@ pub(crate) fn conserved(
     );
 }
 
-/// Retained transaction/host namespaces, not the entire trash tree. These
+/// Transaction/host recovery namespaces, not the entire trash tree. These
 /// schedules contain page moves/merges, asset trash, and undo conflict copies.
 pub(crate) fn transaction_recovery(root: &Path) -> Vec<PathBuf> {
     ["pages", "assets", "conflicts"]

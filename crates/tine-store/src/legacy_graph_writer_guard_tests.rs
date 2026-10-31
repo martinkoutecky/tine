@@ -37,7 +37,8 @@ const LEGACY_WRITERS: &[&str] = &[
 // callers: warm_cache_cancellable in store.rs/watch.rs; invalidate_cache in
 // restore.rs/transaction.rs; sync_file_internal and forget_file_internal in
 // watch.rs; transaction_publish_page in transaction.rs. All other test writes
-// must go through Store. Transaction::save_page is a production write boundary.
+// must go through Store. PagePlan::save_page is plan-only: the page host
+// performs page writes.
 const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
     (
         "crates/tine-store/src/gh221_malformed_html_tests.rs",

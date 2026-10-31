@@ -1,7 +1,7 @@
 //! Page rename, stray rescue, merge and deletion (a deletion is the page
 //! host's, STEP3 §12, after this client's identity checks). The caller names
-//! the operation; this client resolves identities and commits one guarded
-//! store transaction or hands the page host one operation. It needs no graph path, lock,
+//! the operation; this client resolves identities and hands the page host one
+//! operation (or commits a guarded non-page transaction). It needs no graph path, lock,
 //! cache state, or write protocol.
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,7 @@ mod rename_plan;
 use rename_plan::{plan_rename, RenamePlan};
 
 impl RenamePlan {
-    /// Input policy stays at the census writer boundary (STEP3 §7).
+    /// Input policy of the host operation (STEP3 §7).
     fn input(&self) -> Input {
         if self.moved_titles_to_rebind.is_empty() {
             Input::Flush
@@ -146,7 +146,7 @@ fn error(kind: io::ErrorKind, message: &str) -> io::Error {
 }
 
 /// A rename still finishing holds these pages: the host rename's `Busy`,
-/// and a retained writer's past its bound (M6). In-scope scenario: a disk
+/// and a host operation's past its bound (M6). In-scope scenario: a disk
 /// error keeps failing the rename's writes, or an external editor or a sync
 /// service conflicted a referrer (`docs/storage-contract.md`, I-8).
 pub(crate) fn rename_busy() -> io::Error {
@@ -972,7 +972,7 @@ fn commit_home_after(
 
 /// A rename's `:default-home` move: `logseq/config.edn` (the meta area,
 /// never a page file) in its own transaction after the host's operation,
-/// so no page reservation applies; a merged source (`merged_old`) keeps it
+/// so no page-host fence applies; a merged source (`merged_old`) keeps it
 /// (`home_after`). The new home name, if it moved.
 fn commit_home(
     store: &Store,

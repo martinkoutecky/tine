@@ -1,5 +1,5 @@
-//! REVIEW-3b-P2b R2 (STEP3-DESIGN D4, no chaining): a retained writer
-//! (STEP3 §7) is a second operation like a host rename or delete, so one over
+//! REVIEW-3b-P2b R2 (STEP3-DESIGN D4, no chaining): a page writer's
+//! host operation (STEP3 §7) is a second operation like a host rename or delete, so one over
 //! a page of a running rename's order waits until that order ends. Here the
 //! rename's destination has published (witnessed, clean), but an external
 //! edit made a referrer conflict, so the source's deletion still waits for
@@ -8,7 +8,7 @@
 //! and the window taking disk for the referrer ends the order and lets the
 //! merge run. The wait is bounded (M6): a merge still waiting
 //! `OPERATION_WAIT` after its start is told the rename is still finishing,
-//! with nothing written or reserved.
+//! with nothing written.
 
 use std::path::Path;
 use std::sync::{mpsc, Arc};
@@ -161,10 +161,10 @@ fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
 }
 
 /// M6 (STEP3-DESIGN "Manager decisions on REVIEW-progress-plan", R4
-/// interpretation 2): a retained writer over a rename that is still
+/// interpretation 2): a host operation over a rename that is still
 /// finishing waits at most `OPERATION_WAIT` from its start, then is told
 /// so (the host rename's own `Busy` wording) with nothing written and
-/// nothing left reserved. In-scope scenario: an external editor or a sync
+/// nothing left held. In-scope scenario: an external editor or a sync
 /// service conflicted a referrer, which holds the rename until the user
 /// resolves it. An unrelated writer is not held up, and once the order
 /// ends the same merge runs.

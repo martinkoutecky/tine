@@ -15,7 +15,7 @@ pub(super) struct RenamePlan {
     pub(super) ref_merge: bool,
     pub(super) candidates: Vec<PageId>,
     /// The candidates `pages` read to find the plan's write set, reused by
-    /// the commit so it writes exactly what was reserved (A-R3).
+    /// the commit so it writes exactly what was planned (A-R3).
     pub(super) reads: HashMap<PageId, (String, FileRev)>,
     /// Referrers `pages` leaves byte-identical for their VCS conflict markers.
     pub(super) skipped: Vec<PageId>,
@@ -42,7 +42,7 @@ impl RenamePlan {
             let file = id.file();
             let (content, rev) = read_text(store, &file)
                 .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
-            // As `commit_rename` decides: a referrer is written when the
+            // A referrer is written when the
             // transaction's rewrite (using the page's source format)
             // changes it and it carries no VCS conflict markers.
             let syntax = Format::from_path(id.as_str().as_ref());

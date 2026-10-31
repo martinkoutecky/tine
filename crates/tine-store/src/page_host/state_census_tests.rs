@@ -542,7 +542,7 @@ fn census(files: &BTreeMap<String, String>) -> (Census, BTreeMap<String, String>
 }
 
 /// Violations: writes outside the allowed functions, unsupported forms, a
-/// page writer that does not mark, a census writer that does not index.
+/// page writer that does not mark, a page writer that does not index.
 fn violations(found: &Census, calls: &BTreeMap<String, String>) -> Vec<String> {
     let mut out = Vec::new();
     for ((function, field), uses) in found {

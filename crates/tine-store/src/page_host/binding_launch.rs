@@ -37,7 +37,7 @@ impl PageHost {
         })
     }
 
-    /// A host for tests outside this crate (retained writers in
+    /// A host for tests outside this crate (host operations in
     /// tine-graph-features, the app's slot fixtures) under `app_data`, mail
     /// discarded.
     #[cfg(any(test, feature = "test-faults"))]

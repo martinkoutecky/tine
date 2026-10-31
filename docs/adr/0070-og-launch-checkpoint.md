@@ -302,9 +302,10 @@ the full build:
   but opening the page reads the disk. Tests:
   `checkpoint_tests::r5_an_unseen_rewrite_is_served_until_rescan_but_page_reads_see_disk`
   and `a_same_size_same_mtime_rewrite_is_caught_by_ctime`.
-- **First page open waits.** Page opens take the store writer, which the launch
-  diff holds. A page opened after the checkpoint is served therefore waits for
-  Ready.
+- **First page open does not wait for the launch diff.** A page open takes
+  neither the writer nor the launch (see "Stale window" above): it parses the
+  file directly. Only a name that the index alone can resolve (an alias, a
+  `title::` page) waits for Ready.
 - **Disk use.** About 20 MB of app data for a 13k-page graph. Removing a graph
   from Tine (`forget_known_graph`) deletes its checkpoint, best-effort: a
   failure is ignored and never fails the removal

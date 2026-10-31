@@ -94,7 +94,7 @@ fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
 }
 
 /// DESIGN §3.1, the create shape: the copy plans the first page's copy over
-/// no file, and the host cannot apply it while another reservation holds
+/// no file, and the host cannot apply it while another test pause holds
 /// the page. Its file appears meanwhile (an external editor or a sync
 /// delivery). Released, the operation finds the page no longer absent
 /// (`Changed`), the copy replans, and reports the page skipped: the
@@ -115,7 +115,7 @@ fn a_guide_page_that_appears_after_the_plan_is_never_overwritten() {
         });
         assert!(
             finished.recv_timeout(Duration::from_millis(500)).is_err(),
-            "the copy wrote while another reservation holds {rel}"
+            "the copy wrote while another test pause holds {rel}"
         );
         assert!(!g.root.join(&rel).exists());
         fs::write(g.root.join(&rel), "- arrived\n").unwrap();
@@ -201,7 +201,7 @@ fn a_guide_twin_that_arrives_after_the_plan_is_reported_skipped() {
         });
         assert!(
             finished.recv_timeout(Duration::from_millis(500)).is_err(),
-            "the copy wrote while another reservation holds {rel}"
+            "the copy wrote while another test pause holds {rel}"
         );
         assert!(!g.root.join(&rel).exists());
         fs::write(g.root.join(&twin), "* delivered twin\n").unwrap();

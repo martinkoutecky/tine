@@ -186,7 +186,7 @@ fn clear_faults(live: &Live) {
 
 /// (running orders, caller slots).
 /// Read through the driver's queue, after every notice sent before it (a
-/// slot's or a reservation's release).
+/// slot's release).
 fn census(host: &PageHost) -> (usize, usize) {
     let read = host.driver.shared.read(|state| {
         let order = &state.progress.host.order;
@@ -495,7 +495,7 @@ fn a_rename_whose_draft_fails_changes_nothing() {
     assert!(!live.root.join(NEW).exists());
     live.host.stop();
 }
-/// M6: the operations the retained writer's bound covers. A full rename and
+/// M6: the operations the host operation's bound covers. A full rename and
 /// a references-only rename (the source has no file) are renames while
 /// their operation worker runs; a deletion writes no page and is not, so a
 /// writer over it still waits for it.

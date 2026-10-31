@@ -396,7 +396,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
 
 /// STEP3 §7, F10, E17: with a host the command routes a single page's
 /// rename, with or without a file, to the host's own operation; a namespace
-/// rename or a merge to a retained transaction that flushes unsaved input
+/// rename or a merge to a host operation that flushes unsaved input
 /// first; and an interrupted title completion to one that refuses it.
 #[test]
 fn a_hosted_rename_routes_by_the_plan_shape() {
@@ -551,8 +551,8 @@ fn a_config_change_between_targets_and_write_set_replans() {
 /// H-Q3 (A-W1, B2), the retry bound: a config that changes during every
 /// plan exhausts the existing four attempts with no write; once it is
 /// stable the rename goes through, in the format it was planned in. Each
-/// attempt now plans more than once (the retained writer's discovery under
-/// its reservation, Q-P2b-1), so the bound is counted in attempts. A
+/// attempt now plans more than once (the host operation's discovery under
+/// its admission, Q-P2b-1), so the bound is counted in attempts. A
 /// rename of several pages is one host operation (host-only-writer S2):
 /// the rename's one attempt hands it to `retained::operation`, whose four
 /// attempts are the bound.

@@ -472,7 +472,7 @@ fn an_open_reply_says_whether_the_path_is_proved_the_entry() {
     live.host.stop();
 }
 /// A distinct new entry with a fresh key (REVIEW-3a4 #1) that then moved
-/// on to `pages/b.md` (respelled under its reservation), with `body` typed
+/// on to `pages/b.md` (respelled by a host operation), with `body` typed
 /// into it and its saves failing: unsaved input under a key that is
 /// neither its spelling nor its spelling plus a suffix.
 pub(super) fn typed_fresh_entry(live: &Live, body: &str) -> PageKey {

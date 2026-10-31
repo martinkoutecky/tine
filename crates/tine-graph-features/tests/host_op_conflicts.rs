@@ -401,9 +401,9 @@ fn a_fold_with_a_host_writes_the_folded_graph() {
     }
 }
 
-/// While a reservation holds the winner, the fold (with a host) starts and
+/// While a test pause holds the winner, the fold (with a host) starts and
 /// waits; `change` then edits the graph on disk, as an external editor or a
-/// sync service would after the review, and the reservation is released.
+/// sync service would after the review, and the pause is released.
 /// The fold's result, and the graph after it.
 fn fold_changed_meanwhile(
     fold: Fold,

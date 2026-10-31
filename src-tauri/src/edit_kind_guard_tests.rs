@@ -150,8 +150,8 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     let destinations = [
         // A rename's transaction is `rename_transaction`: a rename of
         // several pages plans it as a host operation (`multi_rename`), a
-        // case-only spelling moves run on the host driver
-        // (`commit_rename`); a single page's rename is the host's.
+        // case-only spelling moves run on the host driver;
+        // a single page's rename is the host's.
         (PAGES, "rename_page_after_inventory", "multi_rename("),
         (PAGES, "multi_rename", "rename_transaction("),
         (
@@ -175,7 +175,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "page_plan(Some(tine_store::EditKind::ReplacePage))",
         ),
         // The migration's transaction is `migrate_one`, one per eligible
-        // proposal (under a page host's reservation of its two pages).
+        // proposal (a non-page transaction: it refuses when either file is a page).
         (JOURNALS, "migrate_journal_filenames", "migrate_one("),
         (
             JOURNALS,

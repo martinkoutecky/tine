@@ -2,8 +2,8 @@
 //! 2026-10-19, F2 and F5). Seeded mixed sequences drive a real `Store` and a
 //! real `PageHost` (its driver thread, publication consumer and the store's
 //! watcher in Notify or Poll mode): window opens, submits, keep-mine,
-//! discards and closes; host renames (with referrers) and deletes; retained
-//! transactions under a reservation; outside writers rewriting, creating and
+//! discards and closes; host renames (with referrers) and deletes; multi-page
+//! host operations; outside writers rewriting, creating and
 //! deleting held and unheld pages and journals and editing `config.edn`
 //! (journal formats); duplicate title claimants; failed index publications
 //! and their retries. Each step runs one to three actions without a barrier
@@ -792,8 +792,8 @@ impl Run<'_> {
 
     /// Each held page's owner's last published bytes ((G): its index). The
     /// book keeps a row for a page no longer held until it evicts the key;
-    /// while a conflict holds the host, that row can predate a retained
-    /// transaction's write, whose index stands (V2): an unheld page's
+    /// while a conflict holds the host, that row can predate a host
+    /// operation's write, whose index stands (V2): an unheld page's
     /// reference is its file.
     fn owned(&self) -> BTreeMap<String, Text> {
         let state = self.live.host.driver.shared.state_for_tests();

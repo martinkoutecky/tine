@@ -16,9 +16,7 @@ pub(super) struct Bridge {
 impl Sink for Bridge {
     /// Under the writer, which orders this against every other index writer
     /// and excludes a running reconcile: claimed keys leave the watcher,
-    /// publications apply in host order unless a reservation took their key
-    /// (its transaction publishes; checked under the writer, so it cannot
-    /// commit before a publication applied here), and evicted keys the
+    /// publications apply in host order, and evicted keys the
     /// consumer still does not own return to the watcher.
     fn deliver(
         &mut self,

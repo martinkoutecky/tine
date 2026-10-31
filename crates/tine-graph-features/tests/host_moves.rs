@@ -61,9 +61,9 @@ fn files(root: &Path, area: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Run `write` while another reservation holds `held`: the writer plans
+/// Run `write` while another test pause holds `held`: the writer plans
 /// from `held`'s current bytes and waits at the host's admission. Then an
-/// external editor rewrites `held` to `edited`, and the reservation ends.
+/// external editor rewrites `held` to `edited`, and the pause ends.
 /// The writer's result.
 fn edited_between_plan_and_admission(
     f: &Hosted,
@@ -80,7 +80,7 @@ fn edited_between_plan_and_admission(
         });
         assert!(
             finished.recv_timeout(Duration::from_millis(500)).is_err(),
-            "the writer finished while another reservation holds {held}"
+            "the writer finished while another test pause holds {held}"
         );
         fs::write(f.root.join(held), edited).unwrap();
         drop(reservation);

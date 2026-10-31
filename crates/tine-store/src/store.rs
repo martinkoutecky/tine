@@ -2197,7 +2197,7 @@ pub enum StoreError {
     /// A selected streaming asset is a symlink.
     StreamSymlink(FileId),
     /// Page bytes are invalid UTF-8, or page parse validation rejected source
-    /// nesting deeper than 512 levels.
+    /// nesting deeper than 128 levels.
     Undecodable,
     /// A page parser panicked; message describes the caught failure. Ordinary
     /// malformed text usually remains parseable, while depth and byte limits

@@ -412,7 +412,7 @@ fn store::WholeGraph::templates
 
 ## Page host (ceiling: 52)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
-# for its retained-writer callers (census writers in tine-graph-features, backup restore in
+# for its page-writer callers (host operations in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
 # their wire types (src-tauri page_commands.rs, one command per verb, STEP3 §3), the mail
 # bridge (PageMail, retarget) and the binding's retirement (orphan_stop, stop_abort,
@@ -451,7 +451,7 @@ enum page_host::PageOperation
 enum page_host::StopState
 # test-oracle: tine-graph-features tests bind a host; production starts one through `start`.
 fn page_host::PageHost::start_for_tests
-# test-oracle: retirement and admission fixtures pause host work without a retained writer.
+# test-oracle: retirement and admission fixtures pause host work without a page writer.
 fn page_host::PageHost::pause_for_tests
 enum page_host::Input
 enum page_host::RenameRefusal
@@ -460,7 +460,7 @@ struct page_host::Stopped
 fn page_host::Stopped::relaunch
 # host-only-writer P2 (DESIGN §3.1/3.1a, 38 -> 47): one host operation (`apply` of a `HostOp`
 # with its fields, `Expected` bytes, `Effect`, `ApplyRefusal`) replaces a writer's reservation
-# window. A HostOp carries all expected bytes/effects; S4 removes caller-side reservations.
+# window (historical: caller-side reservations are gone). A HostOp carries all expected bytes/effects.
 struct page_host::HostOp
 field page_host::HostOp.pages
 field page_host::HostOp.moves

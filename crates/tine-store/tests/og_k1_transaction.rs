@@ -2,8 +2,8 @@
 //! K1 (I-2): a merge raced by an honest external editor in another process,
 //! and killed mid-way, never retires the only live payload. The merge is a
 //! host operation (host-only-writer S1): the editor rewrites the survivor
-//! after the merge planned and before the host admits it (another
-//! reservation holds the survivor meanwhile), and a kill lands at one of
+//! after the merge planned and before the host admits it (a test
+//! pause holds the survivor meanwhile), and a kill lands at one of
 //! the host's phases; the relaunched host completes the operation.
 use std::{
     fs,
@@ -54,7 +54,7 @@ fn k1_merge_race_worker() {
         std::thread::sleep(Duration::from_millis(300));
         assert!(
             !merge.is_finished(),
-            "the merge wrote under another reservation"
+            "the merge wrote under another test pause"
         );
         fs::write(format!("{barrier}.ready"), b"planned").unwrap();
         wait_for(&format!("{barrier}.resume"));
