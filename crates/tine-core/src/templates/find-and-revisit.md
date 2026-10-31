@@ -70,6 +70,12 @@ icon:: 🔍
     @block and content match 'budget -draft' and any(ancestors, content match 'project') and any(parent, any(descendants, content match 'approved'))
     ```
   - `content match` accepts the same words, `OR`, exclusions, quoted phrases and `/regex/` as search. Combine conditions on ancestors and descendants to search both directions. These relations belong to TQL; ordinary quick-search syntax and the result layout stay as before.
+  - 6. Let an AI assistant write the query. You do not have to learn the syntax first: describe in plain words what you want to find, and ask an assistant (ChatGPT, Claude or any other) for the TQL. Copy this, replace the last line with your own words, and send it:
+  - ```text
+    I use Tine, an outliner for Logseq-style Markdown graphs. Its queries are written in TQL: SQLite expression syntax over a small fixed vocabulary, starting with @block or @page and then conditions joined with and, or and not. The reference is the "Query text (TQL)" section of https://tine.page/guide/workflows-find-and-revisit.html. Read it first, then write one TQL query for what I describe. Give only the query in a code block, and say which parts you were unsure of.
+    What I want to find: (describe it here)
+    ```
+  - Paste the answer into **⋯ → Edit as text**. Tine re-reads it as you type and names any word it does not know, so a wrong guess shows up as a message instead of quietly running as something else. Look at the result list before you press **Save query text**.
   - What you should see: an unknown word is named, not swallowed. When the message comes with a place in the text, a **Show me** button beside it selects exactly that much of what you typed. A query with a word Tine could not read returns **no results** — its result area says "Tine didn't understand part of this query, so it returned no results" — rather than quietly running a shorter query.
 - ## Property types
   - 1. A property key means more when Tine knows what its values ARE. Open a property in **Edit as visual query** and Tine names the type it has observed across your graph — `text`, `number`, `date`, `checkbox`, or `ref` (a page link) — and says `list of …` when the key normally holds several values at once.

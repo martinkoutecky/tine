@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Zoom in on block** and **Zoom out one level** commands (#799). Both are in the command palette and in Settings → Keyboard shortcuts, and start unbound so you choose the keys (OG's own keys are Tine's Back / Forward). Zoom in acts on the selected block or the block you are editing and keeps the caret in it; Zoom out steps from a zoomed block to its parent, then to the page, and does nothing on the page itself, so it can be pressed repeatedly. Each works in the pane you are in, including a split pane.
 - A **Reload window** command, unbound, for reloading the app on purpose (#797).
 - Page menu: **Copy as ▸ → Copy page embed** copies `{{embed [[Page]]}}`, the page counterpart of a block's **Copy block embed** (GH #418).
+- The Guide (Find and revisit → Query text (TQL)) now says you can let an AI assistant write your TQL, with a short prompt to copy: what TQL is, where its reference lives, and what you want to find (#551).
 
 ### Changed
 
@@ -32,6 +33,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A block inside a grid cell now looks and works as it does on a page (#782). Task markers with their checkbox, priorities, SCHEDULED and DEADLINE chips and properties show in the cell and in every block nested under it, however deep; ticking a checkbox in a cell saves the new marker. Nested blocks have the page's bullet and indent one fixed step per level instead of a step that grew with each level, so deep outlines no longer run off the cell. A sub-grid inside a cell is unchanged.
+- The Table view of a query (and of a block's children) draws each block as the page does (#551). A Markdown list, quote, code block or table inside a result used to appear as source text (`* apples * pears`); it is now rendered.
 - Ctrl/Cmd+R and F5 no longer reload the whole app on Windows (#797). The webview's built-in reload ran on a stray Ctrl+R, discarded the screen state, and could not be changed in Settings → Keyboard shortcuts. Tine now consumes these keys; while editing, Ctrl/Cmd+R is **Comment on selected text**, which is listed there and can be rebound or cleared, and **Reload window** reloads on request.
 - Settings → Journals: with a Journal sections page, the note under **Agenda window** no longer runs off the right edge of the Settings pane and clips **Open page**. It now wraps inside the pane, on desktop and phone widths (GH #808).
 - "Expand children (one level)" and "Collapse children" now work on a query block (#792). They open and fold the query's result rows one level at a time (the hit rows first, then the rows below them), and the query block itself folds and opens as the last step; a query folded only by `{:collapsed? true}` in its text now opens. Result rows fold locally, as their own arrows do, so the page file is not changed. Table and board views and the table of a `#+BEGIN_QUERY` block have no foldable rows, so the commands do nothing there.

@@ -185,8 +185,9 @@ try {
       };
     }, selector);
     fs.writeFileSync(`${ARTIFACTS}/results-${name}.json`, `${JSON.stringify(results, null, 2)}\n`);
-    expect(results.ul === 2, `${name}: the bullet list in a result must render as 2 <li>, got ${results.ul}; text: ${results.text}`);
-    expect(results.ol === 2, `${name}: the numbered list in a result must render as 2 <li>, got ${results.ol}; text: ${results.text}`);
+    // A Board card shows only the block's first line by design, so lists are required as <li> in List and Table only.
+    if (name !== "FoundBoard") expect(results.ul === 2, `${name}: the bullet list in a result must render as 2 <li>, got ${results.ul}; text: ${results.text}`);
+    if (name !== "FoundBoard") expect(results.ol === 2, `${name}: the numbered list in a result must render as 2 <li>, got ${results.ol}; text: ${results.text}`);
     expect(!/\* apples|1\. first/.test(results.text ?? ""), `${name}: list markers must not appear as source text: ${results.text}`);
   }
 } finally {

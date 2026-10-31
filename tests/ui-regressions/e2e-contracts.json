@@ -911,6 +911,15 @@
       ],
       "stability":"burn-in"
     },
+    "scripts/e2e-cells-results-render.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "A block inside a grid cell looks and behaves as the same block does on a page: nested children at every depth with a steady indent and a bullet, task markers with a working checkbox, priority, SCHEDULED chips and properties, and a hosted sub-grid; ticking a task in a cell saves the DONE marker.", "blocking": true, "authority": "ADR 0031 (a cell holds ordinary blocks); editable-everywhere principle, Martin 2026-10-23; GH #782" },
+        { "class": "core-operation", "userOutcome": "A Markdown list inside a query result's block is drawn as a list in the List and Table views, not as source text; Board cards show the block's first line.", "blocking": true, "authority": "OG query results render the block body as the page does; GH #551 item 3" }
+      ],
+      "acceptableVariations": ["Cell height, the exact indent step (any steady step under 45px), bullet size and chip styling may evolve while nesting, markers, chips, properties and the checkbox stay visible and working.", "The Table title cell may clamp long bodies."],
+      "nonRequirements": ["Pixel-exact match with the outline, collapse state of nested blocks inside a cell, or the legacy table view."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-query-nested-rows.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "A query's Table, Board, List and result count answer one membership: a task nested under a task that also matches is not a row of its own (it shows inside its parent in the List), and a task nested under a block that does not match is its own row, including after the query is narrowed so its parent stops matching.", "blocking": true, "authority": "OG tree/filter-top-level-blocks as applied by query/result.cljs to table and list alike; ADR 0042; GH #651" }

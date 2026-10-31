@@ -2473,6 +2473,42 @@ mod external_link_guide_tests {
 }
 
 #[cfg(test)]
+mod tql_assistant_guide_tests {
+    /// GH #551 (EllisMorrow): TQL's learning barrier is mostly gone when an assistant writes the query, so the
+    /// Guide says so and gives a prompt to copy: what TQL is, where the reference lives, and the ask.
+    #[test]
+    fn guide_offers_a_copyable_prompt_for_an_assistant_to_write_tql() {
+        let guide = include_str!("templates/find-and-revisit.md");
+        for outcome in [
+            "Let an AI assistant write the query",
+            "Its queries are written in TQL",
+            "https://tine.page/guide/workflows-find-and-revisit.html",
+            "\"Query text (TQL)\" section",
+            "What I want to find:",
+            "before you press **Save query text**",
+        ] {
+            assert!(
+                guide.contains(outcome),
+                "GH #551 Guide is missing {outcome}"
+            );
+        }
+        let prompt = guide
+            .split("```text\n")
+            .nth(1)
+            .and_then(|rest| rest.split("```").next())
+            .expect("the prompt is a fenced block");
+        assert!(
+            prompt.contains("@block or @page"),
+            "the prompt names the two row kinds"
+        );
+        assert!(
+            prompt.trim_start().starts_with("I use Tine"),
+            "the prompt opens by saying what Tine is"
+        );
+    }
+}
+
+#[cfg(test)]
 mod asset_manifest_tests {
     use super::*;
 

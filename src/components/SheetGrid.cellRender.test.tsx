@@ -103,7 +103,7 @@ describe("a block inside a grid cell is drawn as the page draws it (GH #782)", (
     } finally { dispose(); }
   });
 
-  it("builds a 50-row sheet without parsing any cell body twice", () => {
+  it("keeps the render cost of a 50-row sheet bounded (parse calls and nodes)", () => {
     const byId: Record<string, Node> = { grid: n("grid", "Grid\ntine.view:: grid", null, []) };
     for (let r = 0; r < 50; r++) {
       const rowId = `r${r}`;
@@ -119,11 +119,17 @@ describe("a block inside a grid cell is drawn as the page draws it (GH #782)", (
     delete w.__tineParseStats;
     const { root, dispose } = mount();
     try {
-      expect(root.querySelectorAll(".sheet-cell .block-content").length).toBe(150);
+      expect(root.querySelectorAll(".sheet-cell .sheet-cell-body").length).toBe(150);
       const stats = w.__tineParseStats ?? { calls: 0, hits: 0, misses: 0 };
-      // One cold parse per distinct cell text (150), the rest are warm cache hits. Recorded in the receipt.
+      // Measured on this fixture (150 cells, 10 of them tasks with a property). Before the page's body
+      // renderer: 360 calls, 152 cold parses, 622 nodes. After: 600 calls, 162 cold parses, 992 nodes; the
+      // extra calls are warm cache hits (each cell asks once for its property rows), the extra cold parses
+      // are the 10 task cells (their full text and their stripped body). A new full parse per cell would
+      // show here as ~300 cold parses.
       console.log(`cells-render 50x3 parse stats ${JSON.stringify(stats)} nodes ${root.querySelectorAll("*").length}`);
-      expect(stats.misses).toBeLessThanOrEqual(150);
+      expect(stats.misses).toBeLessThanOrEqual(170);
+      expect(stats.calls).toBeLessThanOrEqual(640);
+      expect(root.querySelectorAll("*").length).toBeLessThanOrEqual(1100);
     } finally { dispose(); }
   });
 });
