@@ -510,7 +510,7 @@ jobs:
   # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
   # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
   android-git-storage:
-    name: Android git on shared storage (API ${{ matrix.api }})
+    name: Android git on shared storage (API ${{ matrix.image || matrix.api }})
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -519,10 +519,14 @@ jobs:
       matrix:
         api: [33, 35]
         target: [default]
-        # Android 16, the GH #811 reporter's: no AOSP default image is
-        # published for it, so the Google APIs image (Google's MediaProvider).
+        # Android 16, the GH #811 reporter's, on the Google APIs image (the
+        # MediaProvider module devices ship). 36.1 is Android 16 QPR2, whose
+        # MediaProvider can use the kernel's FUSE passthrough when exposed.
         include:
           - api: 36
+            target: google_apis
+          - api: 36
+            image: "36.1"
             target: google_apis
     env:
       CARGO_BUILD_JOBS: "2"
@@ -573,6 +577,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
+          system-image-api-level: ${{ matrix.image || matrix.api }}
           arch: x86_64
           target: ${{ matrix.target }}
           emulator-boot-timeout: 300
@@ -583,7 +588,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-git-storage-api${{ matrix.api }}-${{ github.run_attempt }}
+          name: android-git-storage-api${{ matrix.image || matrix.api }}-${{ github.run_attempt }}
           path: artifacts/android-git-storage
           if-no-files-found: warn
           retention-days: 14
