@@ -576,8 +576,8 @@ for (const view of ["table", "board", "grid"] as const) {
   });
 }
 
-/** Surfaces known to do per-keystroke work that grows with page/result/row count (the sweep notes name each computation). */
-const GROWS = new Set([
+/** Former R1-02 / C3-01 growers: guard both text reads and computation runs. */
+const FIXED_RESIDUE = new Set([
   "journals feed (today) with compact task summary",
   "TodayTaskSummary component alone (page edited elsewhere)",
   "in-page find open with a query (routed page)",
@@ -586,7 +586,9 @@ const GROWS = new Set([
   "sheet table view, N rows (edit a row)",
   "sheet board view, N rows (edit a row)",
 ]);
-/** The default (fast) set: zoom/plain-page controls, the compact-summary grower, and the fixed large-subtree window. */
+/** No known per-keystroke growers remain in the sweep. Keep the ratchet for new investigations. */
+const GROWS = new Set<string>();
+/** The default (fast) set: zoom/plain-page controls, compact summary, and the fixed large-subtree window. */
 const FAST = new Set([
   "routed page",
   "zoomed block (routed), edit the zoom root",
@@ -707,6 +709,10 @@ describe("keystroke scaling", () => {
         } else {
           expect(big.foreignRaw, `${surface.name}: per-keystroke reads of other blocks' text grow with size (${small.foreignRaw} -> ${big.foreignRaw}): the GH #248 shape`)
             .toBeLessThanOrEqual(small.foreignRaw * 1.25 + 4);
+          if (FIXED_RESIDUE.has(surface.name)) {
+            expect(big.runs, `${surface.name}: per-keystroke computations grow with size`)
+              .toBeLessThanOrEqual(small.runs * 1.25 + 8);
+          }
         }
       }, 240_000);
     }

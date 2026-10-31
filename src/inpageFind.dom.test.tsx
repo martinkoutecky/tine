@@ -125,6 +125,12 @@ describe("in-page find DOM scoping", () => {
     stepInPageFind(1); refreshInPageFindHighlights();
     expect(document.querySelectorAll(".inpage-find-active-block")).toHaveLength(1);
     expect(document.querySelector(".inpage-find-active-block")?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId).toBe("pane-2");
+    setDoc("byId", "shared", "raw", "no match");
+    expect(inPageFindMatches()).toEqual([]);
+    setDoc("byId", "shared", "raw", "needle needle");
+    expect(inPageFindMatches().map(match => [match.scopeId, match.start])).toEqual([
+      ["main", 0], ["main", 7], ["pane-2", 0], ["pane-2", 7],
+    ]);
   });
 
   it("GH #559: a sidebar block searches its subtree without unrelated page siblings", () => {

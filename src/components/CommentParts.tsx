@@ -17,7 +17,7 @@ import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { openContextMenu } from "../ui";
 import { beginDrag } from "./blockGestures";
-import { QuoteHighlightContext, quotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
+import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
 
 /** Whether the block under `parentId` belongs to a comment's thread: some
@@ -154,7 +154,8 @@ function sameRanges(a: readonly QuotedRange[], b: readonly QuotedRange[]): boole
 export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; children: () => JSX.Element }): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
   // the parent's text runs.
-  const ranges = createMemo(() => quotedSourceRanges(props.parentId, props.format), [], { equals: sameRanges });
+  const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format);
+  const ranges = createMemo(observedRanges, [], { equals: sameRanges });
   return (
     <Show when={props.when} fallback={props.children()}>
       <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges }}>

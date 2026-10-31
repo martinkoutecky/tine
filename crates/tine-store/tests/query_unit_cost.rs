@@ -26,11 +26,13 @@ struct Counting;
 static COUNTING: AtomicBool = AtomicBool::new(false);
 static ALLOCATED: AtomicU64 = AtomicU64::new(0);
 static WATCHER_ALLOCATED: AtomicU64 = AtomicU64::new(0);
+static ALLOCATION_CALLS: AtomicU64 = AtomicU64::new(0);
 
 fn note(bytes: u64) {
     if cost_counters::on_watcher() {
         WATCHER_ALLOCATED.fetch_add(bytes, Ordering::Relaxed);
     } else {
+        ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
         ALLOCATED.fetch_add(bytes, Ordering::Relaxed);
         note_own(bytes);
     }
@@ -108,6 +110,7 @@ fn measure<T>(f: impl FnOnce() -> T) -> (T, u64, Counts) {
     cost_counters::reset();
     ALLOCATED.store(0, Ordering::Relaxed);
     WATCHER_ALLOCATED.store(0, Ordering::Relaxed);
+    ALLOCATION_CALLS.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
     let out = f();
     COUNTING.store(false, Ordering::Relaxed);
@@ -116,6 +119,79 @@ fn measure<T>(f: impl FnOnce() -> T) -> (T, u64, Counts) {
         ALLOCATED.load(Ordering::Relaxed),
         cost_counters::snapshot(),
     )
+}
+
+#[test]
+#[ignore = "explicit PERF-RESIDUE whole-page submit allocation measurement"]
+fn one_character_host_submit_at_60_and_1000_blocks() {
+    let _integration_guard = crate::integration_lock();
+    for blocks in [60, 1000] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("graph");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let original = "- before\n".repeat(blocks);
+        fs::write(root.join("pages/Page.md"), &original).unwrap();
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        store.stop_watcher_for_tests();
+        let (sink, mail) = std::sync::mpsc::channel();
+        let host = tine_store::PageHost::start(
+            &store,
+            &dir.path().join("app"),
+            "perf",
+            |_, _| {},
+            move |m| {
+                sink.send(serde_json::to_value(m).unwrap()).unwrap();
+            },
+        )
+        .unwrap();
+        let reload = serde_json::to_value(host.window_reloaded()).unwrap();
+        let session = reload["session"].as_u64().unwrap();
+        let id = reload["nextId"].as_u64().unwrap();
+        let page_id = PageId::from("pages/Page.md");
+        let opened =
+            serde_json::to_value(host.open(session, id, &page_id, "Page").unwrap()).unwrap();
+        let key = opened["key"].as_str().unwrap();
+        let answer_version = |id| loop {
+            let value = mail
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .unwrap();
+            if value["answer"]["id"] == id {
+                assert_eq!(value["answer"]["outcome"]["kind"], "applied", "{value}");
+                break value["answer"]["version"].as_u64().unwrap();
+            }
+        };
+        let version = answer_version(id);
+        let mut page = store.page(&page_id).unwrap().doc;
+        page.blocks[0].raw.push('x');
+        let (published, bytes, counts) = measure(|| {
+            host.submit(
+                session,
+                id + 1,
+                key,
+                &page,
+                version,
+                None,
+                &[tine_store::EditKind::SaveBlock],
+            )
+            .unwrap();
+            let next = answer_version(id + 1);
+            host.wait_published(
+                session,
+                &[(key.to_string(), next, None)],
+                std::time::Duration::from_secs(30),
+            )
+        });
+        let allocations = ALLOCATION_CALLS.load(Ordering::Relaxed);
+        assert_eq!(format!("{published:?}"), "Applied");
+        assert_eq!(
+            fs::read_to_string(root.join("pages/Page.md")).unwrap(),
+            original.replacen("before", "beforex", 1)
+        );
+        eprintln!("PERF-RESIDUE submit blocks={blocks} allocation_calls={allocations} allocated_bytes={bytes} counts={counts:?}");
+        drop(host);
+        store.close();
+    }
 }
 
 const QUERIES: &[&str] = &[

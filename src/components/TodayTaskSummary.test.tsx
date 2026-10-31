@@ -46,6 +46,15 @@ describe("today task summary", () => {
     expect(host.textContent).toBe("2 tasks today, 1 in progress");
     expect(host.querySelector(".today-task-summary")?.getAttribute("aria-label"))
       .toBe("2 tasks today, 1 in progress");
+    setDoc("byId", "plain", "raw", "NOW Newly started");
+    expect(host.textContent).toBe("3 tasks today, 2 in progress");
+    setDoc("byId", "doing", "raw", "DONE Finished child");
+    expect(host.textContent).toBe("2 tasks today, 1 in progress");
+    setDoc("byId", "todo", "children", []);
+    setDoc("byId", "doing", "raw", "TODO Detached");
+    expect(host.textContent).toBe("2 tasks today, 1 in progress");
+    setDoc("byId", "todo", "children", ["doing"]);
+    expect(host.textContent).toBe("3 tasks today, 1 in progress");
     dispose();
   });
 });

@@ -7,7 +7,7 @@ import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { clearOnBindingInvalidated } from "../binding";
 import { resultWriteTarget } from "./queryResultIdentity";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, mapArray, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
 import { facetsOf } from "../render/facets";
@@ -32,8 +32,6 @@ import {
   type CellSel,
 } from "../sheet/selection";
 import {
-  boardGroupByOptions,
-  fieldIdsForBlocks,
   cycleField,
   fieldLabel,
   groupKeysForBlock,
@@ -45,7 +43,7 @@ import {
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { formulaReferenceName, boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
-import { fieldIdsForRecords, recordFacets, rowRaw } from "../sheet/tableFields";
+import { createRecordFieldsMemo, sameItems, recordFacets, rowRaw } from "../sheet/tableFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { graphEpoch } from "../graphSession";
@@ -94,8 +92,11 @@ export function SheetBoard(props: {
   /** A query's explicit "No grouping" (the engine's `Cleared`, `group_by === ""`):
    *  one column holding every result. An ordinary board has no such state. */
   const ungrouped = () => props.rowSource === "query" && props.groupBy === "";
+  const childRows = createMemo(() => (docNode(props.ownerId)?.children ?? [])
+    .map(id => ({ id, page: docNode(props.ownerId)?.page ?? "" })));
+  const childFields = createRecordFieldsMemo(childRows, () => false);
   const groupByOptions = createMemo<FieldId[]>(() => {
-    const options = boardGroupByOptions(props.ownerId);
+    const options: FieldId[] = ["state", "priority", "tags", ...childFields().filter(field => field.startsWith("prop:"))];
     const current = groupBy();
     return options.includes(current) ? options : [...options, current];
   });
@@ -169,6 +170,10 @@ export function SheetBoard(props: {
     setPendingEjection(null);
   });
 
+  const observedFields = createRecordFieldsMemo(rows, () => props.rowSource === "query");
+  const groupedRows = mapArray(rows, row => ({ row, keys: createMemo(() => groupKeysForBlock(row, groupBy(), {
+    formulas: formulas(), now: appNow(),
+  }), undefined, { equals: sameItems }) }));
   const baseColumns = createMemo<BoardColumn[]>(() => {
     if (ungrouped()) return [{ key: null, label: t("sheet-sheet-board-all-results"), rows: rows() }];
     const now = appNow();
@@ -177,6 +182,10 @@ export function SheetBoard(props: {
       now,
       workflow: workflow(),
       onRow: __sheetBoardTestHooks.onGroupingRowWalk,
+      rowKeys: (() => {
+        const keys = new Map(groupedRows().map(item => [item.row, item.keys()]));
+        return row => keys.get(row)!;
+      })(),
     });
   });
   const columns = createMemo<BoardColumn[]>(() => {
@@ -283,7 +292,7 @@ export function SheetBoard(props: {
   });
   const maxRows = createMemo(() => Math.max(1, ...displayedColumns().map((c) => c.rows.length)));
   const formulaHintFields = createMemo(() => {
-    const observed = observedFieldsForRows(rows(), props.rowSource === "query");
+    const observed = observedFields();
     const out: string[] = [];
     const seen = new Set<string>();
     for (const field of [...schemaFields().map((s) => s.field), ...observed, groupBy()]) {
@@ -563,11 +572,6 @@ export function SheetBoard(props: {
   );
 }
 
-function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
-  const loadedIds = rows.filter((r) => liveFormulaRowNode(r, "mount")).map((r) => r.id);
-  if (loadedIds.length === rows.length) return fieldIdsForBlocks(loadedIds, { includePage });
-  return fieldIdsForRecords(rows, includePage);
-}
 
 
 

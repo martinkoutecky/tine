@@ -3,6 +3,24 @@ import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { isRenderHiddenProp, visibleBody } from "../render/block";
 import { liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
 import type { FieldId } from "./fields";
+import { createMemo, mapArray, type Accessor } from "solid-js";
+
+export function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((item, i) => item === b[i]);
+}
+
+/** Observe field presence per row. Editing a value or title cannot invalidate
+ * the union over the entire answer. Removed rows dispose their subscriptions. */
+export function createRecordFieldsMemo(rows: Accessor<readonly FormulaEvalRow[]>, includePage: Accessor<boolean>): Accessor<FieldId[]> {
+  const fields = mapArray(rows, row => createMemo(() => fieldIdsForRecords([row], false), undefined, { equals: sameItems }));
+  return createMemo(() => {
+    const seen = new Set<FieldId>();
+    for (const row of fields()) for (const field of row()) seen.add(field);
+    const builtin: FieldId[] = ["state", "priority", "scheduled", "deadline", "tags"];
+    return [...builtin.filter(field => seen.has(field)), ...[...seen].filter(field => field.startsWith("prop:")),
+      ...(includePage() ? ["page" as const] : [])];
+  }, undefined, { equals: sameItems });
+}
 
 /** Facets for one live or DTO query row; cost is O(one block). */
 export function recordFacets(row: FormulaEvalRow): Facets | null {

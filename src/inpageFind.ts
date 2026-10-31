@@ -1,6 +1,6 @@
 import { revealOutlineBlock } from "./outlineViewport";
-import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, node as docNode } from "./document";
+import { batch, createMemo, createRoot, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
+import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, onBlockRawChanged, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
@@ -89,7 +89,18 @@ const state = createRoot(() => {
   const [preserveEditorBlur, setPreserveEditorBlur] = createSignal(false);
   const [paneId, setPaneId] = createSignal<string | null>(null);
   const [surfaceRevision, setSurfaceRevision] = createSignal(0);
-  const matches = createMemo(() => currentMatchesFor(query()));
+  const [scopeRevision, setScopeRevision] = createSignal(0);
+  const matches = createLiveMatches(() => open() ? query() : "", surfaceRevision, scopeRevision);
+  const matchesByKey = createMemo(() => {
+    const groups = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
+    matches().forEach((match, matchIndex) => {
+      const key = matchKey(match);
+      const value = { ordinalInBlock: match.ordinalInBlock, matchIndex };
+      const group = groups.get(key);
+      if (group) group.push(value); else groups.set(key, [value]);
+    });
+    return groups;
+  });
   return {
     open, setOpen,
     query, setQuery,
@@ -98,9 +109,83 @@ const state = createRoot(() => {
     preserveEditorBlur, setPreserveEditorBlur,
     paneId, setPaneId,
     surfaceRevision, setSurfaceRevision,
-    matches,
+    scopeRevision, setScopeRevision,
+    matches, matchesByKey,
   };
 });
+
+/** Index the reachable outline on structural/query changes. A raw notification
+ * searches only that block; unchanged spans do not invalidate the answer.
+ * Materializing a changed answer visits matching blocks, never nonmatches. */
+function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<number>, scopeRevision: Accessor<number>): Accessor<InPageFindMatch[]> {
+  type Entry = { id: string; scopeId: string; scopeIndex: number; format: Format; order: number; matches: InPageFindMatch[] };
+  const [revision, setRevision] = createSignal(0);
+  const read = (entry: Entry, q: string, accents: boolean) => {
+    const block = docNode(entry.id);
+    if (!block) return [];
+    return findTextOccurrences(cachedRenderedBlockText(entry.id, block.raw, entry.format), q, accents)
+      .map((span, ordinalInBlock) => ({ blockId: entry.id, scopeId: entry.scopeId, ordinalInBlock, ...span }));
+  };
+  const outline = createMemo(() => {
+    scopeRevision();
+    const q = query().trim();
+    const accents = searchRemoveAccents();
+    const byId = new Map<string, Entry[]>();
+    const matching = new Set<Entry>();
+    const scopes = q ? findScopes() : [];
+    let order = 0;
+    for (const [scopeIndex, scope] of scopes.entries()) {
+      const visit = (ids: readonly string[]) => {
+        for (const id of ids) {
+          const block = docNode(id);
+          if (!block) continue;
+          const entry: Entry = { id, scopeId: scope.id, scopeIndex, format: scope.format, order: order++, matches: [] };
+          entry.matches = untrack(() => read(entry, q, accents));
+          if (entry.matches.length) matching.add(entry);
+          const entries = byId.get(id);
+          if (entries) entries.push(entry); else byId.set(id, [entry]);
+          visit(block.children);
+        }
+      };
+      visit(scope.roots);
+    }
+    return { q, accents, byId, matching, scopes };
+  });
+  onCleanup(onBlockRawChanged(id => {
+    const index = outline();
+    let changed = false;
+    for (const entry of index.byId.get(id) ?? []) {
+      const next = read(entry, index.q, index.accents);
+      if (next.length === entry.matches.length && next.every((span, i) =>
+        span.start === entry.matches[i].start && span.end === entry.matches[i].end)) continue;
+      entry.matches = next;
+      if (next.length) index.matching.add(entry); else index.matching.delete(entry);
+      changed = true;
+    }
+    if (changed) setRevision(value => value + 1);
+  }));
+  return createMemo(() => {
+    const index = outline();
+    revision(); surfaceRevision();
+    const entries = [...index.matching].sort((a, b) => a.order - b.order);
+    const out: InPageFindMatch[] = [];
+    const scanned = new Set<string>();
+    for (const [scopeIndex, scope] of index.scopes.entries()) {
+      // Entries are in outline order, including duplicate journal scopes.
+      for (const entry of entries) if (entry.scopeIndex === scopeIndex) out.push(...entry.matches);
+      if (scanned.has(scope.id)) continue;
+      scanned.add(scope.id);
+      for (const surface of findScopeElement(scope.id)?.querySelectorAll<HTMLElement>("[data-inpage-find-surface]") ?? []) {
+        const surfaceId = surface.dataset.inpageFindSurface;
+        if (!surfaceId) continue;
+        findTextOccurrences(searchableTextForRoot(surface), index.q, index.accents).forEach((match, ordinalInBlock) => {
+          out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
+        });
+      }
+    }
+    return out;
+  });
+}
 
 let restoreFocusEl: HTMLElement | null = null;
 let revealToken = 0;
@@ -378,6 +463,7 @@ function observeCurrentFindSurfaces() {
   const win = findWindow();
   const pane = win.document.body;
   const Observer = (win as Window & typeof globalThis).MutationObserver ?? MutationObserver;
+  let scopesChanged = false, surfacesChanged = false;
   surfaceObserver = new Observer((records) => {
     if (records.every((record) => {
       const target = isElementNode(record.target) ? record.target : record.target.parentElement;
@@ -385,10 +471,24 @@ function observeCurrentFindSurfaces() {
       return record.type === "childList" && [...record.addedNodes, ...record.removedNodes].every((node) =>
         isElementNode(node) && node.matches(".inpage-find-overlays,.inpage-find-bar"));
     })) return;
+    for (const record of records) {
+      const target = isElementNode(record.target) ? record.target : record.target.parentElement;
+      surfacesChanged ||= !!target?.closest("[data-inpage-find-surface]");
+      for (const node of [...record.addedNodes, ...record.removedNodes]) {
+        if (!isElementNode(node)) continue;
+        const contains = (selector: string) => node.matches(selector) || !!node.querySelector(selector);
+        scopesChanged ||= contains("[data-sidebar-surface],[data-pane-id]");
+        surfacesChanged ||= contains("[data-inpage-find-surface]");
+      }
+    }
     if (surfaceObserverFrame) return;
     surfaceObserverFrame = requestFrame(pane, () => {
       surfaceObserverFrame = undefined;
-      state.setSurfaceRevision((revision) => revision + 1);
+      batch(() => {
+        if (scopesChanged) state.setScopeRevision(revision => revision + 1);
+        if (surfacesChanged) state.setSurfaceRevision(revision => revision + 1);
+      });
+      scopesChanged = surfacesChanged = false;
       const matches = inPageFindMatches();
       if (!matches.length) state.setActiveIndex(-1);
       else if (state.activeIndex() < 0 || state.activeIndex() >= matches.length) state.setActiveIndex(0);
@@ -396,6 +496,7 @@ function observeCurrentFindSurfaces() {
     });
   });
   surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true });
+  state.setScopeRevision(revision => revision + 1);
   state.setSurfaceRevision((revision) => revision + 1);
 }
 
@@ -699,19 +800,14 @@ export function refreshInPageFindHighlights() {
   }
   const matchesByBlock = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
   const matchesBySurface = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
-  for (let i = 0; i < matches.length; i++) {
-    const m = matches[i];
-    if (m.surfaceId) {
-      if (!candidateSurfaceIds.has(matchKey(m))) continue;
-      const bucket = matchesBySurface.get(matchKey(m));
-      if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
-      else matchesBySurface.set(matchKey(m), [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
-      continue;
-    }
-    if (!candidateIds.has(matchKey(m))) continue;
-    const bucket = matchesByBlock.get(matchKey(m));
-    if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
-    else matchesByBlock.set(matchKey(m), [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
+  const indexed = state.matchesByKey();
+  for (const id of candidateIds) {
+    const group = indexed.get(id);
+    if (group) matchesByBlock.set(id, group);
+  }
+  for (const id of candidateSurfaceIds) {
+    const group = indexed.get(id);
+    if (group) matchesBySurface.set(id, group);
   }
   void refreshInPageFindHighlightsChunked(token, candidates, surfaceCandidates, matchesByBlock, matchesBySurface, query, activeIdx);
 }

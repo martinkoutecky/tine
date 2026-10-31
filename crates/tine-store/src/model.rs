@@ -10372,6 +10372,102 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "explicit PERF-RESIDUE retained-answer invalidation measurement"]
+    fn perf_residue_retained_answer_group_scan() {
+        for size in [100, 1000] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir(dir.path().join("pages")).unwrap();
+            for n in 0..size {
+                fs::write(
+                    dir.path().join(format!("pages/Ref{n:04}.md")),
+                    "- [[Target]]\n",
+                )
+                .unwrap();
+            }
+            fs::write(dir.path().join("pages/Notes.md"), "- unrelated\n").unwrap();
+            let store = model_store(dir.path());
+            let snapshot = published_snapshot(&store);
+            let result = snapshot.backlinks_bounded("Target", 20_000, 32 * 1024 * 1024);
+            assert_eq!(result.groups.len(), size);
+            let (entry, doc) = snapshot
+                .pages
+                .iter()
+                .find(|(entry, _)| entry.name == "Notes")
+                .unwrap();
+            snapshot.alias_edges();
+            crate::query::real_page_names(&snapshot);
+            let began = std::time::Instant::now();
+            for _ in 0..100 {
+                snapshot.memos.scope_derived_invalidation(
+                    &snapshot,
+                    entry,
+                    Some(doc),
+                    doc,
+                    0,
+                    Scope::Predicates,
+                );
+            }
+            eprintln!("PERF-RESIDUE retained-answer pages={size} entries=1 group_comparisons_per_call={} calls=100 elapsed_us={}",
+                result.groups.len(), began.elapsed().as_micros());
+            store.close();
+        }
+    }
+
+    #[test]
+    #[ignore = "explicit PERF-RESIDUE deleted identity retention measurement"]
+    fn perf_residue_deleted_identity_retention() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = |name: &str| PageEntry {
+            name: name.into(),
+            kind: PageKind::Page,
+            date_key: None,
+            rel_path: Some(format!("pages/{name}.md").into()),
+            path: dir.path().join(format!("pages/{name}.md")),
+        };
+        let ballast = (0..100)
+            .map(|n| format!("- row\n  id:: ballast-{n}\n"))
+            .collect::<String>();
+        let mut pages = Arc::new(Pages::from(vec![
+            (
+                entry("Ballast"),
+                Arc::new(parse_doc(&entry("Ballast").path, &ballast)),
+            ),
+            (
+                entry("Active"),
+                Arc::new(parse_doc(&entry("Active").path, "- row\n  id:: active-0\n")),
+            ),
+        ]));
+        let mut index = SnapshotBlockIndex::build(&pages);
+        for edit in 1..=1000 {
+            let next = Arc::new(Pages::from(vec![
+                pages[0].clone(),
+                (
+                    entry("Active"),
+                    Arc::new(parse_doc(
+                        &entry("Active").path,
+                        &format!("- row\n  id:: active-{edit}\n"),
+                    )),
+                ),
+            ]));
+            index = SnapshotBlockIndex::capture(
+                Some((&index, &pages)),
+                &next,
+                &["pages/Active.md".into()],
+            );
+            pages = next;
+            if edit == 100 || edit == 1000 {
+                let current = SnapshotBlockIndex::build(&pages).rows().count();
+                let resident = index.len() + index.overlay.len() + index.uuid_overlay.len();
+                let live = index.rows().count();
+                assert_eq!(live, current);
+                assert!(resident <= current + current / 4 + 4);
+                eprintln!("PERF-RESIDUE identity edits={edit} live_rows={live} resident_base_plus_overlay={resident} string_overlay={} uuid_overlay={}",
+                    index.overlay.len(), index.uuid_overlay.len());
+            }
+        }
+    }
+
+    #[test]
     fn nfd_alias_resolves_and_canonical_equivalent_alias_cannot_shadow_real_page() {
         let dir = scratch("nfd-alias-resolution");
         fs::write(

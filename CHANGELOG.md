@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Typing in large pages and query results avoids rescanning unrelated block text for the compact Today task count, in-page find, query column choices, and sheet table and board fields.
 - PDF and print exports keep images in nested asset folders distinct, including images with the same filename.
 - iPhone Spotlight search updates page titles and excerpts after edits made in Tine.
 - Editor parsing uses Logseq's whitespace rules consistently for planning dates and source offsets, including leading BOM and NEL characters.

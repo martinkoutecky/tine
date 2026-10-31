@@ -804,9 +804,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [paneStale, setPaneStale] = createSignal(false);
   const legacyDefaultColumns = createMemo(() => !legacyTable() ? [] : defaultHostColumns(groups().flatMap(group =>
     group.blocks.flatMap(block => (block.properties ?? []).map(([key]) => key)))));
-  const effectiveDefaultColumns = createMemo(() => legacyTable() ? legacyDefaultColumns() : reading()?.query.anchor === "page"
+  const effectiveDefaultColumns = () => legacyTable() ? legacyDefaultColumns() : reading()?.query.anchor === "page"
     ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))]
-    : queryBlockColumns(groups()));
+    : queryBlockColumns(groups());
   const displayView = (): ViewSettings => {
     const view = reading()?.view ?? {};
     if (legacyTable()) return { ...view, columns: props.blockId

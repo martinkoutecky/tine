@@ -41,7 +41,8 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
   rows: readonly R[],
   groupBy: FieldId,
   schema: readonly FieldSpec[],
-  opts: { formulas?: ReadonlyMap<string, string>; now?: Date; workflow: "todo" | "now"; onRow?: (rowId: string) => void }
+  opts: { formulas?: ReadonlyMap<string, string>; now?: Date; workflow: "todo" | "now"; onRow?: (rowId: string) => void;
+    rowKeys?: (row: R) => (string | null)[] }
 ): BoardColumn<R>[] {
   const rowsByKey = new Map<string | null, R[]>();
   const keys: (string | null)[] = [];
@@ -51,7 +52,7 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
   let hasFormulaError = false;
   for (const row of rows) {
     opts.onRow?.(row.id);
-    const rowKeys = groupKeysForBlock(row, groupBy, opts);
+    const rowKeys = opts.rowKeys?.(row) ?? groupKeysForBlock(row, groupBy, opts);
     keys.push(rowKeys[0] ?? null);
     const seenForRow = new Set<string | null>();
     for (const key of rowKeys) {

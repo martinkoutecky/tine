@@ -10,6 +10,48 @@ struct PreparedWalk {
     times: CollectTimes,
 }
 
+fn retain_unreadable_stamps<'a>(
+    previous: impl Iterator<Item = (&'a PathBuf, &'a Stamp)>,
+    now: &mut HashMap<PathBuf, Stamp>,
+    errors: &HashMap<PathBuf, String>,
+    incremental: bool,
+) {
+    if errors.is_empty() {
+        return;
+    }
+    for (path, value) in previous {
+        if path
+            .ancestors()
+            // An incremental self-error must not restore an exact removal.
+            .skip(usize::from(incremental))
+            .any(|ancestor| errors.contains_key(ancestor))
+        {
+            now.entry(path.clone()).or_insert_with(|| value.clone());
+        }
+    }
+}
+
+#[test]
+fn empty_errors_do_not_visit_prior_stamps() {
+    for size in [100, 1000] {
+        let visits = std::cell::Cell::new(0);
+        let path = PathBuf::from("pages/Page.md");
+        let stamp = Stamp {
+            modified: None,
+            len: 0,
+            identity: 0,
+            changed: 0,
+            rev: None,
+        };
+        let previous = (0..size).map(|_| {
+            visits.set(visits.get() + 1);
+            (&path, &stamp)
+        });
+        retain_unreadable_stamps(previous, &mut HashMap::new(), &HashMap::new(), true);
+        assert_eq!(visits.get(), 0, "prior stamp visits at N={size}");
+    }
+}
+
 impl Core {
     pub(super) fn reconcile(
         &self,
@@ -277,19 +319,7 @@ impl Core {
             crate::store::pause_at_hook(&self.after_collect_pause);
         }
         if let Some(errors) = unreadable.as_ref() {
-            for (path, value) in &*snapshot {
-                if path
-                    .ancestors()
-                    // Full-walk errors include failed file_type/lstat calls
-                    // on the file itself. Incremental errors are cloned from
-                    // the previous cycle: a stale self-error must not restore
-                    // a file that an exact removal notification just removed.
-                    .skip(usize::from(paths.is_some()))
-                    .any(|ancestor| errors.contains_key(ancestor))
-                {
-                    now.entry(path.clone()).or_insert_with(|| value.clone());
-                }
-            }
+            retain_unreadable_stamps(snapshot.iter(), &mut now, errors, paths.is_some());
         }
         let mut racy = self.racy.lock().unwrap();
         let mut refusals = self.read_refusals.lock().unwrap();

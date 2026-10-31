@@ -37,7 +37,6 @@ import {
 import { beginCellPointerSelection, isSheetPointerInteractive, sheetGridIdFromEventTarget } from "../sheet/pointerSelection";
 import {
   cycleField,
-  fieldIdsForBlocks,
   toggleStateMarkerLabel,
   fieldLabel,
   isFormulaField,
@@ -74,7 +73,7 @@ import { compareSortKeys, measuredGridTracks, queryColumnFieldId, queryColumnNam
 import { queryTableFooter, type QueryDisplayControl } from "../sheet/queryTableFooter";
 import { FieldValueView } from "./SheetFieldValue";
 import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
-import { fieldIdsForRecords, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
+import { createRecordFieldsMemo, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
 import { createTableColumnResize } from "../sheet/tableColumnResize";
 import { windowOf } from "../windowRealm";
 
@@ -194,13 +193,9 @@ export function SheetTable(props: {
     return isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);
   };
 
-  const defaultFields = createMemo<FieldId[]>(() => {
-    const loadedIds = rows().filter((r) => liveFormulaRowNode(r, "mount")).map((r) => r.id);
-    const observed = loadedIds.length === rows().length
-      ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
-      : fieldIdsForRecords(rows(), props.rowSource === "query");
-    return tableFieldOrder(observed, extraFields(), schemaFields().map((s) => s.field), formulaFields());
-  });
+  const observedFields = createRecordFieldsMemo(rows, () => props.rowSource === "query");
+  const defaultFields = createMemo<FieldId[]>(() =>
+    tableFieldOrder(observedFields(), extraFields(), schemaFields().map((s) => s.field), formulaFields()));
   createEffect(() => props.onDefaultColumns?.(defaultFields().map(queryColumnName).filter((field): field is string => field !== null)));
   const fields = createMemo<FieldId[]>(() => {
     const draft = editingProp();
