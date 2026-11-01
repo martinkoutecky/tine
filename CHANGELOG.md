@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.4] - 2026-11-01
+
 ### Fixed
 
 - Updated TLS certificate verification dependencies for the emSign distrust advisories (#828).
