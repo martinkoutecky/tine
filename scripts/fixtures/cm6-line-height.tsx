@@ -1,15 +1,19 @@
 import { render } from "solid-js/web";
-import { For } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
+import { EditorView } from "@codemirror/view";
 import { initParser } from "../../src/render/parse";
 import { loadSingle } from "../../src/document/workingSet";
 import { pageByName } from "../../src/document/model";
-import { Block } from "../../src/components/Block";
+import { Block, SurfaceContext } from "../../src/components/Block";
+import { createMarginSurface } from "../../src/components/MarginColumn";
+import { MarginContext } from "../../src/components/marginContext";
 import { startEditing, endEdit } from "../../src/editorController";
 import { setCm6EditorEnabled } from "../../src/editor/cm6Setting";
 import "../../src/styles/inter.css";
 import "../../src/styles/theme.css";
 import "../../src/styles/app.css";
 import "../../src/styles/ls-shim.css";
+import "../../src/styles/comments.css";
 
 // One block per construct whose line box could differ between the rendered body and the editor.
 export const CASES: Record<string, string> = {
@@ -86,9 +90,47 @@ loadSingle({ name: "Target", title: "Target", kind: "page", pre_block: null, for
 loadSingle({ name: "LH", title: "LH", kind: "page", pre_block: null, format: "md",
   blocks: Object.entries(CASES).map(([id, raw]) => ({ id, raw, collapsed: false, ...DTO_EXTRA[id], scheduled: raw.match(/SCHEDULED: <([^>]*)>/)?.[1], deadline: raw.match(/DEADLINE: <([^>]*)>/)?.[1], properties: raw.match(/\nheading:: (\w+)$/) ? [["heading", raw.match(/\nheading:: (\w+)$/)![1]]] : [], children: [{ id: `${id}-child`, raw: "child", collapsed: false, children: [] }] })) });
 Object.assign(window, { startEditing, endEdit, setCm6EditorEnabled, CASES });
-render(() => <main class="main-content" style={{ padding: "40px", width: "640px" }}>
+// Plain-text wrap census uses real outline nesting and the shipped main/sidebar/margin boxes.
+// Varying word lengths (including short words at line ends) exposes changed breaks even when height stays equal.
+const WRAP_TEXT = `${CASES.plain} Small words fit at the edge of a line while longer ordinary words test the next break. `.repeat(3).trim();
+const WRAP_DEPTHS = [0, 1, 3];
+type WrapNode = { id: string; raw: string; collapsed: boolean; children: WrapNode[]; properties?: [string, string][] };
+loadSingle({ name: "Wrap", title: "Wrap", kind: "page", pre_block: null, format: "md",
+  blocks: WRAP_DEPTHS.map(depth => {
+    const id = `wrap-${depth}`;
+    let block: WrapNode = { id, raw: WRAP_TEXT, collapsed: false, children: [
+      { id: `${id}-child`, raw: "Next child", collapsed: false, children: [] },
+      { id: `${id}-comment`, raw: "A margin comment\nquote:: *", properties: [["quote", "*"]], collapsed: false, children: [] },
+    ] };
+    for (let i = 0; i < depth; i++) block = { id: `${id}-parent-${i}`, raw: "Parent", collapsed: false, children: [block] };
+    return block;
+  }) });
+const [wrapping, setWrapping] = createSignal(false);
+const [wrapPane, setWrapPane] = createSignal("main");
+const [wrapMargin, setWrapMargin] = createSignal(false);
+const [wrapWidth, setWrapWidth] = createSignal(640);
+function WrapFixture() {
+  const [outline, setOutline] = createSignal<HTMLElement>();
+  const margin = createMarginSurface({ page: () => pageByName("Wrap"), eligible: () => wrapMargin(), outline });
+  return <div id="wrap-fixture" classList={{ "main-content": wrapPane() === "main", "right-sidebar": wrapPane() === "sidebar" }}
+    style={{ width: `${wrapWidth()}px`, "max-width": "none", "flex-shrink": 0 }}>
+    <div classList={{ "main-content-inner": wrapPane() === "main", "right-sidebar-body": wrapPane() === "sidebar" }}>
+      <div classList={{ "page-section": wrapPane() === "main", "rs-item": wrapPane() === "sidebar" }}>
+        <SurfaceContext.Provider value={wrapPane() === "main" ? "main" : "sidebar:wrap"}>
+          <MarginContext.Provider value={margin.placement}>
+            <div class="page-blocks" classList={{ "margin-active": margin.active() }} ref={setOutline}>
+              <For each={pageByName("Wrap")!.roots}>{id => <Block id={id} />}</For>
+            </div>
+            <margin.Column />
+          </MarginContext.Provider>
+        </SurfaceContext.Provider>
+      </div>
+    </div>
+  </div>;
+}
+render(() => <><main class="main-content" style={{ padding: "40px", width: "640px", display: wrapping() ? "none" : undefined }}>
   <For each={pageByName("LH")!.roots}>{id => <Block id={id} />}</For>
-</main>, document.getElementById("root")!);
+</main><Show when={wrapping()}><WrapFixture /></Show></>, document.getElementById("root")!);
 
 // In-page probe, so any driver (Playwright Chromium, WebKitGTK's WebKitWebDriver) runs the identical measurement.
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -140,7 +182,61 @@ function probe(id: string, kind: Kind) {
   };
 }
 async function until(sel: string) { for (let i = 0; i < 50 && !document.querySelector(sel); i++) await wait(100); }
+// Range geometry measures each original word, without introducing spans that could change shaping or wrapping.
+function wordRows(id: string, editing: boolean) {
+  const row = document.querySelector(`[data-block-id="${id}"]`)!;
+  const box = row.querySelector(editing ? ".cm-content" : ":scope > .block-main .block-content") as HTMLElement;
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  const words: { text: string; top: number; row: number; x: number; w: number }[] = [];
+  let firstTop: number | undefined;
+  const pitch = parseFloat(getComputedStyle(box).lineHeight);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    for (const match of n.nodeValue!.matchAll(/\S+/g)) {
+      const range = document.createRange();
+      range.setStart(n, match.index!); range.setEnd(n, match.index! + match[0].length);
+      // WebKit can include a zero-width rect on the preceding row at a soft wrap; the union's top would
+      // misclassify the next word. Use its first painted glyph rect instead.
+      const r = Array.from(range.getClientRects()).find(r => r.width > 0 && r.height > 0)!;
+      firstTop ??= r.top;
+      words.push({ text: match[0], top: r.top - firstTop, row: Math.round((r.top - firstTop) / pitch), x: r.x - box.getBoundingClientRect().x, w: r.width });
+    }
+  }
+  const boxes = [box, ...Array.from(row.querySelectorAll(".cm6-block-editor,.cm-editor,.cm-scroller,.cm-line"))].map(el => {
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    return { cls: el.className, w: r.width, clientW: el.clientWidth, padding: cs.padding, margin: cs.margin, font: cs.font, fontSize: cs.fontSize, fontFamily: cs.fontFamily, fontVariantLigatures: cs.fontVariantLigatures, letterSpacing: cs.letterSpacing, whiteSpace: cs.whiteSpace, wordBreak: cs.wordBreak, overflowWrap: cs.overflowWrap, flex: cs.flex };
+  });
+  return { words, boxes, height: box.getBoundingClientRect().height };
+}
 Object.assign(window, {
+  measureWrap: async () => {
+    endEdit("page-navigation"); setCm6EditorEnabled(true); setWrapping(true);
+    await document.fonts.ready;
+    const results = [];
+    for (const pane of ["main", "sidebar"]) for (const width of (pane === "main" ? [480, 640.5, 1400] : [320, 480.5, 640])) {
+      for (const withMargin of (pane === "main" && width === 1400 ? [false, true] : [false])) {
+        setWrapPane(pane); setWrapWidth(width); setWrapMargin(withMargin); await wait(100);
+        for (const depth of WRAP_DEPTHS) {
+          const id = `wrap-${depth}`;
+          const row = document.querySelector(`[data-block-id="${id}"]`)!;
+          row.scrollIntoView({ block: "center" }); await wait(50);
+          const rendered = wordRows(id, false);
+          for (const caret of [0, WRAP_TEXT.length]) {
+            startEditing(id, caret);
+            await until(`[data-block-id="${id}"] .cm-content`); await wait(50);
+            const editing = wordRows(id, true);
+            const view = EditorView.findFromDOM(row.querySelector(".cm-editor") as HTMLElement)!;
+            view.dispatch({ selection: { anchor: 0, head: 12 }, userEvent: "select" }); view.focus(); await wait(50);
+            const toolbar = wordRows(id, true);
+            results.push({ pane, width, withMargin, depth, caret, rendered, editing, toolbar,
+              toolbarShown: !!row.querySelector(".sel-toolbar"), marginActive: !!row.closest(".margin-active"), markerShown: !!row.querySelector(":scope > .block-main > .margin-marker") });
+            endEdit("page-navigation"); await wait(20);
+          }
+        }
+      }
+    }
+    setWrapping(false);
+    return results;
+  },
   measureAll: async (opts: { theme: string; font: string; lh: string }) => {
     document.documentElement.setAttribute("data-theme", opts.theme);
     if (opts.font) document.documentElement.style.setProperty("--tine-font-size", `${opts.font}px`);
