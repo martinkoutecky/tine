@@ -97,16 +97,19 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     } finally { dispose(); }
   });
 
-  it("places root actions and author in the quote line and reply actions in its body", () => {
-    const { root, dispose } = mount([block("p", "words", [block("c", "My view\nquote:: words", [block("r", "Evidence\nauthor:: Ada")])])]);
+  it("identifies each response separately from its quote and body, including your own nested replies (GH #110)", () => {
+    const { root, dispose } = mount([block("p", "words", [block("c", "My view\nquote:: words", [block("r", "Evidence\nauthor:: Ada", [block("own", "Agreed")])])])]);
     try {
       const card = root.querySelector('[data-block-id="c"]')!;
-      expect(card.querySelector(":scope > .comment-actions")).toBeNull();
-      expect(card.querySelector(":scope > .comment-quote .comment-delete")).not.toBeNull();
-      expect(card.querySelector(":scope > .comment-quote .author-chip")?.textContent).toBe("you");
-      const reply = root.querySelector('[data-block-id="r"]')!;
-      expect(reply.querySelector(":scope > .comment-actions")).toBeNull();
-      expect(reply.querySelector(":scope > .block-main .comment-delete")).not.toBeNull();
+      expect(card.querySelector(":scope > .comment-quote")?.textContent).toBe("words");
+      for (const [id, author, body] of [["c", "you", "My view"], ["r", "Ada", "Evidence"], ["own", "you", "Agreed"]]) {
+        const response = root.querySelector(`[data-block-id="${id}"]`)!;
+        const own = (selector: string) => [...response.querySelectorAll(selector)].find(el => el.closest(".ls-block") === response);
+        expect(own(".author-chip")?.textContent).toBe(author);
+        expect(own(".comment-delete")).toBeDefined();
+        expect(response.querySelector(":scope > .block-main .block-content")?.textContent).toBe(body);
+        expect(response.querySelector(":scope > .block-main .author-chip")).toBeNull();
+      }
     } finally { dispose(); }
   });
   it.each(["md", "org"] as const)("keeps ordinary %s author and quote-suffix properties in the edit buffer", (format) => {
@@ -137,7 +140,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
 
   it("offers Comment in the selection toolbar and uses the selected words", () => {
-    const { root, dispose } = mount([block("p", "Discuss these words here")], "p");
+    const { root, dispose } = mount([block("p", "Discuss these words here", [block("existing", "An existing child")])], "p");
     try {
       const ta = editor(root);
       ta.select(8, 19);
@@ -147,9 +150,11 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(button!.querySelector("svg")).not.toBeNull();
       expect(button!.closest(".sel-toolbar")!.querySelector(":scope > button:last-of-type")).toBe(button);
       button!.click();
-      const id = docNode("p")!.children[0];
+      const id = docNode("p")!.children[1];
       expect(docNode(id)!.raw).toContain("quote:: these words");
       expect(editingId()).toBe(id);
+      expect(docNode("p")!.children).toEqual(["existing", id]); // ADR 0075 file order
+      expect([...root.querySelectorAll('[data-block-id="p"] .ls-block')].map(el => el.getAttribute("data-block-id"))).toEqual([id, "existing"]);
     } finally { dispose(); }
   });
 
@@ -185,7 +190,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode(id)!.raw).toContain("A considered reply");
       expect(docNode(id)!.parent).toBe("c");
       endEdit("page-navigation");
-      const del = row().querySelector<HTMLButtonElement>(":scope > .comment-quote .comment-delete");
+      const del = row().querySelector<HTMLButtonElement>(":scope > .comment-header .comment-delete");
       expect(del, "a comment needs Delete").not.toBeNull();
       del!.click();
       expect(docNode("p")!.children).toHaveLength(0);
@@ -360,7 +365,7 @@ describe("comment rendering", () => {
   }
 
   const row = (root: HTMLElement, id: string) => root.querySelector(`.ls-block[data-block-id="${id}"]`) as HTMLElement;
-  const ownChip = (el: HTMLElement) => el.querySelector(":scope > .comment-quote .author-chip, :scope > .block-main .author-chip")?.textContent ?? null;
+  const ownChip = (el: HTMLElement) => el.querySelector(":scope > .comment-header .author-chip, :scope > .block-main .author-chip")?.textContent ?? null;
 
   it("shows a comment as a card with its quote header and hides the quote and author rows", () => {
     const { root, dispose } = renderedFixture();

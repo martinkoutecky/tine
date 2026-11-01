@@ -34,11 +34,11 @@ export function inCommentThread(parentId: string | null, format: Format): boolea
 
 /** The muted quote line above a comment: the quoted passage, "whole block", or
  * the quote struck through when it no longer occurs in the parent. */
-export function CommentQuoteHeader(props: { parentId: string | null; selector: QuoteSelector | null; controls?: JSX.Element }): JSX.Element {
-  return <Show when={props.selector !== null && props.parentId !== null}><QuoteHeader parentId={props.parentId!} selector={props.selector!} controls={props.controls} /></Show>;
+export function CommentQuoteHeader(props: { parentId: string | null; selector: QuoteSelector | null }): JSX.Element {
+  return <Show when={props.selector !== null && props.parentId !== null}><QuoteHeader parentId={props.parentId!} selector={props.selector!} /></Show>;
 }
 
-function QuoteHeader(props: { parentId: string; selector: QuoteSelector; controls?: JSX.Element }): JSX.Element {
+function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.Element {
   const anchor = createMemo(() => {
     const parent = docNode(props.parentId);
     return parent ? anchorQuote(parent.raw, props.selector) : { kind: "stale" as const };
@@ -55,9 +55,17 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector; control
           <span class="comment-quote-stale">{t("comment-quote-changed")}</span>
         </Show>
       </Show>
-      {props.controls}
     </div>
   );
+}
+
+/** Every response starts with the same author handle and top-right actions;
+ * quotes are context above this row and the body always starts below it. */
+export function CommentHeader(props: { id: string; author: string | null }): JSX.Element {
+  return <div class="comment-header">
+    <AuthorChip author={props.author} handleOf={props.id} />
+    <CommentActions id={props.id} />
+  </div>;
 }
 
 /** Who wrote a block: the `author::` value, or "you" for the graph owner. On a
