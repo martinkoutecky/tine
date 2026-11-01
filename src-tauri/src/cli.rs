@@ -12,7 +12,8 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tine_graph_features::publish_query::{
-    plan_query, publish_live_home, publish_query, publish_static, query_request_by_uuid, ExportReceipt,
+    plan_query, publish_live_home, publish_query, publish_static, query_request_by_uuid,
+    ExportReceipt,
 };
 use tine_store::Store;
 
@@ -563,12 +564,21 @@ fn export_query(args: QueryExportArgs) -> Result<ExportReceipt, String> {
     export_query_with_bundle(args, &bundle())
 }
 
-fn export_query_with_bundle(args: QueryExportArgs, bundle: &[(String, Vec<u8>)]) -> Result<ExportReceipt, String> {
+fn export_query_with_bundle(
+    args: QueryExportArgs,
+    bundle: &[(String, Vec<u8>)],
+) -> Result<ExportReceipt, String> {
     let raw = args.uuid.trim();
-    let uuid = raw.strip_prefix("((").and_then(|value| value.strip_suffix("))")).unwrap_or(raw);
-    let uuid = uuid::Uuid::parse_str(uuid).map_err(|_| "expected a block UUID, bare or wrapped as ((UUID))".to_owned())?.to_string();
+    let uuid = raw
+        .strip_prefix("((")
+        .and_then(|value| value.strip_suffix("))"))
+        .unwrap_or(raw);
+    let uuid = uuid::Uuid::parse_str(uuid)
+        .map_err(|_| "expected a block UUID, bare or wrapped as ((UUID))".to_owned())?
+        .to_string();
     let store = open_store(&args.graph)?;
-    let request = query_request_by_uuid(&store, &uuid, args.name.as_deref(), args.force).map_err(|e| e.to_string())?;
+    let request = query_request_by_uuid(&store, &uuid, args.name.as_deref(), args.force)
+        .map_err(|e| e.to_string())?;
     let plan = plan_query(&store, &request).map_err(|e| e.to_string())?;
     if plan.exists && !args.force {
         return Err(format!("output already exists at {}; use --force to replace it (the previous export is kept in recovery)", plan.path));
@@ -1200,31 +1210,57 @@ mod tests {
         let mut argv = vec!["tine", "export", "query", graph.to_str().unwrap(), uuid];
         argv.extend_from_slice(extra);
         let parsed = Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
-        let Some(Command::Export { format: ExportFormat::Query(args) }) = parsed.command else { panic!("query export"); };
+        let Some(Command::Export {
+            format: ExportFormat::Query(args),
+        }) = parsed.command
+        else {
+            panic!("query export");
+        };
         // Default test builds do not embed the frontend. Supply only that build
         // artifact while exercising the real parser, selector and publisher.
-        export_query_with_bundle(args, &[("index.html".into(), b"<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>".to_vec())])
+        export_query_with_bundle(
+            args,
+            &[(
+                "index.html".into(),
+                b"<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>"
+                    .to_vec(),
+            )],
+        )
     }
 
     #[test]
     fn query_export_by_uuid() {
         let graph = doctor_fixture("query-export");
         let uuid = "82400000-0000-4000-8000-000000000001";
-        let raw = format!("- {{{{query (task TODO)}}}}\n  id:: {uuid}\n  query-table:: true\n- TODO selected\n");
+        let raw = format!(
+            "- {{{{query (task TODO)}}}}\n  id:: {uuid}\n  query-table:: true\n- TODO selected\n"
+        );
         std::fs::write(graph.path().join("pages/Tasks.md"), &raw).unwrap();
-        let receipt = run_query_export(graph.path(), &format!("(({uuid}))"), &["--name", "Task review"]).unwrap();
+        let receipt = run_query_export(
+            graph.path(),
+            &format!("(({uuid}))"),
+            &["--name", "Task review"],
+        )
+        .unwrap();
         assert_eq!(receipt.pages, 1);
         assert!(receipt.path.ends_with("published-queries/task-review"));
         assert!(Path::new(&receipt.path).join("app/snapshot.json").is_file());
         let before = std::fs::read(Path::new(&receipt.path).join("index.html")).unwrap();
         let refused = run_query_export(graph.path(), uuid, &["--name", "Task review"]).unwrap_err();
         assert!(refused.contains("--force"), "{refused}");
-        assert_eq!(std::fs::read(Path::new(&receipt.path).join("index.html")).unwrap(), before);
-        let replaced = run_query_export(graph.path(), uuid, &["--name", "Task review", "--force"]).unwrap();
+        assert_eq!(
+            std::fs::read(Path::new(&receipt.path).join("index.html")).unwrap(),
+            before
+        );
+        let replaced =
+            run_query_export(graph.path(), uuid, &["--name", "Task review", "--force"]).unwrap();
         assert!(Path::new(replaced.retired.as_ref().unwrap()).is_dir());
         let default = run_query_export(graph.path(), uuid, &[]).unwrap();
         assert!(!default.path.is_empty());
-        assert_eq!(std::fs::read_to_string(graph.path().join("pages/Tasks.md")).unwrap(), raw);
+        assert_eq!(
+            std::fs::read_to_string(graph.path().join("pages/Tasks.md")).unwrap(),
+            raw
+        );
     }
 
     #[test]
@@ -1236,9 +1272,16 @@ mod tests {
         for (raw, message) in [
             ("ordinary text", "not a query"),
             ("`{{query (task TODO)}}`", "not a query"),
-            ("{{query (task TODO)}} {{tine-query @block}}", "more than one query"),
+            (
+                "{{query (task TODO)}} {{tine-query @block}}",
+                "more than one query",
+            ),
         ] {
-            std::fs::write(graph.path().join("pages/Query.md"), format!("- {raw}\n  id:: {uuid}\n")).unwrap();
+            std::fs::write(
+                graph.path().join("pages/Query.md"),
+                format!("- {raw}\n  id:: {uuid}\n"),
+            )
+            .unwrap();
             let error = run_query_export(graph.path(), uuid, &[]).unwrap_err();
             assert!(error.contains(message), "{raw}: {error}");
         }

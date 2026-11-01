@@ -90,28 +90,48 @@ pub fn query_request_by_uuid(
     name: Option<&str>,
     replace: bool,
 ) -> io::Result<QueryExportRequest> {
-    let graph = store.whole_graph().map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
+    let graph = store
+        .whole_graph()
+        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
     let corpus = graph.corpus();
     let mut found = None;
     for page in &corpus.pages {
         let mut stack: Vec<_> = page.document.roots.iter().collect();
         while let Some(block) = stack.pop() {
             stack.extend(block.children.iter());
-            if block.property("id").is_some_and(|id| id.eq_ignore_ascii_case(uuid)) {
-                if found.is_some() { return Err(refusal(format!("ambiguous block UUID: {uuid}"))); }
+            if block
+                .property("id")
+                .is_some_and(|id| id.eq_ignore_ascii_case(uuid))
+            {
+                if found.is_some() {
+                    return Err(refusal(format!("ambiguous block UUID: {uuid}")));
+                }
                 found = Some((page, block));
             }
         }
     }
     let (page, block) = found.ok_or_else(|| refusal(format!("unknown block UUID: {uuid}")))?;
-    let (argument, dialect, title) = render::query_for_export(block.visible_text(), block.is_org()).map_err(refusal)?;
-    let properties = block.properties().into_iter().filter(|(key, _)| query_parse_property(key) || legacy_table_property(key)).collect();
+    let (argument, dialect, title) =
+        render::query_for_export(block.visible_text(), block.is_org()).map_err(refusal)?;
+    let properties = block
+        .properties()
+        .into_iter()
+        .filter(|(key, _)| query_parse_property(key) || legacy_table_property(key))
+        .collect();
     Ok(QueryExportRequest {
-        argument, dialect, properties,
+        argument,
+        dialect,
+        properties,
         current_page: Some(page.name.clone()),
-        name: name.map(str::to_owned).or(title).unwrap_or_else(|| format!("Query {uuid}")),
+        name: name
+            .map(str::to_owned)
+            .or(title)
+            .unwrap_or_else(|| format!("Query {uuid}")),
         host_block_id: Some(block.uuid.clone()),
-        folder: None, replace, asset_budget_bytes: None, include_query_text: false,
+        folder: None,
+        replace,
+        asset_budget_bytes: None,
+        include_query_text: false,
     })
 }
 

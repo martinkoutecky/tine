@@ -2300,8 +2300,18 @@ mod og_20d_guide_tests {
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("`tine export query`"));
         let cli = include_str!("templates/command-line.md");
-        for detail in ["tine export query GRAPH '((UUID))'", "--name", "--force", "exactly one query", "previous export in recovery", "plain row outlines"] {
-            assert!(cli.contains(detail), "missing query export instruction: {detail}");
+        for detail in [
+            "tine export query GRAPH '((UUID))'",
+            "--name",
+            "--force",
+            "exactly one query",
+            "previous export in recovery",
+            "plain row outlines",
+        ] {
+            assert!(
+                cli.contains(detail),
+                "missing query export instruction: {detail}"
+            );
         }
         assert!(files.contains(
             "Tine computes them with the app's own sheet code before it writes the export"

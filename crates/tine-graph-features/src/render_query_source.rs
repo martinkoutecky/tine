@@ -66,7 +66,12 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> Vec<MacroExtent> {
     recognized
 }
 
-fn restore_arguments(inlines: &mut [Inline], extents: &HashMap<usize, MacroExtent>, lead: usize, recognized: &mut Vec<MacroExtent>) {
+fn restore_arguments(
+    inlines: &mut [Inline],
+    extents: &HashMap<usize, MacroExtent>,
+    lead: usize,
+    recognized: &mut Vec<MacroExtent>,
+) {
     let mut closing_brace = None;
     for inline in inlines {
         // lsdoc closes a map-bearing macro one byte early: its final `}` is
