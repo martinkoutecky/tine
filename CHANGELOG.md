@@ -17,9 +17,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
 - Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
-- A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
-- Queries with `query-table:: true` now show their results in published read-only apps. Query exports also keep the table's chosen columns and starting sort.
-- Typing `1. ` inside a code or calculator block now keeps it as literal text instead of removing the fence and turning the block into a numbered list.
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
 - Ordinary text keeps the same line breaks when entering the experimental CodeMirror editor, including nested blocks and sidebar panes (UI-CM6-PLAIN-WRAP-WIDTH).
 - Typing in large pages and query results avoids rescanning unrelated block text for the compact Today task count, in-page find, query column choices, and sheet table and board fields.
