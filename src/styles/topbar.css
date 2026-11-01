@@ -167,8 +167,10 @@
   display: flex;
   justify-content: space-around;
   gap: 8px;
+  overflow-x: auto;
 }
 .mobile-navigation-toolbar .icon-btn {
+  flex: 0 0 44px;
   width: 44px;
   height: 44px;
 }

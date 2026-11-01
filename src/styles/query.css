@@ -792,7 +792,7 @@
     /* One system token, never `env()` at the call site (mobileSafeArea). */
     padding: 12px 14px calc(12px + var(--overlay-inset-bottom));
     /* A bottom sheet is expected to scroll; menus inside it scroll with it. */
-    max-height: 70vh;
+    max-height: calc(70vh / var(--interface-zoom, 1));
     overflow-y: auto;
   }
   .qs-menu {
@@ -987,7 +987,7 @@
 .query-result-section-header h3 { margin: 0; }
 .query-result-section-header .qd-root { margin-left: auto; }
 .qd-trigger { border: 1px solid var(--border-color, #777); border-radius: 6px; padding: .25rem .55rem; background: transparent; color: inherit; }
-.qd-panel { position: relative; z-index: 4; max-height: min(65vh, 34rem); overflow: auto; padding: .75rem; border: 1px solid var(--border-color, #777); border-radius: 8px; background: var(--bg-primary, #222); box-shadow: 0 8px 24px #0004; min-width: min(32rem, 90vw); }
+.qd-panel { position: relative; z-index: 4; max-height: min(calc(65vh / var(--interface-zoom, 1)), 34rem); overflow: auto; padding: .75rem; border: 1px solid var(--border-color, #777); border-radius: 8px; background: var(--bg-primary, #222); box-shadow: 0 8px 24px #0004; min-width: min(32rem, calc(90vw / var(--interface-zoom, 1))); }
 .qd-panel section { margin: .4rem 0 .8rem; border-bottom: 1px solid var(--border-color, #777); padding-bottom: .5rem; }
 .qd-panel h4 { font-size: .85rem; margin: 0 0 .3rem; }
 .qd-panel button { margin: .12rem; }
