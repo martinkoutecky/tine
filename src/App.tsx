@@ -85,6 +85,8 @@ import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initCm6EditorSetting } from "./editor/cm6Setting";
+import { initNoteLayoutSetting } from "./noteLayoutSetting";
+import { rootIsRtl } from "./render/textDirection";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
@@ -282,7 +284,7 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
         const onMove = (ev: PointerEvent) => {
           const raw =
             props.dir === "row"
-              ? (ev.clientX - box.left) / Math.max(1, box.width)
+              ? (rootIsRtl() ? box.right - ev.clientX : ev.clientX - box.left) / Math.max(1, box.width)
               : (ev.clientY - box.top) / Math.max(1, box.height);
           setSplitRatio(props.path, raw, windowId);
         };
@@ -879,6 +881,7 @@ export function App(): JSX.Element {
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());
   onMount(initCm6EditorSetting);
+  onMount(initNoteLayoutSetting);
 
   // Android/iOS WebViews otherwise navigate raw target=_blank links in-app.
   onMount(() => {
@@ -1180,7 +1183,7 @@ export function App(): JSX.Element {
             onMouseDown={(e) => {
               e.preventDefault();
               const onMove = (ev: MouseEvent) =>
-                resizeSidebar("left", ev.clientX);
+                resizeSidebar("left", rootIsRtl() ? windowOf(ev.target as Element).innerWidth - ev.clientX : ev.clientX);
               const onUp = () => {
                 mainWindow.removeEventListener("mousemove", onMove);
                 mainWindow.removeEventListener("mouseup", onUp);

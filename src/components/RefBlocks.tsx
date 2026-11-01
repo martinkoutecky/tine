@@ -26,6 +26,8 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { isElementNode } from "../windowRealm";
 import { CalGlyph } from "./blockParts";
+import { blockDirAttr } from "../render/textDirection";
+import { noteLayoutDirAttr } from "../noteLayoutSetting";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -159,6 +161,7 @@ function RefBlock(props: {
   return (
     <div
       class="ls-block ref-block"
+      dir={noteLayoutDirAttr()}
       data-block-id={props.block.id}
       data-block-ref={blockDtoExternalId(props.block)}
       classList={{ "page-property-reference": !!props.block.page_property, collapsed: folded() }}
@@ -216,6 +219,7 @@ function RefBlock(props: {
             }}>
           <div
             class="block-content"
+            dir={blockDirAttr(props.block.raw, format())}
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
             onClick={(event) => {
               // GH #486: the same gesture as the source page's properties area

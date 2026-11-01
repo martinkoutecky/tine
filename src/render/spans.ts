@@ -493,6 +493,7 @@ export interface LineBox {
   readonly top: number;
   readonly bottom: number;
   readonly right: number;
+  readonly left?: number;
 }
 
 /** True when (x, y) lies horizontally past the last glyph of the FINAL visual
@@ -510,7 +511,7 @@ export interface LineBox {
  *  Only the final line qualifies: a click past the right edge of an earlier
  *  wrapped line belongs at that line's end, which the ordinary span mapping
  *  already gets right. */
-export function beyondFinalGlyph(boxes: ArrayLike<LineBox>, x: number, y: number): boolean {
+export function beyondFinalGlyph(boxes: ArrayLike<LineBox>, x: number, y: number, rtl = false): boolean {
   if (boxes.length === 0) return false;
   // Line boxes arrive in DOM order, which is visual order for text but need not
   // be once floats or inline-blocks are involved, so find the bottom band by
@@ -519,6 +520,7 @@ export function beyondFinalGlyph(boxes: ArrayLike<LineBox>, x: number, y: number
   for (let i = 0; i < boxes.length; i++) bottom = Math.max(bottom, boxes[i].bottom);
   let top = Infinity;
   let right = -Infinity;
+  let left = Infinity;
   for (let i = 0; i < boxes.length; i++) {
     const box = boxes[i];
     // Half a pixel of slack: sub-pixel line heights otherwise split one visual
@@ -526,8 +528,9 @@ export function beyondFinalGlyph(boxes: ArrayLike<LineBox>, x: number, y: number
     if (box.bottom < bottom - 0.5) continue;
     top = Math.min(top, box.top);
     right = Math.max(right, box.right);
+    left = Math.min(left, box.left ?? Infinity);
   }
-  return y >= top && y <= bottom && x > right;
+  return y >= top && y <= bottom && (rtl ? x < left : x > right);
 }
 
 /** {@link beyondFinalGlyph} against a live element's rendered line boxes.
@@ -546,7 +549,8 @@ export function clickBeyondRenderedEnd(root: Element, x: number, y: number): boo
   const boxes: LineBox[] = [];
   for (const child of Array.from(root.childNodes)) collectInFlowRects(child, view, range, boxes);
   range.detach?.();
-  return beyondFinalGlyph(boxes, x, y);
+  // GH #823: a right-to-left block's text ends at its left edge.
+  return beyondFinalGlyph(boxes, x, y, root.closest("[dir]")?.getAttribute("dir") === "rtl");
 }
 
 /** Line boxes of the IN-FLOW content of `node`, appended to `out`.

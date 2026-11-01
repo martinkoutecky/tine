@@ -288,6 +288,9 @@ export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => 
   if (!deps.enabled) return () => {};
   const doc = row.ownerDocument;
   let committedAt = -Infinity;
+  // GH #823: in the mirrored note layout depth grows leftward, so a swipe left
+  // indents. The recognizer sees mirrored x; feedback and the menu anchor get it back.
+  let mirror: 1 | -1 = 1;
   let allowed: Partial<Record<BlockSwipeAction, boolean>> = {};
   let cue: SVGSVGElement | null = null;
   const clearCue = () => { cue?.remove(); cue = null; };
@@ -325,18 +328,19 @@ export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => 
       }
       showCue(action, dx);
       row.setAttribute("data-swipe", action ?? "pending");
-      row.style.setProperty("--swipe-dx", `${Math.round(dx)}px`);
+      row.style.setProperty("--swipe-dx", `${Math.round(dx * mirror)}px`);
     },
     commit: (action, x, y) => {
       committedAt = Date.now();
-      deps.run(action, x, y);
+      deps.run(action, x * mirror, y);
     },
   });
   const point = (e: TouchEvent): { x: number; y: number } | null => {
     const t = e.changedTouches[0] ?? e.touches[0];
-    return t ? { x: t.clientX, y: t.clientY } : null;
+    return t ? { x: t.clientX * mirror, y: t.clientY } : null;
   };
   const onStart = (e: TouchEvent) => {
+    mirror = row.closest("[dir]")?.getAttribute("dir") === "rtl" ? -1 : 1;
     const p = point(e);
     if (!p) return;
     allowed = {};

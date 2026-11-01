@@ -26,7 +26,7 @@
   font: inherit;
 }
 .all-pages-count {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-variant-numeric: tabular-nums;
 }
 /* One track per rendered cell: page, updated, backlinks, plus journal date only
@@ -59,7 +59,7 @@
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  text-align: left;
+  text-align: start;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -93,7 +93,7 @@
   background: none;
   color: var(--link-color, var(--text-primary));
   font: inherit;
-  text-align: left;
+  text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;

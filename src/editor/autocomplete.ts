@@ -709,7 +709,10 @@ export const COMMANDS: readonly Command[] = Object.freeze(COMMAND_DEFINITIONS.ma
     ...command,
     get label() {
       const translated = command.labelMessage ? render(command.labelMessage) : command.label!;
-      return activeLocale() === "zh-CN" ? `${command.matchLabel ?? command.label} (${translated})`
+      const keyword = command.matchLabel ?? command.label;
+      // Any translated locale shows the English keyword it can be typed by next to
+      // its gloss; a marker Persian leaves as TODO needs no gloss of itself.
+      return activeLocale() !== "en" ? (translated === keyword ? translated : `${keyword} (${translated})`)
         : command.taskMarker ? command.matchLabel! : translated;
     },
     matchTieOrder,
@@ -798,7 +801,7 @@ export function commandScore(query: string, c: Command): number {
 // the displayed gloss for localized input. Shared by the / and < pickers.
 function commandLabelScore(query: string, command: { matchLabel?: string; label: string }): number {
   return Math.max(fuzzyScore(query, command.matchLabel ?? command.label),
-    activeLocale() === "zh-CN" && /[^\x00-\x7f]/.test(query) ? fuzzyScore(query, command.label) : 0);
+    activeLocale() !== "en" && /[^\x00-\x7f]/.test(query) ? fuzzyScore(query, command.label) : 0);
 }
 
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty

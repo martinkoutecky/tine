@@ -43,7 +43,7 @@ export const SURFACES = Object.freeze({
   // --- Settings ---------------------------------------------------------------
   "settings.tabs": { env: "desktop", budget: 10, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" },
   "settings.appearance.open": settingsOpen("appearance", 28),
-  "settings.appearance.advanced": settingsAdvanced("appearance", 14),
+  "settings.appearance.advanced": settingsAdvanced("appearance", 15),
   "settings.editor.open": settingsOpen("editor", 9),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
   // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting.

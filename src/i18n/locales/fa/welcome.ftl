@@ -1,0 +1,16 @@
+welcome-could-not-copy = کپی نشد: { $error }
+welcome-close-welcome = بستن صفحهٔ خوش‌آمد
+welcome-welcome-to-tine = به Tine خوش آمدید
+welcome-a-fast-local-outliner-for-your-logseq = طرح‌نویسی سریع و محلی برای گراف <strong>Logseq</strong> شما. Tine همان فایل‌های Markdown را می‌خواند و می‌نویسد، پس می‌توانید روی همان یادداشت‌ها از Logseq هم استفاده کنید.
+welcome-tine-could-not-open-your-last-graph = Tine نتوانست آخرین گراف شما را باز کند
+welcome-try-again = تلاش دوباره
+welcome-copy-details = کپی جزئیات
+welcome-nothing-was-changed-on-disk-you-can = چیزی روی دیسک تغییر نکرد. می‌توانید گراف دیگری را هم از پایین باز کنید.
+welcome-on-iphone-and-ipad-graphs-can-live = در iPhone و iPad، گراف‌ها می‌توانند در On My iPhone → TineOutline یا iCloud Drive → TineOutline باشند. پوشه‌های برنامه‌های دیگر (مانند Logseq) و ارائه‌دهندگان Files هنوز پشتیبانی نمی‌شوند.
+welcome-open-an-existing-graph = باز کردن گراف موجود
+welcome-point-tine-at-a-logseq-graph-folder = Tine را به پوشهٔ گراف Logseq که از قبل دارید هدایت کنید.
+welcome-create-a-new-graph = ساختن گراف جدید
+welcome-new-to-this-we-ll-set-up-a = تازه‌کارید؟ یک گراف نمایشی کوچک می‌سازیم که شما را با برنامه آشنا می‌کند.
+welcome-setting-up-your-graph = در حال آماده‌سازی گراف…
+welcome-opening = در حال باز کردن…
+welcome-free-open-source-your-notes = رایگان و متن‌باز · یادداشت‌هایتان فایل‌های سادهٔ Markdown و متعلق به خودتان می‌مانند.

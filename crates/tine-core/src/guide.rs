@@ -1840,6 +1840,14 @@ mod customize_look_guide_tests {
             .markdown
     }
 
+    /// GH #823: the page names the setting and the way to overrule the guess.
+    #[test]
+    fn the_customize_page_teaches_right_to_left_notes() {
+        assert!(page().contains("Right-to-left note layout"));
+        assert!(page().contains("Choosing Persian"));
+        assert!(page().contains("U+200F"));
+    }
+
     /// GH #610: a user who wants to change one visual detail must be able to
     /// find the page from the Guide index, find the file, open it, recover from
     /// a broken stylesheet, and inspect an element, using the names the app

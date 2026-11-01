@@ -1,3 +1,4 @@
+import { blockDirAttr } from "../render/textDirection";
 import type { ExportNode } from "./exportText";
 import {
   includesChildren,
@@ -9,9 +10,11 @@ import {
 function listItem(node: ExportNode, options: MarkupExportOptions, level: number, indent: string): string[] {
   const text = nodeHtml(node, options);
   const children = includesChildren(level, options.maxDepth) ? node.children : [];
-  if (!children.length) return [`${indent}<li>${text}</li>`];
+  // GH #823: only a right-to-left block carries `dir`; other output is unchanged.
+  const open = blockDirAttr(node.raw, node.format ?? "md", false) === "rtl" ? '<li dir="rtl">' : "<li>";
+  if (!children.length) return [`${indent}${open}${text}</li>`];
   return [
-    `${indent}<li>${text}`,
+    `${indent}${open}${text}`,
     `${indent}  <ul>`,
     ...children.flatMap((child) => listItem(child, options, level + 1, `${indent}    `)),
     `${indent}  </ul>`,

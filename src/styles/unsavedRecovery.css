@@ -12,7 +12,7 @@
 }
 .unsaved-recovery-panel h2 { margin: 0 0 0.5rem; font-size: 1.15rem; }
 .unsaved-recovery-panel h3 { margin: 0.9rem 0 0.4rem; font-size: 0.95rem; }
-.unsaved-recovery-panel button { margin: 0 0.5rem 0.4rem 0; }
+.unsaved-recovery-panel button { margin-block: 0 0.4rem; margin-inline: 0 0.5rem; }
 .unsaved-recovery-entry { border-top: 1px solid var(--border-color); margin-top: 0.75rem; }
 .recovery-draft pre {
   max-height: 12rem;

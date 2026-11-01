@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Notes in Persian, Arabic and Hebrew read right to left: each block takes its direction from its text, in the view and in both editors, and links, tags and code inside it keep their order. Settings offers a **Right-to-left note layout** that mirrors bullets, indentation and guide lines. Nothing is written into notes (#823).
+- Persian (فارسی) is available as an interface language, Tine's first right-to-left one: menus, settings and messages mirror, and the note layout defaults to right to left. Choose it under Settings → Appearance → Language. The Guide stays in English (#823).
 - Settings → Editor → Advanced offers one **Hover preview delay**, in seconds, for page and block references (#824). The default is 1 second; large values keep previews out of the way, and touch long-press keeps its own delay.
 - `tine export query GRAPH '((UUID))'` publishes the query block's result pages, with `--name` for the output and `--force` to replace an existing export while retaining it in recovery. It uses the shared query publisher; Sheets retain the command-line plain-outline rendering.
 

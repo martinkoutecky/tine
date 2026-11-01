@@ -21,3 +21,12 @@ describe("blockDropPosition (OG outline drag parity, GH #326)", () => {
     expect(blockDropPosition(190, 48, block, main)).toBe("child");
   });
 });
+
+describe("mirrored note layout (GH #823)", () => {
+  const block = { left: 100, right: 500, top: 0, height: 40 };
+  it("nests when the pointer is 50 px in from the right edge", () => {
+    expect(blockDropPosition(440, 10, block, block, true)).toBe("child");
+    expect(blockDropPosition(470, 10, block, block, true)).toBe("before");
+    expect(blockDropPosition(470, 30, block, block, true)).toBe("after");
+  });
+});

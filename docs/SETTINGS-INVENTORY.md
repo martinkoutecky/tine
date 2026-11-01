@@ -22,6 +22,7 @@ dynamic keys are outside this core inventory.
 | `appearance` | `settings-search-style` | Style | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `settings-search-color-scheme` | Color scheme | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `themes-install-a-token-theme` | Install a token theme | Basic | Visible workflow, accessibility, permission or safety choice. |
+| `appearance` | `settings-search-right-to-left-note-layout` | Right-to-left note layout | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `settings-search-edit-custom-css` | Edit custom.css | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `css-edit-global` | Edit global CSS | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `settings-search-disable-custom-css` | Disable custom CSS | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |

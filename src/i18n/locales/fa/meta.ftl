@@ -1,0 +1,3 @@
+-locale-name = فارسی
+-locale-matches = fa, fa-IR, fa-AF
+-locale-direction = rtl

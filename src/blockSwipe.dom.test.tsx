@@ -68,6 +68,19 @@ const wire = (id: string, over: Partial<Parameters<typeof wireBlockSwipe>[1]> = 
   return c;
 };
 
+describe("mirrored note layout (GH #823)", () => {
+  it("a swipe left indents and a swipe right outdents, with the menu anchored at the real finger", () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    host.setAttribute("dir", "rtl");
+    host.appendChild(row);
+    const runs: Array<[string, number]> = [];
+    cleanups.push(attachBlockSwipe(row, { enabled: true, editing: () => false, run: (action, x) => runs.push([action, x]) }));
+    swipe(row, -60);
+    swipe(row, 60);
+    expect(runs).toEqual([["indent", 140], ["outdent", 260]]);
+  });
+});
+
 describe("block swipe commands (real store)", () => {
   it("swipe right indents under the previous sibling, and one undo restores it", () => {
     loadPage([blk("a"), blk("b")]);

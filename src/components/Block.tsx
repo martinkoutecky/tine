@@ -153,6 +153,8 @@ import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
+import { noteLayoutDirAttr } from "../noteLayoutSetting";
+import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { applySheetViewSlashAction } from "./block/sheetViewSlash";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -305,6 +307,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   return (
     <div
       class="ls-block"
+      dir={noteLayoutDirAttr()}
       {...(() => {
         const thread = threadLineDecoration();
         return {
@@ -2139,14 +2142,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       e.preventDefault();
       return true;
     }
-    if (plain && !e.shiftKey && start === end && e.key === "ArrowLeft" && start === 0) {
+    if (plain && !e.shiftKey && arrowLeave(e.key, ref, start, end, raw.length)) {
       e.preventDefault();
-      commitAndMove("left");
-      return true;
-    }
-    if (plain && !e.shiftKey && start === end && e.key === "ArrowRight" && start === raw.length) {
-      e.preventDefault();
-      commitAndMove("right");
+      commitAndMove(e.key === "ArrowLeft" ? "left" : "right");
       return true;
     }
     if (plain && !e.shiftKey && start === end && e.key === "ArrowUp") {
@@ -2502,20 +2500,20 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           });
         }
       }
-    } else if (e.key === "ArrowLeft" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // GH #213: at the very start, move into the END of the previous visible
-      // editor. Shift keeps native selection; Ctrl/Meta keep native word/line jumps.
-      if (start === end && start === 0) {
+    } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // GH #213: past the block's start, into the END of the previous visible
+      // editor; past its end, into the START of the next. Shift keeps native
+      // selection; Ctrl/Meta keep native word/line jumps. GH #823: which key that
+      // is depends on the block's direction.
+      const leave = arrowLeave(e.key, ref, start, end, raw.length);
+      if (leave === "backward") {
         const prev = viewPrev();
         if (prev) {
           e.preventDefault();
           // A number caret clamps to the new editor's full text length at mount.
           startEditing(prev, Number.MAX_SAFE_INTEGER, null, navigationSurface());
         }
-      }
-    } else if (e.key === "ArrowRight" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // GH #213: at the very end, move into the START of the next visible editor.
-      if (start === end && start === raw.length) {
+      } else if (leave === "forward") {
         const next = viewNext();
         if (next) {
           e.preventDefault();
@@ -2868,9 +2866,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     else insert(prepared);
   }
   return (
-    <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
+    <div class="editor-wrap" dir={blockDirAttr(docNode(props.id)?.raw ?? "", pageFmt())} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
       <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></BlockRenderBoundary></div>}</Show>
-      <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedCodeContext() }}>
+      <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
         <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />

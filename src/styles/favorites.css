@@ -65,7 +65,7 @@
   font-size: 0.78rem;
   opacity: 0.5;
   padding: 3px 10px;
-  text-align: left;
+  text-align: start;
   width: 100%;
 }
 /* The insertion line starts at the depth the drop would land at. */

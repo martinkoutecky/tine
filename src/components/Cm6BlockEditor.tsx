@@ -50,6 +50,7 @@ import { renderedClickOffset } from "./blockGestures";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { effectiveHeadingLevel } from "../render/facets";
 import { parserReady } from "../render/parse";
+import { blockDirAttr } from "../render/textDirection";
 import "./cm6-editor.css";
 
 export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
@@ -449,9 +450,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
     alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
   });
-  return <div class="cm6-block-editor editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
+  return <div class="cm6-block-editor editor-wrap" dir={blockDirAttr(source(), format)} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
     <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>
-    <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedContext() }}>
+    <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(code() ?? codeFenceOnly(visible(), format))?.lang.toLowerCase()}</span>
         <LineGutter lines={shown().split("\n")} code />

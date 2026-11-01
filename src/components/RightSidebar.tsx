@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { rootIsRtl } from "../render/textDirection";
 import { BlockList } from "./BlockList";
 import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
@@ -155,7 +156,7 @@ export function RightSidebar(): JSX.Element {
           onMouseDown={(e) => {
             e.preventDefault();
             const onMove = (ev: MouseEvent) =>
-              resizeSidebar("right", mainWindow.innerWidth - ev.clientX);
+              resizeSidebar("right", rootIsRtl() ? ev.clientX : mainWindow.innerWidth - ev.clientX);
             const onUp = () => {
               mainWindow.removeEventListener("mousemove", onMove);
               mainWindow.removeEventListener("mouseup", onUp);

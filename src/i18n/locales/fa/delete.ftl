@@ -1,0 +1,13 @@
+delete-failed = حذف انجام نشد: { $reason }
+delete-reason-rewrite = گراف در حال بازنویسی است. پس از پایان آن دوباره امتحان کنید.
+delete-reason-target = مقصد این صفحه تغییر کرده است؛ منوی عملیات صفحه را دوباره باز کنید.
+delete-reason-read-only = این صفحه فقط‌خواندنی است.
+delete-reason-conflict = تعارض ذخیره‌سازی این صفحه حل نشد.
+delete-reason-storage = { $reason }
+delete-reason-unsaved = «{ $name }» ذخیره نشد؛ صفحه حذف نشد.
+delete-reason-no-host = نشست ذخیره‌سازی گراف در دسترس نیست.
+delete-reason-waiting = «{ $name }» هنوز در حال ذخیره شدن است؛ کمی بعد دوباره حذف را امتحان کنید.
+delete-reason-pending = «{ $name }» وقتی حذف می‌شود که نوشتن فایلش ممکن باشد؛ Tine به تلاش ادامه می‌دهد.
+delete-reason-uncertain = Tine نتوانست حذف «{ $name }» را تأیید کند؛ به تلاش ادامه می‌دهد.
+delete-reason-superseded = «{ $name }» با ویرایشی جدیدتر تغییر کرد، پس حذف نشد.
+delete-reason-refused = ذخیره‌ساز بدون ذکر دلیل، حذف را رد کرد.

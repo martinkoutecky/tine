@@ -1,3 +1,4 @@
+import { rootIsRtl } from "./render/textDirection";
 /** Left-edge swipe (GH #501, #492): iOS Back, and the swipe that opens the left
  * drawer (Logseq OG `components/container.cljs`, the closed sidebar's 10px
  * left-edge strip: pending at |dx| > 20, opens at dx > 40, no vertical check).
@@ -226,18 +227,20 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
     },
   });
 
+  // tine#823: a right-to-left interface keeps its sidebars on the opposite edges.
+  const edgeX = (x: number) => rootIsRtl() ? viewportWidth() - x : x;
   const onStart = (event: TouchEvent) => {
     flushBack();
     if (event.touches.length !== 1) { swipe.cancel(); return; }
     const target = event.target as Element | null;
     if (target?.closest?.(EDGE_SWIPE_IGNORE_SELECTOR)) return;
     const t = event.touches[0];
-    swipe.start(t.clientX, t.clientY, event.timeStamp);
+    swipe.start(edgeX(t.clientX), t.clientY, event.timeStamp);
   };
   const onMove = (event: TouchEvent) => {
     if (event.touches.length !== 1) { swipe.cancel(); return; }
     const t = event.touches[0];
-    if (swipe.move(t.clientX, t.clientY, event.timeStamp) === "claim" && event.cancelable) {
+    if (swipe.move(edgeX(t.clientX), t.clientY, event.timeStamp) === "claim" && event.cancelable) {
       // Horizontal edge drag: keep the OS from also treating it as a scroll or
       // as its own back/forward gesture.
       event.preventDefault();
@@ -245,7 +248,7 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
   };
   const onEnd = (event: TouchEvent) => {
     const t = event.changedTouches[0];
-    if (t) swipe.end(t.clientX, t.clientY, event.timeStamp);
+    if (t) swipe.end(edgeX(t.clientX), t.clientY, event.timeStamp);
     else swipe.cancel();
   };
   const onCancel = () => swipe.cancel();

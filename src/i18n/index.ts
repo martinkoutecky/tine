@@ -48,10 +48,11 @@ const otherFiles = import.meta.glob(["./locales/*/*.ftl", "!./locales/en/*.ftl"]
   query: "?raw", import: "default",
 }) as Record<string, () => Promise<string>>;
 
-function bundleOf(tag: string, sources: readonly string[]): FluentBundle {
-  // No Unicode isolation marks: no shipped locale is right-to-left, and the
-  // invisible FSI/PDI characters leak into copied text and test assertions.
-  const bundle = new FluentBundle(tag, { useIsolating: false });
+function bundleOf(tag: string, sources: readonly string[], isolating = false): FluentBundle {
+  // Isolation marks only for a right-to-left locale, where a Latin name inside a
+  // sentence would otherwise reorder it (tine#823). Elsewhere the invisible FSI/PDI
+  // characters would only leak into copied text and test assertions.
+  const bundle = new FluentBundle(tag, { useIsolating: isolating });
   for (const source of sources) {
     const errors = bundle.addResource(new FluentResource(source));
     // Fixed text (I-5); scripts/lib/i18n-catalog.mjs checkCatalog (the catalog test) names it.
@@ -62,6 +63,22 @@ function bundleOf(tag: string, sources: readonly string[]): FluentBundle {
 
 const bundles = new Map<string, FluentBundle>([[SOURCE_LOCALE, bundleOf(SOURCE_LOCALE, Object.values(englishFiles))]]);
 const [locale, setLocaleSignal] = createSignal(SOURCE_LOCALE);
+export type LocaleDirection = "ltr" | "rtl";
+// A registered locale's declared direction; a locale outside the registry names its own.
+let unregisteredRtl: string | null = null;
+const directionOf = (tag: string): LocaleDirection =>
+  tag === unregisteredRtl ? "rtl" : LOCALES.find((entry) => entry.tag === tag)?.direction ?? "ltr";
+let englishIsolating: FluentBundle | null = null;
+
+/** Reactive: the active UI locale's direction, declared by `-locale-direction` in its meta.ftl. */
+export const activeLocaleDirection = (): LocaleDirection => directionOf(locale());
+
+/** A locale that is not in the generated registry. Only tests and screenshot scripts
+ * call this, for a pseudo right-to-left locale; no such catalog ships. */
+export function installPseudoRtlLocale(tag: string, sources: readonly string[]): void {
+  unregisteredRtl = tag;
+  bundles.set(tag, bundleOf(tag, sources, true));
+}
 
 /** Reactive: the active UI locale's tag (`"en"`, `"zh-CN"`). */
 export const activeLocale = locale;
@@ -77,7 +94,7 @@ export function loadLocale(tag: string): Promise<void> {
   const files = Object.entries(otherFiles).filter(([file]) => file.startsWith(prefix));
   if (!files.length) return Promise.reject(new Error(`no catalog for ${tag}`));
   const load = Promise.all(files.map(([, read]) => read())).then((sources) => {
-    bundles.set(tag, bundleOf(tag, sources));
+    bundles.set(tag, bundleOf(tag, sources, directionOf(tag) === "rtl"));
   }).finally(() => loading.delete(tag));
   loading.set(tag, load);
   return load;
@@ -105,7 +122,11 @@ export function negotiateLocale(preference: string, requested: readonly string[]
 export function showLocale(tag: string): void {
   if (!bundles.has(tag)) throw new Error(`catalog for ${tag} is not loaded`);
   setLocaleSignal(tag);
-  if (typeof document !== "undefined") document.documentElement.lang = tag;
+  if (typeof document === "undefined") return;
+  document.documentElement.lang = tag;
+  // The root `dir` mirrors the interface. A left-to-right locale leaves no attribute at all.
+  if (directionOf(tag) === "rtl") document.documentElement.setAttribute("dir", "rtl");
+  else document.documentElement.removeAttribute("dir");
 }
 
 /** Load `tag`'s catalog, then show it (tests and single-owner callers; the UI
@@ -138,10 +159,17 @@ function formatIn(bundle: FluentBundle, id: string, args?: Readonly<Record<strin
   return text;
 }
 
+/** English, the fallback; inside a right-to-left interface it isolates its arguments too.
+ * Bug reports and dedupe keys format in the source locale itself and never get marks. */
+function fallbackBundle(tag: string): FluentBundle {
+  if (directionOf(tag) !== "rtl") return bundles.get(SOURCE_LOCALE)!;
+  return englishIsolating ??= bundleOf(SOURCE_LOCALE, Object.values(englishFiles), true);
+}
+
 function format(tag: string, id: MessageId, args?: Readonly<Record<string, string | number>>): string {
   const chosen = bundles.get(tag);
   const text = (chosen && tag !== SOURCE_LOCALE ? formatIn(chosen, id, args) : null)
-    ?? formatIn(bundles.get(SOURCE_LOCALE)!, id, args);
+    ?? formatIn(fallbackBundle(tag), id, args);
   if (text !== null) return text;
   reportOnce(`en:${id} did not format`);
   return id;
