@@ -40,6 +40,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- On Android and iOS, switching to another app commits pending edits immediately and, with **Commit and sync automatically**, pushes them, even inside the commit interval. Switching apps without edits adds no commit; the timed cadence is unchanged (D-20261101-GB).
 - `tine edit BLOCK TEXT` (including `TEXT` read from stdin with `-`) now refuses a supplied parser-owned LOGBOOK drawer without the read's `--rev`, preventing stale full buffers from replacing newer clock history. Plain text edits still retain current history without `--rev`.
 - The Quick capture Guide page now says Tine has no built-in system-wide hotkey (the **Quick-capture: file to today's journal** key, Ctrl+Shift+Enter by default, files what you typed inside the capture box) and gives the setup for Linux, Windows and macOS, plus the tray menu as a no-shortcut way in (GH #807).
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
