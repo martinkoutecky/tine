@@ -10,6 +10,7 @@ import { untrack } from "solid-js";
 import { doc, formatForBlock } from "./model";
 import { quoteSelectorOf } from "../comments";
 import { facetsOf } from "../render/facets";
+import { commentMarginHidden } from "../commentMarginPref";
 
 // A cheap screen before the property parse: a comment carries `quote::` (md)
 // or `:quote:` (org drawers).
@@ -40,5 +41,18 @@ export function commentsFirst(children: readonly string[]): readonly string[] {
     });
     if (!late) return children;
     return [...children.filter((_, i) => comment[i]), ...children.filter((_, i) => !comment[i])];
+  });
+}
+
+/** The children the outline walk visits under a block: the comments first
+ * (above), or, with the comment margin hidden (GH #845), without them, so the
+ * arrow keys and range selection never land on a thread nobody can see. The
+ * hidden preference is read tracked, outside the untracked block-text screens, so
+ * the visible order recomputes when it is toggled. */
+export function visibleChildren(children: readonly string[]): readonly string[] {
+  if (!commentMarginHidden()) return commentsFirst(children);
+  return untrack(() => {
+    const kept = children.filter((id) => !isCommentChild(id));
+    return kept.length === children.length ? children : kept;
   });
 }

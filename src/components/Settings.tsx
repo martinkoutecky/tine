@@ -13,6 +13,8 @@ import { platformKind } from "../platform";
 import { primeQuickShareGate, quickShareOffered } from "../quickShareGate";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { ConflictFileRow } from "./JournalConflictFileRow";
+import { toggleCommentMargin } from "../commentMargin";
+import { commentMarginHidden } from "../commentMarginPref";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { setJournalTemplate, graphMeta } from "../graphSession";
@@ -537,6 +539,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           on={docModeEnterForNewBlock()}
           onClick={() => changeDocModeEnterForNewBlock(!docModeEnterForNewBlock())}
         />
+      </Field>
+      <Field label={t("settings-ui-comment-margin")} hint={t("settings-ui-shows-the-comment-threads-beside-the-page-off-hides")}>
+        <Toggle on={!commentMarginHidden()} onClick={toggleCommentMargin} />
       </Field>
       <Field
         label={t("settings-ui-show-brackets")}
