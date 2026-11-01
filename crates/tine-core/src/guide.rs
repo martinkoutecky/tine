@@ -972,7 +972,7 @@ mod rename_guide_tests {
             "needs the graph folder to be the repository's top folder",
             "On Android and iOS git works as on a computer",
             "When you switch to another app, Tine saves your pages and commits pending edits immediately, without waiting for the interval",
-            "it never starts bringing in changes while in the background",
+            "It never starts bringing in changes while in the background",
             "When you come back to Tine, **Commit and sync automatically** syncs at once",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
