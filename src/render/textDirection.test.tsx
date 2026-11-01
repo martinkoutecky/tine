@@ -55,7 +55,9 @@ describe("arrow keys keep their on-screen meaning at a block's edges (GH #823)",
   const inside = (dir?: string) => {
     const host = document.createElement("div");
     if (dir) host.setAttribute("dir", dir);
-    return host.appendChild(document.createElement("textarea"));
+    const textarea = host.appendChild(document.createElement("textarea"));
+    textarea.value = dir === "rtl" ? "فارسی" : "words";
+    return textarea;
   };
   it("left to right: unchanged", () => {
     const el = inside();
@@ -65,7 +67,7 @@ describe("arrow keys keep their on-screen meaning at a block's edges (GH #823)",
     expect(arrowLeave("ArrowRight", el, 0, 0, 5)).toBeNull();
     expect(arrowLeave("ArrowLeft", el, 5, 5, 5)).toBeNull();
   });
-  it("right to left: offset 0 is the right edge", () => {
+  it("homogeneous right-to-left text leaves backward on the right and forward on the left", () => {
     const el = inside("rtl");
     expect(arrowLeave("ArrowRight", el, 0, 0, 5)).toBe("backward");
     expect(arrowLeave("ArrowLeft", el, 5, 5, 5)).toBe("forward");
@@ -78,6 +80,19 @@ describe("arrow keys keep their on-screen meaning at a block's edges (GH #823)",
     expect(arrowLeave("ArrowLeft", el, 0, 0, 0)).toBe("forward");
     expect(arrowLeave("ArrowLeft", el, 0, 5, 5)).toBeNull();
     expect(arrowLeave("ArrowLeft", el, 2, 2, 5)).toBeNull();
+  });
+  it.each([
+    ["rtl", "TODO یادداشت", 0],
+    ["rtl", "یادداشت English", 15],
+    ["ltr", "یادداشت English", 0],
+    ["ltr", "English یادداشت", 15],
+  ])("lets native textarea movement handle an opposite-direction boundary run (%s, %s)", (dir, raw, offset) => {
+    const el = inside(dir);
+    el.value = raw;
+    const at = offset === 0 ? 0 : raw.length;
+    for (const key of ["ArrowLeft", "ArrowRight"]) {
+      expect(arrowLeave(key, el, at, at, raw.length)).toBeNull();
+    }
   });
 });
 

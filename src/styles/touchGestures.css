@@ -42,8 +42,8 @@
   position: fixed;
   top: auto;
   bottom: var(--mobile-kb-toolbar-lift, calc(64px + var(--system-inset-bottom)));
-  inset-inline-start: max(6px, var(--system-inset-left));
-  inset-inline-end: max(6px, var(--system-inset-right));
+  left: max(6px, var(--system-inset-left));
+  right: max(6px, var(--system-inset-right));
   z-index: 81;
   justify-content: center;
   /* High interface zoom can leave less than one row of essential actions.

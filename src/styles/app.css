@@ -57,7 +57,9 @@ body {
   --overlay-inset-right: var(--system-inset-right);
   --overlay-inset-bottom: var(--system-inset-bottom);
   --overlay-inset-left: var(--system-inset-left);
+  --overlay-inset-inline-end: var(--overlay-inset-right);
 }
+:root[dir="rtl"] { --overlay-inset-inline-end: var(--overlay-inset-left); }
 html[data-system-insets="native-viewport"] {
   --system-inset-top: 0px;
   --system-inset-right: 0px;
@@ -91,7 +93,7 @@ html[data-system-insets="native-viewport"] {
      buttons sit behind the status bar and can't be tapped. All four insets are
      0 on desktop, so this is a no-op there. box-sizing includes the gutters. */
   box-sizing: border-box;
-  padding-block: var(--system-inset-top) var(--system-inset-bottom); padding-inline: var(--system-inset-left) var(--system-inset-right);
+  padding: var(--system-inset-top) var(--system-inset-right) var(--system-inset-bottom) var(--system-inset-left);
 }
 
 /* Shown only if the wasm block renderer fails to load (degraded mode). */
@@ -101,7 +103,7 @@ html[data-system-insets="native-viewport"] {
   inset-inline-start: 0;
   inset-inline-end: 0;
   z-index: 9999;
-  padding-block: calc(var(--overlay-inset-top) + 8px) 8px; padding-inline: calc(var(--overlay-inset-left) + 14px) calc(var(--overlay-inset-right) + 14px);
+  padding: calc(var(--overlay-inset-top) + 8px) calc(var(--overlay-inset-right) + 14px) 8px calc(var(--overlay-inset-left) + 14px);
   font-size: 13px;
   background: #b91c1c;
   color: #fff;
@@ -281,6 +283,8 @@ html[data-system-insets="native-viewport"] {
 }
 .app-container[data-mobile-drawer-mode="true"] .left-sidebar { inset-inline-start: var(--system-inset-left); inset-inline-end: auto; }
 .app-container[data-mobile-drawer-mode="true"] .right-sidebar { inset-inline-end: var(--system-inset-right); inset-inline-start: auto; }
+:root[dir="rtl"] .app-container[data-mobile-drawer-mode="true"] .left-sidebar { inset-inline-start: var(--system-inset-right); }
+:root[dir="rtl"] .app-container[data-mobile-drawer-mode="true"] .right-sidebar { inset-inline-end: var(--system-inset-left); }
 .app-container[data-mobile-drawer-mode="true"] .sidebar-resizer,
 .app-container[data-mobile-drawer-mode="true"] .rs-resizer,
 .app-container[data-mobile-drawer-mode="true"] .resize-grip { display: none; }
@@ -465,8 +469,9 @@ html[data-system-insets="native-viewport"] {
   padding-top: 28px;
 }
 .mac-overlay.sidebar-collapsed .topbar {
-  padding-inline-start: 78px;
+  padding-left: 78px;
 }
+:root[dir="rtl"] .mac-overlay .topbar { padding-left: 78px; }
 /* Thin divider that sets the far-right Settings cog apart from the action icons. */
 .settings-build {
   margin-top: 18px;
@@ -740,14 +745,15 @@ html[data-system-insets="native-viewport"] {
   position: fixed;
   z-index: 9999;
 }
-.grip-n { top: 0; inset-inline-start: 8px; inset-inline-end: 8px; height: 4px; cursor: ns-resize; }
-.grip-s { bottom: 0; inset-inline-start: 8px; inset-inline-end: 8px; height: 4px; cursor: ns-resize; }
-.grip-e { top: 8px; bottom: 8px; inset-inline-end: 0; width: 4px; cursor: ew-resize; }
-.grip-w { top: 8px; bottom: 8px; inset-inline-start: 0; width: 4px; cursor: ew-resize; }
-.grip-nw { top: 0; inset-inline-start: 0; width: 8px; height: 8px; cursor: nwse-resize; }
-.grip-ne { top: 0; inset-inline-end: 0; width: 8px; height: 8px; cursor: nesw-resize; }
-.grip-sw { bottom: 0; inset-inline-start: 0; width: 8px; height: 8px; cursor: nesw-resize; }
-.grip-se { bottom: 0; inset-inline-end: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+/* These directions are physical window-manager resize commands. */
+.grip-n { top: 0; left: 8px; right: 8px; height: 4px; cursor: ns-resize; }
+.grip-s { bottom: 0; left: 8px; right: 8px; height: 4px; cursor: ns-resize; }
+.grip-e { top: 8px; bottom: 8px; right: 0; width: 4px; cursor: ew-resize; }
+.grip-w { top: 8px; bottom: 8px; left: 0; width: 4px; cursor: ew-resize; }
+.grip-nw { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.grip-ne { top: 0; right: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.grip-sw { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.grip-se { bottom: 0; right: 0; width: 8px; height: 8px; cursor: nwse-resize; }
 
 .main-content {
   position: relative;
@@ -789,6 +795,9 @@ html[data-system-insets="native-viewport"] {
 .pane-split-row {
   flex-direction: row;
 }
+/* Pane tree order and split commands name physical screen sides. Keep each
+   pane's inherited interface direction while laying branches out left first. */
+:root[dir="rtl"] .pane-split-row { flex-direction: row-reverse; }
 
 .pane-split-col {
   flex-direction: column;
@@ -923,11 +932,11 @@ html[data-system-insets="native-viewport"] {
 }
 
 .pane-edge-highlight-left {
-  inset-inline-start: 0;
+  left: 0;
 }
 
 .pane-edge-highlight-right {
-  inset-inline-end: 0;
+  right: 0;
 }
 
 .pane-edge-highlight-top,
@@ -974,11 +983,11 @@ html[data-system-insets="native-viewport"] {
 }
 
 .pane-edge-seg-left {
-  inset-inline-start: 0;
+  left: 0;
 }
 
 .pane-edge-seg-right {
-  inset-inline-end: 0;
+  right: 0;
 }
 
 .pane-edge-seg-top,
@@ -1012,11 +1021,11 @@ html[data-system-insets="native-viewport"] {
 }
 
 .pane-tab-split-preview-left {
-  inset-inline-start: 0;
+  left: 0;
 }
 
 .pane-tab-split-preview-right {
-  inset-inline-end: 0;
+  right: 0;
 }
 
 .pane-tab-split-preview-top,
@@ -1885,7 +1894,7 @@ html[data-system-insets="native-viewport"] {
   box-sizing: border-box;
   /* Shared by Settings, Copy/Export, Print to PDF and the query workspace, so
      the system-inset gutter belongs here rather than on any one of them. */
-  padding-block: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1))) calc(var(--overlay-inset-bottom) + 8px); padding-inline: calc(var(--overlay-inset-left) + 8px) calc(var(--overlay-inset-right) + 8px);
+  padding: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1))) calc(var(--overlay-inset-right) + 8px) calc(var(--overlay-inset-bottom) + 8px) calc(var(--overlay-inset-left) + 8px);
   z-index: 120;
 }
 .settings-modal {
@@ -3167,7 +3176,7 @@ html[data-system-insets="native-viewport"] {
 .ctx-submenu-menu {
   visibility: hidden;
   position: absolute;
-  inset-inline-start: 100%;
+  left: 100%;
   top: -4px;
   min-width: 160px;
   padding: 4px;
@@ -3184,13 +3193,13 @@ html[data-system-insets="native-viewport"] {
 
 /* Side chosen by `placeSubmenu`, once per menu (GH #471). */
 .ctx-menu[data-submenu-side="left"] .ctx-submenu-menu {
-  inset-inline-start: auto;
-  inset-inline-end: 100%;
+  left: auto;
+  right: 100%;
 }
 
 .ctx-menu[data-submenu-side="over"] .ctx-submenu-menu {
-  inset-inline-start: 0;
-  inset-inline-end: auto;
+  left: 0;
+  right: auto;
   top: 100%;
 }
 
@@ -4728,11 +4737,11 @@ mark {
 /* {{img url … left|right|center}} alignment wrappers. */
 .img-align-left {
   float: left;
-  margin-block: 0 8px; margin-inline: 0 12px;
+  margin: 0 12px 8px 0;
 }
 .img-align-right {
   float: right;
-  margin-block: 0 8px; margin-inline: 12px 0;
+  margin: 0 0 8px 12px;
 }
 .img-align-center {
   display: block;
@@ -4794,6 +4803,7 @@ mark {
   background: linear-gradient(135deg, transparent 45%, var(--text-muted, #888) 45%, var(--text-muted, #888) 78%, transparent 78%);
   border-end-end-radius: 4px;
 }
+.img-resize-grip:dir(rtl) { cursor: nesw-resize; background: linear-gradient(225deg, transparent 45%, var(--text-muted, #888) 45%, var(--text-muted, #888) 78%, transparent 78%); }
 .inline-image-wrap:hover .img-resize-grip {
   opacity: 0.85;
 }
@@ -4970,7 +4980,7 @@ mark {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  padding-block: calc(var(--overlay-inset-top) + 24px) calc(var(--overlay-inset-bottom) + 24px); padding-inline: calc(var(--overlay-inset-left) + 24px) calc(var(--overlay-inset-right) + 24px);
+  padding: calc(var(--overlay-inset-top) + 24px) calc(var(--overlay-inset-right) + 24px) calc(var(--overlay-inset-bottom) + 24px) calc(var(--overlay-inset-left) + 24px);
 }
 .audio-panel {
   width: calc(90vw / var(--interface-zoom, 1));
@@ -6472,7 +6482,7 @@ body.file-drop-active::after {
 .toast-stack {
   position: fixed;
   bottom: calc(var(--overlay-inset-bottom) + 18px);
-  inset-inline-end: calc(var(--overlay-inset-right) + 18px);
+  inset-inline-end: calc(var(--overlay-inset-inline-end) + 18px);
   z-index: 200;
   display: flex;
   flex-direction: column;
@@ -6558,7 +6568,7 @@ body.file-drop-active::after {
   justify-content: center;
   cursor: zoom-out;
   box-sizing: border-box;
-  padding-block: calc(var(--overlay-inset-top) + 8px) calc(var(--overlay-inset-bottom) + 8px); padding-inline: calc(var(--overlay-inset-left) + 8px) calc(var(--overlay-inset-right) + 8px);
+  padding: calc(var(--overlay-inset-top) + 8px) calc(var(--overlay-inset-right) + 8px) calc(var(--overlay-inset-bottom) + 8px) calc(var(--overlay-inset-left) + 8px);
 }
 .lightbox-overlay > img.lightbox-img {
   width: auto;
@@ -8078,7 +8088,7 @@ html.tine-embed-shading-accent .embed-block {
   align-items: flex-start;
   justify-content: center;
   box-sizing: border-box;
-  padding-block: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1))) calc(var(--overlay-inset-bottom) + 8px); padding-inline: calc(var(--overlay-inset-left) + 8px) calc(var(--overlay-inset-right) + 8px);
+  padding: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1))) calc(var(--overlay-inset-right) + 8px) calc(var(--overlay-inset-bottom) + 8px) calc(var(--overlay-inset-left) + 8px);
   z-index: 100;
 }
 
@@ -8620,7 +8630,8 @@ html.tine-embed-shading-accent .embed-block {
 .rs-actions-menu.rs-item-menu {
   position: fixed;
   z-index: 90;
-  inset-inline-start: auto;
+  left: auto;
+  inset-inline-end: auto;
   white-space: nowrap;
 }
 

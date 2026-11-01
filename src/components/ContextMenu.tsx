@@ -44,6 +44,7 @@ import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { openInPageFind } from "../inpageFind";
 import { isHTMLElementNode, requestFrame, viewportOf } from "../windowRealm";
+import { isRtlContext } from "../render/textDirection";
 
 function reportCopy(write: Promise<void>, okMsg: Msg): void {
   void write.then(() => pushToast(okMsg, "success"))
@@ -85,7 +86,9 @@ export function placeSubmenu(
   submenuWidth: number,
   vw: number,
   margin = 6,
+  rtl = false,
 ): "right" | "left" | "over" {
+  if (rtl && menuLeft - submenuWidth >= margin) return "left";
   if (menuLeft + menuWidth + submenuWidth <= vw - margin) return "right";
   if (menuLeft - submenuWidth >= margin) return "left";
   return "over";
@@ -132,7 +135,7 @@ export function ContextMenu(): JSX.Element {
         0,
         ...[...el.querySelectorAll<HTMLElement>(".ctx-submenu-menu")].map((sub) => sub.getBoundingClientRect().width),
       );
-      setSubmenuSide(placeSubmenu(placed.left, r.width, widest, viewport.width));
+      setSubmenuSide(placeSubmenu(placed.left, r.width, widest, viewport.width, 6, isRtlContext(el)));
       if (cm.kind === "page") {
         el.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
       }

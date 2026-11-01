@@ -41,7 +41,11 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
       el.style.setProperty("--table-column-width", `${normalWidth}px`);
       const { width, shift } = tableBleedGeometry(normalLeft, normalWidth, surface.scrollWidth, m.left, pane.clientWidth, (c.left + c.right) / 2);
       el.style.setProperty("--table-bleed-width", `${width}px`);
-      el.style.setProperty("--table-bleed-shift", `${shift}px`);
+      // CSS anchors a block at inline-start. Geometry above is physical: an
+      // RTL viewport starts at normalRight, so its right margin must also
+      // account for the new width, not just negate the leftward shift.
+      const inlineShift = parentStyle.direction === "rtl" ? width - normalWidth - shift : shift;
+      el.style.setProperty("--table-bleed-shift", `${inlineShift}px`);
     };
     const schedule = () => { if (!frame) frame = requestFrame(el, () => { frame = undefined; measure(); }); };
     const observer = newResizeObserver(el, schedule);

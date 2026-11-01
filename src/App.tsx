@@ -284,7 +284,7 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
         const onMove = (ev: PointerEvent) => {
           const raw =
             props.dir === "row"
-              ? (rootIsRtl() ? box.right - ev.clientX : ev.clientX - box.left) / Math.max(1, box.width)
+              ? (ev.clientX - box.left) / Math.max(1, box.width)
               : (ev.clientY - box.top) / Math.max(1, box.height);
           setSplitRatio(props.path, raw, windowId);
         };

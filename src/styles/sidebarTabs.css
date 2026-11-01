@@ -99,6 +99,9 @@
 #sidebar-tabs-list .nav-tab.row-drop-after {
   background-position: bottom left;
 }
+:root[dir="rtl"] #sidebar-tabs-list .nav-tab:is(.row-drop-before, .row-drop-after) {
+  background-image: linear-gradient(to left, transparent 0 var(--tab-drop-indent, 0px), var(--link-color) var(--tab-drop-indent, 0px));
+}
 
 /* A collapsed group hiding the active tab says so (GH #704): the active cue,
    lighter, with an accent edge; expanding it shows the active row itself. */

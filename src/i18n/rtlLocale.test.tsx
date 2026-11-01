@@ -59,6 +59,7 @@ describe("the interface direction follows the interface language", () => {
   it("isolates arguments only in a right-to-left locale, including English fallback", () => {
     showLocale(PSEUDO);
     expect(t("settings-ui-logical-outdenting" as never, { x: "Tine" } as never)).toContain("⁨Tine⁩");
+    expect(t("settings-ui-couldn-t-save", { value1: "disk full" })).toContain("⁨disk full⁩");
     showLocale("en");
     expect(t("settings-ui-logical-outdenting")).not.toMatch(/[⁨⁩]/);
   });

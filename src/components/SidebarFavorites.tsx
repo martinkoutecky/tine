@@ -79,7 +79,7 @@ export function SidebarFavorites(props: {
           const dropping = () => dropTarget()?.index === i();
           const rowClass = () => ({ "row-drop-before": dropping() && dropTarget()!.before, "row-drop-after": dropping() && !dropTarget()!.before });
           const style = () => ({
-            "padding-left": `${6 + row.depth * INDENT_PX}px`,
+            "padding-inline-start": `${6 + row.depth * INDENT_PX}px`,
             ...(dropping() ? { "--fav-drop-indent": `${6 + dropDepth() * INDENT_PX}px` } : {}),
           });
           const toggle = (

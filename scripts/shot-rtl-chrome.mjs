@@ -22,12 +22,13 @@ try {
     if (a === 600) throw new Error("Vite did not start");
     await delay(250);
   }
-  browser = await chromium.launch({ args: ["--no-sandbox"] });
+  browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), args: ["--no-sandbox", "--disable-gpu", "--force-color-profile=srgb"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: mode === "zh" ? "zh-CN" : mode === "fa" ? "fa-IR" : "en-US" });
   page.on("pageerror", e => failures.push(`page error: ${e.message}`));
   await page.clock.install({ time: new Date("2026-11-01T10:00:00Z") });
   await page.goto(`http://localhost:${port}/`, { timeout: 120_000 });
   await page.waitForSelector(".ls-block, .page-title", { timeout: 60_000 });
+  await page.evaluate(() => document.fonts.ready);
   await page.clock.runFor(2000);
   if (mode === "rtl") await page.evaluate(async () => {
     const i18n = await import("/src/i18n/index.ts");
@@ -47,11 +48,14 @@ try {
     if (box.sidebar && box.main && box.sidebar.left < box.main.left) failures.push("the left sidebar did not move to the right edge");
     if (box.bullet && box.body && box.bullet.left < box.body.right - 1) failures.push("the note layout did not default to right to left");
   }
-  await page.keyboard.press("t"); await page.keyboard.press("s");
+  const settingsTitle = await page.evaluate(async () => (await import("/src/i18n/index.ts")).t("app-settings-t-s"));
+  await page.getByTitle(settingsTitle, { exact: true }).click();
+  await page.waitForSelector(".settings-modal");
   await page.clock.runFor(800); await delay(600);
   await shot("settings");
   await page.keyboard.press("Escape"); await page.clock.runFor(300); await delay(200);
   await page.keyboard.press("Control+k"); await page.clock.runFor(300); await delay(400);
+  await page.waitForSelector(".switcher-input");
   await shot("search");
 } finally {
   await browser?.close();

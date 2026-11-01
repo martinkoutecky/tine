@@ -11,6 +11,7 @@ import {
   type DrawerSide,
 } from "../mobileDrawers";
 import { mainWindow } from "../windowRealm";
+import { rootIsRtl } from "../render/textDirection";
 
 type BackgroundSide = DrawerSide | "any";
 
@@ -60,7 +61,7 @@ export function MobileDrawerPanel(props: {
   const MIN_CLOSE_PX = 56; // absolute floor so a tiny panel still needs a real drag
   const CLOSE_FRACTION = 0.3; // fraction of panel width that triggers a close
   // Positive result = movement toward this side's closed edge (left closes left).
-  const towardClose = (dx: number) => (props.side === "left" ? -dx : dx);
+  const towardClose = (dx: number) => (props.side === "left" ? -dx : dx) * (rootIsRtl() ? -1 : 1);
   let startX = 0;
   let startY = 0;
   let width = 1;

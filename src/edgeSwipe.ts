@@ -205,7 +205,7 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
       if (snapTimer) { clearTimeout(snapTimer); snapTimer = null; }
       surface.style.transition = "none";
       surface.style.willChange = "transform";
-      surface.style.transform = `translateX(${Math.round(dx)}px)`;
+      surface.style.transform = `translateX(${Math.round(dx) * (rootIsRtl() ? -1 : 1)}px)`;
     },
     settle(committed) {
       const surface = deps.surface();
@@ -214,7 +214,7 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
         // Like the native iOS back swipe (GH #501): the page slides fully off
         // to the right, and only then does Back swap it.
         surface.style.transition = `transform ${BACK_SLIDE_OUT_MS}ms ease-out`;
-        surface.style.transform = `translateX(${Math.round(viewportWidth())}px)`;
+        surface.style.transform = `translateX(${Math.round(viewportWidth()) * (rootIsRtl() ? -1 : 1)}px)`;
         pendingBack = true;
         skipBack = true;
         snapTimer = setTimeout(flushBack, BACK_SLIDE_OUT_MS + 20);

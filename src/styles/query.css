@@ -780,8 +780,8 @@
   }
   .qs-sheet-anchor {
     top: auto !important;
-    inset-inline-start: 0 !important;
-    inset-inline-end: 0;
+    left: 0 !important;
+    right: 0;
     bottom: 0;
     width: auto !important;
     min-width: 0;

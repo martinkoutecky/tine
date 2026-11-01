@@ -7,7 +7,7 @@ import type { SheetCellCtx } from "../sheet/context";
 import { appendSheetCellChild } from "../sheet/mutations";
 import { cellBlockId, cellOwner, cellSurfaceKey, moveCellAfterEdit, selectCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
 import { SHEET_CELL_HIDE, splitProps } from "./properties";
-import { arrowLeave } from "../render/textDirection";
+import { cm6ArrowLeave } from "./cm6ArrowLeave";
 
 const blockedCommands = new Set([
   "editor/comment", "editor/indent", "editor/outdent", "editor/move-block-up", "editor/move-block-down",
@@ -63,7 +63,7 @@ export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: stri
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) return true;
     if (plain && !e.shiftKey && s.empty) {
-      if (arrowLeave(e.key, v.contentDOM, s.head, s.head, raw.length)) {
+      if (cm6ArrowLeave(e.key, v)) {
         commit(raw); moveCellAfterEdit(cell, e.key === "ArrowLeft" ? "left" : "right"); return true;
       }
       if (e.key === "ArrowUp" && v.moveToLineBoundary(EditorSelection.cursor(s.head), false).head === 0) {

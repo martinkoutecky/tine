@@ -55,6 +55,8 @@
 }
 .theme-switch.is-system .theme-knob { transform: translateX(100%); }
 .theme-switch.is-dark .theme-knob { transform: translateX(200%); }
+:root[dir="rtl"] .theme-switch.is-system .theme-knob { transform: translateX(-100%); }
+:root[dir="rtl"] .theme-switch.is-dark .theme-knob { transform: translateX(-200%); }
 
 .settings-width-control {
   display: flex;

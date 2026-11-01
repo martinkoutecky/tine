@@ -25,7 +25,7 @@ try {
     if (a === 600) throw new Error("Vite did not start");
     await delay(250);
   }
-  browser = await chromium.launch({ args: ["--no-sandbox"] });
+  browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), args: ["--no-sandbox"] });
   for (const theme of process.env.THEME ? [process.env.THEME] : ["light", "dark"]) {
     const page = await browser.newPage({ viewport: { width: 800, height: 900 } });
     page.on("pageerror", e => failures.push(`page error: ${e.message}`));
@@ -74,13 +74,68 @@ try {
         check(await editing() === "todo", `${theme}/${layout}/${label}: ArrowLeft at a right-to-left block's start moves into the text`);
         await open("todo", cm6, 0); await page.waitForTimeout(60);
         await page.keyboard.press("ArrowRight"); await page.waitForTimeout(100);
-        check(await editing() === "en-child", `${theme}/${layout}/${label}: ArrowRight at a right-to-left block's start leaves backward (got ${await editing()})`);
+        check(await editing() === "todo", `${theme}/${layout}/${label}: ArrowRight in the leading Latin run stays in the task (got ${await editing()})`);
+        await open("fa", cm6, 0); await page.waitForTimeout(60);
+        await page.keyboard.press("ArrowRight"); await page.waitForTimeout(60);
+        // fa is the first block, so a backward exit has no target. Verify exits
+        // with the homogeneous Persian child, whose predecessor exists.
+        await open("he", cm6, 0); await page.waitForTimeout(60);
+        await page.keyboard.press("ArrowRight"); await page.waitForTimeout(60);
+        check(await editing() === "fa-child", `${theme}/${layout}/${label}: homogeneous RTL leaves backward`);
         await open("todo", cm6, 1e9); await page.waitForTimeout(60);
         await page.keyboard.press("ArrowLeft"); await page.waitForTimeout(100);
         check(await editing() === "ref", `${theme}/${layout}/${label}: ArrowLeft at a right-to-left block's end leaves forward (got ${await editing()})`);
         await open("en", cm6, 0); await page.waitForTimeout(60);
         await page.keyboard.press("ArrowLeft"); await page.waitForTimeout(100);
         check(await editing() === "ar", `${theme}/${layout}/${label}: ArrowLeft at a left-to-right block's start leaves backward (got ${await editing()})`);
+      }
+      // At both source ends, in both directions, compare against CM's own visual
+      // command, including inward/outward affinity and hard line transitions.
+      for (const id of ["todo", "mixed-rtl-end", "mixed-ltr-start", "mixed-ltr-end", "multiline", "en", "plain-en"]) {
+        for (const atEnd of [false, true]) for (const assoc of [-1, 1]) for (const key of ["ArrowLeft", "ArrowRight"]) {
+          await open(id, true, atEnd ? 1e9 : 0);
+          await page.waitForTimeout(40); // let the newly mounted view measure its base direction
+          const expected = await page.evaluate(async ([end, affinity, k]) => {
+            const { EditorView } = await import("/node_modules/.vite/deps/@codemirror_view.js");
+            const { EditorSelection } = await import("/node_modules/.vite/deps/@codemirror_state.js");
+            const { cursorCharLeft, cursorCharRight } = await import("/node_modules/.vite/deps/@codemirror_commands.js");
+            const view = EditorView.findFromDOM(document.querySelector(".cm-editor"));
+            const cursor = EditorSelection.cursor(end ? view.state.doc.length : 0, affinity);
+            view.dispatch({ selection: EditorSelection.create([cursor]) });
+            (k === "ArrowLeft" ? cursorCharLeft : cursorCharRight)(view);
+            const moved = !view.state.selection.main.eq(cursor, true), head = view.state.selection.main.head;
+            view.dispatch({ selection: EditorSelection.create([cursor]) });
+            return { moved, head };
+          }, [atEnd, assoc, key]);
+          await page.keyboard.press(key);
+          const actual = await page.evaluate(async () => {
+            const { EditorView } = await import("/node_modules/.vite/deps/@codemirror_view.js");
+            const el = document.activeElement;
+            const view = el?.closest(".cm-editor");
+            return { id: el?.closest("[data-block-id]")?.dataset.blockId, head: view ? EditorView.findFromDOM(view).state.selection.main.head : null };
+          });
+          check(expected.moved ? actual.id === id && actual.head === expected.head : actual.id !== id,
+            `${theme}/${layout}/${id}/${atEnd}/${assoc}/${key}: visual movement ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+        }
+      }
+      // A real blank-space click, including an opposite-direction final run.
+      for (const id of ["fa-child", "mixed-rtl-end"]) for (const cm6 of [false, true]) {
+        await page.evaluate(() => window.endEdit());
+        const click = await page.$eval(`[data-block-id="${id}"] .block-content`, el => {
+          const range = document.createRange(); range.selectNodeContents(el);
+          const line = [...range.getClientRects()].at(-1), box = el.getBoundingClientRect();
+          return { x: box.left + 2, y: (line.top + line.bottom) / 2 };
+        });
+        await page.evaluate(cm => window.setCm6EditorEnabled(cm), cm6);
+        await page.mouse.click(click.x, click.y);
+        const caret = await page.evaluate(async () => {
+          const ta = document.querySelector("textarea");
+          if (ta) return { id: ta.closest("[data-block-id]").dataset.blockId, head: ta.selectionStart, length: ta.value.length };
+          const { EditorView } = await import("/node_modules/.vite/deps/@codemirror_view.js");
+          const v = EditorView.findFromDOM(document.querySelector(".cm-editor"));
+          return { id: v.dom.closest("[data-block-id]").dataset.blockId, head: v.state.selection.main.head, length: v.state.doc.length };
+        });
+        check(caret.id === id && caret.head === caret.length, `${theme}/${layout}/${id}/${cm6}: blank-space click reaches source end (${JSON.stringify(caret)})`);
       }
     }
     await page.evaluate(() => { window.endEdit(); window.setCm6EditorEnabled(false); window.setNoteLayoutRtl(false); });

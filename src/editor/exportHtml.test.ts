@@ -12,6 +12,15 @@ const forest: ExportNode[] = [
 ];
 
 describe("exportHtml", () => {
+  it("resets direction across alternating descendants without changing all-LTR output", () => {
+    const options = { stripLinks: false, removeEmphasis: false, removeTags: false };
+    const html = exportHtml([{ raw: "یادداشت", children: [{ raw: "English child.", children: [{ raw: "فرزند", children: [] }] }] }], options);
+    expect(html).toContain('<li dir="rtl">یادداشت');
+    expect(html).toContain('<li dir="ltr">English child.');
+    expect(html).toContain('<li dir="rtl">فرزند');
+    expect(exportHtml([{ raw: "English", children: [{ raw: "Child", children: [] }] }], options))
+      .toBe("<ul>\n  <li>English\n    <ul>\n      <li>Child</li>\n    </ul>\n  </li>\n</ul>");
+  });
   it("keeps body drawer lookalikes in Org exports", () => {
     const raw = "* Heading\nBody\n:PROPERTIES:\n:note: prose\n:END:";
     const html = exportHtml([{ raw, format: "org", children: [] }], {

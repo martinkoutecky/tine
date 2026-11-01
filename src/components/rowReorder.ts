@@ -20,7 +20,7 @@ export const rowReorderClickSuppressed = () => suppressClick;
 export interface RowDropTarget {
   index: number;
   before: boolean;
-  /** Pointer x relative to where the drag STARTED (not the row's edge), so
+  /** Pointer inline movement relative to where the drag STARTED (not the row's edge), so
    *  where the row was grabbed never decides a nesting depth. */
   dx: number;
   /** The row element the pointer is over, for a caller whose rows live in several lists. */
@@ -62,6 +62,7 @@ export function beginRowReorderDrag(
   const startY = event.clientY;
   // The drag's own window: listeners and hit tests follow the pointer's document.
   const doc = documentOf(event);
+  const indentSign = doc.documentElement.dir === "rtl" ? -1 : 1;
   let dragging = false;
   let target: RowDropTarget | null = null;
   const hold = !!opts.touchHold && (event.pointerType === "touch" || event.pointerType === "pen");
@@ -110,7 +111,7 @@ export function beginRowReorderDrag(
     }
     if (row?.dataset.rowIndex !== undefined) {
       const rect = row.getBoundingClientRect();
-      target = { index: Number(row.dataset.rowIndex), before: ev.clientY < rect.top + rect.height / 2, dx: ev.clientX - startX, row };
+      target = { index: Number(row.dataset.rowIndex), before: ev.clientY < rect.top + rect.height / 2, dx: (ev.clientX - startX) * indentSign, row };
     } else target = null;
     onTarget(target);
   };

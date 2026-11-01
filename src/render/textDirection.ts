@@ -116,14 +116,26 @@ export function rootIsRtl(): boolean {
   return typeof document !== "undefined" && document.documentElement.getAttribute("dir") === "rtl";
 }
 
-/** Whether a plain arrow key leaves the block, and which way in document order.
- *  Left and right keep their on-screen meaning: in a right-to-left block the
- *  caret's offset 0 is at the right edge, so ArrowRight is the key that leaves
- *  backward. `el` is read only with the caret already at a boundary. */
+/** Textarea boundary fallback. There is no browser API for bidi caret affinity.
+ * An opposite-direction boundary run can still have text on either visual side
+ * of offset 0/length. Leave that movement to the browser; Up/Down still cross
+ * blocks at the first/last visual row. Read direction only at candidate offsets. */
 export function arrowLeave(key: string, el: Element, start: number, end: number, length: number): "backward" | "forward" | null {
   if (start !== end || (key !== "ArrowLeft" && key !== "ArrowRight")) return null;
   if (start !== 0 && start !== length) return null;
   const rtl = isRtlContext(el);
+  const raw = (el as HTMLTextAreaElement).value ?? "";
+  let boundary: TextDirection | null = null;
+  if (start === 0) boundary = firstStrongDirection(raw);
+  else {
+    for (let i = raw.length - 1; i >= 0 && !boundary; i--) {
+      const lowSurrogate = raw.charCodeAt(i) >= 0xDC00 && raw.charCodeAt(i) <= 0xDFFF;
+      const character = lowSurrogate && i > 0 ? raw.slice(i - 1, i + 1) : raw[i];
+      if (lowSurrogate && i > 0) i--;
+      boundary = firstStrongDirection(character);
+    }
+  }
+  if (boundary && (boundary === "rtl") !== rtl) return null;
   if (start === 0 && key === (rtl ? "ArrowRight" : "ArrowLeft")) return "backward";
   if (start === length && key === (rtl ? "ArrowLeft" : "ArrowRight")) return "forward";
   return null;
