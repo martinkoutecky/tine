@@ -81,6 +81,23 @@ fn clone_cleanup_retains_symlinks_without_following_them() {
     }
 }
 
+// Windows refuses to rename a directory while the clone holds handles inside it,
+// so the replacement below cannot happen there (seen in hosted Windows CI).
+#[cfg(target_os = "windows")]
+#[test]
+fn clone_destination_cannot_be_replaced_while_pinned() {
+    let (dir, _folder) = fixture();
+    let root = dir.path().join("cloned");
+    assert!(fs::rename(&root, dir.path().join("original")).is_err());
+    assert!(root.join(".git/config").exists());
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
 #[test]
 fn clone_cleanup_retains_a_replaced_destination() {
     let (dir, folder) = fixture();
