@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Adding a margin comment opens it beside or directly below its passage without first jumping to the end of the block's children. Every response now has the same author row above its text, separate from the quoted passage (#110).
 - Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.
 - Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
 - A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
