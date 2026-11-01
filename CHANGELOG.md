@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Security: patched an out-of-bounds write in the PDF image decoder that a crafted JPEG 2000 image in a PDF could trigger (#827).
+- The build instructions now say where to get the Emscripten SDK and how the build finds it, and the missing-SDK error points to them (#830).
 - YouTube timestamps written as `9:03` or `1:02:03` now show and seek to the full time, instead of treating only the first number as seconds. Invalid timestamp arguments are hidden.
 - Linux desktop launcher updates now check the launcher's channel identity as well as its managed flag, preserving entries with another channel's identity (#814).
 - Shift-clicking **Journals** in the left sidebar or toolbar opens today's journal in the right sidebar and keeps the main page in place, as in Logseq. Plain clicks and **g j** still open the journal feed (#740).
