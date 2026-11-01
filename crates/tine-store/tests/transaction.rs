@@ -117,6 +117,43 @@ fn refused(outcome: TxOutcome) -> (Why, crate::Rollback) {
     }
 }
 
+/// A rename map is also supported by the public non-page transaction. The
+/// rewritten-move tail is live even though these Markdown files are assets.
+#[test]
+fn public_asset_move_rewrites_links_and_preserves_its_read_only_page_dependency() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let f = Fixture::with_watch(
+        WatchMode::Poll,
+        &[
+            ("assets/Old.md", b"- [[Old]]\n"),
+            ("pages/Dependency.md", b"- unchanged\n"),
+        ],
+    );
+    let src = f.id(Area::Assets, "Old.md");
+    let dst = f.id(Area::Assets, "New.md");
+    let dependency = f.id(Area::Pages, "Dependency.md");
+    assert!(f.store.as_page(&src).is_none());
+    assert!(f.store.as_page(&dst).is_none());
+    let mut tx = f.store.transaction(Some(crate::EditKind::RenamePage));
+    tx.expect(&dependency, f.rev(&dependency));
+    tx.move_file(
+        &src,
+        f.rev(&src),
+        &dst,
+        Some(&RenameMap(vec![("Old".into(), "New".into())])),
+    );
+    let steps = committed(tx.commit());
+    assert!(matches!(&steps[0], StepResult::Unchanged { file, .. } if file == &dependency));
+    assert!(matches!(&steps[1], StepResult::Moved { to, .. } if to == &dst));
+    assert!(f.bytes("assets/Old.md").is_none());
+    assert_eq!(f.bytes("assets/New.md").unwrap(), b"- [[New]]\n");
+    assert_eq!(f.bytes("pages/Dependency.md").unwrap(), b"- unchanged\n");
+    f.store.close();
+    let cold = Store::open(&f.root, Default::default()).unwrap().0;
+    assert_eq!(cold.read(&dst, None).unwrap().0, b"- [[New]]\n");
+    cold.close();
+}
+
 #[test]
 fn l9_all_transaction_entry_paths_refuse_a_detached_graph() {
     for replaced in [false, true] {
