@@ -2435,6 +2435,9 @@ export interface MessageArgs {
   "settings-graph-folder-reveal": {};
   "settings-graph-folder-search-description": {};
   "settings-highest-priority-a-first-unprioritized-last": {};
+  "settings-hover-preview-delay": {};
+  "settings-hover-preview-delay-hint": {};
+  "settings-hover-preview-delay-seconds": {};
   "settings-how-strongly-the-dotted-link-to-a": {};
   "settings-inspector-hint": { "platform": string | number };
   "settings-journal-file-merged": { "canonical": string | number; "name": string | number };

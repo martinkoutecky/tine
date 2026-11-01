@@ -13,6 +13,10 @@ icon:: ⌨️
 	- If a static export publishes zero pages under that selection, its warning explains that no page has `public:: true` and names `--all-pages`.
 	- Example: `tine export live ~/notes --all-pages --output ~/Sites --name "My notes"`
 	- A live export opens on the configured home page when it is exported, then **Welcome to Tine**, then the first exported page. Use `--home "Page name"` to choose explicitly; a home page that is not exported is refused.
+- ## Publish a query
+	- `tine export query GRAPH '((UUID))'` selects the query by its block's `id::` UUID. Quote the parentheses in your shell; a bare UUID also works. The block must hold exactly one query. Unknown IDs, ordinary blocks and blocks with more than one query are refused.
+	- It exports the results' whole pages to `published-queries/<folder>/` inside the graph, using the same publisher and privacy rules as the query's **Export…** dialog. The query text is left out. Use `--name "Task review"` to name the output; otherwise it uses the BEGIN_QUERY title, or `Query UUID`.
+	- An existing output is refused unless you pass `--force`. Replacement keeps the previous export in recovery and prints its path. Sheets keep their plain row outlines in command-line exports; see [[Reference/Files, external edits, and backups]].
 - ## Check a graph
 	- `tine doctor GRAPH` reads and parses the graph, reports how many pages and journals it found and the configured home page, names every unreadable page and every page name claimed by more than one file, and does not change the graph. It exits with status 1 when it finds a problem.
 - ## Read your graph from a terminal

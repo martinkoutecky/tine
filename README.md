@@ -97,6 +97,7 @@ tine capture
 tine doctor ~/notes
 tine export static ~/notes --output ~/Sites
 tine export live ~/notes --output ~/Sites --name "My notes" --all-pages
+tine export query ~/notes '((82400000-0000-4000-8000-000000000001))' --name "Task review"
 ```
 
 `--output` is an existing absolute folder outside the graph; the export creates one new child

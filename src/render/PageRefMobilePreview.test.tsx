@@ -8,12 +8,14 @@ import { ContextMenu } from "../components/ContextMenu";
 import { openPage, route } from "../router";
 import { pageByName } from "../document";
 import { readFileSync } from "node:fs";
+import { backend } from "../backend";
+import { initHoverPreviewSettings } from "../hoverPreviewSettings";
 
 vi.mock("../inputCapability", async (original) => ({
   ...await original<typeof import("../inputCapability")>(), touchPrimary: () => true,
 }));
 beforeAll(initParser);
-afterEach(() => { vi.useRealTimers(); closeContextMenu(); document.body.replaceChildren(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeContextMenu(); document.body.replaceChildren(); });
 
 function pointer(element: Element, type: string, x = 40) {
   element.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
@@ -22,6 +24,9 @@ function pointer(element: Element, type: string, x = 40) {
 
 it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actions reachable through the shared menu", async (raw) => {
   vi.useFakeTimers(); openPage("Before", "page");
+  vi.spyOn(backend(), "getAppString").mockResolvedValue("1e30");
+  initHoverPreviewSettings();
+  await vi.advanceTimersByTimeAsync(0);
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <><AstBody raw={raw} /><ContextMenu /></>, host);
   const actionIds = () => [...document.querySelectorAll("[data-page-action-id]")].map(el => el.getAttribute("data-page-action-id"));

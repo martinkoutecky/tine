@@ -832,6 +832,10 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 /// Parse + property/planning-filter one block body the way `render_block` does — the
 /// shared front of the render and search-index paths (one lsdoc parse per call).
 fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
+    body_blocks_with_queries(raw, org).0
+}
+
+fn body_blocks_with_queries(raw: &str, org: bool) -> (Vec<Block>, Vec<tine_core::query::macro_text::MacroExtent>) {
     let mut parsed = tine_core::render::parse_block(raw, org);
     if !org {
         // Metadata rows a final quote swallowed (GH #721): the editor hides them, so
@@ -842,8 +846,35 @@ fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
         .into_iter()
         .filter(|b| !matches!(b, Block::Properties { .. }))
         .collect();
-    render_query_source::restore(&mut blocks, raw);
-    blocks
+    let queries = render_query_source::restore(&mut blocks, raw);
+    (blocks, queries)
+}
+
+/// Select the one parser-recognized query in a block. Literal code and metadata
+/// do not become executable queries; raw arguments retain commas and maps.
+pub(crate) fn query_for_export(raw: &str, org: bool) -> Result<(String, QueryTextDialect, Option<String>), &'static str> {
+    if !tine_core::query::query_source_within_limit(raw) {
+        return Err("query block exceeds the query source limit");
+    }
+    let (blocks, queries) = body_blocks_with_queries(raw, org);
+    if let Some(begin) = inspect_begin_query(raw, &blocks) {
+        return match begin {
+            BeginQueryInspection::Supported(begin) => {
+                let argument = if begin.keeps_block_children {
+                    format!("{} {{:remove-block-children? false}}", begin.query)
+                } else { begin.query };
+                Ok((argument, QueryTextDialect::MacroQuery, begin.title))
+            }
+            BeginQueryInspection::Unsupported => Err("query block contains an unsupported BEGIN_QUERY"),
+        };
+    }
+    match queries.as_slice() {
+        [] => Err("block is not a query"),
+        [query] => Ok((query.argument.clone(), if query.name.eq_ignore_ascii_case("tine-query") {
+            QueryTextDialect::MacroTql
+        } else { QueryTextDialect::MacroQuery }, None)),
+        _ => Err("block contains more than one query; select a block with exactly one query"),
+    }
 }
 
 struct BeginQuery {

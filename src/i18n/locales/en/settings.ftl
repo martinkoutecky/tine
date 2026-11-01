@@ -504,3 +504,6 @@ settings-prose-launch-with-the-main-window-hidden-open-it-from-the = Launch with
 settings-prose-last-rescan = Last rescan finished at { $time }.
 settings-prose-file-size = { $value } { $unit }
 diagnostics-refresh-everything = Refresh everything on every save (debug)
+settings-hover-preview-delay = Hover preview delay
+settings-hover-preview-delay-seconds = Hover preview delay (seconds)
+settings-hover-preview-delay-hint = Seconds before a page or block reference opens its preview on mouse hover. Default 1. Use a large value, such as 100, to keep previews out of the way. Touch long-press is unchanged.

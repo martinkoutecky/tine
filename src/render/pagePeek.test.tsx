@@ -9,6 +9,7 @@ import { clearTransientLayersForTest, dismissTopTransient, registerTransientLaye
 import { ContextMenu } from "../components/ContextMenu";
 import { closeContextMenu, contextMenu } from "../ui";
 import { focusedRouter } from "../panes";
+import { initHoverPreviewSettings } from "../hoverPreviewSettings";
 
 const PEEK_OPEN_MS = 1000; // OG 0.10.9 tippy :delay [1000 100]; GH #735
 const PEEK_CLOSE_MS = 100;
@@ -20,8 +21,11 @@ beforeAll(async () => {
   await initParser();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
+  vi.spyOn(backend(), "getAppString").mockImplementation(async (_key, fallback) => fallback);
+  initHoverPreviewSettings();
+  await advance(0);
 });
 
 afterEach(() => {
@@ -69,6 +73,29 @@ function popup(): HTMLElement | null {
 }
 
 describe("page hover-peek (GH #40)", () => {
+  it.each(["[[Tine]]", "#Tine", "((58900000-0000-4000-8000-0000000000b1))"])("GH #824: %s uses the restored delay, including zero and values beyond the timer range", async raw => {
+    for (const seconds of [0.275, 0, 100, 2147483.648, 1e30]) {
+      vi.mocked(backend().getAppString).mockResolvedValue(String(seconds));
+      initHoverPreviewSettings();
+      await advance(0);
+      const { root, dispose } = mountAttached(raw);
+      try {
+        fireEnter(root.querySelector("a.page-ref, a.tag, .block-ref")!);
+        if (seconds * 1000 > 2_147_483_647) {
+          await advance(2000);
+          expect(popup()).toBeNull();
+        } else {
+          if (seconds > 0) {
+            await advance(seconds * 1000 - 1);
+            expect(popup()).toBeNull();
+          }
+          await advance(seconds === 0 ? 0 : 1);
+          expect(await waitFor(() => !!popup())).toBe(true);
+        }
+      } finally { dispose(); }
+    }
+  });
+
   it("GH #655: preview actions and desktop right-click use identical shared page-menu items", async () => {
     const { root, dispose } = mountAttached("[[Tine]]");
     const menuHost = document.createElement("div"); document.body.append(menuHost);

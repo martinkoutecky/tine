@@ -33,6 +33,7 @@ import {
 } from "../copySettings";
 import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
+import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds } from "../hoverPreviewSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
 import { cm6EditorAvailable, cm6EditorEnabled, setCm6EditorEnabled } from "../editor/cm6Setting";
@@ -795,6 +796,18 @@ function EditorTab(props: { search: string }): JSX.Element {
       </Show>
 
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
+        <Field label={t("settings-hover-preview-delay")} hint={t("settings-hover-preview-delay-hint")}>
+          <input
+            type="number" min="0" step="any"
+            aria-label={t("settings-hover-preview-delay-seconds")}
+            value={hoverPreviewDelaySeconds()}
+            onChange={event => {
+              const input = event.currentTarget;
+              if (input.value.trim() !== "") setHoverPreviewDelaySeconds(Number(input.value));
+              input.value = String(hoverPreviewDelaySeconds());
+            }}
+          />
+        </Field>
         <Show when={cm6EditorAvailable}>
           <Field label={t("settings-cm6-label")}>
             <Toggle on={cm6EditorEnabled()} onClick={() => setCm6EditorEnabled(!cm6EditorEnabled())} />

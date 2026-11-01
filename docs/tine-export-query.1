@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-export-query 1  "query " 
+.SH NAME
+tine\-export\-query \- Publish the pages selected by one query block UUID into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
+.SH SYNOPSIS
+\fBtine export query\fR [\fB\-\-name\fR] [\fB\-\-debug\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> <\fI((UUID))\fR> 
+.SH DESCRIPTION
+Publish the pages selected by one query block UUID into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
+.SH OPTIONS
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Output name; defaults to the BEGIN_QUERY title or Query UUID
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-force\fR
+Replace an existing output, keeping the previous export in recovery
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIGRAPH\fR>
+
+.TP
+<\fI((UUID))\fR>
+Persisted block UUID, bare or wrapped as ((UUID)); quote parentheses in the shell
