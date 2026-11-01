@@ -82,11 +82,20 @@ graph indexes read, panics (og-gh644 F1): every such parse runs inside that
 page's isolation (the load's per-page parse, and `cache_upsert` for a sync,
 rescan, page open or own save), so the page is listed as unreadable, a page
 open answers `StoreError::Unparseable` for it alone, and the writer lock is
-never unwound through. A panic in a pure graph-wide index stage after the
-parses ends the initial load `Failed` (`refresh()` retries) rather than
+never unwound through. Such a failure retires that page's row only: the page
+cache, the other pages' rows and other reported errors stay, and nothing else
+is read again. A panic in a pure graph-wide index stage after the
+parses ends the initial cold load `Failed` (`refresh()` retries) rather than
 leaving it `Loading`; that retry and a Settings rescan rebuild the indexes
 through the same containment, so a panic that recurs there leaves the graph
-`Failed` and the writer usable. A transaction whose preflight parse panics is refused
+`Failed` and the writer usable. A publication that patches the indexes with
+named pages (a watcher or rescan sync, an own or host save, a page open, a
+checkpoint launch's diff) contains the same stage per page, a held page
+included: each named page is patched alone to find the one that panics, its
+row is retired and listed as unreadable, and the rest publish; its next
+bytes install it again. A save's guarded write has landed by then and stays
+`Saved`. Only a panic that no named page explains fails the graph, and the
+retry patches those files. A transaction whose preflight parse panics is refused
 (`transaction.rs::prepare_steps::ReadOnly`), and a host rename treats that
 page as unwritable (F3). Name lookup,
 the published inventory, references, and direct page reads use that one

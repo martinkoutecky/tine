@@ -219,21 +219,30 @@ pub(crate) fn journal_ids_from_entries(
 /// load thread with the store still Loading (every waiter hangs) or
 /// unwinding through the writer. The caller holds the writer guard, so
 /// catching here keeps the writer lock unpoisoned for later saves. A closed
-/// store stays closed. True when the publication completed.
+/// store stays closed. True unless the graph ended `Failed`. The feed contains
+/// its own captures (`publish_inner`), for every other publication too.
 pub(crate) fn contain_index_publication(
     graph: &Graph,
     load: &LoadState,
     publish: impl FnOnce(),
 ) -> bool {
-    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(publish)).is_ok() {
-        return true;
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(publish)).is_err() {
+        load.fail_publication(graph);
+        return false;
     }
-    graph.diag.load_stopped();
-    let mut status = load.status.lock().unwrap();
-    if !matches!(*status, LoadStatus::Closed) {
-        *status = LoadStatus::Failed("graph publication stopped: an index build panicked".into());
+    !matches!(*load.status.lock().unwrap(), LoadStatus::Failed(_))
+}
+
+impl LoadState {
+    /// A publication could not capture: `Failed`, unless already closed.
+    pub(crate) fn fail_publication(&self, graph: &Graph) {
+        graph.diag.load_stopped();
+        let mut status = self.status.lock().unwrap();
+        if !matches!(*status, LoadStatus::Closed) {
+            *status =
+                LoadStatus::Failed("graph publication stopped: an index build panicked".into());
+        }
+        drop(status);
+        self.ready.notify_all();
     }
-    drop(status);
-    load.ready.notify_all();
-    false
 }

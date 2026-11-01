@@ -829,28 +829,50 @@ impl Graph {
     /// built for unrelated pages and for the rest of that capture.
     /// A held page's index is its owner's, never a disk parse's.
     pub(super) fn record_index_failure(&self, path: &Path) {
-        let mut cache = self.derived.cache.write().unwrap();
+        let cache = self.derived.cache.write().unwrap();
         if self.disk_sourced(path) {
-            // A quiet retry must not erase an already reported launch error.
-            self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
-            let rel = self.rel_path(path);
-            let mut failures = self.derived.page_index_failures.write().unwrap();
-            if !failures.contains(&rel) {
-                failures.push(rel.clone());
-            }
-            drop(failures);
-            // A checkpoint launch also reconciles through this boundary.
-            // Replacing a whole-cache rebuild must retain its per-page error
-            // reporting, including when the watcher defers its own notice.
-            let mut unreadable = self.derived.unreadable_pages.write().unwrap();
-            let id = crate::FileId::from(rel);
-            if !unreadable.iter().any(|(known, _)| *known == id) {
-                tine_core::diag_line::diagnostic_line("Tine unreadable file producer=index-panic");
-                Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
-            }
-            drop(unreadable);
-            self.move_generation(cache.is_none(), &[path]);
+            self.retire_failed_row(cache, path);
         }
+    }
+
+    /// A publication's index stage panicked on `path`'s row: the same
+    /// isolation, for a held page's row too. A held row cannot be left in
+    /// place, since every later capture would patch it and panic again; its
+    /// owner's next publication installs it afresh.
+    pub(crate) fn retire_index_stage_failure(&self, path: &Path) {
+        let cache = self.derived.cache.write().unwrap();
+        self.retire_failed_row(cache, path);
+    }
+
+    fn retire_failed_row(
+        &self,
+        mut cache: std::sync::RwLockWriteGuard<'_, Option<Arc<Pages>>>,
+        path: &Path,
+    ) {
+        // A quiet retry must not erase an already reported launch error.
+        self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
+        let rel = self.rel_path(path);
+        let mut failures = self.derived.page_index_failures.write().unwrap();
+        if !failures.contains(&rel) {
+            failures.push(rel.clone());
+        }
+        drop(failures);
+        // A checkpoint launch also reconciles through this boundary.
+        // Replacing a whole-cache rebuild must retain its per-page error
+        // reporting, including when the watcher defers its own notice.
+        let mut unreadable = self.derived.unreadable_pages.write().unwrap();
+        let id = crate::FileId::from(rel);
+        if !unreadable.iter().any(|(known, _)| *known == id) {
+            tine_core::diag_line::diagnostic_line("Tine unreadable file producer=index-panic");
+            Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
+        }
+        drop(unreadable);
+        self.move_generation(cache.is_none(), &[path]);
+    }
+
+    /// A publication that could not capture: the next capture patches these.
+    pub(crate) fn touch_rows(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        self.derived.touched.lock().unwrap().extend(paths);
     }
 
     /// A direct read's name discovery for `path`: a success clears its

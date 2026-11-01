@@ -309,6 +309,8 @@ pub(crate) struct ChangeFeed {
     state: Mutex<FeedState>,
     ready: Condvar,
     graph: Arc<Graph>,
+    /// Where a publication that cannot capture reports the graph failed.
+    load: Arc<LoadState>,
     journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
     snapshot: RwLock<Option<Arc<Snapshot>>>,
@@ -400,6 +402,7 @@ impl ChangeFeed {
 
     fn new(
         graph: Arc<Graph>,
+        load: Arc<LoadState>,
         config: Arc<RwLock<ConfigState>>,
         journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     ) -> Self {
@@ -414,6 +417,7 @@ impl ChangeFeed {
             }),
             ready: Condvar::new(),
             graph,
+            load,
             config,
             journal_ids,
             snapshot: RwLock::new(None),
@@ -431,7 +435,7 @@ impl ChangeFeed {
             &self.graph,
             &self.config,
             None,
-            &[],
+            &Default::default(),
             false,
             false,
             GraphRev(0),
@@ -526,82 +530,6 @@ impl ChangeFeed {
             true,
             &HashMap::new(),
         )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn publish_inner(
-        &self,
-        origin: Origin,
-        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-        config_changed: bool,
-        pages: Vec<(FileId, PageKind, String)>,
-        before_notify: impl FnOnce(),
-        watch: Option<WatchBatch>,
-        rebuild: bool,
-        published: &HashMap<FileId, PageEntry>,
-    ) -> GraphRev {
-        let old = self.snapshot.read().unwrap().clone();
-        let journals_dir = self.graph.current_config().journals_dir.clone();
-        if old.is_none()
-            || config_changed
-            || rebuild
-            || files.iter().any(|(id, kind, _)| {
-                id.as_str().starts_with(&format!("{journals_dir}/"))
-                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
-            })
-        {
-            *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
-        }
-        let rev = GraphRev(self.rev().0 + 1);
-        let targets = self.registered_targets();
-        let mut snapshot = Snapshot::capture(
-            &self.graph,
-            &self.config,
-            old.as_deref(),
-            &files,
-            config_changed,
-            rebuild,
-            rev,
-            published,
-            &targets,
-        );
-        // A fold leaves the launch checkpoint's derived state true; its file
-        // stamp is stale, so the next launch diff rereads that one file
-        // (ADR 0070) instead of the whole checkpoint being rewritten for it.
-        if (old.is_none() || config_changed || rebuild || !files.is_empty()) && !snapshot.folds_only
-        {
-            self.checkpoint.get().inspect(|signal| signal.published());
-        }
-        #[cfg(test)]
-        self.publish_hooks.before_publish();
-        let mut state = self.state.lock().unwrap();
-        state.rev += 1;
-        let rev = GraphRev(state.rev);
-        debug_assert_eq!(snapshot.rev, rev);
-        // Holding the snapshot write lock orders a later registration's first
-        // read after this install; one made during the capture fires here.
-        let mut current = self.snapshot.write().unwrap();
-        self.fire_registered_since(&targets, &mut snapshot);
-        let snapshot = Arc::new(snapshot);
-        #[cfg(test)]
-        self.publish_hooks.published(&snapshot);
-        let answers = snapshot.answers.clone();
-        *current = Some(snapshot);
-        drop(current);
-        before_notify();
-        if !state.closed {
-            state.queue.push_back(Change {
-                graph_rev: rev,
-                origin,
-                files,
-                pages,
-                answers,
-                watch,
-            });
-            self.ready.notify_all();
-        }
-        rev
     }
 
     pub(crate) fn rev(&self) -> GraphRev {
@@ -935,6 +863,7 @@ impl Store {
         )));
         let changes = Arc::new(ChangeFeed::new(
             Arc::clone(&graph),
+            Arc::clone(&load),
             Arc::clone(&config_state),
             Arc::clone(&journal_ids),
         ));
@@ -1183,6 +1112,7 @@ impl Store {
         let config_state = Arc::new(RwLock::new(config.clone()));
         let changes = Arc::new(ChangeFeed::new(
             Arc::clone(&graph),
+            Arc::clone(&load),
             Arc::clone(&config_state),
             Arc::clone(&journal_ids),
         ));
