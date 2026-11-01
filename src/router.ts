@@ -1,5 +1,6 @@
 import { t as translate } from "./i18n";
 import { revealOutlineBlock } from "./outlineViewport";
+import { revealCommentMarginFor } from "./commentMargin";
 // Tab-based routing with per-tab navigation history. Each tab holds a back/
 // forward stack of routes; the active tab's current route drives the page view.
 // Middle-click opens links in a new tab. The whole tab session is persisted, so
@@ -827,6 +828,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         // query below can never match and the poll times out silently (GH #258).
         // Inside the poll because the page load is async.
         expandAncestors(id);
+        revealCommentMarginFor(id); // GH #845: a comment link shows a hidden margin
       }
       const scroller = mainScroller();
       if (id) revealOutlineBlock(id, scroller);

@@ -1034,6 +1034,10 @@ mod rename_guide_tests {
             "**Ctrl/Cmd+Z** restores them together",
             "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
             "zooming into a commented bullet also shows them there",
+            "press **t** then **m**, run **Toggle comment margin** from the command palette",
+            "switch off **Comment margin** in Settings > Appearance",
+            "the comments stay in your file and nothing is deleted",
+            "opening a link or search result that leads to one, shows them again",
         ] {
             assert!(
                 tips.contains(behavior),

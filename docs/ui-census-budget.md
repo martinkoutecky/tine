@@ -57,6 +57,11 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-01, GH #845 (Martin, 2026-11-01, D-20261101-MT: "a good idea and should also go in the beta"):
+  `commands.registry` 131→132,
+  `commands.palette` 74→75 and `settings.appearance.open` 28→29 for the requested **Toggle
+  comment margin** command (default shortcut **t m**, free in OG and Tine, rebindable) and
+  its **Comment margin** switch beside Wide mode and Document mode. No topbar control.
 - 2026-10-29, D-20261029-ST (GH #796): `settings.editor.advanced` 10→11 for the explicitly
   decided **Search results open in** (New tab / This tab) setting. It sits behind the Advanced
   disclosure beside "Switch to an already-open tab", so `settings.editor.open` stays 9.

@@ -25,3 +25,4 @@ comment-stale-write-what = The comment
 comment-name-label = Your name
 comment-name-hint = Comments and replies you write in the margin are saved with this name as <code>author::</code>, so a graph shared with other people shows who wrote what. Leave it empty to write no author; your own comments then show as "you". Stored on this device, not in the graph.
 comment-name-placeholder = Your name
+comment-margin-draft-pending = Send or discard the unsent reply before hiding the comments

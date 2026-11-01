@@ -2,7 +2,7 @@ import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model"
 import { createRoot, createMemo } from "solid-js";
 import { isEditorEmpty, BUILTIN_HIDE } from "../editor/properties";
 import { outlineMaxDepth } from "../editor/outline";
-import { commentsFirst } from "./commentOrder";
+import { visibleChildren } from "./commentOrder";
 
 // ---------------------------------------------------------------------------
 // Tree helpers
@@ -30,7 +30,7 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
     const collapsed = scope?.collapsed?.(id, node.collapsed) ?? node.collapsed;
     if ((!collapsed || id === scope?.forceExpandedRoot) && node.children.length && !blockIsOpaqueSheetView(id)) {
       // Comments show under their block, before its other children (commentOrder.ts).
-      visitVisible(commentsFirst(node.children), visit, scope);
+      visitVisible(visibleChildren(node.children), visit, scope);
     }
   }
 }

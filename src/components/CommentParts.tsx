@@ -12,9 +12,11 @@ import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
 import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
+import { registerReplyDraft } from "../commentMargin";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { commentMarginHidden } from "../commentMarginPref";
 import { openContextMenu } from "../ui";
 import { beginDrag } from "./blockGestures";
 import { QuoteHighlightContext, quotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
@@ -124,6 +126,8 @@ export function CommentActions(props: { id: string }): JSX.Element {
  * zero writes. Once submitted it is an ordinary editable child block. */
 export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
   const [draft, setDraft] = createSignal("");
+  // Hiding the margin would unmount this textarea and its unsent text.
+  onCleanup(registerReplyDraft(draft));
   const [expanded, setExpanded] = createSignal(false);
   let input!: HTMLTextAreaElement;
   const cancel = () => { setDraft(""); setExpanded(false); input.blur(); };
@@ -158,13 +162,13 @@ function sameRanges(a: readonly QuotedRange[], b: readonly QuotedRange[]): boole
 
 /** Mark the passages `parentId`'s comment children quote inside the rendering
  * `children()` draws; a block with no children (`when` false) has none to mark
- * and draws it plainly. */
+ * and draws it plainly, as does a hidden margin (GH #845). */
 export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; children: () => JSX.Element }): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
   // the parent's text runs.
   const ranges = createMemo(() => quotedSourceRanges(props.parentId, props.format), [], { equals: sameRanges });
   return (
-    <Show when={props.when} fallback={props.children()}>
+    <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
       <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges }}>
         {props.children()}
       </QuoteHighlightContext.Provider>

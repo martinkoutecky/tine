@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- The comment margin can be hidden, like Wide mode and Document mode: **Toggle comment margin** in the command palette, the shortcut **t** then **m** (rebindable under Settings → Keyboard shortcuts), or **Comment margin** in Settings → Appearance. Hidden, no comment is drawn anywhere (no margin column, no inline cards, no marked words, no counts) and the arrow keys skip them; the comments stay in the file and nothing is written. The choice is kept on this device. Writing a comment, or opening a link or search result that leads to one, shows the margin again (#845).
+
 ## [0.9.0-beta.4] - 2026-11-01
 
 ### Fixed

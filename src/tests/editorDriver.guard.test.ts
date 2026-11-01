@@ -18,6 +18,7 @@ const OTHER_TEXTAREAS = new Map<string, string>([
   ["src/components/SheetBoard.test.tsx", "Standalone data-outside-editor focus fixture; block-editor access uses the driver."],
   ["src/components/QueryMacro.ir.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx); block-editor focus uses the driver."],
   ["src/components/Block.marginComment.test.tsx", "Standalone comment-reply-draft (CommentParts.tsx); block-editor access uses the driver."],
+  ["src/commentMargin.test.tsx", "Standalone comment-reply-draft (CommentParts.tsx); no block editor is touched."],
   ["src/assetLanding.test.ts", "Inert AssetEditorToken identity fixture; no mounted editor or textarea state is accessed."],
   ["src/components/QueryCrossingNotice.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
   ["src/components/QueryWorkspace.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],

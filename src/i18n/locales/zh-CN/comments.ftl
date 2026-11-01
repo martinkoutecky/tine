@@ -25,3 +25,4 @@ comment-stale-write-what = 该评论
 comment-name-label = 你的名字
 comment-name-hint = 你在页边写的批注和回复会以此名字保存为 <code>author::</code>，这样与他人共享的图谱就能看出谁写了什么。留空则不写作者；此时你自己的批注显示为“你”。保存在本设备上，不写入图谱。
 comment-name-placeholder = 你的名字
+comment-margin-draft-pending = 请先发送或放弃未发送的回复，再隐藏评论

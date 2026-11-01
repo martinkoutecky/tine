@@ -17,6 +17,7 @@ import { splitProps, BUILTIN_HIDE } from "./editor/properties";
 import { pushToast } from "./toasts";
 import { msg, t } from "./i18n";
 import { commentsWritten } from "./margin";
+import { revealCommentMargin } from "./commentMargin";
 import { commentAuthorName } from "./commentIdentity";
 import { selectionOf } from "./windowRealm";
 import { threadRootOf } from "./margin";
@@ -39,7 +40,11 @@ export function createComment(parentId: string, editorText: string, start: numbe
       id = insertEmptyChildBlock(parentId, parent.children.length);
       if (id) setRaw(id, raw, { timetracking: false });
     });
-    if (id) commentsWritten();
+    if (id) {
+      // GH #845: a comment is never written into a hidden margin.
+      revealCommentMargin();
+      commentsWritten();
+    }
   });
   return id;
 }
