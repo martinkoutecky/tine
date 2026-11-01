@@ -22,6 +22,7 @@ import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { registerQueryResultFold } from "../collapseCommandSurface";
 import { clearOnBindingInvalidated } from "../binding";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
@@ -66,7 +67,8 @@ interface LiveRefGroupProps {
   path?: string;
   blocks: BlockDto[];
   embedId?: string;
-  /** The block whose `{{embed}}` macro renders this group (embed surface only). */
+  /** The block whose `{{embed}}` macro renders this group (embed surface), or whose query
+   *  these are the results of (query surface: GH #792, so one-level fold commands reach them). */
   hostBlockId?: string;
   showBreadcrumb?: boolean;
   /** "preview": a hover preview (D-20261023-VQ). Folds are the source's own
@@ -426,6 +428,12 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
       return next;
     }),
   };
+  // GH #792: the one-level fold commands treat a query block's result rows as its children.
+  if (props.surface === "query") onCleanup(registerQueryResultFold({
+    hostId: () => props.hostBlockId,
+    roots: () => groupedIds().filter((id) => ready() && !!liveNode(id)),
+    surface: collapseSurface,
+  }));
   let lastBulkVersion: number | undefined;
   createEffect(() => {
     const request = props.bulkFold;

@@ -128,6 +128,36 @@ describe("terminated whole-block BEGIN_QUERY", () => {
     });
   });
 
+  // GH #651 follow-up: `:remove-block-children? false` in the BEGIN_QUERY map must reach the engine, for the
+  // simple DSL in the map (the reporter's form) as well as a datalog vector. The engine side is pinned in
+  // tine-store og_gh651_nested_task_rows; this pins what the view sends it.
+  it("forwards :remove-block-children? false to the query macro", async () => {
+    const dsl = (option: string) => `#+BEGIN_QUERY\n{:query (task TODO DOING)${option}}\n#+END_QUERY`;
+    expect(inspectBeginQuery(dsl(""), "md")).toEqual({ kind: "supported", query: "(task TODO DOING)" });
+    expect(inspectBeginQuery(dsl(" :remove-block-children? true"), "md")).toEqual({ kind: "supported", query: "(task TODO DOING)" });
+    expect(inspectBeginQuery(dsl(" :remove-block-children? false"), "md")).toEqual({
+      kind: "supported", query: "(task TODO DOING)", keeps_block_children: true,
+    });
+    const sent: string[] = [];
+    for (const option of ["", " :remove-block-children? false"]) {
+      setDoc({ byId: { query: node("query", dsl(option)) }, pages: [page(["query"])], feed: ["Source"], loaded: true });
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async (text) => {
+        sent.push(text);
+        return { query: { anchor: "block", filter: { kind: "raw", text, diagnostic_kind: "not_applicable" }, source: { kind: "og", original: text, og_options: "" } }, view: {} } as never;
+      });
+      vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "block", groups: [], report: { ran: [], ignored: [], supported: true }, total: 0, exceeded: false });
+      const { dispose } = mount(() => <Block id="query" />);
+      try {
+        await vi.waitFor(() => expect(sent.length).toBeGreaterThan(option ? 1 : 0));
+      } finally {
+        dispose();
+        vi.restoreAllMocks();
+      }
+    }
+    expect(sent[0]).toBe("(task TODO DOING) {:table-view? true}");
+    expect(sent[sent.length - 1]).toBe("(task TODO DOING) {:table-view? true :remove-block-children? false}");
+  });
+
   it("renders its authored title and table on the main page", async () => {
     seedQuery();
     const { root, dispose } = mount(() => <Block id="query" />);

@@ -96,7 +96,8 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
         query_edn::inspect_begin_query(&format!("{{:query {query} :rules {rules}}}")),
         Supported {
             query: format!("{query} :rules {rules}"),
-            title: None
+            title: None,
+            keeps_block_children: false,
         }
     );
     let payload = format!(
@@ -107,6 +108,7 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
         Supported {
             query: format!("{query} :inputs [:current-page]"),
             title: Some("Line\nTwo\tλ".into()),
+            keeps_block_children: false,
         }
     );
     for (entry, reason) in [
@@ -130,7 +132,39 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
         )),
         Supported {
             query: query.into(),
-            title: None
+            title: None,
+            keeps_block_children: false,
         }
     );
+}
+
+/// GH #651 follow-up: the inspector reports a BEGIN_QUERY map's `:remove-block-children? false`
+/// (or `nil`), for the simple DSL as well as a datalog vector, so the caller can forward it.
+#[test]
+fn begin_query_inspector_reports_the_keep_children_option() {
+    use query_edn::BeginQueryMatch::Supported;
+    let vector = "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]]";
+    let keeps = |payload: &str| match query_edn::inspect_begin_query(payload) {
+        Supported {
+            keeps_block_children,
+            ..
+        } => keeps_block_children,
+        other => panic!("`{payload}` is supported: {other:?}"),
+    };
+    for query in ["(task TODO DOING)", vector] {
+        assert!(!keeps(&format!("{{:query {query}}}")));
+        assert!(!keeps(&format!(
+            "{{:query {query} :remove-block-children? true}}"
+        )));
+        assert!(keeps(&format!(
+            "{{:query {query} :remove-block-children? false}}"
+        )));
+        assert!(keeps(&format!(
+            "{{:remove-block-children? nil :query {query}}}"
+        )));
+        // A mention in a string or a nested map is not the option.
+        assert!(!keeps(&format!(
+            "{{:query {query} :title \":remove-block-children? false\"}}"
+        )));
+    }
 }

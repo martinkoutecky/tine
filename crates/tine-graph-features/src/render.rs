@@ -846,6 +846,8 @@ fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
 struct BeginQuery {
     title: Option<String>,
     query: String,
+    /// `:remove-block-children? false` in the BEGIN_QUERY map (GH #651).
+    keeps_block_children: bool,
 }
 
 enum BeginQueryInspection {
@@ -937,9 +939,15 @@ fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspecti
         return Some(BeginQueryInspection::Unsupported);
     }
     Some(match tine_core::query_edn::inspect_begin_query(payload) {
-        tine_core::query_edn::BeginQueryMatch::Supported { title, query } => {
-            BeginQueryInspection::Supported(BeginQuery { title, query })
-        }
+        tine_core::query_edn::BeginQueryMatch::Supported {
+            title,
+            query,
+            keeps_block_children,
+        } => BeginQueryInspection::Supported(BeginQuery {
+            title,
+            query,
+            keeps_block_children,
+        }),
         tine_core::query_edn::BeginQueryMatch::Unsupported { .. } => {
             BeginQueryInspection::Unsupported
         }
@@ -1547,9 +1555,16 @@ fn render_block(
     match &begin_query {
         Some(BeginQueryInspection::Supported(begin)) => {
             if let Some(graph) = ctx.graph {
+                // The live view forwards the option in the macro's trailing options map
+                // (BeginQuery.tsx); the export builds the same macro text.
+                let query = if begin.keeps_block_children {
+                    format!("{} {{:remove-block-children? false}}", begin.query)
+                } else {
+                    begin.query.clone()
+                };
                 out.push_str(&render_query_with_title(
                     graph,
-                    &begin.query,
+                    &query,
                     begin.title.as_deref(),
                     false,
                     ctx,

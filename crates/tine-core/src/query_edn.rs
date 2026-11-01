@@ -441,6 +441,12 @@ pub enum BeginQueryMatch {
         query: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
+        /// The map said `:remove-block-children? false` (or `nil`): OG then keeps every matching
+        /// block, children of matching parents included ([`removes_block_children`]). The query
+        /// text above cannot carry it for the simple DSL, so the caller forwards it in the macro's
+        /// trailing options map.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keeps_block_children: bool,
     },
     Unsupported {
         reason: &'static str,
@@ -531,5 +537,9 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     if let Some(rules) = rules {
         query = format!("{query} :rules {rules}");
     }
-    Supported { query, title }
+    Supported {
+        query,
+        title,
+        keeps_block_children: !removes_block_children(source),
+    }
 }
