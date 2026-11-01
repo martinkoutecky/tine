@@ -46,7 +46,8 @@ pub enum HidePolicy {
     /// Identity/fold/list and conditional comment chrome, without graph config.
     /// Other metadata still counts as authored data when deciding emptiness.
     Structural,
-    /// An annotation (PDF highlight) block edits only its text.
+    /// Only the text is editable: an annotation (PDF highlight) block, and
+    /// `tine edit`, which keeps every property it is not told to replace (#840).
     All,
     /// Exactly these keys, lower-cased; with `norm`, compared after
     /// [`property_key_norm`] instead (the list-type transform, which the window
@@ -536,10 +537,8 @@ pub fn join_with(
 /// Set a block's text as typing `text` into its editor would (Spec §2.4
 /// "set-text"): `text` replaces the editor text of `raw` and the hidden
 /// property lines ([`HidePolicy::Builtin`]) are kept. The caller's marker
-/// transition (`logbook`) follows, as the window's `setRaw`. The command
-/// line's `edit` calls this; it is the editor's own projection, so the two
-/// cannot disagree on which lines the text owns. A quarantined Org block
-/// with hidden lines refuses.
+/// transition (`logbook`) follows, as the window's `setRaw`. A quarantined Org
+/// block with hidden lines refuses.
 pub fn set_text(raw: &str, is_org: bool, text: &str) -> Result<String, String> {
     set_text_with_policy(raw, is_org, text, &HidePolicy::Builtin)
 }
