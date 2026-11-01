@@ -11,6 +11,60 @@ impl crate::WholeGraph {
         observe(index.len());
         std::hint::black_box(index);
     }
+
+    /// Isolated requested-heap charges for freshly rebuilt eager indexes.
+    /// `live` reads the probe executable's counting allocator. Documents and
+    /// shared page positions remain borrowed; each temporary index is dropped.
+    pub fn rebuilt_index_heap_for_tests(
+        &self,
+        live: impl Fn() -> usize,
+    ) -> Vec<(&'static str, usize)> {
+        let graph = &self.graph;
+        let mut sizes = Vec::with_capacity(5);
+        macro_rules! measure {
+            ($name:literal, $build:expr) => {{
+                let before = live();
+                let index = $build;
+                let bytes = live() - before;
+                drop(index);
+                sizes.push(($name, bytes));
+            }};
+        }
+        measure!("block_owners", SnapshotBlockIndex::build(&graph.pages));
+        measure!(
+            "reference_signatures",
+            SnapshotReferenceCandidateIndex::capture(
+                None,
+                &graph.pages,
+                &[],
+                graph.cache_generation
+            )
+        );
+        measure!(
+            "explicit_references",
+            SnapshotExplicitIndex::capture(None, &graph.pages, &[], None, &graph.config)
+        );
+        measure!(
+            "aliases",
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &graph.pages,
+                &[],
+                crate::query::document_alias_spellings,
+                None
+            )
+        );
+        measure!(
+            "query_facts",
+            crate::query::index::QueryIndex::build(
+                &graph.pages,
+                &graph.config,
+                graph.cache_generation,
+                Arc::clone(&graph.reference_candidate_index.read().unwrap().positions)
+            )
+        );
+        sizes
+    }
 }
 
 fn block_lines(out: &mut String, block: &DocBlock, depth: usize) {

@@ -107,7 +107,7 @@ pub struct BlockProjection {
     #[serde(with = "once_cell_as_option")]
     visible_literal: std::sync::OnceLock<Option<Box<str>>>,
     /// Byte ranges of `raw` eligible for plain-text (unlinked) reference matching.
-    plain_ranges: Vec<std::ops::Range<usize>>,
+    plain_ranges: Box<[std::ops::Range<usize>]>,
     /// Facets set on a minority of blocks; `None` when the block has none of them.
     extra: Option<Box<ProjectionExtra>>,
 }
@@ -116,18 +116,18 @@ pub struct BlockProjection {
 /// have none of them), kept behind one pointer so an ordinary block does not pay for them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ProjectionExtra {
-    refs_norm: Vec<String>,
-    refs_page: Vec<String>,
-    block_refs: Vec<String>,
+    refs_norm: Box<[String]>,
+    refs_page: Box<[String]>,
+    block_refs: Box<[String]>,
     marker: Option<String>,
     priority: Option<String>,
     heading_level: Option<u8>,
-    properties: Vec<(String, String)>,
+    properties: Box<[(String, String)]>,
     scheduled: Option<String>,
     deadline: Option<String>,
-    tags: Vec<String>,
-    explicit: Vec<crate::reference_evidence::ProjectedPageRef>,
-    withheld_ranges: Vec<std::ops::Range<usize>>,
+    tags: Box<[String]>,
+    explicit: Box<[crate::reference_evidence::ProjectedPageRef]>,
+    withheld_ranges: Box<[std::ops::Range<usize>]>,
 }
 
 impl ProjectionExtra {
@@ -144,18 +144,6 @@ impl ProjectionExtra {
             && self.tags.is_empty()
             && self.explicit.is_empty()
             && self.withheld_ranges.is_empty()
-    }
-
-    /// Exact-size buffers: the build grows these Vecs by doubling, and a
-    /// projection lives as long as its page (GH #623, ~98 MiB of slack on g13k).
-    fn shrink(&mut self) {
-        self.refs_norm.shrink_to_fit();
-        self.refs_page.shrink_to_fit();
-        self.block_refs.shrink_to_fit();
-        self.properties.shrink_to_fit();
-        self.tags.shrink_to_fit();
-        self.explicit.shrink_to_fit();
-        self.withheld_ranges.shrink_to_fit();
     }
 }
 
@@ -328,6 +316,12 @@ impl DocBlock {
         self.proj = std::sync::OnceLock::new();
     }
 
+    /// Release only the memoized projection for an isolated heap probe.
+    #[cfg(feature = "test-faults")]
+    pub fn clear_projection_for_tests(&mut self) {
+        self.proj.take();
+    }
+
     /// Whether this block is parsed with Org inline syntax.
     pub fn is_org(&self) -> bool {
         self.is_org
@@ -413,23 +407,24 @@ impl DocBlock {
                     refs_norm.push(key);
                 }
             }
-            let mut plain_ranges = reference_source.plain_ranges;
-            plain_ranges.shrink_to_fit();
-            let mut extra = ProjectionExtra {
-                refs_norm,
-                refs_page,
-                block_refs: proj.refs.block,
+            // These lists never grow after publication. Boxed slices trim the
+            // build's slack and avoid retaining a capacity word per list; serde
+            // keeps the same sequence encoding, including in checkpoints.
+            let plain_ranges = reference_source.plain_ranges.into_boxed_slice();
+            let extra = ProjectionExtra {
+                refs_norm: refs_norm.into_boxed_slice(),
+                refs_page: refs_page.into_boxed_slice(),
+                block_refs: proj.refs.block.into_boxed_slice(),
                 marker,
                 priority,
                 heading_level,
-                properties,
+                properties: properties.into_boxed_slice(),
                 scheduled,
                 deadline,
-                tags,
-                explicit: reference_source.explicit,
-                withheld_ranges: reference_source.withheld_ranges,
+                tags: tags.into_boxed_slice(),
+                explicit: reference_source.explicit.into_boxed_slice(),
+                withheld_ranges: reference_source.withheld_ranges.into_boxed_slice(),
             };
-            extra.shrink();
             let extra = (!extra.is_empty()).then(|| Box::new(extra));
             let visible_lower = (visible_lower != visible).then(|| visible_lower.into_boxed_str());
             let visible = (visible != self.raw).then(|| visible.into_boxed_str());
@@ -509,13 +504,24 @@ impl DocBlock {
 }
 
 fn shared_regions(
-    regions: crate::block_regions::BlockRegions,
+    mut regions: crate::block_regions::BlockRegions,
 ) -> std::sync::Arc<crate::block_regions::BlockRegions> {
     static EMPTY: std::sync::OnceLock<std::sync::Arc<crate::block_regions::BlockRegions>> =
         std::sync::OnceLock::new();
     if regions == crate::block_regions::BlockRegions::default() {
         std::sync::Arc::clone(EMPTY.get_or_init(|| std::sync::Arc::new(Default::default())))
     } else {
+        // Published projections only borrow these buffers. Release parser
+        // growth capacity once, before sharing them for the page's lifetime.
+        regions.literals.shrink_to_fit();
+        regions.property_regions.shrink_to_fit();
+        regions.properties.shrink_to_fit();
+        regions.planning.shrink_to_fit();
+        regions.drawers.shrink_to_fit();
+        regions.literal_blocks.shrink_to_fit();
+        for drawer in &mut regions.drawers {
+            drawer.clocks.shrink_to_fit();
+        }
         std::sync::Arc::new(regions)
     }
 }
@@ -1448,7 +1454,7 @@ mod projection_tests {
     #[test]
     fn ordinary_block_projection_stays_small() {
         assert!(
-            std::mem::size_of::<BlockProjection>() <= 112,
+            std::mem::size_of::<BlockProjection>() <= 88,
             "BlockProjection grew to {} B; every block pays this inline (GH #623). \
              Put rarely-set facets in ProjectionExtra.",
             std::mem::size_of::<BlockProjection>()
@@ -1461,6 +1467,19 @@ mod projection_tests {
         assert_eq!(rich.projection().refs_norm().len(), 3);
         assert_eq!(rich.projection().refs_page().len(), 2);
         assert_eq!(rich.marker(), Some("TODO"));
+    }
+
+    #[test]
+    fn shared_projection_regions_release_parser_growth_capacity() {
+        let raw = "TODO task\nkey:: value\nother:: text\nSCHEDULED: <2026-11-01 Sun>";
+        let mut regions = crate::block_regions::parse(raw, false);
+        regions.properties.reserve(20);
+        regions.literals.reserve(20);
+        let expected = regions.clone();
+        let shared = shared_regions(regions);
+        assert_eq!(*shared, expected);
+        assert_eq!(shared.properties.capacity(), shared.properties.len());
+        assert_eq!(shared.literals.capacity(), shared.literals.len());
     }
 
     #[test]

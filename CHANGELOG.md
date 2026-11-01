@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Large graphs retain less memory by storing immutable block projection lists compactly and releasing parser region buffer slack.
 - Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
 - Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
