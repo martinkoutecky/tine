@@ -100,6 +100,7 @@ export interface MessageArgs {
   "block-parts-start": {};
   "block-parts-type": {};
   "block-ref-actions-select-blocks-or-edit-one-to-copy-their": {};
+  "block-ref-actions-select-blocks-or-edit-one-to-set-depth": {};
   "block-ref-actions-too-much-selected-to-duplicate": {};
   "blocks-merge-would-break-a-reference": {};
   "blocks-outline-is-too-deep-to-insert-a-child": {};
@@ -193,6 +194,7 @@ export interface MessageArgs {
   "command-editor-select-block-down": {};
   "command-editor-select-block-up": {};
   "command-editor-select-embedding-block": {};
+  "command-editor-set-depth-n": { "depth": string | number };
   "command-editor-strike-through": {};
   "command-editor-toggle-open-blocks": {};
   "command-editor-toggle-undo-redo-mode": {};

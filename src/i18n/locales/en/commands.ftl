@@ -111,6 +111,8 @@ command-editor-insert-child-block = Insert child block
 command-editor-select-embedding-block = Select embedding block
 command-editor-collapse-children = Collapse (one level)
 command-editor-expand-children = Expand (one level)
+# $depth (number): how many levels stay open, 0 to 9.
+command-editor-set-depth-n = Set depth { $depth }
 command-editor-paste-as-link = Paste as link
 command-editor-zoom-in = Zoom in on block
 command-editor-zoom-out = Zoom out one level

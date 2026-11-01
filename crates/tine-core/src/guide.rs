@@ -315,6 +315,9 @@ mod journal_guide_tests {
             "Insert child block",
             "Collapse (one level)",
             "Expand (one level)",
+            "Set depth 0",
+            "Set depth 9",
+            "Depth 2 opens the block and its children and folds the grandchildren",
             "once its children are all folded",
             "a folded block opens by itself first",
             "Copy block refs of the selected blocks",
@@ -697,6 +700,21 @@ mod parity_guide_tests {
             "hover a result to copy it",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
+        }
+    }
+
+    #[test]
+    fn the_default_open_level_of_references_is_documented() {
+        // GH #793: `:ref/default-open-blocks-level`, restored from Logseq.
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for phrase in [
+            ":ref/default-open-blocks-level",
+            "(default `2`)",
+            "so you can select the whole list and copy it",
+            "A block you folded yourself with `collapsed:: true` stays folded",
+            "nothing is written to your files",
+        ] {
+            assert!(guide.contains(phrase), "Guide missing {phrase}");
         }
     }
 

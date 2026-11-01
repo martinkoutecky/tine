@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Set depth 0** to **Set depth 9** commands show a block, or each selected block, down to an exact level in one step (#794). Depth N opens the levels above N and folds the blocks at level N; depth 2 opens the block and its children and folds the grandchildren, depth 0 folds the block. Blocks deeper than that are hidden anyway and are left alone, and blocks already in the right state are not written. Each press is one Undo step, in the same way as Expand (one level). They start unbound: find them in Commands or bind them under Settings → Keyboard shortcuts.
+- Logseq's `:ref/default-open-blocks-level` in `config.edn` is honored again (#793). It sets how far linked references, unlinked references, block references and query results open by default: `2` (the default, as before) shows a reference with its first child folded, `3` opens one level further, and a high value such as `9` opens every row so the whole list can be selected and copied. A block with `collapsed:: true` stays folded, and the setting changes the view only: no file is written.
+
 - Notes in Persian, Arabic and Hebrew read right to left: each block takes its direction from its text, in the view and in both editors, and links, tags and code inside it keep their order. Settings offers a **Right-to-left note layout** that mirrors bullets, indentation and guide lines. Nothing is written into notes (#823).
 - Persian (فارسی) is available as an interface language, Tine's first right-to-left one: menus, settings and messages mirror, and the note layout defaults to right to left. Choose it under Settings → Appearance → Language. The Guide stays in English (#823).
 - Settings → Editor → Advanced offers one **Hover preview delay**, in seconds, for page and block references (#824). The default is 1 second; large values keep previews out of the way, and touch long-press keeps its own delay.

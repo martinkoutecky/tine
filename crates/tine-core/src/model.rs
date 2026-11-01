@@ -787,6 +787,11 @@ fn default_linked_references_collapsed_threshold() -> u32 {
     crate::config::DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD
 }
 
+/// OG's default when `:ref/default-open-blocks-level` is absent or not an integer.
+fn default_ref_open_blocks_level() -> i32 {
+    crate::config::DEFAULT_REF_OPEN_BLOCKS_LEVEL
+}
+
 /// Effective graph settings returned when opening a store.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -821,6 +826,12 @@ pub struct GraphMeta {
     /// (`:ref/linked-references-collapsed-threshold`, OG default 100).
     #[serde(default = "default_linked_references_collapsed_threshold")]
     pub linked_references_collapsed_threshold: u32,
+    /// Level to which references and query results open by default
+    /// (`:ref/default-open-blocks-level`, OG default 2; GH #793). A block at
+    /// this level or deeper that has children starts folded in those views;
+    /// the file's `collapsed::` is never written for it.
+    #[serde(default = "default_ref_open_blocks_level")]
+    pub ref_default_open_blocks_level: i32,
     /// Template name for the caller to apply to a new, empty journal page (if
     /// configured); match it exactly against `TemplateDto.name`. The store
     /// does not insert its body on save.
@@ -965,6 +976,7 @@ impl GraphMeta {
             block_hidden_properties: config.block_hidden_properties.clone(),
             property_pages_enabled: config.property_pages_enabled,
             linked_references_collapsed_threshold: config.linked_references_collapsed_threshold,
+            ref_default_open_blocks_level: config.ref_default_open_blocks_level,
             default_journal_template: config.default_journal_template.clone(),
             default_home: config.default_home.clone(),
             favorites: config.favorites.clone(),
