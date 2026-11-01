@@ -6,7 +6,7 @@ import { query_edn_json } from "../render/wasm/lsdoc_wasm.js";
 import { QueryMacro } from "./Macro";
 
 export type BeginQueryMatch =
-  | { kind: "supported"; query: string; title?: string }
+  | { kind: "supported"; query: string; title?: string; keeps_block_children?: boolean }
   | { kind: "unsupported"; reason: string };
 
 // Mirrored by `whole_begin_query_payload` (tine-graph-features render.rs); both read
@@ -43,6 +43,13 @@ export function inspectBeginQuery(
   return JSON.parse(query_edn_json(container[1], "begin_query", "")) as BeginQueryMatch;
 }
 
+/** The options map the BEGIN_QUERY macro text ends with: OG's table view, and the map's
+ *  `:remove-block-children? false` (GH #651), which the engine reads from this trailing
+ *  map for the simple DSL as well as a datalog vector. */
+function beginQueryOptions(match: { keeps_block_children?: boolean }): string {
+  return match.keeps_block_children ? "{:table-view? true :remove-block-children? false}" : "{:table-view? true}";
+}
+
 /** Read-only BEGIN_QUERY presentation. OG presents the authored title and query
  * result table in its normal custom-query shell (og/src/main/frontend/components/query.cljs:184-247).
  * Tine reuses QueryMacro so execution retains the existing native result bounds. */
@@ -55,7 +62,7 @@ export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string
   }
   return (
     <QueryMacro
-      body={`query ${props.match.query} {:table-view? true}`}
+      body={`query ${props.match.query} ${beginQueryOptions(props.match)}`}
       title={props.match.title}
       currentPage={props.currentPage}
       hideWhenEmpty={props.hideWhenEmpty}

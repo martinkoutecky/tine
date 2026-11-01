@@ -227,3 +227,85 @@ fn remove_block_children_false_keeps_children_of_matching_parents() {
     // The option belongs to advanced queries: the simple DSL keeps its rule.
     assert_eq!(sorted(rows(&graph, "(task TODO)", &[])), top_level);
 }
+
+/// GH #651 follow-up (evanmeyer, 0.8.2): the reporter's own advanced query is a BEGIN_QUERY whose map embeds
+/// the SIMPLE DSL, `{:query (task TODO DOING) :remove-block-children? false}`, not a datalog vector. OG runs
+/// `:query` forms through the same `get-query-result`, so the option applies; Tine accepted it and dropped it
+/// (the table showed the four parents, no A1/C1). The live view and the export turn the payload into the macro
+/// `query <inspected query> {:table-view? true :remove-block-children? false}` (BeginQuery.tsx); this builds the
+/// same text from the inspector's answer.
+#[test]
+fn remove_block_children_false_applies_to_a_begin_query_map_with_a_dsl_form() {
+    let _integration_guard = crate::integration_lock();
+    let (_dir, graph) = graph();
+    let every_match = names(&[
+        "TODO Parent task A",
+        "TODO Child task A1",
+        "DOING Parent task B",
+        "TODO Child task B1",
+        "TODO Parent task C",
+        "DOING Child task C1",
+        "TODO Sibling task D",
+        "TODO Child of a note",
+        "TODO Child of a done task",
+        "TODO Grandchild of a done task",
+    ]);
+    let top_level = names(&[
+        "TODO Parent task A",
+        "DOING Parent task B",
+        "TODO Parent task C",
+        "TODO Sibling task D",
+        "TODO Child of a note",
+        "TODO Child of a done task",
+    ]);
+    let shown = |payload: &str| {
+        let tine_core::query_edn::BeginQueryMatch::Supported {
+            query,
+            keeps_block_children,
+            ..
+        } = tine_core::query_edn::inspect_begin_query(payload)
+        else {
+            panic!("`{payload}` is a supported BEGIN_QUERY");
+        };
+        let options = if keeps_block_children {
+            "{:table-view? true :remove-block-children? false}"
+        } else {
+            "{:table-view? true}"
+        };
+        sorted(rows(&graph, &format!("{query} {options}"), &[]))
+    };
+    assert_eq!(
+        shown("{:query (task TODO DOING) :remove-block-children? false}"),
+        every_match
+    );
+    assert_eq!(shown("{:query (task TODO DOING)}"), top_level);
+    assert_eq!(
+        shown("{:query (task TODO DOING) :remove-block-children? true}"),
+        top_level
+    );
+    // A datalog vector in the same BEGIN_QUERY map takes the same route (TODO blocks only).
+    let vector = r#"[:find (pull ?b [*]) :where [?b :block/marker "TODO"]]"#;
+    let todo_only = |names: Vec<String>| -> Vec<String> {
+        names
+            .into_iter()
+            .filter(|n| n.starts_with("TODO"))
+            .collect()
+    };
+    assert_eq!(
+        shown(&format!(
+            "{{:query {vector} :remove-block-children? false}}"
+        )),
+        todo_only(every_match)
+    );
+    assert_eq!(
+        shown(&format!("{{:query {vector}}}")),
+        names(&[
+            "TODO Parent task A",
+            "TODO Child task B1",
+            "TODO Parent task C",
+            "TODO Sibling task D",
+            "TODO Child of a note",
+            "TODO Child of a done task",
+        ])
+    );
+}

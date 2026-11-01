@@ -1159,10 +1159,19 @@ impl Query {
     /// Whether block rows keep only the top-level matches (a match whose
     /// immediate parent also matched is absorbed), OG's rule for every block
     /// result. Only an advanced query can turn it off, with
-    /// `:remove-block-children? false` (see [`crate::query_edn::removes_block_children`]).
+    /// `:remove-block-children? false` (see [`crate::query_edn::removes_block_children`]),
+    /// written in the advanced map itself or in the trailing options map the macro carries.
+    /// A BEGIN_QUERY whose map embeds the simple DSL (`{:query (task TODO) ...}`) reaches the
+    /// engine as `(task TODO) {:remove-block-children? false}`, so that map is read for an OG
+    /// source too. O(options bytes), empty for most queries.
     pub fn removes_block_children(&self) -> bool {
+        use crate::query_edn::removes_block_children as removes;
         match &self.source {
-            Source::Advanced { original, .. } => crate::query_edn::removes_block_children(original),
+            Source::Advanced {
+                original,
+                og_options,
+            } => removes(original) && removes(og_options),
+            Source::Og { og_options, .. } => removes(og_options),
             _ => true,
         }
     }

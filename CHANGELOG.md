@@ -16,6 +16,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Adding a margin comment opens it beside or directly below its passage without first jumping to the end of the block's children. Every response now has the same author row above its text, separate from the quoted passage (#110).
 - Expanding or collapsing a large bullet no longer reloads embeds and queries above it, which made text flash and rows jump (GH #795, UI-GH795-COLLAPSE-FLASH).
 - At interface zoom above 100% on phones, the bottom navigation row stays on screen and the editing toolbar stays usable, with the keyboard open or closed; drawers and bottom sheets fit the screen too (#826).
+- Expand children and Collapse children now work one level at a time on query blocks and their result rows (#792). BEGIN_QUERY also honours `:remove-block-children? false` for nested matches (#651).
+- The Journal sections note in Settings → Journals wraps within the pane, keeping its Open page link visible (#808).
 - Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.
 - Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
 - A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
