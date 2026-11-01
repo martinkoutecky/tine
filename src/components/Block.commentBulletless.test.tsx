@@ -65,7 +65,7 @@ describe("comment blocks have no bullet", () => {
         expect(ownControls(row(root, id)), id).toBeNull();
         expect(row(root, id).querySelector(":scope > .block-main .bullet-container"), id).toBeNull();
         // Still a rendered block with its text and its author chip as the handle.
-        expect(row(root, id).querySelector(":scope > .comment-quote .author-chip.comment-handle, :scope > .block-main .author-chip.comment-handle"), id).not.toBeNull();
+        expect(row(root, id).querySelector(":scope > .comment-header .author-chip.comment-handle"), id).not.toBeNull();
       }
       expect(row(root, "r2").textContent).toContain("Fair enough.");
     } finally {
@@ -90,7 +90,7 @@ describe("comment blocks have no bullet", () => {
 });
 
 describe("the author chip is the comment's handle", () => {
-  const chip = (root: HTMLElement, id: string) => row(root, id).querySelector(":scope > .comment-quote .comment-handle, :scope > .block-main .comment-handle") as HTMLElement;
+  const chip = (root: HTMLElement, id: string) => row(root, id).querySelector(":scope > .comment-header .comment-handle") as HTMLElement;
 
   it.each(["c1", "r1"])("starts the %s block drag, as the bullet does, without entering the editor", (id) => {
     const { root, dispose } = fixture();

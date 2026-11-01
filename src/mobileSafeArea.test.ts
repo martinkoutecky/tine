@@ -73,7 +73,7 @@ describe("mobile safe-area insets", () => {
   it("lifts the help FAB above a docked mobile selection toolbar", () => {
     // Martin 2026-10-25: the "?" covered the last buttons of the bottom-docked
     // selection toolbar, with and without the keyboard. Its lift must track the
-    // toolbar's own bottom expression plus the toolbar's 32px height and a gap.
+    // toolbar's own bottom expression plus its measured height (32px before layout; GH #826) and a gap.
     const touch = readFileSync("src/styles/touchGestures.css", "utf8");
     const bottomOf = (selector: string) => {
       const rule = block(touch, selector).replace(/\s+/gu, " ");
@@ -81,9 +81,9 @@ describe("mobile safe-area insets", () => {
     };
     const flat = (selector: string) => block(help, selector).replace(/\s+/gu, " ");
     expect(flat(":root:has(.sel-toolbar-mobile:not(.rendered-selection-toolbar)) .help-corner"))
-      .toContain(`bottom: calc(${bottomOf(".sel-toolbar-mobile")} + 32px + 8px);`);
+      .toContain(`bottom: calc(${bottomOf(".sel-toolbar-mobile")} + var(--mobile-selection-toolbar-height, 32px) + 8px);`);
     expect(flat(":root:has(.sel-toolbar-mobile.rendered-selection-toolbar) .help-corner"))
-      .toContain(`bottom: calc(${bottomOf(".sel-toolbar-mobile.rendered-selection-toolbar")} + 32px + 8px);`);
+      .toContain(`bottom: calc(${bottomOf(".sel-toolbar-mobile.rendered-selection-toolbar")} + var(--mobile-selection-toolbar-height, 32px) + 8px);`);
     // The 32px is the toolbar height; a resize must move the lift with it.
     const bar = block(css, ".sel-toolbar");
     expect(bar).toContain("padding: 3px;");

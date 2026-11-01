@@ -4,6 +4,7 @@
 // written through the document door's own child insert and raw setter as one
 // undo step: no new write path.
 
+import { batch } from "solid-js";
 import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, withUndoUnit } from "./document";
 import { editingId, endEdit, startEditing } from "./editorController";
 import { focusedEditorCommandBridge } from "./editorCommandBridge";
@@ -30,19 +31,26 @@ export function createComment(parentId: string, editorText: string, start: numbe
   if (!parent || !blockWritable(parentId)) return null;
   const raw = commentRaw(quoteSelectorFor(editorText, start, end, parent.raw), formatForBlock(parentId), commentAuthorName());
   let id: string | null = null;
-  withUndoUnit("comment:create", [parent.page], () => {
-    id = insertEmptyChildBlock(parentId, parent.children.length);
-    if (id) setRaw(id, raw, { timetracking: false });
+  // Publish structure and quote metadata together. Inline ordering deliberately
+  // reads text untracked on structural changes; exposing the empty child first
+  // made it mount after the subtree and sent the caret there (GH #110).
+  batch(() => {
+    withUndoUnit("comment:create", [parent.page], () => {
+      id = insertEmptyChildBlock(parentId, parent.children.length);
+      if (id) setRaw(id, raw, { timetracking: false });
+    });
+    if (id) commentsWritten();
   });
-  if (id) commentsWritten();
   return id;
 }
 
 /** Create the comment and put the caret on its empty body line. */
 export function commentAndEdit(parentId: string, editorText: string, start: number, end: number, surface: string | null = null): string | null {
-  const id = createComment(parentId, editorText, start, end);
-  if (id) startEditing(id, 0, null, surface);
-  return id;
+  return batch(() => {
+    const id = createComment(parentId, editorText, start, end);
+    if (id) startEditing(id, 0, null, surface);
+    return id;
+  });
 }
 
 /** Ctrl/Cmd+R in the block editor `ref`: commit its text, then comment on the

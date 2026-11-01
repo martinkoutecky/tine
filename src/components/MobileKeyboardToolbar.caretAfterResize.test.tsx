@@ -14,7 +14,7 @@ beforeEach(() => {
   window.requestAnimationFrame = (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; };
   window.cancelAnimationFrame = () => {};
   Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-  Object.defineProperty(window, "visualViewport", { value: { height: 520, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() }, configurable: true });
+  Object.defineProperty(window, "visualViewport", { value: Object.assign(new EventTarget(), { height: 520, offsetTop: 0 }), configurable: true });
 });
 afterEach(() => { document.body.innerHTML = ""; });
 const flush = (n = 8) => { for (let i = 0; i < n; i++) frames.splice(0).forEach(cb => cb(0)); };
@@ -43,7 +43,7 @@ async function setup() {
   toolbar.getBoundingClientRect = () => ({ top: 480, bottom: 520, height: 40 } as DOMRect);
   await Promise.resolve();
   const ime = (visible: boolean) => window.dispatchEvent(new CustomEvent(NATIVE_IME_EVENT, { detail: visible }));
-  return { scroller, ime, done: () => { unregister(); dispose(); } };
+  return { scroller, editor, ime, done: () => { unregister(); dispose(); } };
 }
 
 it("brings a tapped line that sits above the top back into view after the keyboard resizes the view (GH #783)", async () => {
@@ -60,5 +60,66 @@ it("leaves the page where the reader scrolled it when the keyboard closes with t
   f.ime(false);
   flush();
   expect(f.scroller.scrollTop).toBe(1000);
+  f.done();
+});
+
+it("keeps the edited line visible when native scrolling follows the last keyboard resize (GH #783)", async () => {
+  const f = await setup();
+  f.ime(true);
+  window.dispatchEvent(new Event("resize"));
+  flush(); // beta.2's one-shot reveal has finished
+  f.scroller.scrollTop += 200;
+  f.scroller.dispatchEvent(new Event("scroll"));
+  flush();
+  expect(f.editor.getBoundingClientRect().top).toBeGreaterThanOrEqual(108);
+  expect(f.scroller.scrollTop).toBe(932); // minimum correction, no centring
+  f.done();
+});
+
+it("rechecks the caret when focus arrives after the keyboard's last resize (GH #783)", async () => {
+  const f = await setup();
+  f.editor.blur();
+  f.ime(true);
+  window.dispatchEvent(new Event("resize"));
+  flush();
+  f.editor.focus();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  flush();
+  expect(f.editor.getBoundingClientRect().top).toBeGreaterThanOrEqual(108);
+  f.done();
+});
+
+it.each(["visual", "window"])("follows a late %s viewport pan without another resize (GH #783)", async target => {
+  const f = await setup();
+  f.ime(true);
+  flush();
+  f.scroller.scrollTop += 200;
+  (target === "visual" ? window.visualViewport! : window).dispatchEvent(new Event("scroll"));
+  flush();
+  expect(f.editor.getBoundingClientRect().top).toBeGreaterThanOrEqual(108);
+  f.done();
+});
+
+it.each(["wheel", "touchstart", "pointerdown", "keydown"])("yields to deliberate %s scrolling after keyboard opening (GH #783)", async type => {
+  const f = await setup();
+  f.ime(true);
+  flush();
+  f.scroller.dispatchEvent(new Event(type));
+  f.scroller.scrollTop += 200;
+  f.scroller.dispatchEvent(new Event("scroll"));
+  flush();
+  expect(f.scroller.scrollTop).toBe(1132);
+  f.done();
+});
+
+it("stops following native scroll when the keyboard closes (GH #783)", async () => {
+  const f = await setup();
+  f.ime(true);
+  flush();
+  f.ime(false);
+  f.scroller.scrollTop += 200;
+  f.scroller.dispatchEvent(new Event("scroll"));
+  flush();
+  expect(f.scroller.scrollTop).toBe(1132);
   f.done();
 });

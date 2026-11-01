@@ -7,6 +7,7 @@ import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
 import { revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
 import { isElementNode } from "../windowRealm";
+import { cssInterfaceZoom } from "../zoom";
 
 type ToolbarIcon =
   | "outdent"
@@ -64,6 +65,11 @@ function viewportKeyboardTop(): number {
   return vv ? vv.height + vv.offsetTop : window.innerHeight;
 }
 
+function toolbarRevealTop(toolbarTop: number): number {
+  const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
+  return formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
+}
+
 /** Scroll the focused block editor's nearest scroller (or the window) just enough
  *  that the editor's bottom sits 8px above `toolbarTop` (GH #384), or above the
  *  editor's docked formatting row when one is shown, which sits above the dock
@@ -75,14 +81,13 @@ export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   if (!isBlockEditor(editor)) {
     return false;
   }
-  const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
-  const top = formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
+  const top = toolbarRevealTop(toolbarTop);
   const scroller = editor.closest<HTMLElement>(
     ".main-content, .right-sidebar, .left-sidebar-scroll",
   );
   const overlap = scrollToClearToolbar(editor, scroller, top);
   if (overlap <= 0) return false;
-  if (scroller) scroller.scrollTop += overlap;
+  if (scroller) scroller.scrollTop += overlap / cssInterfaceZoom();
   else window.scrollBy({ top: overlap });
   return true;
 }
@@ -181,8 +186,10 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     // GH #783: the toolbar rule above only ever scrolls DOWN, and the mount-time
     // caret reveal runs before the keyboard has resized the view. If anything moves
     // the page while the view shrinks, the tapped line could stay above the top with
-    // nothing to bring it back. After every resize the caret is re-checked once the
-    // layout is steady (a no-op while it is visible).
+    // nothing to bring it back. Two unchanged frames can precede the WebView's
+    // final focus scroll (GH #783). Follow that scroll too,
+    // until keyboard close, focus loss or deliberate user input, with minimum
+    // corrections and no animation-frame polling after the initial settle.
     let settleCaret: (() => void) | undefined;
     const keepCaretAfterResize = () => {
       settleCaret?.();
@@ -193,13 +200,24 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       const editor = document.activeElement;
       if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) return;
       const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");
-      if (scroller) settleCaret = revealCaretSettled(editor, scroller);
+      if (scroller) settleCaret = revealCaretSettled(editor, scroller, 2, 40, Infinity, {
+        scroll: true,
+        viewport: () => ({
+          top: window.visualViewport?.offsetTop ?? 0,
+          bottom: toolbarRef ? toolbarRevealTop(toolbarRef.getBoundingClientRect().top) : viewportKeyboardTop(),
+        }),
+      });
     };
     const updateAfterResize = () => {
       updateViewport();
       keepCaretAfterResize();
     };
-    const updateAfterFocusChange = () => setTimeout(updateViewport, 0);
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    const updateAfterFocusChange = () => {
+      clearTimeout(focusTimer);
+      // Focus can arrive after the last resize when an editor remounts.
+      focusTimer = setTimeout(updateAfterResize, 0);
+    };
     const revealAfterEditorInput = (event: Event) => {
       if (isBlockEditor(event.target)) {
         scheduleEditorReveal();
@@ -226,6 +244,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       window.removeEventListener("focusout", updateAfterFocusChange);
       document.removeEventListener("input", revealAfterEditorInput, true);
       if (revealFrame) cancelAnimationFrame(revealFrame);
+      clearTimeout(focusTimer);
       settleCaret?.();
     });
   }
@@ -263,6 +282,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
   createEffect(() => {
     const shown = touchPrimary() && visible();
     dockTop(); // re-measure when the keyboard/dock moves
+    cssInterfaceZoom(); // zoom can move the dock without resizing the viewport
     const root = typeof document !== "undefined" ? document.documentElement : null;
     if (!root) return;
     // The editing dock replaces the bottom navigation row while it is up.
@@ -276,7 +296,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       // resize); measuring it now would publish a lift from a 0 top (GH #716).
       if (!toolbarRef || !visible()) return;
       const top = toolbarRef.getBoundingClientRect().top;
-      const lift = Math.max(0, window.innerHeight - top) + 8;
+      const lift = Math.max(0, window.innerHeight - top) / cssInterfaceZoom() + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
       revealFocusedEditorAboveToolbar(top);
     });
@@ -292,7 +312,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     // The viewport grows while the keyboard closes. Keep the button under the
     // active pointer until its trailing click is consumed; otherwise a mounted
     // toolbar can still move away and expose the note before pointer-up.
-    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - var(--system-inset-bottom))`,
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop()) / cssInterfaceZoom()}px - var(--system-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 

@@ -123,11 +123,16 @@ it("occurrence-local collapse compacts large outline geometry without changing t
   };
   const { host, dispose } = await mount(2000, false, true, collapse);
   try {
-    expect(host.querySelectorAll('[data-outline-window] > [aria-hidden="true"]').length).toBeGreaterThan(0);
+    const reserved = () => [...host.querySelectorAll<HTMLElement>('[data-outline-window] > [aria-hidden="true"]')]
+      .reduce((sum, spacer) => sum + parseFloat(spacer.style.height), 0);
+    const expanded = reserved();
+    expect(expanded).toBeGreaterThan(0);
     collapse.setMany(pageByName("Window")!.roots, true);
-    expect(host.querySelectorAll(".ls-block")).toHaveLength(50);
+    // Folding keeps the list windowed (GH #795); what must compact is the space it reserves.
+    expect(reserved()).toBeLessThan(expanded / 10);
     expect(host.querySelector('[data-block-id="window-0"]')).toBeNull();
-    expect(host.querySelectorAll('[data-outline-window] > [aria-hidden="true"]')).toHaveLength(0);
+    revealOutlineBlock("branch-49", host);
+    expect(host.querySelector('[data-block-id="branch-49"]')).not.toBeNull();
     expect(node("branch-0")?.collapsed).toBe(false);
     collapse.setMany(pageByName("Window")!.roots, false);
     revealOutlineBlock("window-1999", host);

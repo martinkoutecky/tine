@@ -193,6 +193,14 @@ pub(super) fn refused(
     body
 }
 
+fn plan_failed(error: tine_store::IoError, page: &PageId) -> ErrorBody {
+    if error.kind == std::io::ErrorKind::WouldBlock {
+        refused("page-busy", Some(page), error.message)
+    } else {
+        internal(Diag::WriteFailed, format!("{error:?}"))
+    }
+}
+
 /// Resolve the block a handle names on `doc` (the host's current read).
 /// A fingerprint resolves only when exactly one block on the page carries
 /// it (design §2, review round 1 finding 1): position-first over a shared
@@ -590,9 +598,7 @@ pub(super) fn write_page_from_bytes(
             Err(Why::Refused(refusal)) => {
                 return Err(refused("store", Some(&read.page), format!("{refusal:?}")))
             }
-            Err(Why::Failed(error)) => {
-                return Err(internal(Diag::WriteFailed, format!("{error:?}")))
-            }
+            Err(Why::Failed(error)) => return Err(plan_failed(error, &read.page)),
         };
         // The store planned from its own read; the host's must be the same
         // bytes, or the page moved in between (PROTOCOL §5).
@@ -1005,6 +1011,25 @@ pub(crate) fn delete_block(slot: &GraphSlot, args: &Value) -> Result<Value, Erro
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn planning_busy_is_a_refusal_before_admission() {
+        let message =
+            "Tine is still finishing another change to these pages. Try again in a moment.";
+        let body = super::plan_failed(
+            tine_store::IoError {
+                kind: std::io::ErrorKind::WouldBlock,
+                message: message.into(),
+            },
+            &tine_store::PageId::from("pages/a.md"),
+        );
+        assert_eq!(body.code, "refused");
+        assert_eq!(body.message, message);
+        let detail = body.detail.unwrap();
+        assert_eq!(detail["reason"], "page-busy");
+        assert_eq!(detail["admitted"], false);
+        assert_eq!(detail["page"], "pages/a.md");
+    }
+
     use super::*;
 
     #[test]

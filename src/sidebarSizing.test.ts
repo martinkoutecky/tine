@@ -60,6 +60,8 @@ describe("right sidebar maximum width (GH #521)", () => {
   it("the stylesheet guard for a stale wide stored width uses the same bounds", () => {
     const css = readFileSync("src/styles/app.css", "utf8");
     const rule = /\n\.right-sidebar \{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(rule).toContain(`max-width: min(${RIGHT_MAX_WINDOW_FRACTION * 100}vw, calc(100vw - ${MAIN_PANE_MIN}px))`);
+    // Viewport lengths divide by the interface zoom (GH #826); that is 1 on desktop.
+    const vw = "calc(100vw / var(--interface-zoom, 1))";
+    expect(rule).toContain(`max-width: min(calc(${RIGHT_MAX_WINDOW_FRACTION * 100}vw / var(--interface-zoom, 1)), calc(${vw} - ${MAIN_PANE_MIN}px))`);
   });
 });

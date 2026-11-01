@@ -187,6 +187,9 @@ export function createMarginSurface(opts: {
     onMount(() => {
       threads.set(props.id, { el, parentId: props.parentId, row: props.row });
       observer?.observe(el);
+      // A newly focused comment must already sit beside its passage before
+      // paint or caret reveal. Existing threads still coalesce resize/edit work.
+      measure();
       api.schedule();
       onCleanup(() => {
         if (threads.get(props.id)?.el === el) threads.delete(props.id);
@@ -223,6 +226,8 @@ export function createMarginSurface(opts: {
       if (outline) observer?.observe(outline);
       if (outline?.parentElement) observer?.observe(outline.parentElement);
       for (const t of threads.values()) observer?.observe(t.el);
+      // Initial ThreadView mounts precede the column's onMount.
+      measure();
       // A web font that finishes loading moves a passage inside its line
       // without resizing anything observed.
       const fonts = el.ownerDocument.fonts as FontFaceSet | undefined;

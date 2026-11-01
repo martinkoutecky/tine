@@ -47,7 +47,8 @@ import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { openJournalsFromClick } from "./journalsNavigation";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
@@ -606,7 +607,7 @@ export function App(): JSX.Element {
   };
   const topbarActions = {
     calendar: () => openCalendarJump(),
-    journals: () => openJournals(),
+    journals: openJournalsFromClick,
     share: () => { const page = sharePage(); if (page) openShareDialog({ page }); },
     theme: () => toggleTheme(),
     rightSidebar: (trigger?: HTMLElement | null) => toggleRightSidebar(trigger),

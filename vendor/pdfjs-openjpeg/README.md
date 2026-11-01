@@ -10,6 +10,13 @@ comes from OpenJPEG's `src/lib/openjp2/`; `convert.{c,h}` comes from
 `src/bin/jp2/`, and `color.{c,h}` and `opj_getopt.h` from `src/bin/common/`.
 The bridge's upstream buffer-stream patch is already applied to the OpenJPEG
 sources; the original patch is included. No decoder algorithm is changed.
+
+`source.json` also lists security patches applied on top of that pin. Today this
+is upstream commit `91d08b11` (`0002-…`), which adds the missing bounds check to
+`opj_j2k_read_sod` (#827). No OpenJPEG release has it yet, and pinning upstream's
+development branch would bring unrelated unreleased changes, so the fix is applied
+on its own. Remove the patch when moving the pin to a release that contains it.
+
 Both upstreams use BSD-2-Clause; the build bundles both licence texts.
 
 `scripts/build-pdfjs-openjpeg.mjs` reproduces the upstream wasm32/no-threads
@@ -27,8 +34,8 @@ decoder instructions, types, memory limits and official JS fallback unchanged.
 The Vite plugin serves the same rebuilt WASM in development and copies it
 with its licences and provenance into the offline application bundle.
 
-Install/activate Emscripten 4.0.20 and source `emsdk_env.sh`, then run
-`npm run build:pdf-decoder`. `EMSDK` identifies the SDK installation;
+Install/activate Emscripten 4.0.20 and source `emsdk_env.sh` (steps in the root
+README, under "PDF decoder SDK"), then run `npm run build:pdf-decoder`. `EMSDK` identifies the SDK installation;
 `TINE_PDFJS_EMSDK` may instead name its `upstream/` directory. Python 3 and
 Node.js 22.13+ must be available. The builder needs no CMake, Docker, network,
 or host C compiler. All intermediate output and the compiler cache stay in

@@ -36,6 +36,9 @@ body {
   /* Width of the sidebar's drag-to-resize strip, and of the gutter the sidebar
      reserves so that strip never lands on top of the scrollbar (GH #435). */
   --sidebar-resizer-width: 7px;
+  /* Mobile CSS zoom scales vh/vw lengths but not the viewport itself. Fixed
+     surfaces divide those lengths by --interface-zoom; native desktop uses 1. */
+  --interface-zoom: 1;
   /* One named owner for system-inset gutters (GH #205). Browser/iOS surfaces
      use CSS env() values. MainActivity already sizes Android's WebView inside
      the native insets, so main.tsx selects `native-viewport` before render and
@@ -63,7 +66,7 @@ html[data-system-insets="native-viewport"] {
 }
 
 #root {
-  height: 100vh;
+  height: 100%;
 }
 
 ::selection {
@@ -75,7 +78,9 @@ html[data-system-insets="native-viewport"] {
 
 .app-container {
   display: flex;
-  height: 100vh;
+  /* The root's percentage height already accounts for CSS interface zoom.
+     100vh scales a second time on mobile and pushes bottom chrome offscreen. */
+  height: 100%;
   overflow: hidden;
   /* Terminate every pane/sidebar/drawer chain at the common shell. Keeping the
      rule here (rather than on every nested scroller) preserves normal chaining
@@ -84,7 +89,7 @@ html[data-system-insets="native-viewport"] {
   /* Keep the app shell out from under the system bars on edge-to-edge mobile
      (Android targetSdk 36 forces this): without it the topbar's sidebar/settings
      buttons sit behind the status bar and can't be tapped. All four insets are
-     0 on desktop, so this is a no-op there. box-sizing keeps 100vh honest. */
+     0 on desktop, so this is a no-op there. box-sizing includes the gutters. */
   box-sizing: border-box;
   padding: var(--system-inset-top) var(--system-inset-right)
     var(--system-inset-bottom) var(--system-inset-left);
@@ -271,9 +276,9 @@ html[data-system-insets="native-viewport"] {
   z-index: 90;
   width: min(
     var(--mobile-drawer-width, 320px),
-    calc(100vw - 44px - var(--system-inset-left) - var(--system-inset-right))
+    calc(100% - 44px - var(--system-inset-left) - var(--system-inset-right))
   ) !important;
-  max-width: calc(100vw - 44px - var(--system-inset-left) - var(--system-inset-right));
+  max-width: calc(100% - 44px - var(--system-inset-left) - var(--system-inset-right));
   flex: none !important;
   box-shadow: 0 8px 30px rgba(0, 0, 0, .28);
 }
@@ -385,8 +390,8 @@ html[data-system-insets="native-viewport"] {
   top: calc(100% + 5px);
   left: 0;
   min-width: 220px;
-  max-width: min(420px, calc(100vw - 24px));
-  max-height: min(440px, calc(100vh - 72px));
+  max-width: min(420px, calc(calc(100vw / var(--interface-zoom, 1)) - 24px));
+  max-height: min(440px, calc(calc(100vh / var(--interface-zoom, 1)) - 72px));
   overflow-y: auto;
   padding: 5px;
   border: 1px solid var(--border-color);
@@ -613,7 +618,7 @@ html[data-system-insets="native-viewport"] {
 .tab-overview {
   position: fixed;
   z-index: 80;
-  max-height: min(420px, calc(100vh - 80px));
+  max-height: min(420px, calc(calc(100vh / var(--interface-zoom, 1)) - 80px));
   padding: 5px;
   overflow-y: auto;
   border: 1px solid var(--border-color);
@@ -1572,7 +1577,7 @@ html[data-system-insets="native-viewport"] {
 .page-props-panel {
   position: fixed;
   width: 320px;
-  max-height: calc(100vh - 16px);
+  max-height: calc(calc(100vh / var(--interface-zoom, 1)) - 16px);
   overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -1652,7 +1657,7 @@ html[data-system-insets="native-viewport"] {
 .settings-modal.share-dialog {
   width: 640px;
   height: auto;
-  max-height: 82vh;
+  max-height: calc(82vh / var(--interface-zoom, 1));
   outline: none;
 }
 .share-dialog .settings-pane-head { flex: 0 0 auto; }
@@ -1685,8 +1690,8 @@ html[data-system-insets="native-viewport"] {
 .graph-name-error { padding: 0 16px; color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 .export-modal {
   width: 620px;
-  max-width: 94vw;
-  max-height: 80vh;
+  max-width: calc(94vw / var(--interface-zoom, 1));
+  max-height: calc(80vh / var(--interface-zoom, 1));
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
@@ -1829,7 +1834,7 @@ html[data-system-insets="native-viewport"] {
 /* PDF export dialog: a note between the options and the buttons explaining the
    next step (the OS print dialog). */
 .pdf-export-modal {
-  width: min(440px, 92vw);
+  width: min(440px, calc(92vw / var(--interface-zoom, 1)));
 }
 .pdf-export-note {
   font-size: 12px;
@@ -1883,7 +1888,7 @@ html[data-system-insets="native-viewport"] {
   box-sizing: border-box;
   /* Shared by Settings, Copy/Export, Print to PDF and the query workspace, so
      the system-inset gutter belongs here rather than on any one of them. */
-  padding: calc(var(--overlay-inset-top) + 12vh)
+  padding: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1)))
     calc(var(--overlay-inset-right) + 8px)
     calc(var(--overlay-inset-bottom) + 8px)
     calc(var(--overlay-inset-left) + 8px);
@@ -1891,8 +1896,8 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-modal {
   width: 840px;
-  max-width: 94vw;
-  height: 70vh;
+  max-width: calc(94vw / var(--interface-zoom, 1));
+  height: calc(70vh / var(--interface-zoom, 1));
   max-height: 640px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -1965,7 +1970,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-search-input {
   margin-left: auto;
-  width: min(260px, 40vw);
+  width: min(260px, calc(40vw / var(--interface-zoom, 1)));
   border: 1px solid var(--border-color);
   border-radius: 7px;
   background: var(--bg-secondary);
@@ -3431,7 +3436,7 @@ html[data-system-insets="native-viewport"] {
 }
 
 .page-loading {
-  height: 50vh;
+  height: calc(50vh / var(--interface-zoom, 1));
 }
 
 .conflict-stack {
@@ -4146,6 +4151,7 @@ html[data-system-insets="native-viewport"] {
   z-index: 95;
   transform: translateY(-100%);
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 5px;
   padding: 6px 6px;
@@ -4159,7 +4165,10 @@ html[data-system-insets="native-viewport"] {
 /* GH #598: the App's navigation group, pinned at the leading end outside the
    scrolling strip (so it never scrolls away), with a hairline before the strip. */
 .mobile-keyboard-toolbar-nav {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
   display: flex;
   align-items: center;
   padding-right: 4px;
@@ -4167,6 +4176,7 @@ html[data-system-insets="native-viewport"] {
 }
 .mobile-keyboard-toolbar-nav .navigation-actions {
   display: flex;
+  width: max-content;
   gap: 2px;
 }
 .mobile-keyboard-toolbar-nav .icon-btn {
@@ -4208,8 +4218,10 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
 }
 
 .mobile-keyboard-toolbar-strip {
-  min-width: 0;
-  flex: 1 1 auto;
+  /* Keep one action and Hide reachable even when zoom makes the navigation
+     group take its own row. Both groups retain horizontal touch scrolling. */
+  min-width: 40px;
+  flex: 1 1 40px;
   display: flex;
   gap: 2px;
   overflow-x: auto;
@@ -4621,7 +4633,7 @@ mark {
 .peek-popup {
   position: fixed;
   z-index: 50;
-  width: min(600px, calc(100vw - 16px));
+  width: min(600px, calc(calc(100vw / var(--interface-zoom, 1)) - 16px));
   max-height: 600px;
   overflow-y: auto;
   background: var(--bg-primary);
@@ -4951,7 +4963,7 @@ mark {
     calc(var(--overlay-inset-left) + 24px);
 }
 .audio-panel {
-  width: 90vw;
+  width: calc(90vw / var(--interface-zoom, 1));
   max-width: 1100px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -5102,7 +5114,7 @@ body.file-drop-active::after {
   z-index: 60;
   display: none;
   width: max-content;
-  max-width: min(680px, calc(100vw - 48px));
+  max-width: min(680px, calc(calc(100vw / var(--interface-zoom, 1)) - 48px));
   padding: 8px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -5173,7 +5185,7 @@ body.file-drop-active::after {
   z-index: 60;
 }
 .date-picker {
-  max-height: calc(100dvh - 8px);
+  max-height: calc(calc(100dvh / var(--interface-zoom, 1)) - 8px);
   overflow-y: auto;
   position: fixed;
   /* Wide enough that the longest header title — the scheduled/deadline picker's
@@ -5412,7 +5424,7 @@ body.file-drop-active::after {
 .formula-editor {
   position: fixed;
   width: 440px;
-  max-width: calc(100vw - 8px);
+  max-width: calc(calc(100vw / var(--interface-zoom, 1)) - 8px);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -6544,8 +6556,8 @@ body.file-drop-active::after {
 .lightbox-overlay > img.lightbox-img {
   width: auto;
   height: auto;
-  max-width: 92vw;
-  max-height: 92vh;
+  max-width: calc(92vw / var(--interface-zoom, 1));
+  max-height: calc(92vh / var(--interface-zoom, 1));
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
@@ -7049,7 +7061,7 @@ img.emoji {
 .ref-export-list {
   flex: 1 1 auto;
   min-height: 120px;
-  max-height: 46vh;
+  max-height: calc(46vh / var(--interface-zoom, 1));
   overflow-y: auto;
   padding: 8px 10px;
   border: 1px solid var(--border-color);
@@ -8058,7 +8070,7 @@ html.tine-embed-shading-accent .embed-block {
   align-items: flex-start;
   justify-content: center;
   box-sizing: border-box;
-  padding: calc(var(--overlay-inset-top) + 12vh)
+  padding: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1)))
     calc(var(--overlay-inset-right) + 8px)
     calc(var(--overlay-inset-bottom) + 8px)
     calc(var(--overlay-inset-left) + 8px);
@@ -8067,7 +8079,7 @@ html.tine-embed-shading-accent .embed-block {
 
 .switcher {
   width: 560px;
-  max-width: 90vw;
+  max-width: calc(90vw / var(--interface-zoom, 1));
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
@@ -8087,7 +8099,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 
 .switcher-results {
-  max-height: 50vh;
+  max-height: calc(50vh / var(--interface-zoom, 1));
   overflow-y: auto;
   padding: 6px;
 }
@@ -8417,7 +8429,7 @@ html.tine-embed-shading-accent .embed-block {
   /* GH #521: a stored wide width on a smaller window can never swallow the main
      pane or its own resize handle (same bounds as sidebarSizing.rightSidebarMaxWidth;
      drawer mode sets its own max-width above). */
-  max-width: min(70vw, calc(100vw - 360px));
+  max-width: min(calc(70vw / var(--interface-zoom, 1)), calc(calc(100vw / var(--interface-zoom, 1)) - 360px));
   flex: 0 0 auto;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -8781,7 +8793,7 @@ html.tine-embed-shading-accent .embed-block {
   max-width: 100%;
   min-width: 0;
   margin: 0 auto;
-  padding: 26px clamp(16px, 3vw, 34px) 48px;
+  padding: 26px clamp(16px, calc(3vw / var(--interface-zoom, 1)), 34px) 48px;
   box-sizing: border-box;
   color: var(--text-primary);
 }
@@ -9093,7 +9105,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 .query-advanced-modal {
   width: min(720px, 100%);
-  max-height: min(720px, 88vh);
+  max-height: min(720px, calc(88vh / var(--interface-zoom, 1)));
   overflow: auto;
   box-sizing: border-box;
   padding: 18px;
@@ -9188,7 +9200,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 .root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
 .root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
-.owner-protection-notice { position: relative; flex-shrink: 0; max-height: 30vh; overflow: auto; padding: 6px 16px; background: var(--background-secondary); }
+.owner-protection-notice { position: relative; flex-shrink: 0; max-height: calc(30vh / var(--interface-zoom, 1)); overflow: auto; padding: 6px 16px; background: var(--background-secondary); }
 .owner-protection-title { flex: 1 1 auto; font-weight: 500; }
 .owner-protection-explanation { min-width: 0; margin-top: 8px; }
 .owner-protection-explanation p { margin: 4px 0; }

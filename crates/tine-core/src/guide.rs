@@ -216,6 +216,14 @@ pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, Str
 #[cfg(test)]
 mod journal_guide_tests {
     #[test]
+    fn journals_shift_click_and_ordinary_navigation_are_documented() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        assert!(journals.contains("**Shift-click Journals** in the left sidebar or toolbar"));
+        assert!(journals.contains("right sidebar without leaving the main page"));
+        assert!(journals.contains("A plain click or **g j** still opens the multi-day feed"));
+    }
+
+    #[test]
     fn reference_change_notices_offer_undo() {
         let reference = include_str!("templates/pages-links-references-search.md");
         assert!(

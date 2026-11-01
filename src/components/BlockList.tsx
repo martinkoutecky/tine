@@ -127,9 +127,14 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
       }
       return count;
     };
-    const sizes = ids.map(size);
     const prior = untrack(groups);
-    if (sizes.reduce((sum, value) => sum + value, 0) <= (prior.length ? UNWINDOW_AT : WINDOW_AT)) return plain(ids);
+    // The mode counts folded descendants too, so folding never changes it: a
+    // swap replaces every row's owner, and rows above the fold remount and
+    // reload their embeds and queries (GH #795). Stops at the limit: O(WINDOW_AT).
+    let left = prior.length ? UNWINDOW_AT : WINDOW_AT;
+    const fits = (id: string): boolean => --left >= 0 && (node(id)?.children ?? []).every(fits);
+    if (ids.every(fits)) return plain(ids);
+    const sizes = ids.map(size);
     // Typing/editor-state reads keep the same O(ids) comparison as before;
     // only a changed membership needs the partition below.
     let at = 0;

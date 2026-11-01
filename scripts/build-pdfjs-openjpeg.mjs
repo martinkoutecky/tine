@@ -33,7 +33,7 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
     if (previous.inputHash === inputHash && previous.sha256 === sha(fs.readFileSync(output))) return outDir;
   }
   const sdk = process.env.TINE_PDFJS_EMSDK || (process.env.EMSDK && path.join(process.env.EMSDK, "upstream"));
-  if (!sdk) throw new Error("Building the PDF decoder requires Emscripten 4.0.20: install/activate that SDK and set EMSDK (README.md).");
+  if (!sdk) throw new Error("Building the PDF decoder requires Emscripten 4.0.20: see 'PDF decoder SDK' in README.md for installing it and setting EMSDK or TINE_PDFJS_EMSDK.");
   fs.mkdirSync(path.join(outDir, "obj"), { recursive: true });
   const config = path.join(outDir, "emscripten.config");
   fs.writeFileSync(config, `LLVM_ROOT = ${JSON.stringify(path.join(sdk, "bin"))}\nBINARYEN_ROOT = ${JSON.stringify(sdk)}\nNODE_JS = [${JSON.stringify(process.execPath)}]\n`);

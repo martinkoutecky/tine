@@ -46,6 +46,19 @@ describe("ExportModal content choice (GH #352)", () => {
     document.body.innerHTML = "";
   });
 
+  it.each([
+    ["9:03", "9:03"], ["1:02:03", "1:02:03"], ["75", "1:15"], ["0", "0:00"],
+    ["no-time", ""], ["9:60", ""],
+  ])("exports the rendered timestamp %s as its label", async (arg, label) => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <ExportModal />, root);
+    try {
+      openExportNodesModal([{ raw: `before {{youtube-timestamp ${arg}}} after`, format: "md", children: [] }], 1);
+      await vi.waitFor(() => expect(root.querySelector<HTMLTextAreaElement>(".export-preview")?.value.trim()).toBe(`- before ${label} after`));
+    } finally { dispose(); }
+  });
+
   it("refuses a cumulative macro expansion before allocating its last substitution (L7s8-02)", async () => {
     const arg = "x".repeat(100);
     const last = "$1".repeat(1400) + "LAST";
