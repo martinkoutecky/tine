@@ -76,15 +76,7 @@ function caretViewBounds(editor: HTMLElement, scroller: HTMLElement | null, row:
   return { top: row.top, bottom: row.bottom, visibleTop, visibleBottom };
 }
 
-<<<<<<< HEAD
-function scrollToShow(scroller: HTMLElement | null, g: CaretViewRow | null): boolean {
-=======
-/** Scroll `scroller` the minimum that shows the caret row of the focused
- * `editor`. Returns whether it scrolled. O(editor text) for one row
- * measurement; a no-op without layout, an unfocused editor, or no scroller. */
-export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null, viewport?: { top: number; bottom: number }): boolean {
-  const g = caretViewRow(editor, scroller);
->>>>>>> batch/fix-beta4-b2
+function scrollToShow(scroller: HTMLElement | null, g: CaretViewRow | null, viewport?: { top: number; bottom: number }): boolean {
   if (!g || !scroller) return false;
   const top = Math.max(g.visibleTop, viewport ? viewport.top + MARGIN : -Infinity);
   const bottom = Math.min(g.visibleBottom, viewport ? viewport.bottom - MARGIN : Infinity);
@@ -99,8 +91,8 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
 /** Scroll `scroller` the minimum that shows the caret row of the focused
  * `editor`. Returns whether it scrolled. O(editor text) for one row
  * measurement; a no-op without layout, an unfocused editor, or no scroller. */
-export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null): boolean {
-  return scrollToShow(scroller, caretViewRow(editor, scroller));
+export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null, viewport?: { top: number; bottom: number }): boolean {
+  return scrollToShow(scroller, caretViewRow(editor, scroller), viewport);
 }
 
 /** The same reveal for an editor engine that measures its own caret row (CM6). */
@@ -144,13 +136,6 @@ export function scrollToClearToolbar(editor: HTMLElement, scroller: HTMLElement 
  * brought back if it left the view. Any wheel/touch/pointer/key input on the
  * scroller, a blur, or the returned `cancel()` ends it: the user and any other
  * focus owner always win. */
-<<<<<<< HEAD
-export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40, lateMs = 10_000): () => void {
-  return watchCaretReveal(editor, scroller, () => revealCaret(editor, scroller), stableFrames, maxFrames, lateMs);
-}
-
-export function watchCaretReveal(editor: HTMLElement, scroller: HTMLElement | null, reveal: () => void, stableFrames = 2, maxFrames = 40, lateMs = 10_000): () => void {
-=======
 export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40, lateMs = 10_000, watch: {
   /** Keyboard resizing and WebView focus scrolling can finish in separate turns.
    * Follow their scroll events after the initial reveal; user input still wins.
@@ -158,17 +143,19 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
   scroll?: boolean;
   viewport?: () => { top: number; bottom: number };
 } = {}): () => void {
->>>>>>> batch/fix-beta4-b2
+  return watchCaretReveal(editor, scroller, () => revealCaret(editor, scroller, watch.viewport?.()), stableFrames, maxFrames, lateMs, watch.scroll);
+}
+
+export function watchCaretReveal(editor: HTMLElement, scroller: HTMLElement | null, reveal: () => void, stableFrames = 2, maxFrames = 40, lateMs = 10_000, followScroll = false): () => void {
   if (!scroller) return () => {};
   let stopped = false;
   let cancelFrame: (() => void) | undefined;
   let lateTimer: number | undefined;
   let lateFrame: (() => void) | undefined;
   const gestures = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-  const late = watch.scroll ? ["load", "error", "scroll"] : ["load", "error"];
+  const late = followScroll ? ["load", "error", "scroll"] : ["load", "error"];
   const win = windowOf(editor);
-  const vv = watch.scroll ? win.visualViewport : null;
-  const reveal = () => revealCaret(editor, scroller, watch.viewport?.());
+  const vv = followScroll ? win.visualViewport : null;
   const userInput = () => stop();
   function stop() {
     if (stopped) return;
@@ -179,7 +166,7 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
     for (const type of gestures) scroller!.removeEventListener(type, userInput, true);
     for (const type of late) scroller!.removeEventListener(type, onLate, true);
     vv?.removeEventListener("scroll", onLate);
-    if (watch.scroll) win.removeEventListener("scroll", onLate);
+    if (followScroll) win.removeEventListener("scroll", onLate);
     editor.removeEventListener("blur", stop);
   }
   function onLate() {
@@ -196,7 +183,7 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
     if (stopped || lateMs <= 0) return stop();
     for (const type of late) scroller!.addEventListener(type, onLate, { passive: true, capture: true });
     vv?.addEventListener("scroll", onLate, { passive: true });
-    if (watch.scroll) win.addEventListener("scroll", onLate, { passive: true });
+    if (followScroll) win.addEventListener("scroll", onLate, { passive: true });
     if (Number.isFinite(lateMs)) lateTimer = windowOf(editor).setTimeout(stop, lateMs);
   }
   editor.addEventListener("blur", stop);
