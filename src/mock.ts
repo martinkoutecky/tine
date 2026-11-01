@@ -1398,6 +1398,13 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
     },
+    async captureImportAsset(path: string, name?: string): Promise<string> {
+      return name ?? path.split("/").pop() ?? path;
+    },
+    async captureSaveAsset(name: string, bytes: Uint8Array): Promise<string> {
+      mockAssets[name] = bytes;
+      return name;
+    },
     async importNativeCapture(path: string, name: string): Promise<string> {
       return name || path.split("/").pop() || path;
     },

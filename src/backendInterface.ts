@@ -504,6 +504,13 @@ export interface Backend {
    * No source-byte cap. Bad source/name or write failures reject.
    * Cost O(source bytes + collision candidates). */
   importAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
+  /** Quick Capture only (GH #835): the capture window has no graph of its own, so
+   * its pasted files are imported into the graph its show was bound to, by these
+   * two narrow commands instead of `importAsset` / `saveAsset`. Same contracts as
+   * those (return the chosen assets-relative name; reject on a bad name, a stale
+   * binding or a failed write); the graph window never calls them. */
+  captureImportAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
+  captureSaveAsset(name: string, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
   /** Import an app-cache tine_photo_*.jpg (64 MiB max) or tine_memo_*.m4a
    * (32 MiB max) capability into a unique asset. Reject empty/invalid sources,
    * bad names, size limits, and writes. After commit, attempt temp removal;

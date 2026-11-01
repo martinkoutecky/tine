@@ -1123,7 +1123,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   const assets = editorAssets({
-    id: props.id, element: () => ref, mounted: () => editorMounted,
+    id: props.id, element: () => ref, mounted: () => editorMounted, capture: !!cap,
     insert: (markdown, current) => {
       const start = ref.selectionStart, end = ref.selectionEnd;
       const newRaw = ref.value.slice(0, start) + markdown + ref.value.slice(end);

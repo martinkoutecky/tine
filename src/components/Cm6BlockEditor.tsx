@@ -157,7 +157,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     ...marginNavigation(props.id, props.scope, props.surface, () => format),
   });
   const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
-  const assets = editorAssets({ id: props.id, element: () => view!.contentDOM, mounted: current,
+  const assets = editorAssets({ id: props.id, element: () => view!.contentDOM, mounted: current, capture: !!capture,
     insert: markup => {
       if (!view) return;
       view.dispatch(view.state.replaceSelection(markup), { userEvent: "input.paste", scrollIntoView: true });

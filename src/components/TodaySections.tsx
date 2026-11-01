@@ -33,6 +33,25 @@ const classify = (raw: string, format: Format): SectionItem["kind"] | null => {
 
 type Sections = { page: string; items: SectionItem[]; ambiguous: string[] } | null;
 
+/** GH #834: a re-read (any full refresh re-reads the sections page) hands back
+ * fresh item objects, and `<For>` keys by identity: every unchanged section
+ * would unmount and drop its adopted answer, so `hideWhenEmpty` hid it until a
+ * new answer landed and the page below shifted. Keep the previous object for
+ * every item whose kind, text and format are unchanged. */
+function reuseUnchanged(previous: Sections | undefined, next: Sections): Sections {
+  if (!previous || !next) return next;
+  const pool = [...previous.items];
+  const items = next.items.map(item => {
+    const at = pool.findIndex(old => old.kind === item.kind && old.raw === item.raw && old.format === item.format);
+    return at < 0 ? item : pool.splice(at, 1)[0];
+  });
+  const same = previous.page === next.page && items.length === previous.items.length
+    && items.every((item, i) => item === previous.items[i])
+    && previous.ambiguous.length === next.ambiguous.length
+    && previous.ambiguous.every((name, i) => name === next.ambiguous[i]);
+  return same ? previous : { ...next, items };
+}
+
 export function JournalSectionsHeader(): JSX.Element {
   const openGuide = async () => {
     const owner = graphOwner();
@@ -90,7 +109,7 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
   const [sections, { refetch }] = createResource(() => {
     const names = readOr(pages, undefined, "sections pages");
     return names && { names, revision: names.map(name => changed(pageChangeKey(name))).join("\0") };
-  }, source => readSections(source.names));
+  }, async (source, info): Promise<Sections> => reuseUnchanged(info.value as Sections | undefined, await readSections(source.names)));
   const current = () => readOr(sections, null, "today sections");
   const [busy, setBusy] = createSignal(false);
   const customize = () => {
