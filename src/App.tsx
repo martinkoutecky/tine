@@ -80,6 +80,7 @@ import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initHoverPreviewSettings } from "./hoverPreviewSettings";
 import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
 import { initCommentIdentity } from "./commentIdentity";
+import { initCommentNamePrompt, probeGraphGit } from "./commentNamePrompt";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
@@ -826,7 +827,12 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(initHoverPreviewSettings);
   onMount(() => void initNavSettings());
-  onMount(() => initCommentIdentity());
+  onMount(() => { initCommentIdentity(); initCommentNamePrompt(); });
+  // tine#841: learn once per opened graph whether it sits in git, so the first
+  // margin comment can ask for "Your name" without waiting for the answer.
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) probeGraphGit();
+  }));
   onMount(() => void initSettingsLayout());
   onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.

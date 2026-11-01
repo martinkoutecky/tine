@@ -16,7 +16,7 @@ import { editingId, endEdit, startEditing } from "./editorController";
 import { pasteAsLinkEdit } from "./blockRefActions";
 import { setGraphMeta } from "./graphSession";
 import { openPage, resetTabsToJournals } from "./router";
-import { setToasts } from "./toasts";
+import { setToasts, toasts } from "./toasts";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import type { BlockDto } from "./types";
 import { For } from "solid-js";
@@ -74,7 +74,8 @@ describe("default bindings (R2 B1)", () => {
   it("adds no default binding and leaves every mod+digit chord on pane focus", () => {
     const defaults = Object.fromEntries(commandDefaults().map((c) => [c.id, c.binding]));
     for (const id of ["select/copy-block-ref", "editor/duplicate-block", "editor/insert-child-block",
-      "editor/collapse-children", "editor/expand-children", "editor/paste-as-link", "go/search-selection"]) {
+      "editor/collapse-children", "editor/expand-children", "editor/paste-as-link", "go/search-selection",
+      ...Array.from({ length: 10 }, (_, n) => `editor/set-depth-${n}`)]) {
       expect(defaults[id], id).toBe("");
     }
     for (let n = 1; n <= 9; n++) expect(defaults[`pane/focus-${n}`]).toBe(`mod+${n}`);
@@ -368,6 +369,114 @@ describe("collapse / expand one level (GH #525)", () => {
     expect(doc.byId[B].collapsed).toBe(false); // B has no children: nothing to fold
     run("editor/expand-children");
     expect(doc.byId[A].collapsed).toBe(false);
+  });
+});
+
+// GH #794: Set depth N shows the block down to level N: levels 0..N-1 open, level N
+// folded, deeper levels untouched (hidden by the fold above them).
+describe("Set depth 0 to 9 (GH #794)", () => {
+  const D = "66666666-6666-4666-8666-666666666666";
+  const E = "77777777-7777-4777-8777-777777777777";
+  // A (0) > C1 (1) > G1 (2) > D (3) > E (4, leaf);  A > C2 (1, leaf).
+  // Everything with children starts as `fold` says; D is open on purpose.
+  const deepTree = (format: "md" | "org", fold: { a: boolean; c1: boolean; g1: boolean; d: boolean }) =>
+    loadSingle({ name: "P", kind: "page", title: "P", format, pre_block: null,
+      blocks: [block(A, "Alpha", [
+        block(C1, "One", [block(G1, "Grand", [block(D, "Deep", [block(E, "Leaf")], fold.d)], fold.g1)], fold.c1),
+        block(C2, "Two"),
+      ], fold.a), block(B, "Beta")] });
+  const states = () => [A, C1, G1, D].map((id) => doc.byId[id].collapsed);
+  const rawOf = (id: string) => doc.byId[id].raw;
+
+  it("registers ten palette commands and no default chord", () => {
+    for (let n = 0; n <= 9; n++) {
+      const command = paletteCommands().find((c) => c.id === `editor/set-depth-${n}`);
+      expect(command?.label, `set depth ${n}`).toBe(`Set depth ${n}`);
+    }
+  });
+
+  it.each(["md", "org"] as const)("Set depth 2 matches the issue's test case in %s: opens the block and its children, folds the grandchildren, leaves deeper blocks alone", (format) => {
+    deepTree(format, { a: true, c1: true, g1: false, d: false });
+    const deepBefore = [rawOf(D), rawOf(E)];
+    selectBlock(A);
+    run("editor/set-depth-2");
+    expect(states()).toEqual([false, false, true, false]);
+    expect(rawOf(A)).not.toContain("collapsed");
+    expect(rawOf(C1)).not.toContain("collapsed");
+    expect(rawOf(G1)).toContain("collapsed");
+    expect([rawOf(D), rawOf(E)]).toEqual(deepBefore); // hidden descendants are not written
+  });
+
+  it("Set depth 2 leaves a deep folded block folded, and deeper expanded ones expanded", () => {
+    deepTree("md", { a: false, c1: false, g1: true, d: true });
+    const deepBefore = [rawOf(D), rawOf(E)];
+    selectBlock(A);
+    run("editor/set-depth-2");
+    expect(states()).toEqual([false, false, true, true]);
+    expect([rawOf(D), rawOf(E)]).toEqual(deepBefore); // D was folded and hidden: no write
+  });
+
+  it("Set depth 0 folds the block, Set depth 1 opens it and folds its children, Set depth 9 opens every level", () => {
+    deepTree("md", { a: false, c1: false, g1: false, d: false });
+    selectBlock(A);
+    run("editor/set-depth-0");
+    expect(states()).toEqual([true, false, false, false]);
+    run("editor/set-depth-1");
+    expect(states()).toEqual([false, true, false, false]);
+    run("editor/set-depth-9");
+    expect(states()).toEqual([false, false, false, false]);
+    run("editor/set-depth-3");
+    expect(states()).toEqual([false, false, false, true]);
+    run("editor/set-depth-4"); // E is a leaf: nothing at level 4 can fold
+    expect(states()).toEqual([false, false, false, false]);
+    expect(doc.byId[E].collapsed).toBe(false);
+  });
+
+  it("writes nothing for blocks already in the right state, and leaves one undo step per change", () => {
+    deepTree("md", { a: false, c1: false, g1: false, d: false });
+    selectBlock(A);
+    run("editor/set-depth-2");
+    expect(states()).toEqual([false, false, true, false]);
+    const dirty = vi.spyOn(backend(), "writeRich");
+    run("editor/set-depth-2"); // already there: no write and no undo entry
+    expect(dirty).not.toHaveBeenCalled();
+    undo(); // reverts the first press as ONE step, not the no-op
+    expect(states()).toEqual([false, false, false, false]);
+  });
+
+  it("leaves a block with no children alone", () => {
+    deepTree("md", { a: false, c1: false, g1: false, d: false });
+    selectBlock(B);
+    run("editor/set-depth-0");
+    run("editor/set-depth-3");
+    expect(doc.byId[B].collapsed).toBe(false);
+    expect(rawOf(B)).not.toContain("collapsed");
+  });
+
+  it("acts on each selected block, measured from the topmost ones", () => {
+    deepTree("md", { a: false, c1: false, g1: false, d: false });
+    selectBlock(A);
+    extendSelectionTo(C2); // A, C1, G1, D, E, C2 are selected: only A is a root
+    run("editor/set-depth-1");
+    expect(states()).toEqual([false, true, false, false]); // G1 and D are not roots of their own
+    selectBlock(C1);
+    extendSelectionTo(B); // C1 is folded now: A > C1, C2, B are visible; roots C1, C2, B
+    run("editor/set-depth-2");
+    expect(states()).toEqual([false, false, false, true]); // from C1: C1 and G1 open, D folded
+  });
+
+  it("works on the block being edited", () => {
+    deepTree("md", { a: true, c1: true, g1: true, d: false });
+    startEditing(A, 0);
+    run("editor/set-depth-2");
+    expect(states()).toEqual([false, false, true, false]);
+  });
+
+  it("with nothing selected or edited, says so and changes nothing", () => {
+    deepTree("md", { a: true, c1: true, g1: true, d: false });
+    run("editor/set-depth-2");
+    expect(states()).toEqual([true, true, true, false]);
+    expect(toasts().map((t) => t.kind)).toContain("warn");
   });
 });
 

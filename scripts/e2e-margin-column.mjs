@@ -2,7 +2,9 @@
 // on a wide window, Ctrl+R on a selection creates a comment that is drawn in the
 // right-hand margin column (not in the outline); clicking it edits it there,
 // Enter adds a reply, and the page file on disk holds the reply nested under
-// the comment, which is nested under the commented block.
+// the comment, which is nested under the commented block. GH #845: t then m
+// hides every thread (and leaves the file alone), the choice survives a reload,
+// and t then m shows them again.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -149,7 +151,36 @@ try {
     outline: document.querySelectorAll(".page-blocks .ls-block > .block-main > .block-controls > .bullet-container").length,
   }));
   if (bullets.inThread !== 0 || bullets.handles < 2 || bullets.outline < 1) throw new Error(`thread bullets: ${JSON.stringify(bullets)}`);
-  console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk");
+  // GH #845: hide the margin with the default shortcut (t then m, no editor focused).
+  const drawn = () => browser.execute((comment, reply) => ({
+    column: !!document.querySelector(".margin-column"),
+    threads: document.querySelectorAll(".margin-thread").length,
+    cards: document.querySelectorAll(".ls-block.comment-card").length,
+    markers: document.querySelectorAll(".margin-marker").length,
+    marks: document.querySelectorAll(".comment-quote-anchor").length,
+    text: (document.querySelector(".page-blocks")?.textContent ?? "").includes(comment) || (document.querySelector(".page-blocks")?.textContent ?? "").includes(reply)
+      || [...document.querySelectorAll(".margin-column")].some((el) => el.textContent.includes(comment)),
+  }), COMMENT, REPLY);
+  const nothingDrawn = (f) => !f.column && f.threads === 0 && f.cards === 0 && f.markers === 0 && f.marks === 0 && !f.text;
+  const pressTM = async () => { await browser.keys(["t"]); await browser.keys(["m"]); };
+  await pressTM();
+  await browser.waitUntil(async () => nothingDrawn(await drawn()), { timeout: 5_000, timeoutMsg: "t m did not hide every comment thread" });
+  if (fs.readFileSync(PAGE_FILE, "utf8") !== saved) throw new Error("hiding the margin changed the page file");
+  // The choice is a device preference: it survives a reload.
+  await browser.refresh();
+  await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  await openPageByName(browser, PAGE_NAME);
+  await (await browser.$(`.page-blocks .ls-block.authored`)).waitForExist({ timeout: 10_000 });
+  await browser.pause(800);
+  if (!nothingDrawn(await drawn())) throw new Error("the margin came back after a reload although it was hidden");
+  await pressTM();
+  await browser.waitUntil(() => browser.execute((comment, reply) => {
+    const threads = [...document.querySelectorAll(".margin-column .margin-thread")];
+    return threads.some((t) => t.textContent.includes(comment)) && threads.some((t) => t.textContent.includes(reply))
+      && document.querySelector(".page-blocks .ls-block.authored .margin-marker")?.textContent === "1";
+  }, COMMENT, REPLY), { timeout: 5_000, timeoutMsg: "t m did not show the comment threads again" });
+  if (fs.readFileSync(PAGE_FILE, "utf8") !== saved) throw new Error("showing the margin changed the page file");
+  console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk; t m hides and shows every thread, across a reload, without touching the file");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

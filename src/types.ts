@@ -559,6 +559,9 @@ export interface GraphMeta {
   property_pages_enabled?: boolean;
   /** config.edn `:ref/linked-references-collapsed-threshold` (OG default 100; 0 = always collapsed). */
   linked_references_collapsed_threshold: number;
+  /** config.edn `:ref/default-open-blocks-level` (OG default 2, any integer): references and
+   *  query results fold a block at this level or deeper that has children; level 1 is the hit. */
+  ref_default_open_blocks_level: number;
   default_journal_template: string | null;
   /** `:feature/enable-journals?`; absent means enabled, as in OG. False swaps the
    *  sidebar's Journals entry for the configured home page. */

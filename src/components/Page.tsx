@@ -58,6 +58,7 @@ import { pageIdentityKey } from "../pageIdentity";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
 import { captureReadingViewport } from "./readingViewportAnchor";
+import { revealCommentMarginFor } from "../commentMargin";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
 import { JournalFeedDays } from "./JournalFeedDays";
@@ -901,6 +902,8 @@ function ZoomedView(props: { id: string }): JSX.Element {
     return out;
   };
   const pageName = () => docNode(props.id)?.page ?? "";
+  // GH #845: zooming into a comment (a link, a search result) shows a hidden margin.
+  createEffect(() => revealCommentMarginFor(props.id));
   const pageKind = () => loadedPage(pageName())?.kind ?? "page";
   const pageTarget = () => {
     const owner = pageByName(pageName());

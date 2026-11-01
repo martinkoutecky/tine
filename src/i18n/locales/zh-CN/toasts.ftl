@@ -38,6 +38,7 @@ binding-some-state-of-the-previous-graph-could-not = 无法清除上一图谱的
 binding-was-not-saved-it-was-opened-in-a = { $what } 未保存：其所在图谱已关闭。
 
 block-ref-actions-select-blocks-or-edit-one-to-copy-their = 请选择块（或编辑一个块）以复制块引用
+block-ref-actions-select-blocks-or-edit-one-to-set-depth = 请选择块（或编辑一个块）以设置展开深度
 
 block-ref-actions-too-much-selected-to-duplicate = 所选内容过多，无法创建副本
 

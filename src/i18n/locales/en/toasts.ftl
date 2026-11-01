@@ -34,6 +34,7 @@ binding-some-state-of-the-previous-graph-could-not = Some state of the previous 
 binding-was-not-saved-it-was-opened-in-a = { $what } was not saved: it was opened in a graph that is no longer open.
 
 block-ref-actions-select-blocks-or-edit-one-to-copy-their = Select blocks (or edit one) to copy their block refs
+block-ref-actions-select-blocks-or-edit-one-to-set-depth = Select blocks (or edit one) to set their depth
 
 block-ref-actions-too-much-selected-to-duplicate = Too much selected to duplicate
 
