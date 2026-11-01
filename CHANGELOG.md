@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
 - Ordinary text keeps the same line breaks when entering the experimental CodeMirror editor, including nested blocks and sidebar panes (UI-CM6-PLAIN-WRAP-WIDTH).
+- Updated TLS certificate verification dependencies for the emSign distrust advisories (#828).
+- Pressing Enter after Ctrl+Enter cycles a task to DOING keeps its clock drawer on the original task, including when splitting the title (#829; covered by the earlier #741 drawer fix).
+- Security: patched an out-of-bounds write in the PDF image decoder that a crafted JPEG 2000 image in a PDF could trigger (#827).
+- The build instructions now say where to get the Emscripten SDK and how the build finds it, and the missing-SDK error points to them (#830).
 - YouTube timestamps written as `9:03` or `1:02:03` now show and seek to the full time, instead of treating only the first number as seconds. Invalid timestamp arguments are hidden.
 - Linux desktop launcher updates now check the launcher's channel identity as well as its managed flag, preserving entries with another channel's identity (#814).
 - Shift-clicking **Journals** in the left sidebar or toolbar opens today's journal in the right sidebar and keeps the main page in place, as in Logseq. Plain clicks and **g j** still open the journal feed (#740).
