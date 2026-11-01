@@ -419,7 +419,12 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 55)
+## Page host (ceiling: 56)
+# R5 F3 (55 -> 56), test-oracle only: respell_for_tests shares the former binding
+# fixture's spelling setup with feature-boundary refusal tests. It must update
+# an already-live host after a physical fixture move while preserving its old
+# and fresh keys; startup or pause parameters cannot establish that state.
+# The hook is test-faults gated and performs no rewrite or filesystem write.
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its page-writer callers (host operations in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -459,6 +464,8 @@ enum page_host::PageOperation
 enum page_host::StopState
 # test-oracle: tine-graph-features tests bind a host; production starts one through `start`.
 fn page_host::PageHost::start_for_tests
+# test-oracle: feature rename tests share the writer proofs' fresh-key spelling setup; no rewrite or filesystem write.
+fn page_host::PageHost::respell_for_tests
 # test-oracle: retirement and admission fixtures pause host work without a page writer.
 fn page_host::PageHost::pause_for_tests
 enum page_host::Input

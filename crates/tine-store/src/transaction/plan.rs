@@ -13,12 +13,34 @@ fn planning_lock<T>(
             Err(std::sync::TryLockError::WouldBlock) => {}
         }
         if std::time::Instant::now() >= deadline {
+            // One deadline mapping for every PagePlan caller, including
+            // preflights that do not go through retained feature writes.
             return Err(failed(io::Error::new(
                 io::ErrorKind::WouldBlock,
-                "page host planning is busy",
+                "Tine is still finishing another change to these pages. Try again in a moment.",
             )));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planning_deadline_reports_retryable_busy_in_user_words() {
+        let lock = std::sync::Mutex::new(());
+        let _held = lock.lock().unwrap();
+        let why = planning_lock(&lock, std::time::Instant::now()).unwrap_err();
+        let Why::Failed(error) = why else {
+            panic!("a planning deadline must be retryable: {why:?}");
+        };
+        assert_eq!(error.kind, io::ErrorKind::WouldBlock);
+        assert_eq!(
+            error.message,
+            "Tine is still finishing another change to these pages. Try again in a moment."
+        );
     }
 }
 
@@ -30,6 +52,9 @@ impl PagePlan<'_> {
     /// move from a non-page source stages only its page destination; the caller
     /// must retire the source after Applied in its own revision-guarded transaction.
     /// Other non-page steps are refused.
+    /// Writer/path acquisition that reaches the planning deadline returns
+    /// `Why::Failed` with `WouldBlock` and a shared user-facing retry message.
+    /// Callers preserve that busy condition rather than report a failed write.
     pub fn plan(mut self) -> Result<HostOp, Why> {
         self.for_host = true;
         self.await_reference_publication();

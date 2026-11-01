@@ -1060,7 +1060,30 @@ fn planned(why: Why, path: &str) -> PullOutcome {
             path: path.to_string(),
             reason: format!("{refusal:?}"),
         },
+        Why::Failed(error) if error.kind == std::io::ErrorKind::WouldBlock => {
+            PullOutcome::Held(Held::Busy(error.message))
+        }
         Why::Failed(error) => PullOutcome::Incomplete(format!("{error:?}")),
+    }
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::*;
+
+    #[test]
+    fn planning_busy_is_held_before_publication() {
+        let message =
+            "Tine is still finishing another change to these pages. Try again in a moment.";
+        let outcome = planned(
+            Why::Failed(tine_store::IoError {
+                kind: std::io::ErrorKind::WouldBlock,
+                message: message.into(),
+            }),
+            "pages/a.md",
+        );
+        assert_eq!(outcome.code(), "pull-held-busy");
+        assert_eq!(outcome, PullOutcome::Held(Held::Busy(message.into())));
     }
 }
 

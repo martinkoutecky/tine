@@ -45,6 +45,26 @@ impl PageHost {
         Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
     }
 
+    /// Fixture-only spelling setup after the test physically moved an entry.
+    /// No rewrite, refusal policy or filesystem write is performed here.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn respell_for_tests(&self, key: &str, from: &PageId, to: &PageId) {
+        let (key, from, to) = (key.to_owned(), from.clone(), to.clone());
+        let store = self.store.clone();
+        self.driver
+            .shared
+            .call_writer(&self.store.writer, move |state| {
+                state.progress.host.fs.spell(&key, to.as_str());
+                let lock = store.graph.page_lock(&store.graph.root.join(to.as_str()));
+                state.progress.host.locks.insert(key.clone(), lock);
+                store
+                    .graph
+                    .respelled(&key, &store.graph.root.join(from.as_str()));
+                store.publish_retired();
+            })
+            .expect("live test host");
+    }
+
     /// Pause work on selected pages while still accepting requests.
     /// This test scheduler guard never grants permission to write pages.
     /// Dropping it resumes progress; retirement also waits for the guard.
