@@ -5,7 +5,7 @@ import { isPackageId, isPackageVersion } from "./packageIdentity";
 it.each(["dev.tine.demo", "a.b", "a..b", "a.-b", "a." + "b".repeat(62)])("accepts existing manifest ID syntax: %s", (value) => {
   expect(isPackageId(value)).toBe(true);
 });
-it.each(["abc", "a.", ".a", "a.b-", "A.b", "../a", "a." + "b".repeat(63)])("rejects manifest ID: %s", (value) => {
+it.each(["abc", "a.", ".a", "a.b-", "A.b", "../a", "a.b\n", "a." + "b".repeat(63)])("rejects manifest ID: %s", (value) => {
   expect(isPackageId(value)).toBe(false);
 });
 it.each(["0.1.0", "1.2.3-beta.1", "1.2.3-.", "1.2.3-beta.", "99999999999999999999.2.3"])("retains manifest version syntax: %s", (value) => {

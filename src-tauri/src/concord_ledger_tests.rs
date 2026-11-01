@@ -13,6 +13,170 @@ use tine_store::{OpenOptions, PageId, SaveBase, Store, WatchMode};
 const COPY: &str = "pages/Desk.sync-conflict-20260929-101010-ABCDEFG.md";
 const ID: &str = "aaaaaaaa-0000-0000-0000-0000000000d5";
 
+#[test]
+fn stalled_ledger_caps_items_without_waiting_for_the_disk() {
+    let ledger = ConcordLedger::new(PathBuf::new(), Weak::new());
+    let (tx, rx) = mpsc::channel();
+    *ledger.tx.lock().unwrap() = Some(tx);
+    for _ in 0..1025 {
+        ledger.queue_prune();
+    }
+    assert_eq!(rx.try_iter().count(), 1024);
+}
+
+#[test]
+fn stalled_ledger_skips_an_envelope_over_four_mib_before_copying_it() {
+    let dir = scratch("oversized-envelope");
+    let (slot, subscription) = open_slot(&dir, dir.join("appdata"));
+    external(&slot, "pages/A.md", &body("first"));
+    let mut change = subscription.try_recv().unwrap().unwrap();
+    change.files = vec![(
+        FileId::from("x".repeat(4 * 1024 * 1024)),
+        ChangeKind::Created,
+        None,
+    )];
+    let ledger = ConcordLedger::new(PathBuf::new(), Weak::new());
+    let (tx, rx) = mpsc::channel();
+    *ledger.tx.lock().unwrap() = Some(tx);
+    ledger.observe(&change);
+    assert_eq!(rx.try_iter().count(), 0);
+}
+
+#[test]
+fn ledger_byte_budget_is_aggregate_and_released_when_work_finishes() {
+    let dir = scratch("aggregate-budget");
+    let (slot, subscription) = open_slot(&dir, dir.join("appdata"));
+    external(&slot, "pages/A.md", &body("first"));
+    let mut change = subscription.try_recv().unwrap().unwrap();
+    change.files = vec![(
+        FileId::from("x".repeat(2 * 1024 * 1024)),
+        ChangeKind::Modified,
+        None,
+    )];
+    let ledger = ConcordLedger::new(PathBuf::new(), Weak::new());
+    let (tx, rx) = mpsc::channel();
+    *ledger.tx.lock().unwrap() = Some(tx);
+    ledger.observe(&change);
+    ledger.observe(&change);
+    assert!(ledger.coverage_degraded.load(Ordering::Acquire));
+    assert_eq!(ledger.usage.lock().unwrap().items, 1);
+    assert!(ledger.usage.lock().unwrap().bytes <= QUEUE_MAX_BYTES);
+    let processing = rx.try_recv().unwrap();
+    // Receiving alone must not release the credit: the disk can stall here.
+    ledger.observe(&change);
+    assert!(rx.try_recv().is_err());
+    drop(processing);
+    ledger.observe(&change);
+    assert_eq!(rx.try_iter().count(), 1);
+    assert_eq!(ledger.usage.lock().unwrap().bytes, 0);
+}
+
+#[test]
+fn ledger_keeps_admitted_copy_create_remove_create_order() {
+    let dir = scratch("copy-event-order");
+    let (slot, subscription) = open_slot(&dir, dir.join("appdata"));
+    external(&slot, "pages/A.md", &body("first"));
+    let mut change = subscription.try_recv().unwrap().unwrap();
+    let ledger = ConcordLedger::new(PathBuf::new(), Weak::new());
+    let (tx, rx) = mpsc::channel();
+    *ledger.tx.lock().unwrap() = Some(tx);
+    for kind in [
+        ChangeKind::Created,
+        ChangeKind::Removed,
+        ChangeKind::Created,
+    ] {
+        change.files = vec![(FileId::from(COPY.to_owned()), kind, None)];
+        ledger.observe(&change);
+    }
+    let kinds: Vec<_> = rx
+        .try_iter()
+        .map(|queued| match &queued.job {
+            Job::Observe(files) => files[0].1,
+            _ => panic!("expected copy event"),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ChangeKind::Created,
+            ChangeKind::Removed,
+            ChangeKind::Created
+        ]
+    );
+}
+
+#[test]
+fn overloaded_ledger_keeps_conflict_inventory_and_two_way_resolution_working() {
+    let dir = scratch("overloaded-two-way");
+    std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
+    let (slot, sub) = open_slot(&dir, dir.join("appdata"));
+    slot.conflict_queue.inventory(&slot.store).unwrap();
+    save(&slot, "pages/Desk.md", "Desktop 5");
+    pump(&slot, &sub);
+    save(&slot, "pages/Desk.md", "Desktop");
+    pump(&slot, &sub);
+    let ledger = slot.concord_ledger.get().unwrap();
+    assert!(!ledger.page_bases("pages/Desk.md").is_empty());
+    let (tx, _paused_disk) = mpsc::channel();
+    *ledger.tx.lock().unwrap() = Some(tx);
+    for _ in 0..QUEUE_MAX_ITEMS + 2 {
+        ledger.queue_prune();
+    }
+    assert!(ledger.coverage_degraded.load(Ordering::Acquire));
+    assert!(!ledger.drain_for_exit(Instant::now()));
+    external(&slot, COPY, &body("Desktop 5 kk"));
+    while let Some(change) = sub.try_recv().unwrap() {
+        crate::watcher::concord_observe(&slot, &change);
+    }
+    assert_eq!(
+        slot.conflict_queue
+            .inventory(&slot.store)
+            .unwrap()
+            .sync_conflicts
+            .len(),
+        1
+    );
+    let bases = ledger.conflict_bases(COPY, "pages/Desk.md");
+    assert!(bases.is_empty());
+    assert!(ledger.page_bases("pages/Desk.md").is_empty());
+    let diff = conflicts::sync_conflict_diff(&slot.store, "pages/Desk.md", COPY, &bases)
+        .unwrap()
+        .unwrap();
+    assert!(!diff.three_way && diff.merge_base_rev.is_none());
+    let decisions: HashMap<_, _> = diff
+        .rows
+        .iter()
+        .map(|row| (row.id.clone(), "theirs".to_owned()))
+        .collect();
+    let host = running_host(&slot, &dir);
+    conflicts::resolve_sync_conflict(
+        &slot.store,
+        &host,
+        "pages/Desk.md",
+        COPY,
+        &decisions,
+        &diff.base_rev,
+        &diff.conflict_rev,
+        None,
+        &[],
+        "union",
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap(),
+        body("Desktop 5 kk")
+    );
+    while let Some(change) = sub.try_recv().unwrap() {
+        crate::watcher::concord_observe(&slot, &change);
+    }
+    assert!(slot
+        .conflict_queue
+        .inventory(&slot.store)
+        .unwrap()
+        .sync_conflicts
+        .is_empty());
+}
+
 /// The fixture page: a shared intro and one identified block reading `text`.
 fn body(text: &str) -> String {
     format!("- shared intro line\n- {text}\n  id:: {ID}\n")

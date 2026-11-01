@@ -6,7 +6,10 @@
 //!
 //! Questions and operations (all O(one page), never a graph walk except prune):
 //! - [`ConcordLedger::observe`]: hand one published store `Change` to the
-//!   ledger's worker thread. Caller cost: one channel send. The worker reads
+//!   ledger's worker thread. Caller cost: bounded admission, file-tuple copy
+//!   and one channel send; at capacity it skips this optional record and marks
+//!   coverage degraded, so reviews stay two-way until the graph is reopened.
+//!   The worker reads
 //!   each changed page once (O(page bytes)), records it (see **Unit cost**),
 //!   and pins the winner's ancestor when a sync-conflict copy appears.
 //! - [`ConcordLedger::conflict_bases`]: candidate ancestors for one copy,
@@ -54,9 +57,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
-use tine_store::{Change, ChangeKind, FileId};
+use tine_store::{Change, ChangeKind, FileId, FileRev};
 
 /// Schema of index and pin entries; another schema reads as "no base".
 pub(crate) const LEDGER_SCHEMA: u32 = 1;
@@ -74,6 +78,9 @@ pub(crate) const EXIT_DRAIN_BUDGET: Duration = Duration::from_millis(200);
 /// the other's entries. A separate folder means og never reads, prunes or
 /// writes master's tree (and the reverse). Disposable, so no migration.
 pub(crate) const LEDGER_DIR: &str = "concord-ledger-og";
+const QUEUE_MAX_ITEMS: usize = 1024;
+const QUEUE_MAX_BYTES: usize = 4 * 1024 * 1024;
+type ObservedFile = (FileId, ChangeKind, Option<FileRev>);
 
 fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -95,16 +102,44 @@ struct Pin {
 }
 
 enum Job {
-    Observe(Change),
+    Observe(Vec<ObservedFile>),
     Prune,
     Flush(mpsc::Sender<()>),
+}
+
+#[derive(Default)]
+struct QueueUsage {
+    items: usize,
+    bytes: usize,
+}
+
+/// Credit stays held through processing, including stalled disk I/O. Dropping
+/// a failed send or a disconnected receiver also releases it.
+struct Reservation {
+    usage: Arc<Mutex<QueueUsage>>,
+    bytes: usize,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let mut usage = self.usage.lock().unwrap_or_else(|e| e.into_inner());
+        usage.items -= 1;
+        usage.bytes -= self.bytes;
+    }
+}
+
+struct QueuedJob {
+    job: Job,
+    _reservation: Reservation,
 }
 
 /// One graph window's ledger handle. Performs no I/O until used.
 pub(crate) struct ConcordLedger {
     dir: PathBuf,
     slot: Weak<GraphSlot>,
-    tx: Mutex<Option<mpsc::Sender<Job>>>,
+    tx: Mutex<Option<mpsc::Sender<QueuedJob>>>,
+    usage: Arc<Mutex<QueueUsage>>,
+    coverage_degraded: Arc<AtomicBool>,
 }
 
 impl ConcordLedger {
@@ -113,25 +148,40 @@ impl ConcordLedger {
             dir,
             slot,
             tx: Mutex::new(None),
+            usage: Arc::new(Mutex::new(QueueUsage::default())),
+            coverage_degraded: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Record the published change off-thread. The caller pays one channel
-    /// send; the worker pays the module doc's **Unit cost** per recorded save.
+    /// Record the published change off-thread. The caller pays for bounded
+    /// admission and copies only file tuples (not parsed publication
+    /// summaries); the worker pays the module doc's **Unit cost** per save.
     pub(crate) fn observe(&self, change: &Change) {
         if !change.files.is_empty() {
-            self.enqueue(Job::Observe(change.clone()));
+            let bytes = change.files.iter().fold(0usize, |total, (id, _, rev)| {
+                total
+                    .saturating_add(std::mem::size_of::<ObservedFile>())
+                    .saturating_add(id.as_str().len())
+                    .saturating_add(
+                        rev.as_ref()
+                            .map_or(0, |rev| String::from(rev.clone()).len()),
+                    )
+            });
+            self.enqueue(bytes, || Job::Observe(change.files.clone()));
         }
     }
 
     /// Queue the open-time prune.
     pub(crate) fn queue_prune(&self) {
-        self.enqueue(Job::Prune);
+        self.enqueue(0, || Job::Prune);
     }
 
     /// Candidate ancestors for `copy` (graph-relative), newest first: the pin,
     /// then `winner`'s retained texts. Verified; empty on any failure.
     pub(crate) fn conflict_bases(&self, copy: &str, winner: &str) -> Vec<String> {
+        if self.coverage_degraded.load(Ordering::Acquire) {
+            return Vec::new();
+        }
         let files = self.files();
         let mut out: Vec<String> = files.pinned(copy).into_iter().collect();
         for text in files.retained(winner) {
@@ -145,6 +195,9 @@ impl ConcordLedger {
     /// Every retained text of `page` (graph-relative), newest first. Verified;
     /// empty on any failure. A live-draft review picks its base among these.
     pub(crate) fn page_bases(&self, page: &str) -> Vec<String> {
+        if self.coverage_degraded.load(Ordering::Acquire) {
+            return Vec::new();
+        }
         self.files().retained(page)
     }
 
@@ -157,7 +210,16 @@ impl ConcordLedger {
             let Some(tx) = guard.as_ref() else {
                 return true;
             };
-            if tx.send(Job::Flush(done)).is_err() {
+            let Some(reservation) = self.reserve(0) else {
+                return false;
+            };
+            if tx
+                .send(QueuedJob {
+                    job: Job::Flush(done),
+                    _reservation: reservation,
+                })
+                .is_err()
+            {
                 return false;
             }
         }
@@ -171,19 +233,47 @@ impl ConcordLedger {
         }
     }
 
-    fn enqueue(&self, job: Job) {
+    fn reserve(&self, payload_bytes: usize) -> Option<Reservation> {
+        let bytes = payload_bytes.saturating_add(std::mem::size_of::<QueuedJob>());
+        let mut usage = self.usage.lock().unwrap_or_else(|e| e.into_inner());
+        if usage.items >= QUEUE_MAX_ITEMS || bytes > QUEUE_MAX_BYTES.saturating_sub(usage.bytes) {
+            return None;
+        }
+        usage.items += 1;
+        usage.bytes += bytes;
+        Some(Reservation {
+            usage: self.usage.clone(),
+            bytes,
+        })
+    }
+
+    fn degrade(&self) {
+        // No logging I/O here: the dispatch thread must not wait on the same
+        // app-data disk whose stalled writes exhausted this budget.
+        self.coverage_degraded.store(true, Ordering::Release);
+    }
+
+    fn enqueue(&self, payload_bytes: usize, job: impl FnOnce() -> Job) {
         let mut guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+        // Reserve before cloning the payload; even a single oversized
+        // publication must never allocate an oversized queued copy.
+        let Some(reservation) = self.reserve(payload_bytes) else {
+            self.degrade();
+            return;
+        };
         if guard.is_none() {
-            let (tx, rx) = mpsc::channel::<Job>();
+            let (tx, rx) = mpsc::channel::<QueuedJob>();
             let files = self.files();
             let slot = self.slot.clone();
+            let coverage_degraded = self.coverage_degraded.clone();
             let spawned = std::thread::Builder::new()
                 .name("concord-ledger".into())
                 .spawn(move || {
-                    while let Ok(job) = rx.recv() {
+                    let mut reported_degraded = false;
+                    while let Ok(QueuedJob { job, _reservation }) = rx.recv() {
                         let outcome = match job {
-                            Job::Observe(change) => match slot.upgrade() {
-                                Some(slot) => observe(&files, &slot.store, &change),
+                            Job::Observe(changed_files) => match slot.upgrade() {
+                                Some(slot) => observe(&files, &slot.store, &changed_files),
                                 None => Ok(()),
                             },
                             Job::Prune => match slot.upgrade() {
@@ -201,6 +291,14 @@ impl ConcordLedger {
                                 format!("concord-ledger: {error}"),
                             );
                         }
+                        if !reported_degraded && coverage_degraded.load(Ordering::Acquire) {
+                            reported_degraded = true;
+                            crate::debug::diag_private(
+                                "concord-ledger-coverage-degraded",
+                                "concord-ledger coverage degraded: queue capacity reached; optional entries skipped to bound memory during stalled app-data I/O; reviews use two-way diffs",
+                            );
+                        }
+                        drop(_reservation);
                     }
                 });
             if spawned.is_err() {
@@ -209,7 +307,10 @@ impl ConcordLedger {
             *guard = Some(tx);
         }
         if let Some(tx) = guard.as_ref() {
-            let _ = tx.send(job);
+            let _ = tx.send(QueuedJob {
+                job: job(),
+                _reservation: reservation,
+            });
         }
     }
 }
@@ -219,7 +320,11 @@ impl ConcordLedger {
 /// dropped pins for copies that left, then one record per changed page whose
 /// bytes still match the published revision (a later change records newer
 /// bytes). O(changed page bytes).
-fn observe(files: &LedgerFiles, store: &tine_store::Store, change: &Change) -> io::Result<()> {
+fn observe(
+    files: &LedgerFiles,
+    store: &tine_store::Store,
+    changed_files: &[ObservedFile],
+) -> io::Result<()> {
     use tine_graph_features::conflicts::sync_copy_of;
     let read = |rel: &str| {
         store
@@ -229,7 +334,7 @@ fn observe(files: &LedgerFiles, store: &tine_store::Store, change: &Change) -> i
             )
             .ok()
     };
-    for (id, kind, _) in &change.files {
+    for (id, kind, _) in changed_files {
         let Some(winner) = sync_copy_of(store, id) else {
             continue;
         };
@@ -242,7 +347,7 @@ fn observe(files: &LedgerFiles, store: &tine_store::Store, change: &Change) -> i
             _ => {}
         }
     }
-    for (id, kind, rev) in &change.files {
+    for (id, kind, rev) in changed_files {
         let (Some(rev), ChangeKind::Created | ChangeKind::Modified) = (rev, kind) else {
             continue;
         };
