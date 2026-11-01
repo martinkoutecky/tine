@@ -125,6 +125,38 @@ describe("today's sections (GH #605)", () => {
       expect(h.queryRuns).toBe(3);
     } finally { dispose(); }
   });
+  it("GH #834: a full refresh re-reads the sections page without remounting its unchanged query sections", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (pages: string[], full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages, props: {}, full, blocks: [], linksTo: [], inventoryChanged: false });
+      bumpDataRev(true);
+    };
+    publish([]);
+    h.marked = ["Sections"];
+    h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null,
+      blocks: [block("{{query (task TODO)}}"), block("{{query (task DOING)}}")] });
+    const { div, dispose } = await mount();
+    try {
+      const before = [...div.querySelectorAll(".q")];
+      expect(before.map((e) => e.getAttribute("data-body"))).toEqual(["query (task TODO)", "query (task DOING)"]);
+      h.pageReads = 0;
+      publish([], true); await settle(); await settle();
+      expect(h.pageReads).toBeGreaterThan(0);
+      // A remount discards the query's adopted answer; hideWhenEmpty then hides the section until a
+      // new answer lands, and the journal page below it shifts (the reported disappearing queries).
+      const after = [...div.querySelectorAll(".q")];
+      expect(after).toHaveLength(2);
+      expect(after[0]).toBe(before[0]);
+      expect(after[1]).toBe(before[1]);
+      // An edit that changes a section's text still shows the new text.
+      h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null,
+        blocks: [block("{{query (task TODO)}}"), block("{{query (task DONE)}}")] });
+      publish(["sections"]); await settle(); await settle();
+      expect(bodies(div)).toEqual(["query (task TODO)", "query (task DONE)"]);
+      expect(div.querySelectorAll(".q")[0]).toBe(before[0]);
+    } finally { dispose(); }
+  });
   it("GH #710: explains sections and opens the scheduling Guide in the sidebar", async () => {
     h.sidebar = [];
     const div = document.createElement("div");

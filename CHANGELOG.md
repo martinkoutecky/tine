@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- A Search tab that is still searching now says "Searching…" instead of "Pages 0 / Blocks 0 / No matching pages"; a finished empty search still says no results (#838).
+- A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).
+- Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with "no graph loaded for window capture". Drag-and-drop onto the capture window is not supported yet (#835).
+- Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).
+
 ## [0.9.0-beta.4] - 2026-11-01
 
 ### Fixed
