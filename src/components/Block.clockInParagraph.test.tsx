@@ -19,6 +19,7 @@ import * as properties from "../editor/properties";
 import type { TimestampInline } from "../render/ast";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { setWorkflow } from "../ui";
 
 // GH #741: typing DOING makes Tine write the :LOGBOOK: clock-in immediately.
 // (1) Text typed after it must stay on the task line, not land after `:END:`.
@@ -366,6 +367,62 @@ describe("a command marker change keeps its clock change when you keep typing (G
   const ctrlEnter = (ta: EditorDriver) =>
     ta.keydown(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+  it.each(["md", "org"] as const)("GH829 Ctrl+Enter twice then Enter preserves the clock on the original task (%s)", async format => {
+    setWorkflow("todo");
+    const { root, textarea, blockId, dispose } = mountPage("", true, format);
+    try {
+      for (const ch of "测试") typeChar(textarea!, ch);
+      ctrlEnter(textarea!);
+      await flush();
+      expect(textarea!.value()).toBe("TODO 测试");
+      ctrlEnter(textarea!);
+      await flush();
+      expect(textarea!.value()).toBe("DOING 测试");
+      expect(textarea!.selection()).toEqual([8, 8]);
+      const clocked = doc.byId[blockId].raw;
+      expect(logbookInfo(clocked, format).rows).toHaveLength(1);
+      textarea!.keydown({ key: "Enter" });
+      await flush();
+      expect(doc.byId[blockId].raw).toBe(clocked);
+      const sibling = maybeEditorIn(root)!;
+      expect(sibling.blockId).not.toBe(blockId);
+      expect(sibling.value()).toBe("");
+      sibling.type("next block");
+      expect(doc.byId[sibling.blockId!].raw).toBe("next block");
+      expect(root.textContent).not.toMatch(/LOGBOOK|CLOCK:|:END:/);
+    } finally { dispose(); setWorkflow("now"); }
+  });
+
+  it.each(["md", "org"] as const)("GH829 a mid-title split or DONE cycle keeps the drawer with its task (%s)", async format => {
+    setWorkflow("todo");
+    try { for (const done of [false, true]) {
+      const { root, textarea, blockId, dispose } = mountPage("", true, format);
+      try {
+        for (const ch of "first second") typeChar(textarea!, ch);
+        ctrlEnter(textarea!);
+        await flush();
+        ctrlEnter(textarea!);
+        await flush();
+        if (done) {
+          ctrlEnter(textarea!);
+          await flush();
+          expect(textarea!.value()).toBe("DONE first second");
+          expect(logbookInfo(doc.byId[blockId].raw, format).rows[0].end).not.toBeNull();
+        }
+        const prefix = done ? "DONE first " : "DOING first ";
+        const drawer = doc.byId[blockId].raw.slice(doc.byId[blockId].raw.indexOf("\n"));
+        textarea!.select(prefix.length);
+        textarea!.keydown({ key: "Enter" });
+        await flush();
+        expect(doc.byId[blockId].raw).toBe(prefix + drawer);
+        const sibling = maybeEditorIn(root)!;
+        expect(sibling.value()).toBe("second");
+        expect(doc.byId[sibling.blockId!].raw).toBe("second");
+        expect(root.textContent).not.toMatch(/LOGBOOK|CLOCK:|:END:/);
+      } finally { dispose(); }
+    } } finally { setWorkflow("now"); }
+  });
 
   it("DOING to DONE clocks out and stays clocked out", async () => {
     const { textarea, blockId, dispose } = mountPage(`DOING taskA\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:`, true);

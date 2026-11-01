@@ -2,12 +2,13 @@ import os from "node:os";
 // GH #741: typing DOING writes the :LOGBOOK: clock-in; the rest of the typed text stays on the task line, the
 // block clocks in once, and a damaged logbook (CLOCK line outside a recognised drawer) renders instead of
 // replacing the page with "This page could not be displayed".
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -18,6 +19,16 @@ const TMP = fs.mkdtempSync(path.join(artifacts, "run-"));
 const GRAPH = path.join(TMP, "graph");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir));
+const account = installAccountHome(TMP, TMP);
+fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{:preferred-workflow :todo :tine/guide-announced? true}\n");
+const cycleCases = [
+  ["CycleMdEnd", "md", false, false], ["CycleMdMiddle", "md", true, false],
+  ["CycleOrgEnd", "org", false, false], ["CycleOrgMiddle", "org", true, false],
+  ["CycleMdDone", "md", false, true], ["CycleOrgDone", "org", false, true],
+];
+for (const [name, format] of cycleCases) {
+  fs.writeFileSync(path.join(GRAPH, `pages/${name}.${format}`), `${format === "md" ? "-" : "*"} seed\n`);
+}
 const clock = "CLOCK: [2026-10-21 Wed 08:54:45]";
 // The two literal samples of the report, as a user's file would hold them.
 fs.writeFileSync(path.join(GRAPH, "pages/Typing.md"), "- seed\n");
@@ -34,19 +45,21 @@ const log = fs.openSync(path.join(TMP, "driver.log"), "w");
 const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 let browser;
 let stage = "startup";
-const testedBase = process.env.TINE_TESTED_BASE || "og batch/og-741-logbook (working diff)";
+const testedBase = process.env.TINE_TESTED_BASE || `${execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim()} (working diff)`;
 const connect = () => remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
   capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
-// E2E_PAGE=AfterEnd|Backtick narrows the damaged stage. E2E_ONLY=typing|damaged runs one stage (a failed page region blocks navigation, so the stages cannot share a run before the fix).
+// E2E_PAGE=AfterEnd|Backtick narrows the damaged stage. E2E_ONLY=typing|damaged|cycle runs one stage.
 const only = process.env.E2E_ONLY || "";
+const cycleProof = [];
 const failureRegion = () => browser.execute(() => !!document.querySelector(".region-failure"));
 try {
   browser = await connect();
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
+  await assertAppLease(account);
 
   stage = "damaged pages render";
   const problems = [];
-  for (const [name, sibling] of (only === "typing" ? [] : [["AfterEnd", "sibling one"], ["Backtick", "sibling two"]]).filter(([n]) => !process.env.E2E_PAGE || n === process.env.E2E_PAGE)) {
+  for (const [name, sibling] of (only && only !== "damaged" ? [] : [["AfterEnd", "sibling one"], ["Backtick", "sibling two"]]).filter(([n]) => !process.env.E2E_PAGE || n === process.env.E2E_PAGE)) {
    try {
     stage = `open damaged ${name}`;
     await openPageByName(browser, name);
@@ -62,7 +75,7 @@ try {
   }
 
   stage = "type DOING with real key events";
-  if (only !== "damaged") {
+  if (!only || only === "typing") {
   await openPageByName(browser, "Typing");
   try {
   const seed = await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'seed']");
@@ -156,14 +169,59 @@ try {
   await browser.keys(["Escape"]);
   } catch (error) { problems.push(`typing: ${error.message.split("\n")[0].slice(0, 300)}`); }
   }
+  if (!only || only === "cycle") {
+    // GH #829: keep the same editor open while cycling a newly typed task.
+    // Compare the full file as well as the visible rows, including an interior
+    // caret and completing the task before Enter. No timestamp oracle needed:
+    // the exact drawer seen before Enter must stay on the original task.
+    for (const [name, format, middle, done] of cycleCases) {
+      stage = `GH829 ${name}: new block, Ctrl+Enter twice, Enter`;
+      await openPageByName(browser, name);
+      await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'seed']").click();
+      await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+      await browser.keys(["End"]);
+      await browser.keys(["Enter"]);
+      for (const ch of "测试 first second") await browser.keys([ch]);
+      const cycle = async () => {
+        await browser.keys(["Control", "Enter"]);
+        await browser.keys(["Control"]);
+      };
+      await cycle();
+      if (await browser.$("textarea.block-editor").getValue() !== "TODO 测试 first second") throw new Error(`${name}: first cycle did not produce TODO`);
+      await cycle();
+      const editorValue = await browser.$("textarea.block-editor").getValue();
+      if (editorValue !== "DOING 测试 first second") throw new Error(`${name}: drawer leaked into editor: ${JSON.stringify(editorValue)}`);
+      if (done) await cycle();
+      const marker = done ? "DONE" : "DOING";
+      const filename = path.join(GRAPH, `pages/${name}.${format}`);
+      const before = await waitForFileText(filename, text => text.includes(`${marker} 测试 first second\n`) && (text.match(/CLOCK:/g) || []).length === 1 && (done ? text.includes("]--[") : !text.includes("]--[")));
+      if (middle) {
+        await browser.keys(["Home"]);
+        for (let i = 0; i < `${marker} 测试 first `.length; i++) await browser.keys(["ArrowRight"]);
+      } else await browser.keys(["End"]);
+      await browser.keys(["Enter"]);
+      const sibling = middle ? "second" : "next block";
+      if (!middle) for (const ch of sibling) await browser.keys([ch]);
+      await browser.keys(["Escape"]);
+      const bullet = format === "md" ? "-" : "*";
+      const expected = before.replace(`${marker} 测试 first second`, `${marker} 测试 first${middle ? " " : " second"}`) + `${bullet} ${sibling}\n`;
+      const saved = await waitForFileText(filename, text => text === expected);
+      const visibleRows = await browser.$$(".block-content").map(row => row.getText());
+      if (visibleRows.some(text => /LOGBOOK|CLOCK:|:END:/.test(text))) throw new Error(`${name}: visible drawer row: ${JSON.stringify(visibleRows)}`);
+      if (!visibleRows.some(text => text.includes(sibling))) throw new Error(`${name}: new sibling is not visible`);
+      if (await failureRegion()) throw new Error(`${name}: page failed after Enter`);
+      cycleProof.push({ name, format, middle, done, before, saved, visibleRows });
+      if (process.env.E2E_SCREENSHOTS === "1") await browser.saveScreenshot(path.join(TMP, `${name}.png`));
+    }
+  }
   if (problems.length) throw new Error(problems.join("\n"));
 
-  fs.writeFileSync(path.join(TMP, "proof.json"), JSON.stringify({ testedBase, app: APP, outcome: "PASS" }));
+  fs.writeFileSync(path.join(TMP, "proof.json"), JSON.stringify({ testedBase, app: APP, outcome: "PASS", cycleProof }));
   console.log(`PASS GH 741: ${TMP}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(TMP, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(TMP, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: ${testedBase}\nJourney: GH741 typing, edit, Enter, manual drawer composition\nExpected: hidden saved LOGBOOK, one persisted clock on original task after Enter; handwritten drawers stay visible and save literally; damaged pages render.\nStage: ${stage}. Observed: ${error.stack}\nClassification: ambiguous (inspect screenshot and driver.log)\n`);
+  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: ${testedBase}\nJourney: GH741 typing, edit, Enter, manual drawer composition; GH829 Ctrl+Enter twice then Enter\nExpected: hidden saved LOGBOOK, one persisted clock on original task after Enter; handwritten drawers stay visible and save literally; damaged pages render.\nStage: ${stage}. Observed: ${error.stack}\nClassification: ambiguous (inspect screenshot and driver.log)\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

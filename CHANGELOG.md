@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Updated TLS certificate verification dependencies for the emSign distrust advisories (#828).
+- Pressing Enter after Ctrl+Enter cycles a task to DOING keeps its clock drawer on the original task, including when splitting the title (#829; covered by the earlier #741 drawer fix).
 - YouTube timestamps written as `9:03` or `1:02:03` now show and seek to the full time, instead of treating only the first number as seconds. Invalid timestamp arguments are hidden.
 - Linux desktop launcher updates now check the launcher's channel identity as well as its managed flag, preserving entries with another channel's identity (#814).
 - Shift-clicking **Journals** in the left sidebar or toolbar opens today's journal in the right sidebar and keeps the main page in place, as in Logseq. Plain clicks and **g j** still open the journal feed (#740).
