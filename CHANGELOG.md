@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scrolling up a long page with block embeds no longer throws the page back down, which could leave it stuck in one place (#810). The earlier fix for this issue in 0.9.0-beta.2 made these jumps more frequent. Tine now prepares outline windows and block bodies before they reach the visible area of their pane and keeps the reading position when they replace a placeholder. Remounted query and reference groups also keep their measured height.
 - A Search tab that is still searching now says "Searching…" instead of "Pages 0 / Blocks 0 / No matching pages"; a finished empty search still says no results (#838).
 - A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).
 - Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with "no graph loaded for window capture". Drag-and-drop onto the capture window is not supported yet (#835).
