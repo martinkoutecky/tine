@@ -45,6 +45,15 @@ it("does not move the view while the caret row is visible", () => {
   expect(revealCaret(f.editor, f.scroller)).toBe(false);
   expect(f.scroller.scrollTop).toBe(1000);
 });
+it("keeps the row within the visual viewport and above a dock without centring it (GH #783)", () => {
+  const above = fixture(20); // y=120, below the scroller top but above a panned viewport
+  revealCaret(above.editor, above.scroller, { top: 150, bottom: 450 });
+  expect(above.scroller.scrollTop).toBe(962); // row top becomes 158
+  const below = fixture(330); // y=430..450, above the scroller bottom but under the dock margin
+  revealCaret(below.editor, below.scroller, { top: 100, bottom: 450 });
+  expect(below.scroller.scrollTop).toBe(1008); // row bottom becomes 442
+  expect(revealCaret(below.editor, below.scroller, { top: 100, bottom: 450 })).toBe(false);
+});
 it.each([[-477, -477 - 8], [-6, -6 - 8]])("scrolls up by the least amount when the caret row is above (top %i)", (editorTop, delta) => {
   const f = fixture(editorTop);
   expect(revealCaret(f.editor, f.scroller)).toBe(true);
