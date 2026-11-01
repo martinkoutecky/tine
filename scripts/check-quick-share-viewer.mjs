@@ -26,8 +26,9 @@ export async function serveViewer(directory) {
       const relative = decodeURIComponent(new URL(req.url, "http://localhost").pathname).replace(/^\/s\/1\//, "");
       const file = path.resolve(directory, relative || "index.html");
       if (!file.startsWith(path.resolve(directory) + path.sep)) throw new Error("outside viewer");
+      const body = fs.readFileSync(file); // first: a missing file must answer 404, not crash after the 200
       res.writeHead(200, { "content-type": mime[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
-      res.end(fs.readFileSync(file));
+      res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
