@@ -1457,7 +1457,7 @@ fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
 mod stop_saved;
 
 #[path = "binding_rename_tests.rs"]
-mod rename;
+pub(super) mod rename;
 
 #[path = "binding_apply_tests.rs"]
 mod apply_tests;

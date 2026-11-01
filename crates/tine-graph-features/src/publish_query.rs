@@ -1,6 +1,6 @@
 //! Reviewed query and live publication. Selection and query answers come from
 //! one `WholeGraph` view. Query output goes to Store-owned published-queries
-//! leaves; live/CLI exports remain create-only outside the graph. Store stages,
+//! leaves; whole-graph live/CLI exports remain create-only outside the graph. Store stages,
 //! syncs, preserves replaced output and installs without clobbering a winner.
 //! This module never writes source pages or runs a second query evaluator.
 //!
@@ -79,6 +79,60 @@ pub struct QueryExportRequest {
     /// otherwise the home lists the exported pages and nothing of the query.
     #[serde(default)]
     pub include_query_text: bool,
+}
+
+/// Resolve one persisted block UUID to the dialog's query publication input.
+/// O(graph blocks) over one held graph view, no writes. The parser owns query
+/// recognition and raw arguments; publication still uses `plan_query`/`publish_query`.
+pub fn query_request_by_uuid(
+    store: &Store,
+    uuid: &str,
+    name: Option<&str>,
+    replace: bool,
+) -> io::Result<QueryExportRequest> {
+    let graph = store
+        .whole_graph()
+        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
+    let corpus = graph.corpus();
+    let mut found = None;
+    for page in &corpus.pages {
+        let mut stack: Vec<_> = page.document.roots.iter().collect();
+        while let Some(block) = stack.pop() {
+            stack.extend(block.children.iter());
+            if block
+                .property("id")
+                .is_some_and(|id| id.eq_ignore_ascii_case(uuid))
+            {
+                if found.is_some() {
+                    return Err(refusal(format!("ambiguous block UUID: {uuid}")));
+                }
+                found = Some((page, block));
+            }
+        }
+    }
+    let (page, block) = found.ok_or_else(|| refusal(format!("unknown block UUID: {uuid}")))?;
+    let (argument, dialect, title) =
+        render::query_for_export(block.visible_text(), block.is_org()).map_err(refusal)?;
+    let properties = block
+        .properties()
+        .into_iter()
+        .filter(|(key, _)| query_parse_property(key) || legacy_table_property(key))
+        .collect();
+    Ok(QueryExportRequest {
+        argument,
+        dialect,
+        properties,
+        current_page: Some(page.name.clone()),
+        name: name
+            .map(str::to_owned)
+            .or(title)
+            .unwrap_or_else(|| format!("Query {uuid}")),
+        host_block_id: Some(block.uuid.clone()),
+        folder: None,
+        replace,
+        asset_budget_bytes: None,
+        include_query_text: false,
+    })
 }
 
 /// A page the query selected that the export leaves out, and why.

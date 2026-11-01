@@ -21,14 +21,6 @@ pub(crate) fn rewrite(
     Ok(rewritten.into_bytes())
 }
 
-/// [`rewrite`]'s result `new`, which the rename planner computed from exactly
-/// `old` (GH #623): only the Org round-trip refusal is decided again.
-pub(crate) fn prepared(old: &[u8], new: Vec<u8>, path: &Path) -> Result<Vec<u8>, Why> {
-    let is_org = Format::from_path(path) == Format::Org;
-    refuse_read_only_org(old, &new, is_org)?;
-    Ok(new)
-}
-
 /// Refuse changing an Org file that does not round-trip. Scenario: malformed
 /// imported Org content that Tine cannot rewrite without losing bytes.
 pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Result<(), Why> {
@@ -58,7 +50,7 @@ pub(crate) fn rewrite_move(
     };
     let destination_name = tine_core::model::decode_page_name(stem, name_format);
     let source = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-faults"))]
     if source.contains(crate::model::TEST_TITLE_READ_PANIC_SENTINEL) {
         panic!("deterministic test sentinel for a rename title-read panic");
     }

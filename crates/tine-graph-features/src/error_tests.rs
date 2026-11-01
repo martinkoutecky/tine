@@ -2,6 +2,17 @@ use super::*;
 use tine_store::{FileId, IoError, Rollback, Store};
 
 #[test]
+fn planning_busy_keeps_its_message_and_retryable_kind() {
+    let message = "Tine is still finishing another change to these pages. Try again in a moment.";
+    let error = why_error(Why::Failed(IoError {
+        kind: io::ErrorKind::WouldBlock,
+        message: message.into(),
+    }));
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(error.to_string(), message);
+}
+
+#[test]
 fn rollback_failure_keeps_recovery_family_and_locations() {
     let root = std::env::temp_dir().join(format!("tine-tx-error-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();

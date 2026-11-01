@@ -4881,7 +4881,7 @@ pub(crate) const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_
 /// Test-only: a page holding this text panics the rename path's own-title
 /// read (`transaction::validation::rewrite_move`), the lsdoc outline parse a
 /// page move runs under the writer lock (og-gh644 F3).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-faults"))]
 pub(crate) const TEST_TITLE_READ_PANIC_SENTINEL: &str = "__TINE_TEST_TITLE_READ_PANIC__";
 /// Test-only: graph roots whose next whole-graph explicit-reference index
 /// build (not an incremental update) panics, so a test can fail exactly the

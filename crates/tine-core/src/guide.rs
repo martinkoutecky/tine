@@ -216,6 +216,14 @@ pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, Str
 #[cfg(test)]
 mod journal_guide_tests {
     #[test]
+    fn journals_shift_click_and_ordinary_navigation_are_documented() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        assert!(journals.contains("**Shift-click Journals** in the left sidebar or toolbar"));
+        assert!(journals.contains("right sidebar without leaving the main page"));
+        assert!(journals.contains("A plain click or **g j** still opens the multi-day feed"));
+    }
+
+    #[test]
     fn reference_change_notices_offer_undo() {
         let reference = include_str!("templates/pages-links-references-search.md");
         assert!(
@@ -390,6 +398,9 @@ mod journal_guide_tests {
             "the first **Esc** ends the edit and the next one closes the preview",
             // GH #735: Logseq's hover delay and height cap, and page-faithful content.
             "opens after a one-second pause",
+            "**Hover preview delay**",
+            "seconds (default **1**)",
+            "Touch long-press keeps its own delay",
             "It stops at 600 pixels or half the window, whichever is taller",
             "shows code blocks, callouts, quotes and folds the way the page does",
             "Its arrow folds or unfolds the source block",
@@ -2295,6 +2306,21 @@ mod og_20d_guide_tests {
     #[test]
     fn guide_describes_sheets_in_export_and_the_cli_divergence() {
         let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("`tine export query`"));
+        let cli = include_str!("templates/command-line.md");
+        for detail in [
+            "tine export query GRAPH '((UUID))'",
+            "--name",
+            "--force",
+            "exactly one query",
+            "previous export in recovery",
+            "plain row outlines",
+        ] {
+            assert!(
+                cli.contains(detail),
+                "missing query export instruction: {detail}"
+            );
+        }
         assert!(files.contains(
             "Tine computes them with the app's own sheet code before it writes the export"
         ));

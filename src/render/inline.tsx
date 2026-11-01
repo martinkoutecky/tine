@@ -1,4 +1,5 @@
 import { msg, t } from "../i18n";
+import { hoverPreviewDelayMs } from "../hoverPreviewSettings";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
@@ -265,7 +266,6 @@ function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefine
 
 // OG 0.10.9 page-preview-trigger / block-ref tippy: `:delay [1000, 100]` (ms open, close).
 // GH #735: a quicker open puts the popup over the reference you meant to click.
-const PEEK_OPEN_MS = 1000;
 const PEEK_CLOSE_MS = 100;
 const PEEK_BLOCK_CAP = 50;
 
@@ -297,7 +297,8 @@ function createPeekBridge(disabled: () => boolean) {
     if (disabled()) return;
     clearClose();
     clearOpen();
-    openT = setTimeout(() => setOpen(true), PEEK_OPEN_MS);
+    const delay = hoverPreviewDelayMs();
+    if (delay !== null) openT = setTimeout(() => setOpen(true), delay);
   };
   const anchorLeave = () => {
     if (touchOpen) return;

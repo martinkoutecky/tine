@@ -27,7 +27,7 @@ impl RenamePlan {
 use tine_store::SaveOutcome;
 use tine_store::{
     Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
-    RenameRefusal, Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
+    Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -436,9 +436,8 @@ pub fn rename_page_expected(
 /// because rewriting it would turn those edits into a conflict against bytes
 /// the user never saw. Pages it does not touch need not be saved. `WouldBlock`
 /// also reports giving up after pages kept changing under repeated replans.
-/// The page host (`host`) decides by its own unsaved input as well: a single
-/// page's rename is the host's rename; every other rename is one host
-/// operation of every page it writes (host-only-writer S2), checked before
+/// The page host (`host`) decides by its own unsaved input as well: every
+/// rename is one host operation of every page it writes (S2), checked before
 /// the first write and completed from its draft after a crash. Either moves
 /// `config.edn`'s home page in its own transaction after it; a failure there
 /// leaves the home setting on the old name and is reported:
@@ -501,9 +500,6 @@ fn rename_page_after_inventory(
         if first.map.0.is_empty() {
             return Ok(Some(RenameReport::unchanged()));
         }
-        if let Some(pair) = first.single(store)? {
-            return host_rename(store, host, pair, first, &plan, unsaved_paths);
-        }
         // One host operation of every page the plan writes (host-only-writer
         // S2, DESIGN §3.1, §3.5), planned again until the host applies it:
         // flush first, except an interrupted title completion, which refuses
@@ -512,11 +508,11 @@ fn rename_page_after_inventory(
     })
 }
 
-/// A rename of several pages (a namespace, a merge, a reference-only
-/// rename) as one host operation, then the home page in `config.edn` as its
+/// Every rename (one page, a namespace, a merge or references only)
+/// as one host operation, then the home page in `config.edn` as its
 /// own transaction once the operation applied (DESIGN §3.4: skipped when it
-/// is uncertain). A plan that turned into a single page's rename, or into
-/// another unsaved-input policy, replans (`Ok(None)`).
+/// is uncertain). A plan that changed its unsaved-input policy or selection
+/// shape replans (`Ok(None)`).
 fn multi_rename(
     store: &Store,
     host: &PageHost,
@@ -525,9 +521,17 @@ fn multi_rename(
     plan: &dyn Fn() -> io::Result<RenamePlan>,
     unsaved_paths: &[String],
 ) -> io::Result<Option<RenameReport>> {
-    let input = first.input();
+    let single = first.single(store)?.is_some();
+    let input = if single { Input::Refuse } else { first.input() };
+    let before_flush = host.inputs().map_err(|_| rename_busy())?;
+    let mut inputs = single.then(|| before_flush.clone());
+    if let Some(inputs) = &inputs {
+        first.include_inputs(store, inputs)?;
+    }
     let expected = first.pages(store)?;
-    let refused = |page: &str| unsaved_error(&first.graph, page);
+    let graph = first.graph.clone();
+    let refused = |page: &str| unsaved_error(&graph, page);
+    let mut initial = Some(first);
     let built = std::cell::RefCell::new(None);
     let replan = std::cell::Cell::new(false);
     crate::retained::operation(
@@ -539,15 +543,48 @@ fn multi_rename(
         refused,
         || {
             built.replace(None);
-            let mut plan = plan()?;
-            if plan.single(store)?.is_some() || plan.input() != input {
+            // Reuse only while view/config and held input still match.
+            let retained = initial.take().filter(|first| {
+                refreshed_view(store).is_ok_and(|current| current.rev() == first.graph.rev())
+                    && std::sync::Arc::ptr_eq(&store.config().config, &first.config.config)
+                    && host.inputs().is_ok_and(|now| now == before_flush)
+            });
+            let reused = retained.is_some();
+            let mut plan = match retained {
+                Some(first) => first,
+                None => plan()?,
+            };
+            let now_single = plan.single(store)?.is_some();
+            let now_input = if now_single {
+                Input::Refuse
+            } else {
+                plan.input()
+            };
+            if now_single != single || now_input != input {
                 replan.set(true);
                 return Ok(None);
             }
             // The commit decides on the bytes `pages` read.
-            plan.pages(store)?;
+            if !reused {
+                inputs = if single {
+                    Some(host.inputs().map_err(|_| rename_busy())?)
+                } else {
+                    None
+                };
+                if let Some(inputs) = &inputs {
+                    plan.include_inputs(store, inputs)?;
+                }
+                plan.pages(store)?;
+            }
             match rename_transaction(store, old, plan, unsaved_paths)? {
                 RenameTransaction::Unchanged(report) => {
+                    if inputs
+                        .as_ref()
+                        .is_some_and(|before| !host.inputs().is_ok_and(|now| now == *before))
+                    {
+                        replan.set(true);
+                        return Ok(None);
+                    }
                     built.replace(Some((report, None)));
                     Ok(None)
                 }
@@ -558,6 +595,8 @@ fn multi_rename(
                     home,
                 } => {
                     let mut op = crate::retained::plan(tx)?;
+                    op.separate_case_entries = single;
+                    op.inputs = inputs.clone();
                     // A merge's survivor holds the source's blocks: a move's
                     // order, as `merge_pages` declares it.
                     if let Some((src, dst)) = merge {
@@ -626,6 +665,7 @@ fn rename_transaction<'s>(
     plan: RenamePlan,
     unsaved_paths: &[String],
 ) -> io::Result<RenameTransaction<'s>> {
+    let single = plan.single(store)?.is_some();
     let RenamePlan {
         graph,
         config,
@@ -637,8 +677,8 @@ fn rename_transaction<'s>(
         ref_merge,
         candidates,
         mut reads,
-        skipped: _,
-        rewritten: _,
+        skipped,
+        mut rewritten,
     } = plan;
     let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
     // Every step, rewrite or not, commits only in the planning context.
@@ -665,7 +705,10 @@ fn rename_transaction<'s>(
     }
     let name_format = config.file_name_format;
     let mut edits = Vec::new();
-    let mut skipped = Vec::new();
+    let mut skipped: Vec<_> = skipped
+        .into_iter()
+        .map(|id| id.as_str().to_owned())
+        .collect();
     for id in candidates {
         let file = id.file();
         // A candidate the rename cannot read (non-UTF-8, over the size or
@@ -673,19 +716,25 @@ fn rename_transaction<'s>(
         // naming the file. Skipping it (v0.6.5 model.rs 3699) left a moved
         // page under Old while every referrer said New (C3W W2, I-2);
         // master page_rename.rs fails the same way (audit R15-09).
+        let planned = reads.contains_key(&id);
         let (content, rev) = match reads.remove(&id) {
             Some(read) => read,
             None => read_text(store, &file)
                 .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?,
         };
-        let org = Format::from_path(id.as_str().as_ref()) == Format::Org;
+        let syntax = Format::from_path(id.as_str().as_ref());
+        let org = syntax == Format::Org;
         let moved = moves.contains_key(&id);
         let rebind = moved_titles_to_rebind.contains(&id);
-        let marked = !tine_core::concord_queue::vcs_conflict_markers(
-            &content,
-            if org { Format::Org } else { Format::Md },
-        )
-        .is_empty();
+        let marked = !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
+        let own_title = single
+            && moved
+            && (org || marked)
+            && std::panic::catch_unwind(|| {
+                tine_core::model::rebind_page_title(&content, syntax, &map.0[0].0, &map.0[0].1)
+                    .is_some_and(|new| org || new != content)
+            })
+            .map_err(|_| unwritable(store, &id))?;
         // Master a8fd4230d: a file carrying VCS conflict markers is not
         // ours to rewrite (R-VCS-MARKERS; scenario: an external merge or a
         // sync service left it mid-conflict). It stays byte-identical, a
@@ -697,22 +746,45 @@ fn rename_transaction<'s>(
         // reused by preflight (GH #623).
         let changed = if moved || marked {
             tine_core::refs::rename_rewrite(&content, org, &map.0, name_format) != content
+                || (!org && marked && own_title)
         } else {
             let title = if rebind {
                 TitleRebind::Own
             } else {
                 TitleRebind::Keep
             };
-            tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title) == RewriteEffect::Changes
+            if title == TitleRebind::Keep {
+                if let Some(new) = rewritten.remove(&id) {
+                    tx.rewrite_refs_prepared(
+                        &id,
+                        rev.clone(),
+                        (content.clone(), new),
+                        &map,
+                        name_format,
+                    );
+                    true
+                } else if planned {
+                    false
+                } else {
+                    tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title)
+                        == RewriteEffect::Changes
+                }
+            } else {
+                tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title)
+                    == RewriteEffect::Changes
+            }
         };
-        if changed && marked {
+        let org_refuses = org && (changed || own_title) && !tine_core::org::org_editable(&content);
+        // A single rename's own marked Org source refuses like any other that
+        // does not round-trip; the marker skip must not move it unrewritten.
+        if changed && marked && !(single && moved && org_refuses) {
             skipped.push(id.as_str().to_owned());
             if moved {
                 edits.push((id, rev, false));
             }
             continue;
         }
-        if org && changed && !tine_core::org::org_editable(&content) {
+        if org_refuses {
             let display = store
                 .path_for_os_handoff(&file, false)
                 .map_err(store_error)?;
@@ -738,6 +810,8 @@ fn rename_transaction<'s>(
     } else {
         RenameOutcome::Renamed
     };
+    skipped.sort_unstable();
+    skipped.dedup();
     if edits.is_empty() && merged.is_none() {
         return Ok(RenameTransaction::Unchanged(RenameReport {
             skipped_conflicted_referrers: skipped,
@@ -790,166 +864,6 @@ fn rename_transaction<'s>(
         merge,
         home: (lookup, merged_old),
     })
-}
-
-/// A single page's rename with a host (STEP3 §7, F10): one host operation
-/// under `pages.rs`'s policy, then the home page in `config.edn` as its own
-/// transaction once the operation completes. A target that is another
-/// spelling of the source's own entry (a case-folding volume, Q4) moves as
-/// a normal host operation refusing unsaved input, followed by a
-/// byte-preserving entry move on the driver. A replan is `Ok(None)`.
-fn host_rename(
-    store: &Store,
-    host: &PageHost,
-    (source, target): (PageId, PageId),
-    mut first: RenamePlan,
-    plan: &dyn Fn() -> io::Result<RenamePlan>,
-    unsaved_paths: &[String],
-) -> io::Result<Option<RenameReport>> {
-    // The planner's value (R3): referrers whose file the rewrite changes;
-    // the host adds held buffers and fixes the final pages under its lock.
-    let mut referrers = first.pages(store)?;
-    referrers.retain(|id| *id != source && *id != target);
-    // The planner's rewrite of a referrer, reused when the host reads the
-    // same bytes under the page locks (GH #623: no second rewrite under the
-    // driver's state lock), and only under the planner's file-name format.
-    // The host runs it on its driver, so it owns the plan's reads (unused
-    // after the rename).
-    let reads = std::mem::take(&mut first.reads);
-    let rewritten = std::mem::take(&mut first.rewritten);
-    let planned = first.config.file_name_format;
-    let prepared = move |page: &PageId, old: &[u8], format| {
-        let (content, _) = reads.get(page)?;
-        let new = rewritten.get(page)?;
-        (format == planned && content.as_bytes() == old).then(|| new.clone().into_bytes())
-    };
-    let renamed = host.rename(
-        &source,
-        &target,
-        &referrers,
-        &first.map,
-        &first.graph,
-        std::sync::Arc::new(prepared),
-    );
-    let (changed, mut skipped) = match renamed {
-        Ok(done) => done,
-        Err(RenameRefusal::Alias) => {
-            let expected = first.pages(store)?;
-            let refused = |page: &str| unsaved_error(&first.graph, page);
-            let built = std::cell::RefCell::new(None);
-            let replan = std::cell::Cell::new(false);
-            crate::retained::operation(
-                host,
-                Input::Refuse,
-                &expected,
-                "the rename",
-                "page changed repeatedly during rename",
-                refused,
-                || {
-                    built.replace(None);
-                    let mut plan = plan()?;
-                    if plan.single(store)?.as_ref() != Some(&(source.clone(), target.clone())) {
-                        replan.set(true);
-                        return Ok(None);
-                    }
-                    plan.pages(store)?;
-                    match rename_transaction(store, &first.map.0[0].0, plan, unsaved_paths)? {
-                        RenameTransaction::Unchanged(report) => {
-                            built.replace(Some((report, None)));
-                            Ok(None)
-                        }
-                        RenameTransaction::Writes {
-                            tx, report, home, ..
-                        } => {
-                            let op = crate::retained::plan(tx)?;
-                            built.replace(Some((report, Some(home))));
-                            Ok(Some(op))
-                        }
-                    }
-                },
-            )
-            .map_err(rename_operation_error)?;
-            if replan.get() {
-                return Ok(None);
-            }
-            let (mut report, home) = built.into_inner().expect("planned before the operation");
-            if let Some((lookup, merged_old)) = home {
-                report.home_page = commit_home_after(store, &report, &lookup, merged_old.as_ref())?;
-            }
-            return Ok(Some(report));
-        }
-        Err(RenameRefusal::Unsaved(page)) => {
-            return Err(unsaved_error(&first.graph, page.as_str()))
-        }
-        Err(RenameRefusal::Unwritable(page)) => return Err(unwritable(store, &page)),
-        Err(RenameRefusal::Unwritten(page)) => {
-            return Err(error(
-                io::ErrorKind::WouldBlock,
-                &format!(
-                    "“{}” could not be written; the rename finishes once it can be.",
-                    page.as_str()
-                ),
-            ))
-        }
-        Err(RenameRefusal::Refused) => return Ok(None),
-        // Finding B: a result never claims more than its evidence, and none
-        // of these is a replan.
-        Err(RenameRefusal::DraftFailed) => {
-            return Err(error(
-                io::ErrorKind::Other,
-                "The rename could not be recorded; nothing changed.",
-            ))
-        }
-        Err(RenameRefusal::Superseded(page)) => {
-            return Err(error(
-                io::ErrorKind::Other,
-                &format!(
-                    "“{}” changed before the rename finished; your later edit stands.",
-                    page.as_str()
-                ),
-            ))
-        }
-        Err(RenameRefusal::Uncertain) => {
-            return Err(error(
-                io::ErrorKind::TimedOut,
-                "Couldn't confirm the rename yet; Tine keeps trying to finish it.",
-            ))
-        }
-        Err(RenameRefusal::Busy) => return Err(rename_busy()),
-    };
-    skipped.extend(first.skipped.iter().cloned());
-    skipped.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
-    skipped.dedup();
-    if changed.is_empty() && first.moves.is_empty() {
-        let skipped = skipped.iter().map(|id| id.as_str().to_owned()).collect();
-        return Ok(Some(RenameReport {
-            skipped_conflicted_referrers: skipped,
-            ..RenameReport::unchanged()
-        }));
-    }
-    let mut touched: Vec<TouchedPage> = changed
-        .iter()
-        .map(|id| TouchedPage {
-            path: id.as_str().to_owned(),
-            moved: false,
-        })
-        .collect();
-    if first.moves.contains_key(&source) {
-        touched.push(TouchedPage {
-            path: source.as_str().to_owned(),
-            moved: true,
-        });
-    }
-    // In path order, as the transaction's report lists them.
-    touched.sort_by(|a, b| a.path.cmp(&b.path));
-    let mut report = RenameReport {
-        outcome: RenameOutcome::Renamed,
-        touched,
-        skipped_conflicted_referrers: skipped.iter().map(|id| id.as_str().to_owned()).collect(),
-        home_page: None,
-    };
-    report.home_page = commit_home_after(store, &report, &first.lookup, None)?;
-    Ok(Some(report))
 }
 
 /// The home-page move after published page changes: its failure carries the
@@ -1394,3 +1308,7 @@ mod merge_payload;
 #[cfg(test)]
 #[path = "pages_snapshot_tests.rs"]
 mod snapshot_tests;
+
+#[cfg(test)]
+#[path = "pages_rename_cost_tests.rs"]
+mod rename_cost_tests;

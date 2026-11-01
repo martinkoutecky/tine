@@ -136,16 +136,17 @@
   display: inline-flex;
   align-items: center;
 }
-/* Root controls share the quote line. Reply controls float beside the first
-   body line, letting subsequent lines use the entire narrow margin. */
-.comment-first-line-controls {
-  display: inline-flex;
+/* All responses have one author row above a full-width body. Keep the quote's
+   italic rule separate: it describes the passage, never the next response. */
+.comment-header {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: 65%;
-  flex: 0 1 auto;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  padding-top: 4px;
 }
-.comment-first-line-controls > .author-chip {
+.comment-header > .author-chip {
   float: none;
   margin-left: 0;
   min-width: 0;
@@ -153,22 +154,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.comment-first-line-controls > .comment-actions { flex: 0 0 24px; }
-.comment-in-thread > .block-main > .block-content-wrapper > .comment-first-line-controls {
-  float: right;
-  margin-left: 6px;
+.comment-header > .comment-actions { flex: 0 0 24px; }
+.comment-in-thread > .block-children-container > .block-children > .ls-block {
+  margin-top: 8px;
 }
-.comment-in-thread > .block-main.editing > .block-content-wrapper > .comment-first-line-controls {
-  float: none;
-  position: absolute;
-  right: 0;
-  top: 0;
-}
-.comment-in-thread > .block-main.editing > .block-content-wrapper:has(> .comment-first-line-controls) {
-  position: relative;
-  padding-right: 24px;
-}
-.comment-in-thread > .block-main.editing .comment-first-line-controls > .author-chip { display: none; }
 .comment-composer { display: none; margin: 8px 0 2px; }
 .comment-card:hover > .comment-composer,
 .comment-card:focus-within > .comment-composer,

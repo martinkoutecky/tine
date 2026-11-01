@@ -8,6 +8,7 @@ import { ExternalLink } from "./ExternalLink";
 import { mainWindow } from "../windowRealm";
 import { isQuickShareViewer } from "../publishedBackend";
 import { ShareMedia } from "../quickShare/ShareMedia";
+import { parseYoutubeTimestamp, formatYoutubeTimestamp } from "../youtubeTimestamp";
 
 interface YoutubeApi {
   Player: new (iframeId: string, options: { events?: { onReady?: () => void; onStateChange?: (event: { data: number }) => void } }) => YoutubePlayer;
@@ -191,36 +192,26 @@ export function TweetMacro(props: { body: string }): JSX.Element {
   );
 }
 
-// `{{youtube-timestamp <seconds>}}` seeks the shared selected YouTube player.
+// `{{youtube-timestamp <seconds|[h:]m:s>}}` seeks the shared selected YouTube player.
 export function YoutubeTimestamp(props: { body: string }): JSX.Element {
-  const secs = () => {
-    const raw = props.body.replace(/^youtube-timestamp\s*/i, "").trim();
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const label = () => {
-    const s = Math.max(0, secs());
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    const pad = (x: number) => String(x).padStart(2, "0");
-    return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
-  };
+  const secs = () => parseYoutubeTimestamp(props.body.replace(/^youtube-timestamp\s*/i, ""));
   return (
-    <a
-      class="youtube-ts"
-      title={renderMessage(msg("media-youtube-timestamp-seek"))}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        // OG timestamp click stops the event and calls seekTo(seconds, true)
-        // on get-player's result (og-1.0.0 6e7afa8eb,
-        // extensions/video/youtube.cljs:103-111).
-        youtubePlayerForTarget(event.currentTarget)?.seekTo(secs(), true);
-      }}
-    >
-      ⏱ {label()}
-    </a>
+    <Show when={secs() !== null}>
+      <a
+        class="youtube-ts"
+        title={renderMessage(msg("media-youtube-timestamp-seek"))}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          // OG timestamp click stops the event and calls seekTo(seconds, true)
+          // on get-player's result (og-1.0.0 6e7afa8eb,
+          // extensions/video/youtube.cljs:103-111).
+          youtubePlayerForTarget(event.currentTarget)?.seekTo(secs()!, true);
+        }}
+      >
+        ⏱ {formatYoutubeTimestamp(secs()!)}
+      </a>
+    </Show>
   );
 }
 

@@ -3,15 +3,18 @@
 //! request forwarded to an already-running instance (master ADR 0068; before this
 //! the hand-rolled parser, `graph::resolve_root` and the single-instance handler
 //! each re-interpreted argv, and `tine open GRAPH` was forwarded as a page called
-//! "open"). Export keeps og's create-only shape: `--output` names an existing
-//! external parent and both formats install one new child there; no direct
-//! projection, graph-relative publication or replacement path exists.
+//! "open"). Whole-graph export creates a child in an external `--output` parent.
+//! Query export uses the shared Store-owned query leaf publisher, with explicit
+//! `--force` replacement preserving the previous output in recovery.
 
 use clap::{ArgAction, Args, Parser, Subcommand};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tine_graph_features::publish_query::{publish_live_home, publish_static, ExportReceipt};
+use tine_graph_features::publish_query::{
+    plan_query, publish_live_home, publish_query, publish_static, query_request_by_uuid,
+    ExportReceipt,
+};
 use tine_store::Store;
 
 #[derive(Debug, Parser)]
@@ -418,6 +421,27 @@ enum ExportFormat {
     Static(ExportArgs),
     /// Write the read-only Tine app.
     Live(LiveExportArgs),
+    /// Publish the pages selected by one query block UUID into published-queries/.
+    /// Sheets keep plain row outlines, as in other command-line exports.
+    Query(QueryExportArgs),
+}
+
+#[derive(Debug, Args)]
+struct QueryExportArgs {
+    #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
+    graph: PathBuf,
+
+    /// Persisted block UUID, bare or wrapped as ((UUID)); quote parentheses in the shell.
+    #[arg(value_name = "((UUID))")]
+    uuid: String,
+
+    /// Output name; defaults to the BEGIN_QUERY title or Query UUID.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+
+    /// Replace an existing output, keeping the previous export in recovery.
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Debug, Args)]
@@ -500,6 +524,7 @@ fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
     let (live, args) = match format {
         ExportFormat::Static(args) => (None, args),
         ExportFormat::Live(args) => (Some(args.home), args.export),
+        ExportFormat::Query(args) => return export_query(args),
     };
     if !args.output.is_absolute() {
         return Err("--output must be an absolute folder path".into());
@@ -533,6 +558,32 @@ fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
             receipt
         })
         .map_err(|e| e.to_string())
+}
+
+fn export_query(args: QueryExportArgs) -> Result<ExportReceipt, String> {
+    export_query_with_bundle(args, &bundle())
+}
+
+fn export_query_with_bundle(
+    args: QueryExportArgs,
+    bundle: &[(String, Vec<u8>)],
+) -> Result<ExportReceipt, String> {
+    let raw = args.uuid.trim();
+    let uuid = raw
+        .strip_prefix("((")
+        .and_then(|value| value.strip_suffix("))"))
+        .unwrap_or(raw);
+    let uuid = uuid::Uuid::parse_str(uuid)
+        .map_err(|_| "expected a block UUID, bare or wrapped as ((UUID))".to_owned())?
+        .to_string();
+    let store = open_store(&args.graph)?;
+    let request = query_request_by_uuid(&store, &uuid, args.name.as_deref(), args.force)
+        .map_err(|e| e.to_string())?;
+    let plan = plan_query(&store, &request).map_err(|e| e.to_string())?;
+    if plan.exists && !args.force {
+        return Err(format!("output already exists at {}; use --force to replace it (the previous export is kept in recovery)", plan.path));
+    }
+    publish_query(&store, &request, &plan.fingerprint, bundle).map_err(|e| e.to_string())
 }
 
 /// What `tine doctor` found: summary lines for stdout and one line per problem.
@@ -1155,6 +1206,90 @@ mod tests {
         );
     }
 
+    fn run_query_export(graph: &Path, uuid: &str, extra: &[&str]) -> Result<ExportReceipt, String> {
+        let mut argv = vec!["tine", "export", "query", graph.to_str().unwrap(), uuid];
+        argv.extend_from_slice(extra);
+        let parsed = Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
+        let Some(Command::Export {
+            format: ExportFormat::Query(args),
+        }) = parsed.command
+        else {
+            panic!("query export");
+        };
+        // Default test builds do not embed the frontend. Supply only that build
+        // artifact while exercising the real parser, selector and publisher.
+        export_query_with_bundle(
+            args,
+            &[(
+                "index.html".into(),
+                b"<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>"
+                    .to_vec(),
+            )],
+        )
+    }
+
+    #[test]
+    fn query_export_by_uuid() {
+        let graph = doctor_fixture("query-export");
+        let uuid = "82400000-0000-4000-8000-000000000001";
+        let raw = format!(
+            "- {{{{query (task TODO)}}}}\n  id:: {uuid}\n  query-table:: true\n- TODO selected\n"
+        );
+        std::fs::write(graph.path().join("pages/Tasks.md"), &raw).unwrap();
+        let receipt = run_query_export(
+            graph.path(),
+            &format!("(({uuid}))"),
+            &["--name", "Task review"],
+        )
+        .unwrap();
+        assert_eq!(receipt.pages, 1);
+        assert!(receipt.path.ends_with("published-queries/task-review"));
+        assert!(Path::new(&receipt.path).join("app/snapshot.json").is_file());
+        let before = std::fs::read(Path::new(&receipt.path).join("index.html")).unwrap();
+        let refused = run_query_export(graph.path(), uuid, &["--name", "Task review"]).unwrap_err();
+        assert!(refused.contains("--force"), "{refused}");
+        assert_eq!(
+            std::fs::read(Path::new(&receipt.path).join("index.html")).unwrap(),
+            before
+        );
+        let replaced =
+            run_query_export(graph.path(), uuid, &["--name", "Task review", "--force"]).unwrap();
+        assert!(Path::new(replaced.retired.as_ref().unwrap()).is_dir());
+        let default = run_query_export(graph.path(), uuid, &[]).unwrap();
+        assert!(!default.path.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(graph.path().join("pages/Tasks.md")).unwrap(),
+            raw
+        );
+    }
+
+    #[test]
+    fn query_export_by_uuid_errors() {
+        let graph = doctor_fixture("query-export-errors");
+        let uuid = "82400000-0000-4000-8000-000000000002";
+        let unknown = run_query_export(graph.path(), uuid, &[]).unwrap_err();
+        assert!(unknown.contains("unknown block UUID"), "{unknown}");
+        for (raw, message) in [
+            ("ordinary text", "not a query"),
+            ("`{{query (task TODO)}}`", "not a query"),
+            (
+                "{{query (task TODO)}} {{tine-query @block}}",
+                "more than one query",
+            ),
+        ] {
+            std::fs::write(
+                graph.path().join("pages/Query.md"),
+                format!("- {raw}\n  id:: {uuid}\n"),
+            )
+            .unwrap();
+            let error = run_query_export(graph.path(), uuid, &[]).unwrap_err();
+            assert!(error.contains(message), "{raw}: {error}");
+        }
+        assert!(!graph.path().join("published-queries").exists());
+        let bad = run_query_export(graph.path(), "not-a-uuid", &[]).unwrap_err();
+        assert!(bad.contains("UUID"), "{bad}");
+    }
+
     /// og I1f (#35, port of master e7af4db9): doctor names an unreadable page
     /// and a duplicate page identity, and exits 1, instead of printing OK.
     fn doctor_fixture(tag: &str) -> tempfile::TempDir {
@@ -1227,6 +1362,10 @@ mod tests {
             (
                 "tine-export-live.1",
                 include_str!("../../docs/tine-export-live.1"),
+            ),
+            (
+                "tine-export-query.1",
+                include_str!("../../docs/tine-export-query.1"),
             ),
             ("tine-doctor.1", include_str!("../../docs/tine-doctor.1")),
             ("tine-version.1", include_str!("../../docs/tine-version.1")),

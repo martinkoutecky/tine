@@ -7,7 +7,7 @@ use std::io;
 
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
-use tine_store::{Area, Day, FileEntry, FileId, Input, PageHost, PageId, Store, StoreError};
+use tine_store::{Area, Day, FileEntry, FileId, Input, PageHost, PageId, Store, StoreError, Why};
 
 use crate::{store_error, tx_error};
 
@@ -680,6 +680,35 @@ fn migration_error(error: io::Error) -> io::Error {
     }
 }
 
+fn migration_plan_error(why: Why) -> io::Error {
+    let busy = matches!(&why, Why::Failed(error) if error.kind == io::ErrorKind::WouldBlock);
+    let error = crate::why_error(why);
+    if busy {
+        error
+    } else {
+        migration_error(error)
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn planning_busy_migration_keeps_retryable_kind_and_message() {
+    let message = "Tine is still finishing another change to these pages. Try again in a moment.";
+    let error = migration_plan_error(Why::Failed(tine_store::IoError {
+        kind: io::ErrorKind::WouldBlock,
+        message: message.into(),
+    }));
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(error.to_string(), message);
+    // A revision conflict keeps the migration's existing classification.
+    let conflict = migration_plan_error(Why::Conflict {
+        file: FileId::from("journals/old.md".to_owned()),
+        disk: None,
+    });
+    assert_eq!(conflict.kind(), io::ErrorKind::Other);
+    assert_eq!(conflict.to_string(), "move refused: concurrent graph write");
+}
+
 /// One eligible journal file's move to `to` as one host operation (DESIGN
 /// §3.1): its bytes unchanged, `to` written over no file, then the source
 /// deleted from the bytes the move was planned from. A target that appeared
@@ -696,10 +725,7 @@ fn migrate_hosted(
         let (_, rev) = migration_source(store, entry)?;
         let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
         tx.move_file(entry, rev, to, None);
-        tx.plan()
-            .map(Some)
-            .map_err(crate::why_error)
-            .map_err(migration_error)
+        tx.plan().map(Some).map_err(migration_plan_error)
     };
     crate::retained::operation(
         host,

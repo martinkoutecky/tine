@@ -15,6 +15,7 @@ import {
 } from "../editor/renderedSelection";
 import { selectionActionLabel } from "./SelectionActionLabel";
 import { listen, onEachWindow, selectionOf } from "../windowRealm";
+import { trackSelectionToolbarHeight } from "./block/selectionToolbarPlacement";
 
 // GH #375 (D-20261018-LP2): on a touch-first device, text selected inside a
 // RENDERED block keeps its native selection, handles and menu; this toolbar
@@ -116,6 +117,7 @@ export function RenderedSelectionToolbar(): JSX.Element {
   return (
     <Show when={touchPrimary() && target()}>
       <div
+        ref={trackSelectionToolbarHeight}
         class="sel-toolbar sel-toolbar-mobile rendered-selection-toolbar"
         role="toolbar"
         aria-label={t("editor-block-selection-formatting")}

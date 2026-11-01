@@ -10,6 +10,404 @@ fn hosted<T>(store: &Arc<Store>, run: impl FnOnce(&PageHost) -> T) -> T {
     run(&host)
 }
 
+fn text_at(root: &std::path::Path, file: &str) -> String {
+    disk::read_to_string(root.join(file)).unwrap()
+}
+
+#[test]
+fn single_rename_rewrites_title_and_refs_and_reports_marked_referrers() {
+    let marked = "- [[Old]]\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/Old.md", "title:: Old\n\n- [[Old]] self\n"),
+        ("pages/r.md", "- see [[Old]]\n"),
+        ("pages/m.md", marked),
+    ]);
+    let report = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.outcome, RenameOutcome::Renamed);
+    assert_eq!(
+        report
+            .touched
+            .iter()
+            .filter(|page| page.path != "pages/Old.md" && page.path != "pages/New.md")
+            .map(|page| page.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pages/r.md"]
+    );
+    assert_eq!(report.skipped_conflicted_referrers, vec!["pages/m.md"]);
+    assert_eq!(
+        text_at(&root, "pages/New.md"),
+        "title:: New\n\n- [[New]] self\n"
+    );
+    assert!(!root.join("pages/Old.md").exists());
+    assert_eq!(text_at(&root, "pages/r.md"), "- see [[New]]\n");
+    assert_eq!(text_at(&root, "pages/m.md"), marked);
+}
+
+#[test]
+fn single_rename_title_read_panic_refuses_untouched_and_next_rename_works() {
+    // The store's test-faults sentinel fires inside rewrite_move, under the
+    // real preflight panic boundary; this test performs no rewrite itself.
+    let bad = "title:: Old\n\n- __TINE_TEST_TITLE_READ_PANIC__\n";
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/Old.md", bad),
+        ("pages/r.md", "- see [[Old]] and [[Other]]\n"),
+        ("pages/Other.md", "- other\n"),
+    ]);
+    hosted(&store, |host| {
+        let error = rename_or_merge_page(&store, host, "Old", "New", None, None, &[]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "page could not be parsed; Tine will not rewrite it"
+        );
+        assert_eq!(text_at(&root, "pages/Old.md"), bad);
+        assert!(!root.join("pages/New.md").exists());
+        assert_eq!(
+            text_at(&root, "pages/r.md"),
+            "- see [[Old]] and [[Other]]\n"
+        );
+        let report = rename_or_merge_page(&store, host, "Other", "Else", None, None, &[]).unwrap();
+        assert_eq!(report.outcome, RenameOutcome::Renamed);
+        assert_eq!(
+            report
+                .touched
+                .iter()
+                .filter(|page| page.path != "pages/Other.md" && page.path != "pages/Else.md")
+                .map(|page| page.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pages/r.md"]
+        );
+        assert!(report.skipped_conflicted_referrers.is_empty());
+        assert_eq!(text_at(&root, "pages/r.md"), "- see [[Old]] and [[Else]]\n");
+        assert_eq!(text_at(&root, "pages/Else.md"), "- other\n");
+        assert!(!root.join("pages/Other.md").exists());
+    });
+}
+
+#[test]
+fn single_rename_preserves_complete_tag_targets_in_markdown_and_org() {
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/foo.md", "- source\n"),
+        ("pages/r.md", "- [[foo]] and #foo+bar #foo🎉 #foo.bar #foo. #foo... #foo, #foo\n- `#foo.`\n```\n#foo.\n```\n"),
+        ("pages/r.org", "* [[foo]] and #foo+bar #foo🎉 #foo.bar #foo. #foo... #foo, #foo\n* =#foo.=\n#+BEGIN_SRC\n#foo.\n#+END_SRC\n"),
+    ]);
+    let report = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "foo", "New", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.outcome, RenameOutcome::Renamed);
+    assert_eq!(text_at(&root, "pages/New.md"), "- source\n");
+    assert!(!root.join("pages/foo.md").exists());
+    assert_eq!(text_at(&root, "pages/r.md"), "- [[New]] and #foo+bar #foo🎉 #foo.bar #New. #New... #New, #New\n- `#foo.`\n```\n#foo.\n```\n");
+    assert_eq!(text_at(&root, "pages/r.org"), "* [[New]] and #foo+bar #foo🎉 #foo.bar #New. #New... #New, #New\n* =#foo.=\n#+BEGIN_SRC\n#foo.\n#+END_SRC\n");
+}
+
+fn hold_rename_input(host: &PageHost, store: &Store, id: &PageId, raw: &str) {
+    let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
+    let session = reloaded["session"].as_u64().unwrap();
+    let next_id = reloaded["nextId"].as_u64().unwrap();
+    let opened = host.open(session, next_id, id, "r").unwrap();
+    let key = serde_json::to_value(opened).unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let version = loop {
+        if let Some((_, version)) = host.read(id).unwrap().revision {
+            break version;
+        }
+        assert!(std::time::Instant::now() < deadline, "open completes");
+        std::thread::yield_now();
+    };
+    let mut doc = store.page(id).unwrap().doc;
+    doc.blocks[0].raw = raw.into();
+    host.submit(
+        session,
+        next_id + 1,
+        &key,
+        &doc,
+        version,
+        None,
+        &[tine_store::EditKind::SaveBlock],
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let expected = format!("- {raw}\n");
+    while host.read(id).unwrap().bytes.as_deref() != Some(expected.as_bytes()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "typed input reaches the host"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn single_rename_refuses_unwritable_and_unsaved_referrers_untouched() {
+    let org = "* see [[old]]\n*** skipped level\n";
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/old.md", "- old\n"),
+        ("pages/o.org", org),
+        ("pages/r.md", "- see [[old]]\n"),
+    ]);
+    hosted(&store, |host| {
+        let error = rename_or_merge_page(&store, host, "old", "new", None, None, &[]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "cannot rename: {} is a read-only .org file (does not round-trip)",
+                root.join("pages/o.org").display()
+            )
+        );
+        assert_eq!(text_at(&root, "pages/o.org"), org);
+        assert_eq!(text_at(&root, "pages/old.md"), "- old\n");
+        assert_eq!(text_at(&root, "pages/r.md"), "- see [[old]]\n");
+        assert!(!root.join("pages/new.md").exists());
+    });
+    // A separate fixture reaches unsaved-input policy without an earlier Org refusal.
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/old.md", "- old\n"),
+        ("pages/r.md", "- see [[old]]\n"),
+    ]);
+    tine_store::host_faults::fail(
+        tine_store::host_faults::Phase::PageTemp,
+        io::ErrorKind::Other,
+        1000,
+    );
+    hosted(&store, |host| {
+        let id = PageId::from("pages/r.md");
+        hold_rename_input(host, &store, &id, "typed [[old]]");
+        let before = host.read(&id).unwrap();
+        let error = rename_or_merge_page(&store, host, "old", "new", None, None, &[]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "“r” has changes Tine could not save, and this rename would rewrite it. Save or discard those changes, then rename again.");
+        assert_eq!(host.read(&id).unwrap(), before);
+        assert_eq!(text_at(&root, "pages/old.md"), "- old\n");
+        assert_eq!(text_at(&root, "pages/r.md"), "- see [[old]]\n");
+        assert!(!root.join("pages/new.md").exists());
+    });
+}
+
+#[test]
+fn single_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
+    let (_temp, root, store) = b2_graph(&[("pages/a.md", "- old\n"), ("pages/t.md", "- t\n")]);
+    if root.join("pages/A.md").exists() {
+        return;
+    }
+    tine_store::host_faults::fail(
+        tine_store::host_faults::Phase::PageTemp,
+        io::ErrorKind::Other,
+        1000,
+    );
+    hosted(&store, |host| {
+        let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
+        let session = reloaded["session"].as_u64().unwrap();
+        let request_id = std::cell::Cell::new(reloaded["nextId"].as_u64().unwrap());
+        let open = |path: &str| {
+            let id = request_id.get();
+            request_id.set(id + 1);
+            let page = PageId::from(path);
+            let opened = host.open(session, id, &page, "r").unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while host.read(&page).unwrap().revision.is_none() {
+                assert!(std::time::Instant::now() < deadline, "open completes");
+                std::thread::yield_now();
+            }
+            serde_json::to_value(opened).unwrap()
+        };
+        let old = open("pages/a.md");
+        disk::rename(root.join("pages/a.md"), root.join("pages/A.md")).unwrap();
+        host.respell_for_tests(
+            old["key"].as_str().unwrap(),
+            &PageId::from("pages/a.md"),
+            &PageId::from("pages/A.md"),
+        );
+        assert_eq!(open("pages/A.md")["key"], old["key"]);
+        disk::write(root.join("pages/a.md"), "- new distinct entry\n").unwrap();
+        let fresh = open("pages/a.md");
+        assert_ne!(fresh["key"], old["key"]);
+        assert!(
+            fresh["key"].as_str().unwrap().contains('\0'),
+            "the replacement entry has a fresh opaque key"
+        );
+        disk::rename(root.join("pages/a.md"), root.join("pages/b.md")).unwrap();
+        host.respell_for_tests(
+            fresh["key"].as_str().unwrap(),
+            &PageId::from("pages/a.md"),
+            &PageId::from("pages/b.md"),
+        );
+        assert_eq!(open("pages/b.md")["key"], fresh["key"]);
+        let id = PageId::from("pages/b.md");
+        hold_rename_input(host, &store, &id, "see [[t]]");
+        let before = host.read(&id).unwrap();
+        assert_eq!(before.page, id);
+        let error = rename_or_merge_page(&store, host, "t", "u", None, None, &[]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "“b” has changes Tine could not save, and this rename would rewrite it. Save or discard those changes, then rename again.");
+        assert_eq!(host.read(&id).unwrap(), before);
+        assert_eq!(text_at(&root, "pages/t.md"), "- t\n");
+        assert!(!root.join("pages/u.md").exists());
+    });
+}
+
+#[test]
+fn prepared_referrer_rewrite_still_refuses_an_external_edit() {
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/Old.md", "- source\n"),
+        ("pages/r.md", "- [[Old]]\n"),
+    ]);
+    let mut first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+    first.pages(&store).unwrap();
+    disk::write(root.join("pages/r.md"), "- [[Old]] outside edit\n").unwrap();
+    assert_eq!(preflight_rename(&store, "Old", first, &[]).unwrap(), None);
+    assert_eq!(text_at(&root, "pages/r.md"), "- [[Old]] outside edit\n");
+    assert!(!root.join("pages/New.md").exists());
+}
+
+#[test]
+fn a_single_org_title_rebind_keeps_its_unwritable_refusal() {
+    let content = "#+TITLE: Old\n* body\n*** skipped level\n";
+    let (_temp, root, store) = b2_graph(&[("pages/Old.org", content)]);
+    let error = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "cannot rename: {} is a read-only .org file (does not round-trip)",
+            root.join("pages/Old.org").display()
+        )
+    );
+    assert_eq!(text_at(&root, "pages/Old.org"), content);
+    assert!(!root.join("pages/New.org").exists());
+}
+
+#[test]
+fn absent_destination_at_preflight_still_refuses_an_arrival_at_admission() {
+    let (_temp, root, store) = b2_graph(&[("pages/Old.md", "- source\n")]);
+    hosted(&store, |host| {
+        let first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+        let RenameTransaction::Writes { tx, .. } =
+            rename_transaction(&store, "Old", first, &[]).unwrap()
+        else {
+            panic!("move")
+        };
+        let op = tx.plan().unwrap();
+        disk::write(root.join("pages/New.md"), "- external arrival\n").unwrap();
+        assert_eq!(host.apply(op), Err(tine_store::ApplyRefusal::Changed));
+        assert_eq!(text_at(&root, "pages/New.md"), "- external arrival\n");
+        assert_eq!(text_at(&root, "pages/Old.md"), "- source\n");
+    });
+}
+
+#[test]
+fn general_rename_includes_a_held_referrer_missing_from_the_plan() {
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/Old.md", "- source\n"),
+        ("pages/r.md", "- [[Old]]\n"),
+    ]);
+    hosted(&store, |host| {
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        host.open(session, 1, &PageId::from("pages/r.md"), "r")
+            .unwrap();
+        let plan = || {
+            let mut first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+            first.candidates.retain(|id| id.as_str() != "pages/r.md");
+            Ok(first)
+        };
+        let report = multi_rename(&store, host, "Old", plan().unwrap(), &plan, &[])
+            .unwrap()
+            .unwrap();
+        assert!(report.touched.iter().any(|page| page.path == "pages/r.md"));
+        assert_eq!(text_at(&root, "pages/r.md"), "- [[New]]\n");
+    });
+}
+
+#[test]
+fn clean_namespace_flush_reuses_its_selected_plan() {
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/Old.md", "- source\n"),
+        ("pages/child.md", "title:: Old/child\n\n- child\n"),
+        ("pages/r.md", "- [[Old]]\n"),
+    ]);
+    hosted(&store, |host| {
+        assert!(host.quiesce_for_tests(std::time::Duration::from_secs(10)));
+        let first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+        assert!(first.single(&store).unwrap().is_none());
+        multi_rename(
+            &store,
+            host,
+            "Old",
+            first,
+            &|| unreachable!("unchanged flush must reuse selection"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(text_at(&root, "pages/r.md"), "- [[New]]\n");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn rename_preserves_an_unchanged_unsaved_referrer() {
+    use std::os::unix::fs::PermissionsExt;
+    for (source, outcome) in [
+        ("Old", RenameOutcome::Renamed),
+        ("Ghost", RenameOutcome::Unchanged),
+    ] {
+        let (_temp, root, store) = b2_graph(&[
+            ("pages/Old.md", "- source\n"),
+            ("journals/r.md", &format!("- [[{source}]]\n")),
+        ]);
+        hosted(&store, |host| {
+            let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+                .as_u64()
+                .unwrap();
+            let id = PageId::from("journals/r.md");
+            let opened = host.open(session, 1, &id, "r").unwrap();
+            let opened = serde_json::to_value(opened).unwrap();
+            let version = host.read(&id).unwrap().revision.unwrap().1;
+            disk::set_permissions(root.join("journals"), disk::Permissions::from_mode(0o555))
+                .unwrap();
+            let mut doc = store.page(&id).unwrap().doc;
+            doc.blocks[0].raw = "[[New]] typed".into();
+            host.submit(
+                session,
+                2,
+                opened["key"].as_str().unwrap(),
+                &doc,
+                version,
+                None,
+                &[tine_store::EditKind::SaveBlock],
+            )
+            .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while host.read(&id).unwrap().bytes.as_deref() != Some(&b"- [[New]] typed\n"[..]) {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let before = host.read(&id).unwrap();
+            let report =
+                rename_or_merge_page(&store, host, source, "New", None, None, &[]).unwrap();
+            assert!(!report.touched.iter().any(|page| page.path == id.as_str()));
+            assert_eq!(host.read(&id).unwrap(), before);
+            assert_eq!(text_at(&root, id.as_str()), format!("- [[{source}]]\n"));
+            assert_eq!(report.outcome, outcome);
+            disk::set_permissions(root.join("journals"), disk::Permissions::from_mode(0o755))
+                .unwrap();
+        });
+    }
+}
+
 #[test]
 fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     let root = std::env::temp_dir().join(format!(
@@ -427,18 +825,17 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
     let shape = |old: &str, new: &str, into: Option<&str>| {
         let plan = plan_rename(&store, old, new, None, into, &|| {}).unwrap();
         let single = plan.single(&store).unwrap();
-        let single =
-            single.map(|(source, target)| (source.as_str().to_owned(), target.as_str().to_owned()));
+        let single = single.map(|source| source.as_str().to_owned());
         (single, plan.input())
     };
-    let pair = |source: &str, target: &str| Some((source.to_owned(), target.to_owned()));
+    let source = |path: &str| Some(path.to_owned());
     assert_eq!(
         shape("Start", "Begin", None),
-        (pair("pages/Start.md", "pages/Begin.md"), Input::Flush)
+        (source("pages/Start.md"), Input::Flush)
     );
     assert_eq!(
         shape("Ghost", "Spirit", None),
-        (pair("pages/Ghost.md", "pages/Spirit.md"), Input::Flush)
+        (source("pages/Ghost.md"), Input::Flush)
     );
     assert_eq!(shape("Ns", "Space", None), (None, Input::Flush));
     assert_eq!(
@@ -454,7 +851,7 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
 fn b2_graph(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf, Arc<Store>) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("graph");
-    for sub in ["pages", "logseq"] {
+    for sub in ["pages", "journals", "logseq"] {
         disk::create_dir_all(root.join(sub)).unwrap();
     }
     for (path, text) in files {

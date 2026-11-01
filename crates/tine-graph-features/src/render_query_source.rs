@@ -5,17 +5,18 @@ use std::collections::HashMap;
 use tine_core::lsdoc::ast::{Block, Inline, ListItem, Span};
 use tine_core::query::macro_text::{query_macro_extents, MacroExtent};
 
-pub(super) fn restore(blocks: &mut [Block], raw: &str) {
+pub(super) fn restore(blocks: &mut [Block], raw: &str) -> Vec<MacroExtent> {
     if !tine_core::query::query_source_within_limit(raw) {
-        return;
+        return Vec::new();
     }
     let extents: HashMap<_, _> = query_macro_extents(raw)
         .into_iter()
         .map(|extent| (extent.start, extent))
         .collect();
     if extents.is_empty() {
-        return;
+        return Vec::new();
     }
+    let mut recognized = Vec::new();
     // parse_block prepends two bytes to raw.trim_start() in both formats.
     let lead = raw.len() - raw.trim_start().len();
     enum Node<'a> {
@@ -48,7 +49,7 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) {
                 todo.extend(item.items.iter_mut().map(Node::Item));
             }
             Node::Inlines(inlines) => {
-                restore_arguments(inlines, &extents, lead);
+                restore_arguments(inlines, &extents, lead, &mut recognized);
                 for inline in inlines {
                     match inline {
                         Inline::Emphasis { children, .. }
@@ -62,9 +63,15 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) {
             }
         }
     }
+    recognized
 }
 
-fn restore_arguments(inlines: &mut [Inline], extents: &HashMap<usize, MacroExtent>, lead: usize) {
+fn restore_arguments(
+    inlines: &mut [Inline],
+    extents: &HashMap<usize, MacroExtent>,
+    lead: usize,
+    recognized: &mut Vec<MacroExtent>,
+) {
     let mut closing_brace = None;
     for inline in inlines {
         // lsdoc closes a map-bearing macro one byte early: its final `}` is
@@ -110,5 +117,6 @@ fn restore_arguments(inlines: &mut [Inline], extents: &HashMap<usize, MacroExten
             *end += 1;
         }
         *args = vec![extent.argument.clone()];
+        recognized.push(extent.clone());
     }
 }

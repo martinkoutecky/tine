@@ -4,7 +4,7 @@ import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLay
 
 export interface TopbarOverflowMenuProps {
   onCalendar: () => void;
-  onJournals: () => void;
+  onJournals: (event: MouseEvent) => void;
   /** Share the current page; absent where sharing does not apply (a published export). */
   onShare?: () => void;
   canShare?: () => boolean;
@@ -72,7 +72,7 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
       <Show when={open()}>
         <div ref={menu} class="topbar-overflow-menu" role="menu" aria-label={t("topbar-overflow-menu-more-toolbar-actions")}>
           <button type="button" role="menuitem" data-topbar-overflow-action="calendar" onClick={() => run(props.onCalendar)}>{t("topbar-overflow-menu-calendar")}</button>
-          <button type="button" role="menuitem" data-topbar-overflow-action="journals" onClick={() => run(props.onJournals)}>{t("topbar-overflow-menu-journals")}</button>
+          <button type="button" role="menuitem" data-topbar-overflow-action="journals" onClick={(event) => run(() => props.onJournals(event))}>{t("topbar-overflow-menu-journals")}</button>
           <Show when={props.onShare}>
             <button type="button" role="menuitem" data-topbar-overflow-action="share" disabled={props.canShare ? !props.canShare() : false} onClick={() => run(props.onShare!)}>{t("topbar-overflow-menu-share")}</button>
           </Show>

@@ -1,43 +1,7 @@
-//! Save-first input handling, single-page rename and switch/restore stop.
-use super::driver::{Deadline, Shared, State, Unanswered, Wait};
+//! Save-first input handling and switch/restore stop.
+use super::driver::{Deadline, Shared, State, Wait};
 use super::*;
 use crate::model::entry_identity::Identity;
-use crate::transaction::validation::{
-    prepared as reuse_rewrite, rewrite as rewrite_refs, rewrite_move,
-};
-use crate::RenameMap;
-
-/// Why a host rename did not run (§7, F10), or did not finish.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RenameRefusal {
-    /// `target` is another spelling of `source`'s own directory entry (a
-    /// case-folding volume, Q4): the caller plans its content as a HostOp;
-    /// apply follows it with the driver's byte-preserving spelling move.
-    Alias,
-    /// A page the rename would rewrite has unsaved input.
-    Unsaved(PageId),
-    /// A page the rename would change cannot be rewritten: an Org file
-    /// that does not round-trip, or bytes that are not UTF-8.
-    Unwritable(PageId),
-    /// The operation was admitted but this page could not be written (a
-    /// conflict or a persistent save error); the operation keeps its
-    /// custody and completes once the page can be written.
-    Unwritten(PageId),
-    /// The target has a file, or the host is stopped.
-    Refused,
-    /// The operation's draft could not be written: nothing changed. In-scope
-    /// scenario: a full disk or an app-data disk error.
-    DraftFailed,
-    /// Applied, but this page was discarded or edited back before it
-    /// published: a later edit decides it.
-    Superseded(PageId),
-    /// No answer or no publication within `OPERATION_WAIT`, or the host
-    /// stopped: the operation may still complete; Tine keeps trying.
-    Uncertain,
-    /// Not admitted within `OPERATION_WAIT`: other work held its pages
-    /// (another rename still running over them, or draft recovery).
-    Busy,
-}
 
 /// Why a host operation's input could not be saved.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,11 +13,6 @@ pub(in crate::page_host) enum FlushRefusal {
     /// from the caller's start (M6); nothing was admitted.
     Busy,
 }
-
-/// The planner's rewrite of a referrer, when it was computed from exactly
-/// these bytes under this file-name format (GH #623).
-pub type PreparedRewrite =
-    dyn Fn(&PageId, &[u8], tine_core::config::FileNameFormat) -> Option<Vec<u8>> + Send + Sync;
 
 type HostShared = Shared<ProductionIo, SystemClock>;
 pub(super) type HostState = State<ProductionIo, SystemClock>;
@@ -127,14 +86,6 @@ pub(in crate::page_host) fn unsaved<F: HostIo>(
         .collect()
 }
 
-/// What the rename policy recorded for one attempt (pages by spelling).
-#[derive(Default)]
-struct Rewrites {
-    changed: BTreeSet<String>,
-    skipped: BTreeSet<String>,
-    unwritable: Option<String>,
-}
-
 impl PageHost {
     /// `pages`' keys, each registered; None when the host state is
     /// poisoned.
@@ -180,209 +131,6 @@ impl PageHost {
         };
         let answer = self.driver.shared.wait(Deadline::Never, wait);
         answer.unwrap_or(Err(FlushRefusal::Busy))
-    }
-
-    /// `page_rename` (§7, F10): rename `source`'s page to the absent
-    /// `target` as one host operation, rewriting `referrers` (the index's
-    /// explicit referrers; held buffers are scanned too) with `map`. The
-    /// policy is the rename transaction's own: the moving page's refs and
-    /// own title are rebound (`rewrite_move`), every other page's refs are
-    /// rewritten, a changed Org file that does not round-trip refuses the
-    /// whole operation, and a page carrying VCS conflict markers is left
-    /// byte-identical (moved verbatim) and reported. A `source` with no file
-    /// rewrites references only. Admitted only while the graph and config are
-    /// still `view`'s, the context the caller planned in (A-W1, B2); otherwise
-    /// `Refused`, and the caller replans. The operation's final pages are
-    /// decided under the host lock from `referrers` and the held buffers
-    /// (`rename_refs`); its drafts, flush and report cover exactly those.
-    /// Waits while a page is busy, then until the operation's writes
-    /// complete. Returns the rewritten referrers and the pages left for their
-    /// markers; with nothing to write (a references-only rerun whose
-    /// referrers already say the new name), both are empty. `prepared`
-    /// returns the planner's rewrite of a referrer when it was computed from
-    /// exactly the given bytes under the given file-name format; the host
-    /// reuses it instead of rewriting under the driver's state lock
-    /// (GH #623), and rewrites otherwise. Admission runs on the driver; a
-    /// caller past `OPERATION_WAIT` before it is `Busy`, during it
-    /// `Uncertain`.
-    pub fn rename(
-        &self,
-        source: &PageId,
-        target: &PageId,
-        referrers: &[PageId],
-        map: &RenameMap,
-        view: &crate::WholeGraph,
-        prepared: Arc<PreparedRewrite>,
-    ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
-        crate::bench_events::mark("rename_enter", referrers.len() as u64);
-        // A host that ended renames nothing.
-        let ended = || RenameRefusal::Refused;
-        let (src, src_spelling, ..) = self.try_identify(source).ok_or_else(ended)?;
-        let (dst, dst_spelling, ..) = self.try_identify(target).ok_or_else(ended)?;
-        if src == dst {
-            return Err(RenameRefusal::Alias);
-        }
-        self.try_register(&src, &src_spelling).ok_or_else(ended)?;
-        self.try_register(&dst, &dst_spelling).ok_or_else(ended)?;
-        let mut refs = self.register_all(referrers.to_vec()).ok_or_else(ended)?;
-        crate::bench_events::mark("rename_registered", refs.len() as u64);
-        refs.remove(&src);
-        refs.remove(&dst);
-        let root = self.store.graph.root.clone();
-        let format = view.config.file_name_format;
-        let destination = root.join(dst_spelling.as_str());
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
-        let (store, map, rev) = (self.store.clone(), map.clone(), view.rev());
-        let planned = view.config.config.clone();
-        let shared = Arc::downgrade(&self.driver.shared);
-        let admit = move |state: &mut HostState| {
-            // Admission in the planner's context (B2); a stale view
-            // replans. In-scope scenario: a sync service or external
-            // editor changed a page or `config.edn` since the plan.
-            let config = store.config().config;
-            if store.changes.rev() != rev || !Arc::ptr_eq(&config, &planned) {
-                return Wait::Ready(Err(Err(RenameRefusal::Refused)));
-            }
-            let (disposition, seen, pages, reply) = state.progress.with_host(|host| {
-                // The keys the policy is called on: the operation's
-                // pages and every held buffer (A-R5: not every key
-                // ever registered).
-                let spellings: BTreeMap<PageKey, String> = refs
-                    .iter()
-                    .chain([&src, &dst])
-                    .chain(host.pages.keys())
-                    .map(|key| (key.clone(), host.fs.spelling(key)))
-                    .collect();
-                let record = Mutex::new(Rewrites::default());
-                let policy = |bytes: &Text, key: &str, moving: bool| {
-                    let Some(old) = bytes else { return Ok(None) };
-                    let spelling = &spellings[key];
-                    let path = root.join(spelling);
-                    // A parser panic on one malformed page (an external
-                    // editor, sync delivery or an import; og-gh644 F3)
-                    // makes that page unwritable for this rename, as a
-                    // refusal does, instead of unwinding through the
-                    // host's state and locks.
-                    let rewritten = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        if moving {
-                            rewrite_move(old, &destination, &map, format)
-                        } else if let Some(new) =
-                            prepared(&PageId::from(spelling.as_str()), old, format)
-                        {
-                            reuse_rewrite(old, new, &path)
-                        } else {
-                            rewrite_refs(old, &path, &map, format)
-                        }
-                    }))
-                    .unwrap_or_else(|_| {
-                        Err(crate::Why::Refused(crate::Refusal::ReadOnly(
-                            "page could not be parsed; Tine will not rewrite it".into(),
-                        )))
-                    });
-                    let mut record = record.lock().unwrap();
-                    let Ok(new) = rewritten else {
-                        record.unwritable = Some(spelling.clone());
-                        return Err(());
-                    };
-                    if new.as_slice() == &old[..] {
-                        return Ok(bytes.clone());
-                    }
-                    let syntax = tine_core::model::Format::from_path(&path);
-                    let marked = std::str::from_utf8(old).is_ok_and(|text| {
-                        !tine_core::concord_queue::vcs_conflict_markers(text, syntax).is_empty()
-                    });
-                    if marked {
-                        record.skipped.insert(spelling.clone());
-                        return Ok(bytes.clone());
-                    }
-                    if !moving {
-                        record.changed.insert(spelling.clone());
-                    }
-                    Ok(Some(Arc::from(new)))
-                };
-                let disposition = host.rename_with(&src, &dst, &refs, policy);
-                let reply = if disposition == Disposition::Pending {
-                    host.register_reply()
-                } else {
-                    None
-                };
-                // The final value (R3/R4): the operation's pages, or for
-                // a refusal the pages it would have written; empty when
-                // a references-only rerun has nothing left to write.
-                let pages = match &host.worker {
-                    Some(worker) if disposition == Disposition::Pending => worker.pages.clone(),
-                    _ => {
-                        let mut pages = host
-                            .rename_refs(&src, &dst, &refs, &policy)
-                            .unwrap_or_default();
-                        if !pages.is_empty() || host.pages.get(&src).is_none_or(|p| p.buf.is_some())
-                        {
-                            pages.extend([src.clone(), dst.clone()]);
-                        }
-                        pages
-                    }
-                };
-                (disposition, record.into_inner().unwrap(), pages, reply)
-            });
-            if state.progress.host.lock_request.is_some() {
-                // A plan: it runs again under its path locks.
-                return Wait::Until(None);
-            }
-            let slot = reply.map(|id| ReplySlot::new(shared.clone(), id));
-            match (disposition, slot) {
-                (Disposition::Pending, Some(slot)) => {
-                    // OG-RULES Rule 8 (A-K1): the operation's writes are renames.
-                    state.book.took(pages, EditKind::RenamePage);
-                    Wait::Ready(Ok((seen, slot)))
-                }
-                (Disposition::Waiting | Disposition::Pending, _) => {
-                    let now = std::time::Instant::now();
-                    if now >= deadline {
-                        return Wait::Ready(Err(Err(RenameRefusal::Busy)));
-                    }
-                    let pause = now + std::time::Duration::from_millis(100);
-                    Wait::Until(Some(pause.min(deadline)))
-                }
-                _ => Wait::Ready(Err(if let Some(page) = seen.unwritable {
-                    Err(RenameRefusal::Unwritable(PageId::from(page)))
-                } else if pages.is_empty() {
-                    Ok((Vec::new(), Vec::new()))
-                } else {
-                    Err(
-                        match unsaved(&state.progress.host, &pages).into_values().next() {
-                            Some(page) => RenameRefusal::Unsaved(page),
-                            None => RenameRefusal::Refused,
-                        },
-                    )
-                })),
-            }
-        };
-        let (seen, slot) = match self
-            .driver
-            .shared
-            .locked_wait(Deadline::At(deadline), admit)
-        {
-            Ok(Ok(admitted)) => admitted,
-            Ok(Err(done)) => return done,
-            // Not admitted: other work held its pages, or a path lock.
-            Err(Unanswered::Withdrawn) => return Err(RenameRefusal::Busy),
-            // Admission was under way: it may complete.
-            Err(Unanswered::Late) => return Err(RenameRefusal::Uncertain),
-            Err(Unanswered::Ended) => return Err(RenameRefusal::Refused),
-        };
-        crate::bench_events::mark("rename_admitted", seen.changed.len() as u64);
-        let settled = self.settle(&slot, None, deadline);
-        crate::bench_events::mark("rename_settled", 0);
-        match settled {
-            Settled::Applied => {
-                let pages = |set: BTreeSet<String>| set.into_iter().map(PageId::from).collect();
-                Ok((pages(seen.changed), pages(seen.skipped)))
-            }
-            Settled::DraftFailed => Err(RenameRefusal::DraftFailed),
-            Settled::Unwritten(page) => Err(RenameRefusal::Unwritten(self.spelling(&page))),
-            Settled::Superseded(page) => Err(RenameRefusal::Superseded(self.spelling(&page))),
-            Settled::Uncertain => Err(RenameRefusal::Uncertain),
-        }
     }
 
     /// Wait for a caller's admitted operation (Finding B): its answer, then

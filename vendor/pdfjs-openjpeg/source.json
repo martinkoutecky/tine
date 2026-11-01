@@ -3,10 +3,18 @@
     "openjpeg": "https://github.com/uclouvain/openjpeg/tree/6c4a29b00211eb0430fa0e5e890f1ce5c80f409f",
     "bridge": "https://github.com/mozilla/pdf.js.openjpeg/tree/8bb19dc1aeecb104ce2ed3493d41fe131fc681e0",
     "patch": "0001-Add-support-for-buffer-based-stream-see-https-github.patch",
+    "securityPatches": [
+      {
+        "file": "0002-Fix-heap-buffer-overflow-in-opj_j2k_read_sod.patch",
+        "upstreamCommit": "https://github.com/uclouvain/openjpeg/commit/91d08b11a72764f6d199f32fa0c1b1abd4edc2ad",
+        "appliesTo": "openjpeg/openjp2/j2k.c"
+      }
+    ],
     "licence": "BSD-2-Clause"
   },
   "files": {
     "0001-Add-support-for-buffer-based-stream-see-https-github.patch": "dd61d5e30e257d34178dbae8b0b2d0a7258fbf3b6341c08c90b408d99b7aeedb",
+    "0002-Fix-heap-buffer-overflow-in-opj_j2k_read_sod.patch": "233bf4c149d7740dd802c36c3e78e80352454b27d5579c1a4ef3260c2f4e90a1",
     "LICENSE_BRIDGE": "717fc62da03292dbb4dd0c8280bd4ce7bb8550dcf31d772bc93455fb50313425",
     "LICENSE_OPENJPEG": "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6",
     "bridge/decoder.c": "6b5ab89e5c1e19b75058fe86bc0f43783f9643e40a6804afcfeadbcafbf27e32",
@@ -35,7 +43,7 @@
     "openjpeg/openjp2/indexbox_manager.h": "c85cfa0feca00d01bb0bc2619199917a08717c5536d581724f4560a403b8a137",
     "openjpeg/openjp2/invert.c": "387fd5e2b3446b6caf3e29cec51713c0f698c086dca695b67a432e774930197a",
     "openjpeg/openjp2/invert.h": "52980bf14becaf7189e367e87c87f9f7c4bc0ddcc7bf4939237788332aca9830",
-    "openjpeg/openjp2/j2k.c": "a6ad86347e52b0108f4a3dedf5f844f274c35a61a08dafc4d15af0b4413f3194",
+    "openjpeg/openjp2/j2k.c": "3d620476b17cb0a16ef8fab769ed4024eed3212109ad06a2aef8134d279a4e49",
     "openjpeg/openjp2/j2k.h": "9fc3343f01f6ce7998c001b44a324230a20664e9d27709bc1582d1aa6eddc5c0",
     "openjpeg/openjp2/jp2.c": "45211ee54d24e05f857acc960712fc3acd1655963e6ae12062a2de1075a6777e",
     "openjpeg/openjp2/jp2.h": "7ba31d730591a7a6465ced2d62f5b50a2abca4cefc4077be248ec875d67e7bda",

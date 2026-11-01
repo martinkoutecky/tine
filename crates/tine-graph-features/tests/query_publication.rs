@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_graph_features::publish_query::{
-    plan_query, publish_live, publish_query, QueryExportRequest,
+    plan_query, publish_live, publish_query, query_request_by_uuid, QueryExportRequest,
 };
 use tine_store::Store;
 
@@ -32,6 +32,34 @@ fn fixture() -> (PathBuf, PathBuf, Store) {
 fn bundle() -> Vec<(String, Vec<u8>)> {
     vec![("index.html".into(), b"<!doctype html><html><head><title>Tine</title></head><body><div id=\"root\"></div></body></html>".to_vec()),
          ("assets/app.js".into(), b"console.log('app')".to_vec())]
+}
+
+#[test]
+fn uuid_query_selector_uses_the_document_parser_and_host_context() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _, initial) = fixture();
+    initial.close();
+    let uuid = "82400000-0000-4000-8000-000000000003";
+    for (raw, argument, dialect, title) in [
+        ("{{tine-query @block and content = 'a,b'}}", "@block and content = 'a,b'", QueryTextDialect::MacroTql, None),
+        ("{{query (task TODO) {:title \"Tasks\"}}}", "(task TODO) {:title \"Tasks\"}", QueryTextDialect::MacroQuery, None),
+        ("#+BEGIN_QUERY\n{:title \"Review\" :query (task TODO) :remove-block-children? false}\n#+END_QUERY", "(task TODO) {:remove-block-children? false}", QueryTextDialect::MacroQuery, Some("Review")),
+    ] {
+        // Multiline Markdown block continuation, with metadata after the query.
+        let raw = raw.replace('\n', "\n  ");
+        fs::write(graph.join("pages/Host.md"), format!("- {raw}\n  id:: {uuid}\n  query-table:: true\n  query-properties:: [:block]\n")).unwrap();
+        let store = Store::open(&graph, Default::default()).unwrap().0;
+        let request = query_request_by_uuid(&store, uuid, None, false).unwrap();
+        assert_eq!(request.argument, argument);
+        assert_eq!(request.dialect, dialect);
+        assert_eq!(request.current_page.as_deref(), Some("Host"));
+        assert!(request.host_block_id.is_some());
+        assert!(request.properties.contains(&("query-table".into(), "true".into())));
+        assert!(request.properties.contains(&("query-properties".into(), "[:block]".into())));
+        assert!(!request.include_query_text);
+        if let Some(title) = title { assert_eq!(request.name, title); }
+        store.close();
+    }
 }
 
 #[test]

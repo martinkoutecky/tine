@@ -758,3 +758,6 @@ settings-prose-last-rescan = 上次重新扫描完成于 { $time }。
 settings-prose-file-size = { $value } { $unit }
 diagnostics-refresh-everything = 每次保存时刷新所有内容（调试）
 settings-cm6-label = 实验性：CodeMirror 编辑器
+settings-hover-preview-delay = 悬停预览延迟
+settings-hover-preview-delay-seconds = 悬停预览延迟（秒）
+settings-hover-preview-delay-hint = 鼠标悬停在页面或块引用上后，等待多少秒才打开预览。默认 1 秒。可设为较大的值（如 100），避免预览打扰。触摸长按不受影响。

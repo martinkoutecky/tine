@@ -84,6 +84,33 @@ StartupWMClass={APP_ID}\n\
     )
 }
 
+fn is_own_managed_entry(entry: &str) -> bool {
+    // The legacy managed flag is shared by stable and Beta. Accept upgrades
+    // only when the main entry's existing identity agrees with this binary;
+    // a copied or misnamed foreign launcher must keep its original Exec.
+    let mut in_entry = false;
+    let mut fields = [None; 3];
+    for line in entry.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+        } else if in_entry {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let index = match key {
+                "X-Tine-Managed" => 0,
+                "Icon" => 1,
+                "StartupWMClass" => 2,
+                _ => continue,
+            };
+            if fields[index].replace(value).is_some() {
+                return false;
+            }
+        }
+    }
+    fields == [Some("true"), Some(APP_ID), Some(APP_ID)]
+}
+
 fn atomic_write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if fs::read(path).ok().as_deref() == Some(bytes) {
         return Ok(());
@@ -129,7 +156,7 @@ fn install_into(
         let Ok(existing) = fs::read_to_string(&desktop_path) else {
             return Ok(InstallOutcome::PreservedUserEntry);
         };
-        if !existing.lines().any(|line| line == MANAGED_MARKER) {
+        if !is_own_managed_entry(&existing) {
             return Ok(InstallOutcome::PreservedUserEntry);
         }
     } else if system_data_dirs
@@ -364,6 +391,96 @@ mod tests {
         );
         assert_eq!(fs::read(desktop_path).unwrap(), [0xff, 0xfe]);
         let _ = fs::remove_dir_all(root);
+    }
+
+    fn other_identity() -> (String, String) {
+        let switch: serde_json::Value =
+            serde_json::from_str(include_str!("../app-identity.json")).unwrap();
+        let identity = switch["identities"]
+            .as_object()
+            .unwrap()
+            .values()
+            .find(|identity| identity["identifier"].as_str() != Some(APP_ID))
+            .unwrap();
+        (
+            identity["identifier"].as_str().unwrap().to_owned(),
+            identity["productName"].as_str().unwrap().to_owned(),
+        )
+    }
+
+    #[test]
+    fn gh814_preserves_a_managed_entry_bearing_another_channels_identity() {
+        let root = temp_root("foreign-identity");
+        let desktop_path = root.join("applications").join(DESKTOP_FILE);
+        fs::create_dir_all(desktop_path.parent().unwrap()).unwrap();
+        let (foreign, foreign_product) = other_identity();
+        let own = desktop_entry(Path::new("/old/tine"));
+        // A copied/misnamed launcher, or one with mixed channel metadata, is
+        // not ours merely because it carries the shared legacy managed flag.
+        for existing in [
+            own.replace(APP_ID, &foreign).replace(
+                &format!("Name={PRODUCT_NAME}\n"),
+                &format!("Name={foreign_product}\n"),
+            ),
+            own.replace(&format!("Icon={APP_ID}"), &format!("Icon={foreign}")),
+            own.replace(
+                &format!("StartupWMClass={APP_ID}"),
+                &format!("StartupWMClass={foreign}"),
+            ),
+        ] {
+            fs::write(&desktop_path, &existing).unwrap();
+            let outcome = install_into(&root, &[], Path::new("/new/tine")).unwrap();
+            assert_eq!(
+                fs::read_to_string(&desktop_path).unwrap(),
+                existing,
+                "GH #814: another channel's launcher must keep its executable"
+            );
+            assert_eq!(outcome, InstallOutcome::PreservedUserEntry);
+            assert!(!root.join("icons").exists());
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gh814_first_install_and_upgrade_leave_the_other_launcher_untouched() {
+        let root = temp_root("channel-coexistence");
+        let (foreign, foreign_product) = other_identity();
+        let foreign_path = root.join("applications").join(format!("{foreign}.desktop"));
+        fs::create_dir_all(foreign_path.parent().unwrap()).unwrap();
+        let foreign_entry = desktop_entry(Path::new("/other-channel/tine"))
+            .replace(APP_ID, &foreign)
+            .replace(
+                &format!("Name={PRODUCT_NAME}\n"),
+                &format!("Name={foreign_product}\n"),
+            );
+        fs::write(&foreign_path, &foreign_entry).unwrap();
+        for executable in ["/first-install/tine", "/upgraded/tine"] {
+            assert_eq!(
+                install_into(&root, &[], Path::new(executable)).unwrap(),
+                InstallOutcome::Installed
+            );
+            assert_eq!(fs::read_to_string(&foreign_path).unwrap(), foreign_entry);
+            assert_eq!(
+                fs::read_to_string(root.join("applications").join(DESKTOP_FILE)).unwrap(),
+                desktop_entry(Path::new(executable))
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gh814_legacy_ownership_requires_unambiguous_main_entry_metadata() {
+        let own = desktop_entry(Path::new("/old/tine"));
+        assert!(is_own_managed_entry(&own));
+        for unowned in [
+            own.replace(MANAGED_MARKER, "X-Tine-Managed=false"),
+            own.replace(&format!("Icon={APP_ID}\n"), ""),
+            own.replace(&format!("StartupWMClass={APP_ID}\n"), ""),
+            own.replace("[Desktop Entry]", "[Desktop Action other]"),
+            format!("{own}Icon={APP_ID}\n"),
+        ] {
+            assert!(!is_own_managed_entry(&unowned));
+        }
     }
 
     #[test]

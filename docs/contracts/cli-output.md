@@ -15,6 +15,13 @@ prints `Published N pages to PATH` on success. If public-page selection publishe
 stderr also explains that no publishable page has `public:: true` and names `--all-pages` as the override.
 This warning keeps the successful export status (exit 0).
 
+`tine export query GRAPH '((UUID))' [--name NAME] [--force]` uses the same
+plain-text success line and warning/recovery reporting. It publishes the one
+query block's result pages into `published-queries/<folder>/` through the shared
+query publisher. Unknown UUIDs, non-query blocks, multiple queries and existing
+output without `--force` exit 1 with an explanation on stderr. A bare UUID is
+also accepted. Sheets retain the documented CLI plain-outline rendering.
+
 ## One payload, two renderings
 
 - The owner's reply to a verb is `{"id":…,"ok":<payload>}` or `{"id":…,"error":<body>}`.

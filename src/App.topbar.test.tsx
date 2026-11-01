@@ -4,6 +4,8 @@ import { App } from "./App";
 import { setLeftSidebarOpen } from "./ui";
 import { closeShareDialog, shareTarget } from "./shareState";
 import { mainPaneRouter, resetTabsToJournals } from "./router";
+import { applySidebarSession, rightSidebar } from "./ui";
+import { appNow, journalTitle } from "./journal";
 
 let dispose = () => {};
 
@@ -11,11 +13,34 @@ afterEach(() => {
   dispose();
   dispose = () => {};
   setLeftSidebarOpen(true);
+  applySidebarSession({ right: false, items: [] });
+  resetTabsToJournals();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
 describe("topbar workspace placement", () => {
+  it.each(["button", "overflow"])("GH #740: Shift-click Journals in the %s opens today beside the current page", async (surface) => {
+    const host = document.body.appendChild(document.createElement("div"));
+    mainPaneRouter.openPage("Project", "page", { inPlace: true });
+    const before = mainPaneRouter.route();
+    dispose = render(() => <App />, host);
+    if (surface === "overflow") host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    const journals = host.querySelector<HTMLElement>(surface === "button"
+      ? 'header.topbar button[title="Journals"]'
+      : '[data-topbar-overflow-action="journals"]')!;
+    journals.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: journalTitle(appNow()), pageKind: "journal" }));
+    expect(mainPaneRouter.route()).toEqual(before);
+
+    // The ordinary click/tap still opens the multi-day feed.
+    if (surface === "overflow") host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    host.querySelector<HTMLElement>(surface === "button"
+      ? 'header.topbar button[title="Journals"]'
+      : '[data-topbar-overflow-action="journals"]')!.click();
+    expect(mainPaneRouter.route()).toMatchObject({ kind: "journals" });
+  });
+
   it("puts the full workspace switcher in the sidebar and only mounts a compact fallback while it is closed", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

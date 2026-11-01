@@ -17,6 +17,9 @@
 /* CM6's base theme pins caret-color to black (light) unless told the theme is dark; follow the text colour. */
 .cm6-block-editor .cm-editor .cm-content { caret-color: currentColor; }
 .cm6-block-editor .cm-line { padding: 0; }
+/* Match `.block-content`: CM6's `break-spaces` counts the space after a word at the right edge, where
+   `pre-wrap` lets it hang. That moved a fitting word to the next row even with identical content widths. */
+.cm6-block-editor .cm-content.cm-lineWrapping { white-space: pre-wrap; }
 .cm6-block-editor .cm-scroller { font: inherit; overflow: visible; }
 /* `.cm-content` is a flex item of the scroller, so its automatic minimum width is its min-content width: a concealed
    code block's longest unwrapped line (its `pre` scrolls in the view) widened the whole block while the prose beside

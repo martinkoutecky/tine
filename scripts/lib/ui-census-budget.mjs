@@ -46,7 +46,8 @@ export const SURFACES = Object.freeze({
   "settings.appearance.advanced": settingsAdvanced("appearance", 14),
   "settings.editor.open": settingsOpen("editor", 9),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
-  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 12 : 11),
+  // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting.
+  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 13 : 12),
   "settings.journals.open": settingsOpen("journals", 13),
   "settings.journals.advanced": settingsAdvanced("journals", 1),
   "settings.files.open": settingsOpen("files", 7),

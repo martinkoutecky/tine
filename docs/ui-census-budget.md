@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-01, D-20261031-PEEK / GH #824: `settings.editor.advanced` 12→13
+  on Beta/development (11→12 without the Beta-only CM6 switch) for the explicitly
+  decided numeric **Hover preview delay** setting. This one control also covers
+  people who want no incidental previews; no separate toggle. The open count stays 9.
 - 2026-10-30, keys dossier / GH #797, #799: `commands.registry` 131→134 and
   `commands.palette` 74→77 for the explicitly requested **Zoom in on block** and
   **Zoom out one level** (both unbound), plus **Reload window** (unbound), the one

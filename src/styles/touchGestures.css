@@ -46,6 +46,9 @@
   right: max(6px, var(--system-inset-right));
   z-index: 81;
   justify-content: center;
+  /* High interface zoom can leave less than one row of essential actions.
+     Wrap instead of clipping their touch targets past the viewport edges. */
+  flex-wrap: wrap;
 }
 
 /* GH #375 (D-20261018-LP2 a): text selected in a RENDERED block has no editor
