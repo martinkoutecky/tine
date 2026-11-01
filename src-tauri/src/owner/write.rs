@@ -705,6 +705,10 @@ struct EditArgs {
     text: String,
     #[serde(default)]
     rev: Option<String>,
+    /// An explicit `--author` on `tine edit`. The `author` argument every write
+    /// carries also takes `TINE_AUTHOR` and names only the run's commits.
+    #[serde(default)]
+    author_property: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -748,14 +752,17 @@ fn kernel_refused(page: &PageId, message: String) -> ErrorBody {
     refused("kernel", Some(page), message)
 }
 
-/// `block.edit`: the text replaces the block's editor text, as typing it
-/// would (hidden properties kept, children kept), then the marker
-/// transition the window's `setRaw` runs.
+/// `block.edit`: the text replaces the block's text and every accepted property
+/// not named in it stays (children kept), then the marker transition the
+/// window's `setRaw` runs. Intentional difference from OG and from the app's
+/// editor, whose buffer owns visible properties (#840, D-20261101-CLIE): OG has
+/// no command line, and a caller naming new text has not asked to drop `src::`.
 pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     let EditArgs {
         handle: text,
         text: new_text,
         rev,
+        author_property,
     } = super::verbs::parse(args)?;
     let handle = parse_handle(&text)?;
     let page = handle_page(slot, &handle)?;
@@ -775,6 +782,14 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             // another block must not silently replace this block's identity.
             // Use accepted properties so fenced examples remain plain text.
             let current = tine_core::block_regions::parse(&old, org);
+            // A parser failure leaves no way to tell retained properties from
+            // text, so replacing it could lose them. `block.prop` refuses too.
+            if current.quarantined {
+                return Err(kernel_refused(
+                    page,
+                    "block.edit refuses a block its parser could not read".into(),
+                ));
+            }
             if let Some(id) = current.id {
                 let submitted = tine_core::block_regions::parse(&new_text, org);
                 if let Some(other) = submitted.properties.iter().find(|p| {
@@ -792,13 +807,11 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                     ));
                 }
             }
-            let hide = HidePolicy::Configured {
-                keys: config.block_hidden_properties.clone(),
-                sheet_cell: false,
-            };
-            let joined = set_text_with_policy(&old, org, &new_text, &hide)
+            // Every accepted property and the LOGBOOK are outside the replaced
+            // text; a key the text names replaces its retained row in the join.
+            let joined = set_text_with_policy(&old, org, &new_text, &HidePolicy::All)
                 .map_err(|e| kernel_refused(page, e))?;
-            block.raw = tine_core::logbook::apply_edit_transition_at(
+            let transitioned = tine_core::logbook::apply_edit_transition_at(
                 &old,
                 &joined,
                 if org {
@@ -810,6 +823,26 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 config.logbook.with_second_support,
                 now_parts(),
             );
+            block.raw = match author_property.as_deref().map(str::trim) {
+                None => transitioned,
+                // Malformed input: an empty name would write `author:: ` over
+                // the real one, and removal has its own verb.
+                Some("") => {
+                    return Err(kernel_refused(
+                        page,
+                        "--author needs a name; `tine prop remove BLOCK author` removes one".into(),
+                    ))
+                }
+                Some(name) => tine_core::block_regions::edit(
+                    &transitioned,
+                    org,
+                    tine_core::block_regions::Edit::Property {
+                        key: "author".into(),
+                        value: Some(name.into()),
+                    },
+                )
+                .map_err(|e| kernel_refused(page, e))?,
+            };
             Ok(Planned {
                 doc: next,
                 changed: vec![path],

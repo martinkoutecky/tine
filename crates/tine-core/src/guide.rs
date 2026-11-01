@@ -2198,6 +2198,8 @@ mod og_20d_guide_tests {
         for concepts in [
             vec!["handle", "fingerprint", "id::", "stale"],
             vec!["author::", "agent", "--author", "tine_author"],
+            // #840: an edit keeps properties; removal has its own verb.
+            vec!["tine edit", "properties stay", "tine prop remove"],
             vec!["app open", "typed", "saved first", "window", "stale"],
             vec!["--journal", "creating", "standard input"],
             vec!["broken", "references", "delete"],

@@ -11,6 +11,7 @@ mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
 mod backup;
+mod capture_asset;
 mod capture_receipts;
 mod capture_target;
 #[cfg(desktop)]
@@ -88,6 +89,7 @@ mod watcher;
 mod workspace_windows;
 mod youtube_identity;
 use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
+use capture_asset::{capture_import_asset, capture_save_asset};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
@@ -1184,6 +1186,8 @@ pub fn run() {
             search,
             quick_switch,
             capture_quick_switch,
+            capture_import_asset,
+            capture_save_asset,
             list_templates,
             journal_content_days,
             resolve_block,

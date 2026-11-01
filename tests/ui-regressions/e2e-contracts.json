@@ -180,9 +180,10 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh810-embed-scroll.mjs": {
-      "contracts":[{"class":"core-operation","userOutcome":"On a long page with several expanded block embeds, scrolling down and back up with the wheel does not move the blocks in view: no visible block jumps by a large amount when an outline window holding an embed scrolls back into view (GH #810).","blocking":true}],
+      "contracts":[{"class":"core-operation","userOutcome":"On a long page, scrolling past expanded embeds or query results and upward through unseen windows keeps the reading position. The collapsed-embed variant also preserves it. Remounted query/reference groups retain measured geometry, and pane scrollers admit lazy content before visibility (GH #810).","blocking":true}],
       "acceptableVariations":["Small settling shifts of a few pixels while rows are first measured and the exact frame timing may vary; the jump measured is a visible block moving by 40 px or more between consecutive frames."],
-      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 (Chromium scroll anchoring); estimates for outline windows or embeds never seen before."],
+      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 or real mobile devices."],
+      "variants":["GH810_FRESH_UP=1 GH810_MULTILINE=1 GH810_CHILDREN=40: jump to the bottom without measuring intermediate windows, then scroll upward; compare viewport displacement after subtracting explicitly applied scroll inputs (8px tolerance).","GH810_FRESH_UP=1 GH810_COLLAPSED=1: same unseen-window journey with collapsed embeds.","GH810_GEOMETRY=1 (dev server only): native remount geometry of reference/query rows and complete query shells, plus implicit/explicit root admission 500px before visibility in main/split/sidebar-shaped scrollers at narrow and desktop widths.","GH810_SURFACE=query: query result groups in the long outline instead of embeds."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
@@ -230,6 +231,7 @@
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit keeps the block's properties the new text does not name, whether tine serve or the real app owns the graph (#840).", "blocking": true, "authority": "docs/contracts/cli-output.md block.edit; D-20261101-CLIE" },
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
         { "class": "core-operation", "userOutcome": "A CLI edit to a page open in the real app appears in its window without navigation and reaches the guarded page file.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
         { "class": "exact-safety-interoperability", "userOutcome": "Opening the app while tine serve owns the graph transfers ownership to the app and preserves and displays the edits already accepted by serve.", "blocking": true, "authority": "Tine CLI v0 Spec §3" }

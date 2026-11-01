@@ -15,7 +15,7 @@ export const ORDERED_COMMANDS: ReadonlySet<string> = new Set([
   "set_preferred_workflow", "set_timetracking_enabled", "set_show_brackets",
   "set_doc_mode_enter_for_new_block", "set_logical_outdenting", "set_guide_announced",
   "set_default_journal_template", "set_start_of_week", "set_preferred_format", "set_journal_title_format",
-  "set_favorites", "set_default_home", "import_asset", "import_native_capture", "empty_asset_trash",
+  "set_favorites", "set_default_home", "import_asset", "import_native_capture", "capture_import_asset", "capture_save_asset", "empty_asset_trash",
   "trash_journal_file", "save_asset", "save_pdf_area_image", "rollback_pdf_area_image",
   "resolve_sync_conflict", "trash_sync_conflict", "set_app_bool",
   "set_app_string", "set_capture_enter_files", "set_smooth_scroll", "forget_known_graph", "set_backup_keep",

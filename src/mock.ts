@@ -1,6 +1,7 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
+import { bigPageBlocks, embedScrollBlocks } from "./mockScrollFixtures";
 import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
@@ -392,41 +393,13 @@ const NAMED: PageDto[] = [
   },
 ];
 
-// A large synthetic page (~2000 root blocks) cycling through construct types, for
-// the lazy-body virtualization harness: most blocks start as deferred raw-text
-// placeholders and only parse/render on scroll. Gated behind `?big` so it never
-// pollutes the normal mock screenshots (it would otherwise show up in All-Pages /
-// quick-switch). Reach it with `…/?big` then quick-switch (Ctrl+K) to "Big".
-function bigPageBlocks(n: number): BlockDto[] {
-  const out: BlockDto[] = [];
-  for (let i = 0; i < n; i++) {
-    switch (i % 6) {
-      case 0:
-        out.push(b(`Paragraph **${i}** with *emphasis*, a [[ref ${i % 50}]] and a #tag${i % 20}.`));
-        break;
-      case 1:
-        out.push(b(`## Heading ${i}`));
-        break;
-      case 2:
-        out.push(b("```js\nfunction f" + i + "(x) {\n  return x * " + i + ";\n}\n```"));
-        break;
-      case 3:
-        out.push(b(`| Col A | Col B |\n| --- | --- |\n| row ${i} | val ${i} |\n| row ${i + 1} | val ${i + 1} |`));
-        break;
-      case 4:
-        out.push(b(`Display math: $$\\sum_{k=0}^{${i}} k = \\frac{${i}(${i}+1)}{2}$$`));
-        break;
-      default:
-        out.push(
-          b(`Block ${i}: a longer line of prose that wraps so the placeholder height is a realistic proxy for the rendered paragraph, with a [[link ${i % 30}]].`)
-        );
-        break;
-    }
-  }
-  return out.map((block) => ({ ...block, has_id: false }));
-}
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
-  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
+  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(b, Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
+}
+if (typeof location !== "undefined" && /[?&]embedscroll\b/.test(location.search)) {
+  const { source, page } = embedScrollBlocks(b);
+  NAMED.push({ name: "Embed scroll source", kind: "page", title: "Embed scroll source", pre_block: null, blocks: source },
+    { name: "Embed scroll", kind: "page", title: "Embed scroll", pre_block: null, blocks: page });
 }
 // D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
 // pages and three names with no file of their own.
@@ -1387,6 +1360,13 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
+    },
+    async captureImportAsset(path: string, name?: string): Promise<string> {
+      return name ?? path.split("/").pop() ?? path;
+    },
+    async captureSaveAsset(name: string, bytes: Uint8Array): Promise<string> {
+      mockAssets[name] = bytes;
+      return name;
     },
     async importNativeCapture(path: string, name: string): Promise<string> {
       return name || path.split("/").pop() || path;

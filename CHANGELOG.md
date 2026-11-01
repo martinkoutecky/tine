@@ -11,6 +11,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - The first margin comment or reply you write in a graph that is under git, when you have not set **Your name**, now asks for a name once, so comments you share show who wrote them instead of reading "you" to everyone. The name is a Tine setting on this device, used in all graphs. Skipping is remembered for all graphs and is not asked again; the comment is written either way, and the setting stays under Settings > Editor (#841).
+### Fixed
+
+- A Search tab that is still searching now says "Searching…" instead of "Pages 0 / Blocks 0 / No matching pages"; a finished empty search still says no results (#838).
+- A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).
+- Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with "no graph loaded for window capture". Drag-and-drop onto the capture window is not supported yet (#835).
+- Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).
+- `tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).
+- Scrolling up a long page with block embeds no longer throws the page back down, which could leave it stuck in one place (#810). The earlier fix for this issue in 0.9.0-beta.2 made these jumps more frequent. Tine now prepares outline windows and block bodies before they reach the visible area of their pane and keeps the reading position when they replace a placeholder. Remounted query and reference groups also keep their measured height.
 
 ## [0.9.0-beta.4] - 2026-11-01
 

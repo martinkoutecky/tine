@@ -5,6 +5,10 @@ const source = (path: string) => readFileSync(
   process.env.OG_SOURCE_DIR ? `${process.env.OG_SOURCE_DIR}/${path}` : path, "utf8",
 );
 
+// GH #835: Quick Capture's narrow asset writes. The capture window has no
+// GraphContext (by design), so these resolve the bound capture graph through
+// capture_asset_slot instead; the same fail-closed generation rule applies.
+const captureCommands = ["capture_import_asset", "capture_save_asset"];
 const commands = [
   "copy_asset_file_to_clipboard",
   "edit_asset_external", "empty_asset_trash", "import_asset", "import_native_capture",
@@ -27,7 +31,17 @@ it("all asset writes and OS handoffs require an intent-time binding generation",
     .map((match) => match[1]).filter((name) =>
       // approve_external_assets runs before a graph is bound: it names its root explicitly.
       !/^(?:read_|stream_|list_|asset_trash_stats|detect_|approve_external_assets$)/.test(name));
-  expect(assetCommands.sort()).toEqual([...commands].sort());
+  expect(assetCommands.sort()).toEqual([...commands, ...captureCommands].sort());
+  for (const name of captureCommands) {
+    expect(backend, `${name} must use the fail-closed assetCall boundary`).toMatch(
+      new RegExp(`this\\.assetCall<[^>]+>\\("${name}"`),
+    );
+    const body = commandBodies.find((match) => match[1] === name)?.[0];
+    expect(body, `${name} must resolve only the bound capture graph`).toMatch(
+      /capture_asset_slot\(&state, window\.label\(\), binding_generation\)\?/,
+    );
+    expect(body, `${name} must not take generic graph access`).not.toMatch(/GraphContext|slot_for_context/);
+  }
   for (const name of commands) {
     expect(backend, `${name} must use the fail-closed assetCall boundary`).toMatch(
       new RegExp(`this\\.assetCall<[^>]+>\\("${name}"`),

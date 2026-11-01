@@ -4754,6 +4754,9 @@ mark {
 .inline-image {
   max-width: 100%;
   border-radius: 4px;
+  /* GH #836: the wrapper's `line-height: 0` is inherited by the alt text a browser draws in place of a
+     file that will not load, which clipped it. A loaded image ignores its own line-height. */
+  line-height: 1.5;
 }
 
 /* Drag-to-resize wrapper: the grip sits in the image's bottom-right corner and
