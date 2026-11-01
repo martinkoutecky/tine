@@ -35,7 +35,13 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   name** (D-20261017-LD1): then the comments and replies the user writes carry
   `author:: <name>`, and an author equal to that name (ignoring case) renders as
   "you". The name is a device preference (`comment_author_name` in
-  tine-settings.json), never in the graph; unset writes nothing. These four keys live in `src/comments.ts`.
+  tine-settings.json), never in the graph; unset writes nothing. In a graph under git
+  (`gitAutocommitStatus().repository`, probed per opened graph), the first comment or
+  reply of a person with no name asks for one once (D-20261101-CN, tine#841): the name is
+  a Tine setting on this device, used in all graphs; skipping is remembered in
+  `comment_name_prompt_declined` (same file) and is not asked again; the comment is
+  written either way, after the dialog. Nothing is asked before the name, the flag and
+  the git answer have loaded. These four keys live in `src/comments.ts`.
 - **Nothing else is persisted.** The anchor is re-derived at every render from the
   parent's current text (`anchorQuote`); there are no offsets, no index and no
   side file. A quote that no longer occurs is shown struck through with "quoted

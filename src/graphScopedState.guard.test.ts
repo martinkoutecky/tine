@@ -338,6 +338,7 @@ describe("graph-scoped UI state (I-20)", () => {
     for (const key of Object.keys(CLASSIFIED_CONSUMERS)) expect(keys, `stale CLASSIFIED_CONSUMERS entry ${key}; remove it`).toContain(key);
     expect(consumers.filter((c) => c.proven).map((c) => c.key).sort(), "the proven writers").toEqual([
       "src/commentActions.ts#paletteSelection",
+      "src/components/CommentNamePrompt.tsx#commentNameRequest",
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
       "src/components/GraphNamePrompt.tsx#graphNameRequest",

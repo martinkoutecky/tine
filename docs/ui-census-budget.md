@@ -57,10 +57,15 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
-- 2026-11-01, D-20261101-L5 / GH #794: `commands.registry` 134→144 and `commands.palette`
-  77→87 for the explicitly decided **Set depth 0** to **Set depth 9** (ten commands, all
-  unbound; Mod+digit stays pane focus). Martin chose the full 0 to 9 range over the issue's
-  "stopping at 5 is fine". No new topbar control and no Settings row.
+- 2026-11-01, D-20261101-L5 / GH #794: `commands.registry` 135→145 and `commands.palette`
+  78→88 for the decided **Set depth 0** to **Set depth 9** (ten commands, all
+  unbound; Mod+digit stays pane focus). D-20261101-L5 takes the full 0 to 9 range over the
+  issue's "stopping at 5 is fine". No new topbar control and no Settings row.
+- 2026-11-01, GH #845 (Martin, 2026-11-01, D-20261101-MT: "a good idea and should also go in the beta"):
+  `commands.registry` 134→135,
+  `commands.palette` 77→78 and `settings.appearance.open` 28→29 for the requested **Toggle
+  comment margin** command (default shortcut **t m**, free in OG and Tine, rebindable) and
+  its **Comment margin** switch beside Wide mode and Document mode. No topbar control.
 - 2026-11-01, GH #823 (brief: one setting for the outline mirroring):
   `settings.appearance.advanced` 14→15 for **Right-to-left note layout**. It sits behind
   Advanced so the open count stays 28; an interface in a right-to-left language turns it on by

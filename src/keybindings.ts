@@ -51,6 +51,7 @@ import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
+import { toggleCommentMargin } from "./commentMargin";
 import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
@@ -431,6 +432,8 @@ const COMMANDS: CommandDef[] = [
   },
   { id: "ui/toggle-wide-mode", binding: "t w", label: msg("command-ui-toggle-wide-mode"), scope: "global", run: toggleWideMode },
   { id: "ui/toggle-document-mode", binding: "t d", label: msg("command-ui-toggle-document-mode"), scope: "global", run: toggleDocumentMode },
+  // GH #845: the comment margin, a view state like wide and document mode (OG binds no "t m").
+  { id: "ui/toggle-comment-margin", binding: "t m", label: msg("command-ui-toggle-comment-margin"), scope: "global", run: toggleCommentMargin },
   { id: "ui/toggle-focus-mode", binding: "t f", label: msg("command-ui-toggle-focus-mode"), scope: "global", run: toggleFocusMode },
   { id: "ui/toggle-dim-blocks", binding: "t b", label: msg("command-ui-toggle-dim-blocks"), scope: "global", run: toggleDimInactiveBlocks },
   // Web KeyboardEvent reports Shift+/ as key "?", so the binding must use the

@@ -65,6 +65,7 @@ command-page-export-pdf = Export current page to PDF…
 command-ui-toggle-wide-mode = Toggle wide mode
 command-ui-toggle-code-block-wrap = Toggle code block wrap
 command-ui-toggle-document-mode = Toggle document mode
+command-ui-toggle-comment-margin = Toggle comment margin
 command-ui-toggle-focus-mode = Toggle focus mode
 command-ui-toggle-dim-blocks = Toggle dim inactive blocks
 command-ui-toggle-help = Toggle help

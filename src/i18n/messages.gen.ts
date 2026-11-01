@@ -259,6 +259,7 @@ export interface MessageArgs {
   "command-ui-reset-zoom": {};
   "command-ui-toggle-brackets": {};
   "command-ui-toggle-code-block-wrap": {};
+  "command-ui-toggle-comment-margin": {};
   "command-ui-toggle-custom-css": {};
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};
@@ -290,10 +291,17 @@ export interface MessageArgs {
   "comment-block-changed": {};
   "comment-delete": {};
   "comment-margin-count": { "count": number };
+  "comment-margin-draft-pending": {};
   "comment-margin-label": {};
   "comment-name-hint": {};
   "comment-name-label": {};
   "comment-name-placeholder": {};
+  "comment-name-prompt-body": {};
+  "comment-name-prompt-dismiss": {};
+  "comment-name-prompt-graph-changed": {};
+  "comment-name-prompt-save": {};
+  "comment-name-prompt-scope": {};
+  "comment-name-prompt-title": {};
   "comment-on-whole-block": {};
   "comment-quote-changed": {};
   "comment-reply": {};
@@ -2513,6 +2521,8 @@ export interface MessageArgs {
   "settings-search-code-blocks-line-wrapping-long-lines": {};
   "settings-search-color-scheme": {};
   "settings-search-comment-author-name-margin-reply": {};
+  "settings-search-comment-margin": {};
+  "settings-search-comment-threads-hide-show": {};
   "settings-search-copy-a-parent-block-s-sub-blocks": {};
   "settings-search-default-journal-template": {};
   "settings-search-default-nord-solarized-gruvbox-soft-medium-light": {};
@@ -2650,6 +2660,7 @@ export interface MessageArgs {
   "settings-ui-carry-over-header": {};
   "settings-ui-carry-over-keeps-context": {};
   "settings-ui-click-a-block-reference-to-zoom-in": {};
+  "settings-ui-comment-margin": {};
   "settings-ui-config-edn-could-not-be-read-this-graph-is": {};
   "settings-ui-conflicts": {};
   "settings-ui-controls-enter-for-non-exact-name-and-name-completion": {};
@@ -2770,6 +2781,7 @@ export interface MessageArgs {
   "settings-ui-show-carry-over-buttons": {};
   "settings-ui-show-the-around-page-references-saved-to-ui-show": {};
   "settings-ui-show-the-carry-buttons-next-to-journal-titles-off": {};
+  "settings-ui-shows-the-comment-threads-beside-the-page-off-hides": {};
   "settings-ui-smaller-ctrl": {};
   "settings-ui-smooth-scrolling-experimental": {};
   "settings-ui-snapshots-to-keep": {};

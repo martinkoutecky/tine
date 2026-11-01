@@ -233,6 +233,11 @@ fn guide_explains_margin_comments() {
     // Comment identity (D-20261017-LD1): the "Your name" setting.
     assert!(tips.markdown.contains("**Settings > Editor > Your name**"));
     assert!(tips.markdown.contains("saved with `author:: <your name>`"));
+    // tine#841: the one-time question in a git graph, and what Skip does.
+    assert!(tips.markdown.contains("In a graph that is under git, the first comment or reply you write without a name asks for one once"));
+    assert!(tips
+        .markdown
+        .contains("**Skip** writes the comment without it and Tine does not ask again"));
     // Slice 2b: comments draw no bullets; the author chip is their handle.
     assert!(tips.markdown.contains("draw no bullet of their own"));
     assert!(tips.markdown.contains("the name chip is the handle"));
