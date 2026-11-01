@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
+- Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
 - Ordinary text keeps the same line breaks when entering the experimental CodeMirror editor, including nested blocks and sidebar panes (UI-CM6-PLAIN-WRAP-WIDTH).
 - Typing in large pages and query results avoids rescanning unrelated block text for the compact Today task count, in-page find, query column choices, and sheet table and board fields.

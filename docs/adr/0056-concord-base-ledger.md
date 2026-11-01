@@ -57,6 +57,34 @@ only, entries for pages and copies that are gone,
 blobs no entry names, torn temps and corrupt entries. At `RunEvent::Exit`,
 queued updates get one shared 200 ms drain.
 
+**Bounded optional coverage (L7-02, Martin 2026-10-31).** Each ledger admits at
+most 1,024 jobs or 4 MiB of envelope payload, whichever comes first. The budget
+includes the job currently being processed, so a stalled app-data disk cannot
+release credit early. Payload accounting includes the fixed envelope, file-tuple
+storage, path bytes and revision bytes; allocator/channel bookkeeping is bounded
+by the item cap. The ledger copies only file tuples, never a publication's parsed
+pages or derived-answer summaries, and reserves capacity before copying. Full
+queues skip entire optional ledger updates without waiting. Admitted updates
+remain FIFO; copy create/remove events are never coalesced. Flush and prune jobs
+share the limits; an exit flush without capacity immediately reports undrained.
+
+The first skip marks coverage degraded for this graph binding; the worker logs
+`concord-ledger-coverage-degraded` once it can process work again (never logging
+to disk on the dispatch thread). Base queries then answer no base, preserving the
+existing two-way review and guarded resolution. Conflict inventory still receives
+every publication independently, including copy creation and removal. Recording
+may resume as capacity returns, but suggestions remain off until the graph is
+reopened. This is an in-memory status, with no new persisted record or format;
+reopening uses the same verified retained history and prune as an interrupted
+session.
+
+| Optional skip | In-scope threat | Result |
+|---|---|---|
+| Item or byte capacity exhausted, including a single oversized envelope | Stalled app-data I/O or bursty sync delivery exhausting memory | Skip ledger work, record degraded coverage, retain two-way conflict handling; graph saves continue |
+
+The persisted unit cost below is unchanged. A skipped update adds **0 bytes,
+0 files and 0 transport bytes per edit**, for both 1-block and 60-block pages.
+
 **Never an authority.** Nothing waits on, refuses on, or fails because of the
 ledger. Every read re-hashes the blob; a miss, a corrupt or foreign entry
 (another page's index, another schema), or an unwritable directory answers

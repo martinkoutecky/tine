@@ -1,4 +1,5 @@
 import { isPackageId, isPackageVersion } from "../packageIdentity";
+import { parsePluginGrammar } from "./grammar.mjs";
 import { schemaGuards } from "../schemaGuards";
 import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./settings";
 
@@ -101,9 +102,6 @@ export class PluginManifestError extends Error {
   }
 }
 
-const CONTRIBUTION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const SAFE_ENTRY_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.wasm$/;
-
 const { record, knownKeys, text: stringField } = schemaGuards(PluginManifestError, {
   object: (where) => `${where} must be an object`,
   string: (where, max) => `${where} must be a non-empty string of at most ${max} characters`,
@@ -140,7 +138,7 @@ function optionalPlatforms(value: unknown, where: string): PluginPlatform[] | un
 
 function contributionId(value: unknown, where: string): string {
   const id = stringField(value, where, 64);
-  if (!CONTRIBUTION_ID_RE.test(id)) throw new PluginManifestError(`${where} has an invalid id`);
+  if (parsePluginGrammar(id, "contributionId") === null) throw new PluginManifestError(`${where} has an invalid id`);
   return id;
 }
 
@@ -270,7 +268,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
   const version = stringField(obj.version, "version", 64);
   if (!isPackageVersion(version)) throw new PluginManifestError("version must be SemVer");
   const entry = stringField(obj.entry, "entry", 160);
-  if (!SAFE_ENTRY_RE.test(entry) || entry.startsWith("/") || entry.split("/").includes("..")) {
+  if (parsePluginGrammar(entry, "entry") === null) {
     throw new PluginManifestError("entry must be a relative .wasm path without traversal");
   }
   const contributionsObj = obj.contributions === undefined ? undefined : record(obj.contributions, "contributions");

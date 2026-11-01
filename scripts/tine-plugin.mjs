@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { acceptsPluginColor } from "../src/plugins/color.mjs";
+import { parsePluginGrammar } from "../src/plugins/grammar.mjs";
 
 const CAPABILITIES = new Set([
   "commands.register",
@@ -218,7 +219,7 @@ function checkManifest(manifest, report) {
   if (manifest.schemaVersion !== 1) add(report, "errors", "manifest.schema", "schemaVersion must be 1");
   // Mirrors SUPPORTED_PLUGIN_API_VERSIONS in src/plugins/manifest.ts (pinned by its test).
   if (manifest.apiVersion !== "0.2" && manifest.apiVersion !== "0.3") add(report, "errors", "manifest.api", "apiVersion must be 0.2 or 0.3");
-  if (typeof manifest.id !== "string" || !/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$/.test(manifest.id) || !manifest.id.includes(".")) {
+  if (parsePluginGrammar(manifest.id, "packageId") === null) {
     add(report, "errors", "manifest.id", "id must be a lowercase dotted identifier");
   }
   if (typeof manifest.version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version)) {
@@ -258,7 +259,17 @@ function checkManifest(manifest, report) {
     [manifest.contributions?.slashCommands, "slash-commands.register"],
     [manifest.contributions?.blockDecorations, "block-decorations.register"],
   ];
+  if (parsePluginGrammar(manifest.entry, "entry") === null) {
+    add(report, "errors", "manifest.entry-path", "entry must be a relative .wasm path of at most 160 characters without traversal");
+  }
   for (const [entries, capability] of required) {
+    if (Array.isArray(entries)) {
+      for (const contribution of entries) {
+        if (parsePluginGrammar(contribution?.id, "contributionId") === null) {
+          add(report, "errors", "manifest.contribution-id", "contribution id must match [a-z0-9][a-z0-9._-]{0,63}");
+        }
+      }
+    }
     if (Array.isArray(entries) && entries.length > 0 && !manifest.capabilities?.includes(capability)) {
       add(report, "errors", "manifest.contribution-capability", `contribution requires ${capability}`);
     }
@@ -331,7 +342,7 @@ function checkPlugin(directory) {
   report.plugin = { id: manifest.id ?? null, version: manifest.version ?? null, name: manifest.name ?? null };
   checkManifest(manifest, report);
   checkPortGap(root, report);
-  if (typeof manifest.entry === "string") {
+  if (parsePluginGrammar(manifest.entry, "entry") !== null) {
     const unresolved = path.resolve(root, manifest.entry);
     const relative = path.relative(root, unresolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
