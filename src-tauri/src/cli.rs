@@ -150,8 +150,8 @@ enum Command {
         #[command(flatten)]
         read: ReadArgs,
     },
-    /// Replace a block's text, as typing it into the block would: hidden
-    /// properties (id::, collapsed::) and children are kept.
+    /// Replace a block's text. Its properties (id::, status::, author::) and
+    /// children are kept; a property named in the new text replaces the kept one.
     /// Supplying a LOGBOOK drawer requires --rev from the read; otherwise
     /// reread and pass --rev (refused:revision-required).
     Edit {
@@ -317,7 +317,8 @@ struct WriteArgs {
     /// `tine run begin`).
     #[arg(long, value_name = "RUN", env = "TINE_RUN")]
     run: Option<String>,
-    /// Author on created blocks and on the run's commits (default: agent).
+    /// Author on created blocks and on the run's commits (default: agent). With
+    /// `edit`, the flag (not the variable) also sets the block's author::.
     #[arg(long, env = "TINE_AUTHOR")]
     author: Option<String>,
 }
@@ -648,6 +649,24 @@ fn doctor(path: &Path) -> Result<(), String> {
     Err("graph checks found problems".into())
 }
 
+/// Whether `tine edit` was given `--author` itself. An agent's session-wide
+/// `TINE_AUTHOR` names its commits; it must not stamp every block it edits, or
+/// overwrite the `author::` a person's block already has (#840).
+fn edit_author_is_a_flag<I, T>(argv: I) -> bool
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    use clap::CommandFactory;
+    Cli::command()
+        .try_get_matches_from(argv)
+        .is_ok_and(|parsed| {
+            parsed.subcommand_matches("edit").is_some_and(|edit| {
+                edit.value_source("author") == Some(clap::parser::ValueSource::CommandLine)
+            })
+        })
+}
+
 /// Handle non-GUI desktop commands before Tauri starts. `None` continues into
 /// the ordinary GUI; `Some(code)` exits after printing the result or error.
 pub(crate) fn dispatch() -> Option<i32> {
@@ -794,7 +813,10 @@ fn read_command(command: Command) -> i32 {
             } else {
                 text
             };
-            let args = write.args(json!({ "handle": handle, "text": text }));
+            let mut args = write.args(json!({ "handle": handle, "text": text }));
+            if edit_author_is_a_flag(std::env::args_os()) {
+                args["author_property"] = json!(write.author);
+            }
             write_verb(write.read.target(), "block.edit", args)
         }
         Command::Add {
@@ -963,6 +985,22 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    #[test]
+    fn gh840_only_the_flag_sets_author_on_edit() {
+        assert!(edit_author_is_a_flag([
+            "tine",
+            "edit",
+            "A/1~abcdef",
+            "x",
+            "--author",
+            "Ada"
+        ]));
+        assert!(!edit_author_is_a_flag(["tine", "edit", "A/1~abcdef", "x"]));
+        assert!(!edit_author_is_a_flag([
+            "tine", "add", "--page", "P", "--author", "Ada", "x"
+        ]));
     }
 
     #[test]
