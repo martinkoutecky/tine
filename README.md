@@ -223,13 +223,31 @@ samples/             Demo graph used by tests/screenshots
 ## Build & run
 
 Use Node.js 22.13 or newer (pdf.js 5 requires Node 22).
-The PDF image decoder also requires Emscripten **4.0.20**, activated with
-`emsdk install 4.0.20` and `emsdk activate 4.0.20`; source `emsdk_env.sh` so
-`EMSDK` points to that installation. `npm run build:pdf-decoder` compiles pinned,
-vendored OpenJPEG sources with standard SIMD, without network access. Builds and
-tests reuse the verified result until its inputs change. See
+The PDF image decoder also requires Emscripten **4.0.20**. `npm run build:pdf-decoder`
+compiles pinned, vendored OpenJPEG sources with standard SIMD, without network
+access. Builds and tests reuse the verified result until its inputs change. See
 [`vendor/pdfjs-openjpeg/README.md`](vendor/pdfjs-openjpeg/README.md) for provenance
 and the offline Flatpak setup.
+
+### PDF decoder SDK
+
+Emscripten's SDK manager, `emsdk`, comes from its own repository and installs into
+any directory you choose. It does not need root, and the install takes about 2 GB
+of disk (on Windows, use `emsdk.bat` and `emsdk_env.bat`):
+
+```bash
+git clone https://github.com/emscripten-core/emsdk.git ~/.local/share/emsdk
+cd ~/.local/share/emsdk
+./emsdk install 4.0.20
+./emsdk activate 4.0.20
+source ./emsdk_env.sh        # sets EMSDK for this shell
+```
+
+The build finds the SDK through `EMSDK`, or through `TINE_PDFJS_EMSDK`, which names
+the SDK's `upstream/` directory instead. Set one of them in every shell that builds
+Tine. If you use a separate toolchain directory (`TINE_TOOLCHAIN`, or a sibling
+`.toolchain/` that contains `cargo/bin/rustup`), `source scripts/env.sh` also sets
+`EMSDK` when the SDK is installed at `emsdk/` inside it and `EMSDK` isn't set yet.
 
 ```bash
 source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
