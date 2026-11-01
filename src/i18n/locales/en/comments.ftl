@@ -33,3 +33,4 @@ comment-name-prompt-scope = Your name is a Tine setting on this device, used in 
 comment-name-prompt-dismiss = Skip
 comment-name-prompt-save = Use this name
 comment-name-prompt-graph-changed = The graph changed while Tine asked for your name, so the comment was not written.
+comment-margin-draft-pending = Send or discard the unsent reply before hiding the comments

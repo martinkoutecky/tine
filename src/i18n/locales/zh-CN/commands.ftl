@@ -123,6 +123,8 @@ command-ui-toggle-code-block-wrap = 切换代码块自动换行
 
 command-ui-toggle-document-mode = 切换文档模式
 
+command-ui-toggle-comment-margin = 切换评论边栏
+
 command-ui-toggle-focus-mode = 切换专注模式
 
 command-ui-toggle-dim-blocks = 切换淡化非活动块

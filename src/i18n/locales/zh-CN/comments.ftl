@@ -33,3 +33,4 @@ comment-name-prompt-scope = 你的名字是本设备上的 Tine 设置，适用�
 comment-name-prompt-dismiss = 跳过
 comment-name-prompt-save = 使用此名字
 comment-name-prompt-graph-changed = 在询问你的名字时图谱已切换，因此没有写入该批注。
+comment-margin-draft-pending = 请先发送或放弃未发送的回复，再隐藏评论

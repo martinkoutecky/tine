@@ -33,16 +33,16 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 /** @type {Readonly<Record<string, Surface>>} */
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
-  "commands.registry": { env: "desktop", budget: 134, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
+  "commands.registry": { env: "desktop", budget: 135, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 26, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 77, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
+  "commands.palette": { env: "desktop", budget: 78, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
 
   // --- Settings ---------------------------------------------------------------
   "settings.tabs": { env: "desktop", budget: 10, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" },
-  "settings.appearance.open": settingsOpen("appearance", 28),
+  "settings.appearance.open": settingsOpen("appearance", 29),
   "settings.appearance.advanced": settingsAdvanced("appearance", 15),
   "settings.editor.open": settingsOpen("editor", 9),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
