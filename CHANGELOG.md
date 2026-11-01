@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - YouTube timestamps written as `9:03` or `1:02:03` now show and seek to the full time, instead of treating only the first number as seconds. Invalid timestamp arguments are hidden.
+- Linux desktop launcher updates now check the launcher's channel identity as well as its managed flag, preserving entries with another channel's identity (#814).
+- Shift-clicking **Journals** in the left sidebar or toolbar opens today's journal in the right sidebar and keeps the main page in place, as in Logseq. Plain clicks and **g j** still open the journal feed (#740).
 - Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.
 - Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
 - A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
