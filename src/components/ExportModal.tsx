@@ -30,6 +30,7 @@ import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { activeWindow, listen } from "../windowRealm";
+import { parseYoutubeTimestamp, formatYoutubeTimestamp } from "../youtubeTimestamp";
 
 const STORE_KEY = "tine.exportOptions";
 type ExportFormat = "text" | "opml" | "html";
@@ -191,7 +192,11 @@ export function queryGroupsToExportNodes(result: QueryExportResult): ExportNode[
 function literalBuiltInMacroText(name: string, args: string[]): string | null {
   const n = name.toLowerCase();
   const arg = macroArg(args);
-  if (/^(video|youtube|vimeo|bilibili|youtube-timestamp|tweet|twitter|img)$/.test(n)) {
+  if (n === "youtube-timestamp") {
+    const seconds = parseYoutubeTimestamp(arg);
+    return seconds === null ? "" : formatYoutubeTimestamp(seconds);
+  }
+  if (/^(video|youtube|vimeo|bilibili|tweet|twitter|img)$/.test(n)) {
     return arg.replace(/^\[\[|\]\]$/g, "");
   }
   if (n === "cloze") return arg.split(/\\\\/)[0]?.trim() ?? arg;

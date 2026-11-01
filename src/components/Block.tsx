@@ -148,7 +148,7 @@ import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
-import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
+import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -323,14 +323,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
       <Show when={stickyParent()}><StickyAncestor id={props.id} raw={node().raw} /></Show>
-      <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} controls={
-        <Show when={bulletless()}>
-          <span class="comment-first-line-controls">
-            <Show when={showsAuthor()}><AuthorChip author={author()} handleOf={props.id} /></Show>
-            <CommentActions id={props.id} />
-          </span>
-        </Show>
-      } />
+      <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
+      <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>
       <div
         class="block-main"
         ref={(el) => {
@@ -421,12 +415,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
-          <Show when={bulletless() && !commentSelector()}>
-            <span class="comment-first-line-controls">
-              <Show when={showsAuthor()}><AuthorChip author={author()} handleOf={props.id} /></Show>
-              <CommentActions id={props.id} />
-            </span>
-          </Show>
           <Show
             when={editing()}
             fallback={

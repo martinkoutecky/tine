@@ -4,7 +4,8 @@ import { msg, t } from "../i18n";
 import { HomeIcon, JournalsIcon } from "./JournalsIcon";
 import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
-import { openAllGraphs, openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openAllGraphs, openAllPages, openConflicts, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openJournalsFromClick } from "../journalsNavigation";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -122,7 +123,10 @@ export function Sidebar(props: {
             <div
               class="nav-item"
               classList={{ active: route().kind === "journals" }}
-              onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
+              onClick={(event) => {
+                openJournalsFromClick(event);
+                if (!event.shiftKey) props.onActiveNavigationComplete?.();
+              }}
               onMouseDown={internalLinkMouseDown}
               onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
             >

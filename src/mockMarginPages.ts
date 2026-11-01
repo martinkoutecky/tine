@@ -7,6 +7,14 @@ import type { BlockDto } from "./types";
 export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) => BlockDto): [string, BlockDto[]][] {
   return [
     [
+      // GH #110: the first comment on a block with a long existing subtree.
+      "Margin creation regression", [
+        ...Array.from({ length: 12 }, (_, i) => b(`Opening paragraph ${i + 1}.`)),
+        b("Discuss these words here", Array.from({ length: 80 }, (_, i) => b(`Existing child ${i + 1}.`))),
+        b("Closing paragraph."),
+      ],
+    ],
+    [
       // Margin dialogue slice 1 (vision §3.7): an agent block, a comment with a
       // three-level thread (slice 2b: a depth-3 reply shows the indent cap), a stale quote and a repeated-phrase quote.
       "Margin comments regression", [

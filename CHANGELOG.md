@@ -12,6 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
 - Ordinary text keeps the same line breaks when entering the experimental CodeMirror editor, including nested blocks and sidebar panes (UI-CM6-PLAIN-WRAP-WIDTH).
+- YouTube timestamps written as `9:03` or `1:02:03` now show and seek to the full time, instead of treating only the first number as seconds. Invalid timestamp arguments are hidden.
+- Linux desktop launcher updates now check the launcher's channel identity as well as its managed flag, preserving entries with another channel's identity (#814).
+- Shift-clicking **Journals** in the left sidebar or toolbar opens today's journal in the right sidebar and keeps the main page in place, as in Logseq. Plain clicks and **g j** still open the journal feed (#740).
+- Adding a margin comment opens it beside or directly below its passage without first jumping to the end of the block's children. Every response now has the same author row above its text, separate from the quoted passage (#110).
+- Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.
+- Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
 - A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.
 - Queries with `query-table:: true` now show their results in published read-only apps. Query exports also keep the table's chosen columns and starting sort.
 - Typing `1. ` inside a code or calculator block now keeps it as literal text instead of removing the fence and turning the block into a numbered list.
@@ -51,8 +57,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A **Reload window** command, unbound, for reloading the app on purpose (#797).
 - Page menu: **Copy as ▸ → Copy page embed** copies `{{embed [[Page]]}}`, the page counterpart of a block's **Copy block embed** (GH #418).
 - The Guide (Find and revisit → Query text (TQL)) now says you can let an AI assistant write your TQL, with a short prompt to copy: what TQL is, where its reference lives, and what you want to find (#551).
-- Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
-- Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.
 
 ## [0.9.0-beta.3] - 2026-10-31
 
