@@ -428,6 +428,19 @@ function bigPageBlocks(n: number): BlockDto[] {
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
   NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
 }
+// GH #810 real-wheel scroll check (`?embedscroll`, scripts/shot-gh810-wheel.mjs): sections of plain rows
+// with expanded block embeds, deep enough that nested outline windows remount around them.
+if (typeof location !== "undefined" && /[?&]embedscroll\b/.test(location.search)) {
+  const source = "81000000-0000-4000-8000-000000000810";
+  const section = (label: string) => b(label, Array.from({ length: 40 }, (_, i) =>
+    b(i % 13 === 5 ? `{{embed ((${source}))}}` : `${label} row ${i} plain line of text`)));
+  NAMED.push(
+    { name: "Embed scroll source", kind: "page", title: "Embed scroll source", pre_block: null,
+      blocks: [b(`Embedded root\nid:: ${source}`, Array.from({ length: 9 }, (_, i) => b(`Embedded row ${i}`)))] },
+    { name: "Embed scroll", kind: "page", title: "Embed scroll", pre_block: null,
+      blocks: [section("Top one"), b("Short A"), section("Top two"), b("Short B"), section("Top three"), section("Top four")] },
+  );
+}
 // D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
 // pages and three names with no file of their own.
 if (typeof location !== "undefined" && /[?&]aliasgroups\b/.test(location.search)) {
