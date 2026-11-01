@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Scrolling up a long page with block embeds no longer throws the page back down, which could leave it stuck in one place (#810). The earlier fix for this issue in 0.9.0-beta.2 made these jumps more frequent. Tine now prepares outline windows and block bodies before they reach the visible area of their pane and keeps the reading position when they replace a placeholder. Remounted query and reference groups also keep their measured height.
+
 ## [0.9.0-beta.4] - 2026-11-01
 
 ### Fixed

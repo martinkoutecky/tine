@@ -216,7 +216,10 @@ describe("GH #735: hover popup size and delay match Logseq", () => {
   it("GH #750: keeps its placement when its content settles to a different height", async () => {
     const old = window.innerHeight;
     const callbacks: Array<() => void> = [];
-    class FakeResizeObserver { constructor(cb: () => void) { callbacks.push(cb); } observe() {} disconnect() {} }
+    class FakeResizeObserver {
+      constructor(cb: ResizeObserverCallback) { callbacks.push(() => cb([], this as unknown as ResizeObserver)); }
+      observe() {} unobserve() {} disconnect() {}
+    }
     vi.stubGlobal("ResizeObserver", FakeResizeObserver);
     (window as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 1100 });

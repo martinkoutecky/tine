@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetStore } from "../document";
@@ -14,6 +14,16 @@ import { LiveRefGroup } from "./LiveRefGroup";
 // (jsdom has no layout; the rect is stubbed, the real geometry is scripts/e2e-gh810-embed-scroll.mjs.)
 
 beforeAll(initParser);
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      queueMicrotask(() => this.callback([{ target, borderBoxSize: [{ blockSize: target.getBoundingClientRect().height }] } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver));
+    }
+    unobserve() {}
+    disconnect() {}
+  });
+});
 afterEach(() => {
   resetNearObserverForTests();
   vi.unstubAllGlobals();
@@ -98,7 +108,7 @@ describe("a live ref group reserves the height it had when it last unmounted (GH
     } finally { dispose(); }
   });
 
-  it("leaves other surfaces on the estimate, which have no stable identity to remember a height by", async () => {
+  it.each(["query", "ref"] as const)("reserves %s groups by owner identity without inspecting a row", async (surface) => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(null);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       const height = this.classList.contains("live-ref-group") ? 288 : 0;
@@ -107,14 +117,15 @@ describe("a live ref group reserves the height it had when it last unmounted (GH
     const io = stubObserver();
     const root = document.createElement("div");
     document.body.appendChild(root);
-    const query = () => render(() => <LiveRefGroup page="Tasks" kind="page" blocks={[source("gh810-query-row")]} surface="query" />, root);
+    const query = () => render(() => <LiveRefGroup page="Tasks" kind="page" blocks={[source("gh810-query-row")]}
+      surface={surface} heightKey="gh810-result-owner" />, root);
     let dispose = query();
     io.near(root.querySelector<HTMLElement>(".live-ref-group")!);
     await expect.poll(() => root.textContent).toContain("embedded root");
     dispose();
     dispose = query();
     try {
-      expect(root.querySelector<HTMLElement>(".live-ref-group")!.style.minHeight).toBe("1.9em");
+      expect(root.querySelector<HTMLElement>(".live-ref-group")!.style.minHeight).toBe("288px");
     } finally { dispose(); }
   });
 });
