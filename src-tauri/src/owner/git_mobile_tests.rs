@@ -679,14 +679,13 @@ fn autocommits_since(repo: &Repository, from: Oid) -> usize {
         .count()
 }
 
-/// D-20261026-GC caps autocommits at one per interval (≤ 6 an hour at the
-/// default ten minutes); switching apps is no exemption, and neither is
-/// coming back. Edits the cap holds back commit once the interval allows.
+/// D-20261101-GB: every background edge commits and pushes pending edits,
+/// even inside one interval. Returning alone still does not force a commit.
 #[test]
-fn switching_apps_commits_at_most_once_per_interval() {
+fn switching_apps_commits_and_pushes_each_edit_inside_one_interval() {
     let phone = Phone::new();
     let slot = Arc::new(phone.slot());
-    let interval = Duration::from_secs(20);
+    let interval = Duration::from_secs(10 * 60);
     start_worker(
         &slot,
         GitSettings {
@@ -702,34 +701,28 @@ fn switching_apps_commits_at_most_once_per_interval() {
     let start = head(&phone.repo);
     phone.edit("pages/b.md", "- switch 0\n");
     backgrounded_at(&phone.root);
-    wait_for("the first background commit", || head(&phone.repo) != start);
-    let first = Instant::now();
-    // Seven more app switches with an edit each, all inside one interval.
-    for n in 1..=7 {
-        foregrounded_at(&phone.root);
-        std::thread::sleep(Duration::from_millis(300));
-        phone.edit("pages/b.md", &format!("- switch {n}\n"));
-        backgrounded_at(&phone.root);
-        std::thread::sleep(Duration::from_millis(300));
-    }
-    std::thread::sleep(Duration::from_secs(2));
-    assert!(
-        first.elapsed() < interval,
-        "the switches outlasted the interval"
-    );
-    assert_eq!(autocommits_since(&phone.repo, start), 1, "one per interval");
-    assert_eq!(
-        phone.disk("pages/b.md"),
-        "- switch 7\n",
-        "the edit is saved"
-    );
-
-    // Once the interval has passed, the next switch commits what waited.
-    std::thread::sleep(interval.saturating_sub(first.elapsed()) + Duration::from_secs(1));
-    backgrounded_at(&phone.root);
-    wait_for("the held-back edits' commit", || {
-        autocommits_since(&phone.repo, start) == 2
+    wait_for("the first background push", || {
+        head(&phone.repo) != start && phone.remote_tip() == head(&phone.repo)
     });
+    let first_commit = head(&phone.repo);
+    let first = Instant::now();
+    foregrounded_at(&phone.root);
+    wait_for("the foreground cycle", || {
+        !last_attempt(&phone.root).sync.running
+    });
+    // An edit published in the foreground is left pending until background.
+    phone.edit("pages/b.md", "- switch 1\n");
+    foregrounded_at(&phone.root);
+    wait_for("the foreground without a forced commit", || {
+        !last_attempt(&phone.root).sync.running
+    });
+    assert_eq!(head(&phone.repo), first_commit);
+    backgrounded_at(&phone.root);
+    wait_for("the second background push", || {
+        head(&phone.repo) != first_commit && phone.remote_tip() == head(&phone.repo)
+    });
+    assert!(first.elapsed() < interval);
+    assert_eq!(autocommits_since(&phone.repo, start), 2);
     let tip = phone.repo.find_commit(head(&phone.repo)).unwrap();
     let blob = tip
         .tree()
@@ -738,9 +731,204 @@ fn switching_apps_commits_at_most_once_per_interval() {
         .unwrap();
     assert_eq!(
         phone.repo.find_blob(blob.id()).unwrap().content(),
-        b"- switch 7\n"
+        b"- switch 1\n"
     );
     slot.background_cancelled.store(true, Ordering::Release);
+}
+
+#[test]
+fn switching_apps_without_another_edit_makes_no_extra_commit() {
+    let phone = Phone::new();
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncAutomatically,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    wait_for("the opening cycle", || {
+        let sync = last_attempt(&phone.root).sync;
+        !sync.running && sync.at.is_some()
+    });
+    let start = head(&phone.repo);
+    phone.edit("pages/b.md", "- switch once\n");
+    backgrounded_at(&phone.root);
+    wait_for("the background push", || {
+        head(&phone.repo) != start && phone.remote_tip() == head(&phone.repo)
+    });
+    let committed = head(&phone.repo);
+    foregrounded_at(&phone.root);
+    wait_for("the foreground cycle", || {
+        !last_attempt(&phone.root).sync.running
+    });
+    // If an unnecessary commit is attempted, this lock would report busy.
+    fs::write(phone.repo.path().join("index.lock"), "held by the test\n").unwrap();
+    // The background worker clears this even when there is nothing to push,
+    // giving the assertion a completion signal without a fixed sleep.
+    registry::get(&phone.root)
+        .unwrap()
+        .state
+        .lock()
+        .unwrap()
+        .last
+        .sync
+        .running = true;
+    backgrounded_at(&phone.root);
+    wait_for("the unchanged background edge", || {
+        !last_attempt(&phone.root).sync.running
+    });
+    assert_eq!(head(&phone.repo), committed);
+    assert_eq!(phone.remote_tip(), committed);
+    assert_eq!(autocommits_since(&phone.repo, start), 1);
+    assert!(last_attempt(&phone.root).refused.is_none());
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// Run explicitly with --ignored --nocapture. Measures the real background
+/// worker, including its incremental repack at 50 commits, against file://.
+#[test]
+#[ignore = "unit-cost measurement, writes JSON evidence to TINE_GIT_COST_OUTPUT"]
+fn measure_background_commit_unit_cost() {
+    use std::collections::BTreeMap;
+
+    fn snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<String, Vec<u8>>) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(root, &path, files);
+                } else {
+                    files.insert(
+                        path.strip_prefix(root)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        fs::read(path).unwrap(),
+                    );
+                }
+            }
+        }
+        let mut files = BTreeMap::new();
+        visit(root, root, &mut files);
+        files
+    }
+
+    fn bytes(files: &BTreeMap<String, Vec<u8>>) -> i64 {
+        files.values().map(|v| v.len() as i64).sum()
+    }
+
+    fn gc(root: &Path) {
+        let result = std::process::Command::new("/usr/bin/git")
+            .arg("-C")
+            .arg(root)
+            .args(["gc", "--prune=now"])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+
+    let output = PathBuf::from(std::env::var_os("TINE_GIT_COST_OUTPUT").unwrap());
+    fs::create_dir_all(&output).unwrap();
+    let mut results = Vec::new();
+    for blocks in [1, 60] {
+        let phone = Phone::new();
+        let page = |edit: usize| {
+            (0..blocks)
+                .map(|n| {
+                    if n == 0 {
+                        format!("- Small edit {edit:02}: a note to remember.\n")
+                    } else {
+                        format!("- Block {n:02}: some ordinary page text to keep unchanged.\n")
+                    }
+                })
+                .collect::<String>()
+        };
+        phone.edit("pages/b.md", &page(0));
+        commit_all(&phone.repo, "measurement baseline");
+        assert_eq!(operation().push_upstream(&phone.root), Net::UpToDate);
+        gc(&phone.root);
+        let slot = Arc::new(phone.slot());
+        start_worker(
+            &slot,
+            GitSettings {
+                policy: Policy::SyncAutomatically,
+                interval: Duration::from_secs(10 * 60),
+            },
+            credentials(),
+        );
+        wait_for("the opening cycle", || {
+            let sync = last_attempt(&phone.root).sync;
+            !sync.running && sync.at.is_some()
+        });
+        let initial = snapshot(phone.repo.path());
+        let mut previous = initial.clone();
+        let mut steps = Vec::new();
+        for edit in 1..=50 {
+            let old_tip = head(&phone.repo);
+            let remote_before = snapshot(phone.bare.path());
+            phone.edit("pages/b.md", &page(edit));
+            backgrounded_at(&phone.root);
+            wait_for("the measured background push", || {
+                head(&phone.repo) != old_tip
+                    && phone.remote_tip() == head(&phone.repo)
+                    && !last_attempt(&phone.root).sync.running
+            });
+            let after = snapshot(phone.repo.path());
+            let changed: BTreeMap<_, _> = after
+                .iter()
+                .filter(|(path, data)| previous.get(*path) != Some(*data))
+                .map(|(path, data)| (path.clone(), data.len()))
+                .collect();
+            let remote_after = snapshot(phone.bare.path());
+            let received_packs: BTreeMap<_, _> = remote_after
+                .iter()
+                .filter(|(path, _)| path.ends_with(".pack") && !remote_before.contains_key(*path))
+                .map(|(path, data)| (path.clone(), data.len()))
+                .collect();
+            let new_objects: usize = changed
+                .iter()
+                .filter(|(path, _)| path.starts_with("objects/") && !previous.contains_key(*path))
+                .map(|(_, len)| *len)
+                .sum();
+            if edit == 1 {
+                assert!(
+                    new_objects <= 100_000,
+                    "small edit exceeds 100 KB: {new_objects}"
+                );
+            }
+            steps.push(serde_json::json!({
+                "edit": edit,
+                "git_bytes": bytes(&after),
+                "net_growth_bytes": bytes(&after) - bytes(&previous),
+                "changed_files": changed,
+                "new_object_bytes": new_objects,
+                "remote_growth_bytes": bytes(&remote_after) - bytes(&remote_before),
+                "received_pack_files": received_packs,
+            }));
+            previous = after;
+        }
+        gc(&phone.root);
+        let collected = snapshot(phone.repo.path());
+        results.push(serde_json::json!({
+            "blocks": blocks,
+            "page_bytes": page(1).len(),
+            "baseline_git_bytes_after_gc": bytes(&initial),
+            "after_50_git_bytes": bytes(&previous),
+            "growth_50_without_git_gc_bytes": bytes(&previous) - bytes(&initial),
+            "after_50_then_git_gc_bytes": bytes(&collected),
+            "growth_50_after_git_gc_bytes": bytes(&collected) - bytes(&initial),
+            "steps": steps,
+        }));
+        slot.background_cancelled.store(true, Ordering::Release);
+        eprintln!("GIT-COST blocks={blocks} {}", results.last().unwrap());
+    }
+    fs::write(
+        output.join("measurements.json"),
+        serde_json::to_vec_pretty(&results).unwrap(),
+    )
+    .unwrap();
 }
 
 /// Backgrounded stays backgrounded until the foreground edge (review F1):
