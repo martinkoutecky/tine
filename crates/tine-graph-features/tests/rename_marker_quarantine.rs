@@ -1,15 +1,11 @@
-//! og 21a (master a8fd4230d): a rename never rewrites references inside a file
-//! carrying VCS conflict markers. Such a referrer stays byte-identical and
-//! quarantined, every other referrer is rewritten, and the skip is reported
-//! once per file. The store refuses such a rewrite from any other caller.
+//! R-VCS-MARKERS (og 21a): marked pages stay byte-identical, including an
+//! explicit source title. The report lists each skipped rewrite once.
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
 use tine_store::{PageId, RenameMap, Store, TitleRebind};
 
-/// Renames are the page host's (STEP3 §7): each runs through a host started
-/// for it under its own app data, as the app's graph binding runs one.
 fn hosted<T>(
     store: &std::sync::Arc<tine_store::Store>,
     run: impl FnOnce(&tine_store::PageHost) -> T,
@@ -44,13 +40,59 @@ fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>
 const CONFLICTED: &str =
     "- intro\n<<<<<<< HEAD\n- mine sees [[Alpha]]\n=======\n- theirs sees [[Alpha]]\n>>>>>>> branch\n";
 
+const MARKED_ORG: &str =
+    "* [[Old]]\n*** skipped level\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n";
+
+#[test]
+fn single_rename_refuses_its_marked_org_source_that_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
+    let source = format!("#+TITLE: Old\n{MARKED_ORG}");
+    let (root, store) = graph("marked-org-source", &[("pages/Old.org", source.as_str())]);
+    let refusal = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(refusal.to_string().contains("read-only .org file"));
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Old.org")).unwrap(),
+        source
+    );
+    assert!(!root.join("pages/New.org").exists());
+}
+
+#[test]
+fn single_rename_refuses_a_held_marked_org_referrer_that_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
+    let (root, store) = graph(
+        "marked-org-held",
+        &[("pages/Old.org", "* body\n"), ("pages/r.org", MARKED_ORG)],
+    );
+    let refusal = hosted(&store, |host| {
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        host.open(session, 1, &tine_store::PageId::from("pages/r.org"), "r")
+            .unwrap();
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(root.join("pages/Old.org").exists() && !root.join("pages/New.org").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("pages/r.org")).unwrap(),
+        MARKED_ORG
+    );
+}
+
 #[test]
 fn rename_skips_marker_bearing_referrers_and_reports_them() {
     let _integration_guard = crate::integration_lock();
+    let source = "title:: Alpha\n\n- alpha\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
     let (root, store) = graph(
         "referrer",
         &[
-            ("pages/Alpha.md", "- alpha\n"),
+            ("pages/Alpha.md", source),
             ("pages/Conflicted.md", CONFLICTED),
             ("pages/Clean.md", "- clean sees [[Alpha]]\n"),
         ],
@@ -70,8 +112,15 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
     );
     assert!(root.join("pages/Beta.md").exists() && !root.join("pages/Alpha.md").exists());
     assert_eq!(
+        fs::read_to_string(root.join("pages/Beta.md")).unwrap(),
+        source
+    );
+    assert_eq!(
         report.skipped_conflicted_referrers,
-        vec!["pages/Conflicted.md".to_owned()]
+        vec![
+            "pages/Alpha.md".to_owned(),
+            "pages/Conflicted.md".to_owned()
+        ]
     );
     assert!(report
         .touched

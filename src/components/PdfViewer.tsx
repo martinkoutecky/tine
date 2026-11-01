@@ -247,6 +247,11 @@ export function PdfViewer(props: {
   // signal does not restart a build already under way for the same raster.
   const textBuildScale: Record<number, number> = {};
   let textTimer: number | undefined;
+  let textScrollTimer: number | undefined;
+  let textScrolling = false;
+  // A page-field/outline/link landing gets text as soon as its raster is ready,
+  // including when the programmatic scroll also starts the idle timer.
+  let immediateTextPage: number | null = null;
 
   async function exactPageDimensions(pageNumber: number): Promise<PdfPageDimensions> {
     if (dimsKnown.has(pageNumber) && dims[pageNumber]) return dims[pageNumber];
@@ -365,6 +370,7 @@ export function PdfViewer(props: {
     io = null;
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
+    clearTimeout(textScrollTimer);
     viewState.cancel();
     findController.cancel();
     releaseAllCanvases();
@@ -401,6 +407,9 @@ export function PdfViewer(props: {
     for (const k of Object.keys(prefetchRefused)) delete prefetchRefused[Number(k)];
     pendingText.clear();
     clearTimeout(textTimer);
+    clearTimeout(textScrollTimer);
+    textScrolling = false;
+    immediateTextPage = null;
     lru.length = 0;
     visible.clear();
     highestPriority = null;
@@ -442,7 +451,8 @@ export function PdfViewer(props: {
         visible.add(n);
         ensureText(n);
       } else {
-        visible.delete(n);
+        const leftView = visible.delete(n);
+        if (leftView && immediateTextPage === n) immediateTextPage = null;
       }
     }
     // The evictable set changed, so a refused prefetch may fit now.
@@ -725,6 +735,7 @@ export function PdfViewer(props: {
     setPageField(String(page));
     viewState.publish(page, scale()); // explicit navigation is already a committed intent
     pageEls[page]?.scrollIntoView({ block: "start" });
+    requestImmediateText(page);
 
     if (!highlight) {
       pendingHighlight = null;
@@ -870,11 +881,9 @@ export function PdfViewer(props: {
   // Coalesced, deferred text-layer (re)build. Runs ~after the view settles, only
   // for visible pages whose text isn't already at the page's current scale.
   function scheduleText(n: number) {
-    // FIRST build for a page (scroll-in): do it now, not behind the single shared
-    // timer that every other page's render keeps resetting during a scroll — that
-    // delay is why pages past the first sometimes had no selectable text layer
-    // (no I-beam, so no way to make a regular highlight). Rebuilds (zoom) stay
-    // deferred off the hot path.
+    // First builds run immediately at rest, or after scroll idle. The scroll
+    // timer retries visible pages even if no further raster/observer fires.
+    // Rebuilds (zoom) keep their existing short debounce.
     if (textScale[n] === undefined) {
       ensureText(n);
       return;
@@ -897,8 +906,14 @@ export function PdfViewer(props: {
   // passed through or prefetched get their text when they become visible.
   function ensureText(n: number) {
     const r = renderedScale[n];
-    if (!visible.has(n) || r === undefined || textScale[n] !== undefined || textBuildScale[n] === r) return;
+    if (disposed || !visible.has(n) || r === undefined || textScale[n] !== undefined || textBuildScale[n] === r) return;
+    if (textScrolling && immediateTextPage !== n) return;
+    if (immediateTextPage === n) immediateTextPage = null;
     void buildTextLayer(n, r);
+  }
+  function requestImmediateText(n: number) {
+    immediateTextPage = textScale[n] === undefined ? n : null;
+    ensureText(n);
   }
   // A text layer's spans size themselves from --scale-factor. Each layer pins
   // the scale it was laid out at, and a zoom only stretches it with a
@@ -1088,6 +1103,7 @@ export function PdfViewer(props: {
     io = null;
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
+    clearTimeout(textScrollTimer);
     findController.cancel();
     if (scrollRaf !== undefined) {
       scrollRaf();
@@ -1606,6 +1622,7 @@ export function PdfViewer(props: {
     const np = numPages() || 1;
     const p = Math.max(1, Math.min(np, Math.floor(n) || 1));
     if (pageEls[p]) scrollRef.scrollTop = pageEls[p].offsetTop;
+    requestImmediateText(p);
     setCurPage(p);
     setPageField(String(p));
   };
@@ -1663,6 +1680,15 @@ export function PdfViewer(props: {
   };
   const onScroll = () => {
     viewState.scroll();
+    textScrolling = true;
+    clearTimeout(textScrollTimer);
+    textScrollTimer = window.setTimeout(() => {
+      textScrolling = false;
+      if (disposed || loadError()) return;
+      // Only the current window of pages is owed work: passed pages and closed
+      // viewers retain no deferred builds. Prefetched rasters get text on entry.
+      for (const n of visibleByPriority()) ensureText(n);
+    }, 120);
     const top = scrollRef.scrollTop;
     if (top !== lastScrollTop) {
       // A move of more than a viewport is a jump (outline, page field, link,

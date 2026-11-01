@@ -1,13 +1,14 @@
 // Geometry probe: rendered block vs textarea editor vs CM6 editor, per construct (CM6-LINEHEIGHT).
 // usage: node scripts/shot-cm6-line-height.mjs [out-dir]
 // env: BROWSER=chromium|webkitgtk  THEME=light|dark  FONT=<px>  LH=<css length for --tine-typography-line-height>  DPR=1
+//   WRAP_ONLY=1: run just the plain word-row census (the default also checks all existing geometry gates).
 //   chromium: Playwright Chromium (also writes screenshots). webkitgtk: the system WebKitGTK through
 //   WebKitWebDriver + MiniBrowser under Xvfb (what Tine ships on Linux); run it as `xvfb-run -a node ...`.
 // Exits 1 when entering the CM6 editor (caret at the start or at the end) moves anything for a gated construct whose text
 // wraps the same in edit mode (box height, the y of the next child block, the first line's top, the line pitch), or when
 // the textarea editor of a single-line heading differs from the rendered heading. Every other construct is only tabled.
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -15,12 +16,16 @@ const out = resolve(process.argv[2] || "target/artifacts/cm6-lineheight");
 mkdirSync(out, { recursive: true });
 const which = process.env.BROWSER || "chromium";
 const opts = { theme: process.env.THEME || "light", font: process.env.FONT || "", lh: process.env.LH || "" };
+const wrapOnly = process.env.WRAP_ONLY === "1";
 const port = 20000 + Math.floor(Math.random() * 20000);
-const server = spawn("npx", ["vite", "--port", String(port), "--strictPort"], { stdio: "ignore", detached: true });
+const serverLog = openSync(`${out}/vite.log`, "w");
+const server = spawn("npx", ["vite", "--port", String(port), "--strictPort"], { stdio: ["ignore", serverLog, serverLog], detached: true });
+closeSync(serverLog);
 const url = `http://localhost:${port}/scripts/fixtures/cm6-line-height.html`;
-let close = async () => {}, results;
+let close = async () => {}, results, wraps;
 try {
   for (let attempt = 0; ; attempt++) {
+    if (server.exitCode !== null) throw new Error(`Vite exited ${server.exitCode}; see ${out}/vite.log`);
     try { if ((await fetch(`http://localhost:${port}/`)).ok) break; } catch {}
     if (attempt === 1200) throw new Error("Vite did not start");
     await delay(250);
@@ -32,8 +37,9 @@ try {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 }, deviceScaleFactor: Number(process.env.DPR || 1) });
     await page.goto(url, { timeout: 120_000 });
     await page.waitForSelector('[data-block-id="plain"] .block-content');
-    results = await page.evaluate(o => window.measureAll(o), opts);
-    for (const id of ["todo", "todop", "donep", "canceled", "todotags", "martin", "h1", "mdh1body", "inline", "code", "calc", "deadline", "scheduled", "repeater", "both", "sameline", "list", "quote", "props", "table", "image", "math", "embed", "quote2", "table2", "math2", "image2"]) {
+    results = wrapOnly ? {} : await page.evaluate(o => window.measureAll(o), opts);
+    wraps = await page.evaluate(() => window.measureWrap());
+    for (const id of (wrapOnly ? [] : ["todo", "todop", "donep", "canceled", "todotags", "martin", "h1", "mdh1body", "inline", "code", "calc", "deadline", "scheduled", "repeater", "both", "sameline", "list", "quote", "props", "table", "image", "math", "embed", "quote2", "table2", "math2", "image2"])) {
       const shot = kind => page.locator(`[data-block-id="${id}"]`).first().screenshot({ path: `${out}/${which}-${id}-${kind}.png` });
       await page.evaluate(() => window.closeEditor()); await shot("rendered");
       for (const [kind, on, caret] of [["textarea", false, 0], ["cm6", true, 0], ["cm6end", true, 1e9]]) { await page.evaluate(([i, o, c]) => window.openEditor(i, o, c), [id, on, caret]); await shot(kind); }
@@ -56,13 +62,16 @@ try {
       if (await call("POST", `/session/${sid}/execute/sync`, { script: "return !!document.querySelector('[data-block-id=\"plain\"] .block-content') && !!window.measureAll", args: [] })) break;
       await delay(250);
     }
-    await call("POST", `/session/${sid}/timeouts`, { script: 120000 });
-    results = await call("POST", `/session/${sid}/execute/async`, { script: "const done = arguments[arguments.length - 1]; window.measureAll(arguments[0]).then(done, e => done({ error: String(e) }));", args: [opts] });
+    await call("POST", `/session/${sid}/timeouts`, { script: 240000 });
+    results = wrapOnly ? {} : await call("POST", `/session/${sid}/execute/async`, { script: "const done = arguments[arguments.length - 1]; window.measureAll(arguments[0]).then(done, e => done({ error: String(e) }));", args: [opts] });
+    wraps = await call("POST", `/session/${sid}/execute/async`, { script: "const done = arguments[arguments.length - 1]; window.measureWrap().then(done, e => done({ error: String(e), stack: e.stack }));", args: [] });
     const ua = await call("POST", `/session/${sid}/execute/sync`, { script: "return navigator.userAgent + ' dpr=' + devicePixelRatio", args: [] });
     console.log("engine:", ua);
   }
   const tag = `${which}-${opts.theme}-fs${opts.font || "def"}-lh${opts.lh || "def"}-dpr${process.env.DPR || 1}`;
   writeFileSync(`${out}/geometry-${tag}.json`, JSON.stringify(results, null, 1));
+  writeFileSync(`${out}/wrap-${tag}.json`, JSON.stringify(wraps, null, 1));
+  if (!Array.isArray(wraps)) throw new Error(`wrap probe failed: ${JSON.stringify(wraps)}`);
   const lines = (r, k) => r[k].lines.filter(l => l.h > 10);
   const pitch = ls => { const t = ls.map(l => l.top); return t.length > 1 ? +((t[t.length - 1] - t[0]) / (t.length - 1)).toFixed(2) : null; };
   console.log(tag);
@@ -85,6 +94,23 @@ try {
   const cm6EndGated = ["plain", "multiline", "mdh1body", "h2body", "code", "calc"]; // planning lines reveal under a caret at the end, by design
   const textareaGated = ["h1", "mdh1", "hauto"]; // uniline headings: OG keeps the heading size (h2..h6: line-height differs, see the receipt)
   const bad = [];
+  // Ordinary text must wrap at the SAME WORD, including when the total line count happens to match.
+  for (const c of wraps) {
+    const label = `${c.pane} width=${c.width} margin=${c.withMargin} depth=${c.depth} caret=${c.caret}`;
+    if (!c.toolbarShown) bad.push(`${label}: selection did not show the formatting toolbar`);
+    if (c.withMargin && (!c.marginActive || !c.markerShown)) bad.push(`${label}: margin fixture did not reserve its column and marker`);
+    for (const mode of ["editing", "toolbar"]) {
+      const a = c.rendered.words, b = c[mode].words;
+      const mismatch = a.findIndex((word, i) => word.text !== b[i]?.text || word.row !== b[i]?.row);
+      if (a.length !== b.length || mismatch !== -1) {
+        const i = Math.max(0, mismatch);
+        bad.push(`${label} ${mode}: word ${i} ${JSON.stringify(a[i]?.text)} on row ${b[i]?.row} vs view ${a[i]?.row} (width ${c[mode].boxes[0].w} vs ${c.rendered.boxes[0].w})`);
+      }
+      if (Math.abs(c[mode].height - c.rendered.height) > 0.5) bad.push(`${label} ${mode}: height ${c[mode].height} vs view ${c.rendered.height}`);
+    }
+  }
+  console.log(`wrap census: ${wraps.length} cases, each at view/edit/selected-toolbar word rows`);
+  if (!wrapOnly) {
   const compare = (id, kind, label) => {
     const r = results[id]; const c = r[kind], d = r.rendered;
     if (c.missing || d.missing) { bad.push(`${id}: missing editor (${label})`); return; }
@@ -168,6 +194,7 @@ try {
   // line widened the block while the prose beside it was edited).
   for (const [id, r] of Object.entries(results)) for (const kind of ["cm6", "cm6end"]) {
     if (!r[kind].missing && r[kind].boxW > r[kind].hostW + 0.5) bad.push(`${id}: ${kind} content ${r[kind].boxW}px wide in a ${r[kind].hostW}px editor`);
+  }
   }
   console.log(bad.length ? "FAIL\n" + bad.join("\n") : "PASS: editing moves nothing for the gated constructs");
   if (bad.length) process.exitCode = 1;

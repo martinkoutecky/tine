@@ -121,15 +121,12 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
          and the graph directory; no per-page draft copy or draft removal is synced \
          (exemplar page_host/draft_worker.rs retire_whole): {few:?} vs {many:?}"
     );
-    // Three guarded reads per rewritten referrer, each a base-revision or
-    // publication check on the audited save path: preflight stage, the check
-    // just before the rename, and the post-commit publication read that tells
-    // own bytes from an external editor's (GH #623 QF3b removed a stage-2
-    // verify that repeated the pre-rename check). None scales with the graph.
+    // R5/D4R: PagePlan staging plus host load, final guard and publication.
+    // Staged-byte preflight is deferred; none scales with the graph.
     assert!(
-        many.full_reads - few.full_reads <= 3 * 28,
-        "I-25: each extra referrer costs at most three whole-file reads (stage, \
-         pre-rename check, publication)"
+        many.full_reads - few.full_reads <= 4 * 28,
+        "I-25/R5: each extra referrer costs at most four whole-file reads (stage, \
+         host load, pre-rename check, publication)"
     );
     for counts in [few, many, large] {
         assert!(

@@ -901,6 +901,7 @@ fn weak_graph_does_not_weaken_app_data_and_power_reverts_only_unsynced_names() {
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
+    "crates/tine-graph-features/src/pages_rename_plan.rs",
     "crates/tine-graph-features/src/conflicts.rs",
     "crates/tine-graph-features/src/journals.rs",
     "crates/tine-graph-features/src/pdf.rs",
@@ -1093,7 +1094,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                     "PageOperation",
                     "PageRefusal",
                     "Reloaded",
-                    "RenameRefusal",
+                    "HostInputs",
                     "StopMode",
                     "StopState",
                     "Stopped",

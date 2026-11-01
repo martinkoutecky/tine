@@ -315,8 +315,8 @@ impl<'a> PagePlan<'a> {
                 } else {
                     Some(self.stage(file, expected)?)
                 };
-                self.available_move_destination(file, to)?;
-                self.twin(to, Some(file))?;
+                let absent = self.available_move_destination(file, to)?;
+                self.twin_with_absence(to, Some(file), absent)?;
                 let new = match (&old, renames) {
                     (Some(old), Some(map)) => Some(rewrite_move(
                         old,

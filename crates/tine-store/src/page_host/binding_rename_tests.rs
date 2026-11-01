@@ -1,7 +1,136 @@
-//! The single-page host rename and the alias respell (STEP3 §2, §7, F10,
-//! Q4), against a real Store.
-use super::super::retained::RenameRefusal;
+//! General-operation rename proofs against a real Store (STEP3 F10, Q4).
 use super::*;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::page_host::binding) enum RenameRefusal {
+    Unsaved(PageId),
+    Unwritable(PageId),
+    Unwritten(PageId),
+    Refused,
+    DraftFailed,
+    Superseded(PageId),
+    Uncertain,
+    Busy,
+}
+
+/// General admission/order adapter; held-input policy is proved through pages.rs.
+impl PageHost {
+    pub(in crate::page_host::binding::tests) fn rename(
+        &self,
+        source: &PageId,
+        target: &PageId,
+        referrers: &[PageId],
+        map: &crate::RenameMap,
+        view: &crate::WholeGraph,
+    ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
+        use crate::transaction::validation::{rewrite, rewrite_move};
+        let inputs = self.inputs().map_err(|_| RenameRefusal::Refused)?;
+        let mut refs: BTreeSet<PageId> = referrers.iter().cloned().collect();
+        let mut skipped = BTreeSet::new();
+        let marked = |id: &PageId, bytes: &[u8]| {
+            std::str::from_utf8(bytes).is_ok_and(|text| {
+                !tine_core::concord_queue::vcs_conflict_markers(
+                    text,
+                    tine_core::model::Format::from_path(id.as_str().as_ref()),
+                )
+                .is_empty()
+            })
+        };
+        let rewrite_page = |id: &PageId, bytes: &[u8], moving: bool| {
+            let file = if moving { target } else { id };
+            let path = self.store.graph.root.join(file.as_str());
+            std::panic::catch_unwind(|| {
+                if moving {
+                    rewrite_move(bytes, &path, map, view.config.file_name_format)
+                } else {
+                    rewrite(bytes, &path, map, view.config.file_name_format)
+                }
+            })
+            .ok()
+            .and_then(Result::ok)
+            .map(|new| {
+                if marked(id, bytes) {
+                    bytes.to_vec()
+                } else {
+                    new
+                }
+            })
+            .ok_or_else(|| RenameRefusal::Unwritable(id.clone()))
+        };
+        refs.remove(source);
+        refs.remove(target);
+        for (id, bytes, clean) in inputs.pages() {
+            if !clean && refs.contains(id) {
+                if let Some(bytes) = bytes {
+                    if rewrite_page(id, bytes, false)? != bytes {
+                        return Err(RenameRefusal::Unsaved(id.clone()));
+                    }
+                }
+            }
+        }
+        let read = |id: &PageId| match self.store.read(&id.file(), None) {
+            Ok((bytes, rev)) => Ok(Some((bytes, rev))),
+            Err(crate::StoreError::NotFound) => Ok(None),
+            Err(_) => Err(RenameRefusal::Unwritable(id.clone())),
+        };
+        let mut tx = self.store.page_plan(Some(EditKind::RenamePage));
+        tx.expect_view(view);
+        let mut writes = false;
+        let mut changed = Vec::new();
+        for id in refs {
+            let Some((old, rev)) = read(&id)? else {
+                continue;
+            };
+            let new = rewrite_page(&id, &old, false)?;
+            if new != old {
+                changed.push(id.clone());
+                tx.rewrite_refs_prepared(
+                    &id,
+                    rev,
+                    (
+                        String::from_utf8(old).unwrap(),
+                        String::from_utf8(new).unwrap(),
+                    ),
+                    map,
+                    view.config.file_name_format,
+                );
+                writes = true;
+            } else if marked(&id, &old) {
+                skipped.insert(id);
+            }
+        }
+        if let Some((old, rev)) = read(source)? {
+            rewrite_page(source, &old, true)?;
+            tx.move_file(&source.file(), rev, &target.file(), Some(map));
+            writes = true;
+        }
+        if writes {
+            let mut op = tx.plan().map_err(|why| match why {
+                crate::Why::Failed(error) if error.kind == std::io::ErrorKind::WouldBlock => {
+                    RenameRefusal::Busy
+                }
+                crate::Why::Refused(crate::Refusal::ReadOnly(_)) => {
+                    RenameRefusal::Unwritable(source.clone())
+                }
+                _ => RenameRefusal::Refused,
+            })?;
+            op.inputs = Some(inputs);
+            op.separate_case_entries = true;
+            self.apply(op).map_err(|why| match why {
+                ApplyRefusal::Unsaved(id) => RenameRefusal::Unsaved(id),
+                ApplyRefusal::Unwritten(id) => RenameRefusal::Unwritten(id),
+                ApplyRefusal::Superseded(id) => RenameRefusal::Superseded(id),
+                ApplyRefusal::DraftFailed => RenameRefusal::DraftFailed,
+                ApplyRefusal::Busy => RenameRefusal::Busy,
+                ApplyRefusal::Uncertain | ApplyRefusal::SpellingIncomplete => {
+                    RenameRefusal::Uncertain
+                }
+                _ => RenameRefusal::Refused,
+            })?;
+        }
+        Ok((changed, skipped.into_iter().collect()))
+    }
+}
 
 #[test]
 fn rename_cost_is_independent_of_registered_keys() {
@@ -25,7 +154,6 @@ fn rename_cost_is_independent_of_registered_keys() {
                 &[PageId::from("pages/r.md")],
                 &map("Old", "New"),
                 &view,
-                Arc::new(|_: &PageId, _: &[u8], _| None),
             )
             .unwrap();
         let (caller, driver) = (counted(), shared.read(|_| counted()).unwrap());
@@ -47,25 +175,17 @@ fn map(from: &str, to: &str) -> RenameMap {
     RenameMap(vec![(from.into(), to.into())])
 }
 
-/// A host rename as `pages.rs` drives it: planned in a fresh view, and
-/// replanned in a new one when another publication made it stale (B2).
-fn rename(
-    live: &Live,
+/// Retry stale planning contexts as the feature does (B2).
+pub(super) fn rename(
+    host: &PageHost,
     source: &PageId,
     target: &PageId,
     referrers: &[PageId],
     map: &RenameMap,
 ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
     for _ in 0..20 {
-        let view = live.store.whole_graph().unwrap();
-        match live.host.rename(
-            source,
-            target,
-            referrers,
-            map,
-            &view,
-            Arc::new(|_: &PageId, _: &[u8], _| None),
-        ) {
+        let view = host.store.whole_graph().unwrap();
+        match host.rename(source, target, referrers, map, &view) {
             Err(RenameRefusal::Refused) => continue,
             done => return done,
         }
@@ -73,7 +193,6 @@ fn rename(
     Err(RenameRefusal::Refused)
 }
 
-/// Whether the test volume treats `A` and `a` as one entry.
 pub(super) fn folds_case(root: &std::path::Path) -> bool {
     let probe = root.join("Fold-Probe");
     fs::write(&probe, b"").unwrap();
@@ -82,9 +201,7 @@ pub(super) fn folds_case(root: &std::path::Path) -> bool {
     folds
 }
 
-/// F10: the rename policy is the rename transaction's: the moving page's
-/// title is rebound, a referrer is rewritten, a referrer with VCS markers
-/// is left byte-identical and reported, and the source goes to trash.
+/// F10: rebind title/refs, report byte-identical marked referrers, trash source.
 #[test]
 fn a_host_rename_rewrites_referrers_and_leaves_marked_ones() {
     let marked = "- [[Old]]\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
@@ -94,7 +211,7 @@ fn a_host_rename_rewrites_referrers_and_leaves_marked_ones() {
         ("pages/m.md", marked),
     ]);
     let renamed = rename(
-        &live,
+        &live.host,
         &PageId::from("pages/Old.md"),
         &PageId::from("pages/New.md"),
         &[PageId::from("pages/r.md"), PageId::from("pages/m.md")],
@@ -114,9 +231,7 @@ fn a_host_rename_rewrites_referrers_and_leaves_marked_ones() {
     live.host.stop();
 }
 
-/// og-gh644 F3: the host rename reads the moving page's own title with
-/// lsdoc. A parser panic there makes that one rename `Unwritable` with every
-/// file untouched, and the host keeps serving: a later rename completes.
+/// og-gh644 F3: a title parser panic refuses untouched; the next rename still works.
 #[test]
 fn a_title_read_panic_makes_one_host_rename_unwritable() {
     let bad = format!(
@@ -129,7 +244,7 @@ fn a_title_read_panic_makes_one_host_rename_unwritable() {
         ("pages/Other.md", "- other\n"),
     ]);
     let renamed = rename(
-        &live,
+        &live.host,
         &PageId::from("pages/Old.md"),
         &PageId::from("pages/New.md"),
         &[PageId::from("pages/r.md")],
@@ -143,7 +258,7 @@ fn a_title_read_panic_makes_one_host_rename_unwritable() {
     assert!(!live.root.join("pages/New.md").exists());
     assert_eq!(live.disk("pages/r.md"), "- see [[Old]] and [[Other]]\n");
     let renamed = rename(
-        &live,
+        &live.host,
         &PageId::from("pages/Other.md"),
         &PageId::from("pages/Else.md"),
         &[PageId::from("pages/r.md")],
@@ -168,7 +283,7 @@ fn audit_l3_02_host_rename_preserves_complete_tag_targets() {
         ),
     ]);
     let renamed = rename(
-        &live,
+        &live.host,
         &PageId::from("pages/foo.md"),
         &PageId::from("pages/New.md"),
         &[PageId::from("pages/r.md"), PageId::from("pages/r.org")],
@@ -188,10 +303,7 @@ fn audit_l3_02_host_rename_preserves_complete_tag_targets() {
     live.host.stop();
 }
 
-/// OG-RULES Rule 8 (A-K1): a host operation declares its edit kind. Every
-/// page a host rename writes publishes with `RenamePage`, and a host
-/// delete's page with `DeletePage`, through the per-page kinds a submit
-/// uses; no publication of either goes without a kind.
+/// OG-RULES Rule 8 (A-K1): every publication carries RenamePage or DeletePage.
 #[test]
 fn host_rename_and_delete_publish_their_edit_kinds() {
     let live = Live::new(&[
@@ -200,7 +312,7 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
         ("pages/gone.md", "- gone\n"),
     ]);
     let renamed = rename(
-        &live,
+        &live.host,
         &PageId::from("pages/Old.md"),
         &PageId::from("pages/New.md"),
         &[PageId::from("pages/r.md")],
@@ -248,9 +360,7 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
     live.host.stop();
 }
 
-/// F10: a changed Org referrer that does not round-trip refuses the whole
-/// rename before any write, naming it; a referrer with unsaved input does
-/// too.
+/// F10: unwritable Org or changed unsaved referrers refuse the whole operation.
 #[test]
 fn a_host_rename_refuses_an_unwritable_or_unsaved_referrer() {
     let live = Live::new(&[
@@ -262,7 +372,7 @@ fn a_host_rename_refuses_an_unwritable_or_unsaved_referrer() {
     let target = PageId::from("pages/new.md");
     assert_eq!(
         rename(
-            &live,
+            &live.host,
             &source,
             &target,
             &[PageId::from("pages/o.org")],
@@ -278,7 +388,7 @@ fn a_host_rename_refuses_an_unwritable_or_unsaved_referrer() {
     live.answer(&key, id);
     assert_eq!(
         rename(
-            &live,
+            &live.host,
             &source,
             &target,
             &[PageId::from("pages/r.md")],
@@ -291,14 +401,7 @@ fn a_host_rename_refuses_an_unwritable_or_unsaved_referrer() {
     live.host.stop();
 }
 
-/// Q4 (REVIEW-3), the counterexample trace: on a case-sensitive volume
-/// `Foo.md` exists, `foo.md` does not, and a durable draft of `Foo.md` is
-/// pending retirement. The case-only rename is a two-key host rename,
-/// never a spelling move of one key: it waits out the old-spelling draft,
-/// and its own records name each spelling's key. A crash then leaves an
-/// old-spelling record durable (a deletion draft and custody marker whose
-/// trash move failed, or a custody marker whose retirement failed after
-/// `Foo.md` was gone); the relaunched host never brings `Foo.md` back.
+/// Q4: both spelling keys retain their draft/custody obligations across a crash.
 #[test]
 fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
     use super::super::io::Phase;
@@ -330,7 +433,7 @@ fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
         live.faults(fault, 1000);
         assert_eq!(
             rename(
-                &live,
+                &live.host,
                 &PageId::from("pages/Foo.md"),
                 &PageId::from("pages/foo.md"),
                 &[],
@@ -384,7 +487,6 @@ fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
         live.host.stop();
     }
 }
-/// The spelling lookups and registered-key visits counted on this thread.
 fn counted() -> (usize, usize) {
     let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
     (lookups, super::super::KEY_VISITS.with(|n| n.get()))
@@ -394,11 +496,7 @@ fn uncount() {
     super::super::production::SPELLING_LOOKUPS.with(|n| n.set(0));
     super::super::KEY_VISITS.with(|n| n.set(0));
 }
-/// B1: the host and the held index decide a spelling's identity by the
-/// same rule. Another spelling of an open page's entry (a folding volume's
-/// case alias; elsewhere a symlink, the Q4 test's stand-in) opens the same
-/// key, is never sourced from disk while the page is held, and the entry
-/// keeps one installed row.
+/// B1: aliases share one held key and index row; the held index never reads their disk.
 #[test]
 fn the_host_and_the_held_index_agree_on_an_alias_spelling() {
     let live = Live::new(&[("pages/Foo.md", "- one\n")]);
@@ -434,12 +532,7 @@ fn the_host_and_the_held_index_agree_on_an_alias_spelling() {
     live.host.stop();
 }
 
-/// P1 (`page_open`'s `baselineEntry`): the reply says whether the opened
-/// path is proved to name the key's entry under the shared identity: the
-/// key's own leaf, or Q4's alias of it (a case-folding disk). A symlinked
-/// case variant on a case-sensitive disk is a second listed entry of the
-/// same file: Unknown with no alias, so not proved, though it resolves to
-/// the same key.
+/// P1 baselineEntry: own or proved folded spelling, never a separately listed alias.
 #[test]
 fn an_open_reply_says_whether_the_path_is_proved_the_entry() {
     let live = Live::new(&[("pages/Foo.md", "- one\n")]);
@@ -471,10 +564,7 @@ fn an_open_reply_says_whether_the_path_is_proved_the_entry() {
     );
     live.host.stop();
 }
-/// A distinct new entry with a fresh key (REVIEW-3a4 #1) that then moved
-/// on to `pages/b.md` (respelled by a host operation), with `body` typed
-/// into it and its saves failing: unsaved input under a key that is
-/// neither its spelling nor its spelling plus a suffix.
+/// REVIEW-3a4: unsaved input on a fresh key subsequently respelled to b.md.
 pub(super) fn typed_fresh_entry(live: &Live, body: &str) -> PageKey {
     let (old, _) = live.open("pages/a.md");
     fs::rename(live.root.join("pages/a.md"), live.root.join("pages/A.md")).unwrap();
@@ -504,9 +594,7 @@ pub(super) fn typed_fresh_entry(live: &Live, body: &str) -> PageKey {
     live.answer(&new, id);
     new
 }
-/// REVIEW-3a5 neighbour: a host rename refused by a referrer's unsaved
-/// input names that referrer by its current spelling, which `pages.rs`
-/// looks its title up by.
+/// REVIEW-3a5: an unsaved referrer is named by current spelling, including fresh keys.
 #[test]
 fn a_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
     let live = Live::new(&[("pages/a.md", "- old\n"), ("pages/t.md", "- t\n")]);
@@ -517,7 +605,7 @@ fn a_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
     typed_fresh_entry(&live, "- see [[t]]\n");
     assert_eq!(
         rename(
-            &live,
+            &live.host,
             &PageId::from("pages/t.md"),
             &PageId::from("pages/u.md"),
             &[PageId::from("pages/b.md")],
@@ -528,118 +616,7 @@ fn a_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
     live.host.stop();
 }
 
-/// The host page `key` as the driver holds it now.
-fn held_page(live: &Live, key: &str) -> Option<Page> {
-    let state = live.host.driver.shared.state_for_tests();
-    state.progress.host.pages.get(key).cloned()
-}
-
-/// R3a(2)/R4 (A-W1): a referrer whose unsaved buffer already says the new
-/// name (its saves keep failing) is not the rename's to flush or refuse.
-/// The rename succeeds without it; the referrer keeps its buffer, version
-/// and unsaved input, its file is untouched, and it publishes no rename.
-/// With no source file (a references-only rerun) there is then nothing to
-/// write: an empty success, never a replan loop.
-#[cfg(unix)]
-#[test]
-fn a_rename_leaves_an_unsaved_referrer_that_already_says_the_new_name() {
-    use std::os::unix::fs::PermissionsExt;
-    for source in ["pages/Old.md", "pages/Ghost.md"] {
-        let name = if source == "pages/Old.md" {
-            "Old"
-        } else {
-            "Ghost"
-        };
-        let mut files = vec![("journals/m.md", format!("- see [[{name}]]\n"))];
-        if source == "pages/Old.md" {
-            files.push(("pages/Old.md", "- old\n".to_owned()));
-        }
-        let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (*p, b.as_str())).collect();
-        let live = Live::new(&files);
-        let (key, page) = live.open("journals/m.md");
-        // m's saves fail (no temp file in a read-only directory) while the
-        // rename's own writes under `pages/` succeed.
-        let journals = live.root.join("journals");
-        let mode = |bits| fs::set_permissions(&journals, fs::Permissions::from_mode(bits)).unwrap();
-        mode(0o555);
-        let id = live
-            .submit(&key, "- see [[New]] typed\n", page.version, None)
-            .unwrap();
-        live.answer(&key, id);
-        settle();
-        let before = held_page(&live, &key).unwrap();
-        assert!(!before.clean(), "{source}: the edit stays unsaved");
-        assert_eq!(
-            rename(
-                &live,
-                &PageId::from(source),
-                &PageId::from("pages/New.md"),
-                &[PageId::from("journals/m.md")],
-                &map(name, "New"),
-            ),
-            Ok((vec![], vec![])),
-            "{source}"
-        );
-        assert_eq!(held_page(&live, &key).unwrap(), before, "{source}");
-        assert_eq!(live.disk("journals/m.md"), format!("- see [[{name}]]\n"));
-        if source == "pages/Old.md" {
-            assert_eq!(live.disk("pages/New.md"), "- old\n");
-            assert!(!live.root.join(source).exists());
-        } else {
-            assert!(!live.root.join("pages/New.md").exists());
-        }
-        let kinds = live.kinds.lock().unwrap().clone();
-        assert!(
-            !kinds.iter().any(|(page, _)| page == "journals/m.md"),
-            "{source}: {kinds:?}"
-        );
-        mode(0o755);
-        live.host.stop();
-    }
-}
-
-/// R3 (A-W1), the host's final value: a held page the planner did not list
-/// (its referrers come from the index) is found from its buffer, and the
-/// operation's write, edit kind and report cover it.
-#[test]
-fn a_held_referrer_the_planner_missed_is_part_of_the_rename() {
-    let live = Live::new(&[("pages/Old.md", "- old\n"), ("pages/h.md", "- x\n")]);
-    let (key, page) = live.open("pages/h.md");
-    let id = live
-        .submit(&key, "- see [[Old]]\n", page.version, None)
-        .unwrap();
-    live.answer(&key, id);
-    live.until_disk(&key, "- see [[Old]]\n");
-    let renamed = rename(
-        &live,
-        &PageId::from("pages/Old.md"),
-        &PageId::from("pages/New.md"),
-        &[],
-        &map("Old", "New"),
-    );
-    assert_eq!(renamed, Ok((vec![PageId::from("pages/h.md")], vec![])));
-    assert_eq!(live.disk("pages/h.md"), "- see [[New]]\n");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let kinds = live.kinds.lock().unwrap().clone();
-        if kinds
-            .iter()
-            .any(|(page, kinds)| page == "pages/h.md" && kinds == &[EditKind::RenamePage])
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "h.md published no rename: {kinds:?}"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    live.host.stop();
-}
-
-/// B2 (A-W1): the host admits a rename only in the context it was planned
-/// in. A config delivered after the plan's view refuses the operation
-/// before any write or draft; the caller replans in a fresh view.
+/// B2 (A-W1): a changed config refuses unwritten, then a fresh plan completes.
 #[test]
 fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
     let live = Live::new(&[
@@ -660,7 +637,6 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
         &[PageId::from("pages/r.md")],
         &map("Old", "New"),
         &view,
-        Arc::new(|_: &PageId, _: &[u8], _| None),
     );
     assert_eq!(renamed, Err(RenameRefusal::Refused));
     assert_eq!(live.disk("pages/Old.md"), "- old\n");
@@ -669,7 +645,7 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
     assert!(live.drafts().is_empty());
     assert_eq!(
         rename(
-            &live,
+            &live.host,
             &PageId::from("pages/Old.md"),
             &PageId::from("pages/New.md"),
             &[PageId::from("pages/r.md")],
@@ -680,11 +656,7 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
     live.host.stop();
 }
 
-/// The caller's bound is on a stall, not the operation (storage contract,
-/// page host binding, the caller's wait): a rename whose pages save one by
-/// one over more than `OPERATION_WAIT` in all, each well within it of the
-/// last, is waited for and answered Applied (hosted Windows: a thousand
-/// referrers outlast 10 s).
+/// The caller's bound is on a stall: publishing referrers keep a long rename alive.
 #[test]
 fn a_long_rename_that_keeps_publishing_is_waited_for() {
     use super::super::retained::OPERATION_WAIT;
@@ -712,7 +684,7 @@ fn a_long_rename_that_keeps_publishing_is_waited_for() {
     });
     let started = Instant::now();
     let renamed = rename(
-        &live,
+        &live.host,
         &PageId::from("pages/Old.md"),
         &PageId::from("pages/New.md"),
         &ids,
@@ -734,8 +706,7 @@ fn a_long_rename_that_keeps_publishing_is_waited_for() {
     live.host.stop();
 }
 
-/// host-only-writer P1 (review F4): a host whose driver ended refuses each
-/// operation as a stopped host does; none panics.
+/// P1/F4: an ended driver refuses each operation without panicking.
 #[test]
 fn every_operation_on_an_ended_driver_is_refused() {
     let mut live = Live::new(&[("pages/Old.md", "- body\n")]);
@@ -755,15 +726,11 @@ fn every_operation_on_an_ended_driver_is_refused() {
         &[],
         &map("Old", "New"),
         &view,
-        Arc::new(|_: &PageId, _: &[u8], _| None),
     );
     assert_eq!(renamed.err(), Some(RenameRefusal::Refused), "rename");
 }
 
-/// host-only-writer P1 (§3.2a deltas): a rename or a delete whose page's
-/// path lock another thread holds is not admitted past `OPERATION_WAIT`.
-/// The rename refuses `Busy` and the delete answers `Waiting`; nothing
-/// changed on disk. Before P1 both blocked on the lock without a bound.
+/// P1: a held path lock bounds rename (Busy) and delete (Waiting), without writes.
 #[test]
 fn a_rename_or_delete_under_a_held_path_lock_is_bounded() {
     use super::super::retained::OPERATION_WAIT;
@@ -773,26 +740,30 @@ fn a_rename_or_delete_under_a_held_path_lock_is_bounded() {
     let graph = &live.store.graph;
     let old_lock = graph.page_lock(&live.root.join("pages/Old.md"));
     let gone_lock = graph.page_lock(&live.root.join("pages/Gone.md"));
-    let held = (old_lock.lock().unwrap(), gone_lock.lock().unwrap());
+    let (old_held, gone_held) = (old_lock.lock().unwrap(), gone_lock.lock().unwrap());
     let started = Instant::now();
+    let (sender, received) = mpsc::channel();
     let (renamed, deleted) = std::thread::scope(|scope| {
-        let renamed = scope.spawn(|| {
-            live.host.rename(
+        let _renamed = scope.spawn(|| {
+            let renamed = live.host.rename(
                 &PageId::from("pages/Old.md"),
                 &PageId::from("pages/New.md"),
                 &[],
                 &map("Old", "New"),
                 &view,
-                Arc::new(|_: &PageId, _: &[u8], _| None),
-            )
+            );
+            let _ = sender.send(renamed);
         });
         let gone = PageId::from("pages/Gone.md");
         let host = &live.host;
         let deleted = scope.spawn(move || host.delete(session, &gone, Some(&b"- gone\n"[..])));
-        (renamed.join().unwrap(), deleted.join().unwrap())
+        let renamed = received.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        drop(old_held);
+        (renamed, deleted.join().unwrap())
     });
     let waited = started.elapsed();
-    drop(held);
+    drop(gone_held);
+    let renamed = renamed.expect("rename preflight must be bounded");
     assert!(
         waited < OPERATION_WAIT + Duration::from_secs(3),
         "bounded: {waited:?}"

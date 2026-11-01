@@ -200,11 +200,16 @@ impl PagePlan<'_> {
         }
     }
 
-    pub(super) fn available_move_destination(&self, from: &FileId, to: &FileId) -> Result<(), Why> {
+    pub(super) fn available_move_destination(
+        &self,
+        from: &FileId,
+        to: &FileId,
+    ) -> Result<bool, Why> {
         if self.destination_is_source_spelling(from, to)? {
-            Ok(())
+            Ok(false)
         } else {
-            self.absent(to)
+            self.absent(to)?;
+            Ok(true)
         }
     }
 

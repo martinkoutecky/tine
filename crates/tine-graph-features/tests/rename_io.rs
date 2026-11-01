@@ -2,10 +2,9 @@
 //! is its opens. QF3 measured eight successful read opens per rewritten
 //! referrer and a planner that built the whole-graph name inventory. og's
 //! contract: the planner's name work does not grow with the page count, each
-//! referrer's references are rewritten once (not again under the writer
-//! lock), and each rewritten referrer is opened a constant four times: the
-//! planner's read, the preflight base-revision stage, the final pre-rename
-//! guard, and the publication read (I-13, I-25).
+//! referrer's references are rewritten once outside the writer. R5/D4R keeps
+//! five opens: selection, PagePlan preflight, host admission load, final
+//! pre-rename guard and publication. Staged-byte preflight is deferred.
 use std::fs;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -147,9 +146,9 @@ fn rename_reads_each_referrer_once_per_guard() {
     let few = rename(60, 2);
     let many = rename(60, 30);
     assert!(
-        many.full_reads - few.full_reads <= 3 * 28,
-        "GH #623/I-25: each extra referrer costs three whole-file reads under the writer: \
-         the preflight base-revision stage, the final pre-rename guard and the publication \
+        many.full_reads - few.full_reads <= 4 * 28,
+        "GH #623/I-25/R5: each extra referrer costs four whole-file reads under the writer: \
+         PagePlan staging, host admission load, final pre-rename guard and publication \
          read; a separate stage-2 verify of a changing rewrite repeated the pre-rename \
          guard's comparison (exemplar transaction/read_checks.rs): {few:?} vs {many:?}"
     );

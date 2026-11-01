@@ -447,13 +447,13 @@ zero additional checkpoint bytes or files per edit.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 57 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
+surface is 58 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).
-The operation count stays 57; this adds no operation or persisted record.
+R5 adds prepared referrer text to the existing rewrite protocol, with no new persisted record.
 
 Clone setup (D-20261031-GCL) shares GS1's existing Unicode candidate rule through
 `file_kind::fold_entry_name`, so a folding volume refuses a colliding remote
@@ -685,6 +685,15 @@ failing app-data disk) never fail the start: the graph opens with draft I/O
 down and `draft_status` says why. Unit cost: none beyond the drafts below; sessions, the orphan
 flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
+
+Every page rename is planned as a `HostOp`, including one moved page.
+Single-page selection refuses unsaved input only where the rewrite changes
+it, and includes held referrers absent from the index. Admission checks that
+selection's held buffers, versions, saved status, spellings and membership.
+An unchanged flush permits plan reuse only with identical held input and
+unchanged refreshed graph revision/config; otherwise selection runs again.
+Read-only host planning retains its writer and path locks, with the same
+`OPERATION_WAIT` bound on acquiring them. A timeout refuses before drafting.
 
 **Rename order (option 2, SPEC-s3 s3.2).** While Tine runs, a host rename
 publishes its destination first, then its rewritten referrers, then its
@@ -1218,7 +1227,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 |---|---:|---|
 | `transaction.rs::refuse_marker_rewrite::ReadOnly` | 1 | R-VCS-MARKERS for reference rewrites and moves that rewrite references (og 21a, master a8fd4230d): an external VCS merge or a sync service left a referrer mid-conflict; rewriting `[[Old]]` inside it would edit sides of a merge the user has not adjudicated. The rename skips such referrers (byte-identical, a moved one moves verbatim) and reports them; this refuses any other caller's rewrite. A rewrite that changes nothing passes. |
 | `transaction.rs::path::InvalidTarget` | 3 | A sync update changes a path into a symlink or invalid area while an operation resolves it; refuse access outside the approved graph root. Only a target proved outside is refused. One that cannot be inspected now (Windows refuses to open a page for a moment while a save replaces it) is re-probed for under 50 ms (in `canonical_existing_ancestor`, so the submit's OS-path check and the write-target check both do), an ordinary entry resolving through its folder; a link that does not resolve is refused at once. A target still uninspectable fails as that I/O error: the submit answers `failed` and the window keeps the text unsaved, rather than refusing it as outside (REG-WIN-WRITE-TARGET-TRANSIENT, proof `crates/tine-store/src/model/write_target.rs` `write_target_probe_tests`). |
-| `transaction.rs::twin::Twin` | 2 | Sync introduces an alternate-extension or indexed second physical file for the same page name or journal day; refuse a write that could choose the wrong one. The disk check also catches a twin delivered since the index, and exempts a move's own source. |
+| `transaction.rs::twin_with_absence::Twin` | 2 | Sync introduces an alternate-extension or indexed second physical file for the same page name or journal day; refuse a write that could choose the wrong one. The disk check also catches a twin delivered since the index, and exempts a move's own source. Locally absent destinations use filename identity; admission and final creation guards remain live. |
 | `transaction.rs::preflight::InvalidTarget` | 10 | A legitimate caller supplies a malformed path or unsupported operation (including moving config), or an external rename changes target shape; refuse before any step changes disk. Config moves require live config publication. |
 | `transaction.rs::page_save_target::InvalidTarget` | 3 | A page save names a non-page path or unsafe page nesting, or a caller attempts to save a virtual Guide DTO; refuse before any step changes disk. Guide content needs an explicit graph copy. |
 | `transaction.rs::page_create_checks::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
@@ -1269,7 +1278,7 @@ by I-9's typed failure paths.
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::model::configured_hidden` scope (og T2, master `hidden_parse_failed_closed`) | A torn or hand-broken `config.edn` (sync-service delivery, an external-editor race or crash) leaves `:hidden` malformed or over its limits (unterminated vector, bad string escape, over 256 entries or 64 KiB, nesting over 32): graph-text scope hides all graph text instead of reading "nothing hidden", which would list, index, snapshot and export text the owner excluded. Recovery is fixing `config.edn`; the watcher's config reload restores the scope. A snapshot taken meanwhile holds no graph text and records `hidden_parse_failed_closed`, so its restore retires none (proof `crates/tine-store/tests/store_read.rs` `malformed_hidden_value_hides_all_graph_text`, `src-tauri/src/backup/restore.rs` `failed_closed_hidden_snapshot_records_scope_and_retires_nothing`). A missing `:hidden`, or a non-vector value, hides nothing (OG). |
 | `tine-store::page_host` request answers (step 3b, `Refusal`) | A submit or Discard for a page the host does not hold (`NotHeld`; a frontend or plugin defect, or a request from an earlier window state): refuse and change nothing. A Discard whose disk read fails (`ReadFailed`, SPEC-s2 §4.11 "discard failed"; a disk error), including the read of a running rename's source that the Discard would revert: refuse whole, change neither page, keep the rename's order (proof `crates/tine-store/src/page_host/command_tests.rs` `an_answer_that_did_not_take_its_request_names_why`, `a_discard_whose_partner_source_read_fails_changes_nothing`). A move whose versions are no longer current (`Stale`; newer input in this window raced it): refuse both pages. A move whose receiver draft cannot be written (`DraftFailed`; a full disk or an app-data disk error): refuse and change nothing. |
-| `tine-store::page_host` operations (step 3b P2b, `RenameRefusal`, `PageOperation`) | An operation's draft cannot be written (a full disk or an app-data disk error): the rename, merge move or deletion answers `DraftFailed`, nothing changed on disk or in memory, no order is installed and no reply slot is left (proof `binding_order_tests.rs` `a_rename_whose_draft_fails_changes_nothing`). An operation over a running rename's pages is `Waiting` or `Busy` (above, "Rename order"). A page the rename would rewrite has unsaved input (`Unsaved`; an honest edit in this window races it) or cannot be rewritten (`Unwritable`; malformed imported Org or non-UTF-8 bytes): refuse before anything changes. |
+| `tine-store::page_host` operations (step 3b P2b, `ApplyRefusal`, `PageOperation`) | An operation's draft cannot be written (a full disk or an app-data disk error): the rename, merge move or deletion answers `DraftFailed`, nothing changed on disk or in memory, no order is installed and no reply slot is left (proof `binding_order_tests.rs` `a_rename_whose_draft_fails_changes_nothing`). An operation over a running rename's pages is `Waiting` or `Busy` (above, "Rename order"). A page the rename would rewrite has unsaved input (`Unsaved`; an honest edit in this window races it) or cannot be rewritten (`Unwritable`; malformed imported Org or non-UTF-8 bytes): refuse before anything changes. |
 | `tine-store::page_host` trash custody (A4, `HostIo::trash_sync`) | A deleted page's trash name cannot be made durable: the payload's stat or a trash-chain directory sync fails (a disk error, R-STORAGE-ERROR). The next saves of that page fail while its custody is owed, so a recreation never lands before the deletion's trash name is durable. The third consecutive failure escapes: the save goes ahead with a sticky error, and the unfinished custody stays as debt that launch retries. Discard never waits for custody (proof `crates/tine-store/src/page_host/production_tests.rs` `unsyncable_trash_escapes_after_three_failures_and_never_blocks_discard`, `scheduler.rs` `failing_custody_fails_saves_until_the_three_failure_escape`). |
 | `tine-store::page_host::delete` target (step 3b, `page_host/binding.rs`) | Web content, a plugin or a frontend defect passes `page_delete` a path that is not a page file of this graph (outside the root, not a graph text file): refuse before the deletion is registered or anything is written, as `page_open_checks::InvalidTarget` does for an open (proof `crates/tine-graph-features/tests/page_delete_missing.rs` `a_delete_outside_the_graph_refuses_without_writes`). |
 | `tine-store::page_host::apply` (host-only-writer P2, `HostOp`, `ApplyRefusal`) | A feature's planned write runs as one host operation, admitted only if every page still holds the bytes the feature planned from (`Expected`). A page that no longer does, or that the host cannot read (`Changed`; the window, an external editor or a sync service changed the file since the plan): refuse whole, change nothing, and the feature replans (`retry_on_conflict`). A publication or config delivery after the planner's bound view also refuses Changed before admission (B2), even if the planned page bytes are unchanged. An absent destination's name slot is rechecked on the driver under the operation's path locks, using the transaction's claimant/twin and unreadable-owner rules (raw create checks the filename, CreateNew save also checks the DTO name, move exempts its own source). An arriving claim refuses `Changed` before the inner `Host::apply`; no operation or draft is recorded. This binding refusal is an s33 pre-admission stutter: the one-path-per-page model, its `opApply` conformance and pins are unchanged. C3 is proven by the real Guide API regressions for an arriving twin and an unreadable owner. Unsaved input on a page (`Unsaved`; an honest edit in this window races the writer): a `Refuse` writer refuses naming the page; a `Flush` writer saves it first and refuses only when that save cannot complete (a conflict or a persistent disk error). Store reads answer saved bytes, so a `Flush` feature saves its pages' input before it plans (`PageHost::flush_input`, `tine-graph-features::retained::operation`): a page that exists only as typed input would otherwise plan as absent. The save-first wait is the host's flush wait: past `OPERATION_WAIT` only a page a rename holds refuses `Busy`. A path that is not a page of this graph or reaches outside it through a symlink, a page named twice, or a move that is not one (`Refused`; a plugin or frontend defect, or an imported graph holding a symlinked folder): refuse before the operation is admitted or anything is written (pages named earlier in the operation may already be registered; registration writes nothing). A path that only collides with a registered entry, unproved, is `Changed` (an external rename or case-variant twin since the plan). Not admitted within `OPERATION_WAIT` (`Busy`; another operation, rename or path lock holds its pages, as above); after a flush the admission gets a whole `OPERATION_WAIT` again. A draft that cannot be written (`DraftFailed`; a full disk or an app-data disk error): nothing changed. After admission it answers as a rename does (`Unwritten`, `Superseded`, `Uncertain`). Exception for folded case moves (S3): before any entry move the driver checks the write set's clean input, expected bytes and bound view/config and retains verified old bytes in trash using the existing no-replace copy recipe; a refusal can leave a harmless recovery copy. A withdrawn copy wait reports Busy; a late/ended copy wait reports Uncertain. Each guarded byte-preserving entry move runs first, under its path lock, rechecking clean input, old bytes and view/config; only a fresh listing can advance host spelling. The content HostOp then repeats full admission at the new spelling. Once entry work starts, every failed or unanswered move or content operation reports SpellingIncomplete, including a later Changed, Unsaved, Busy or DraftFailed. The file name may already be changed; the text change is not confirmed. Save or discard pending edits, then rename again to the intended name; if already displayed, check the text. No automatic entry completion is promised; unchanged names are always no-ops. A deleted page keeps its bytes in the graph trash, as every host deletion does (proof `crates/tine-store/src/page_host/binding_apply_tests.rs`; physical random lockstep for current/stale plans, absent/present effects and claimed creates: `crates/tine-store/src/page_host/scheduler_random_tests.rs` `scheduler_random_walks_with_faults_and_disabled_actions`). |
@@ -1633,7 +1642,7 @@ A later refusal can leave a harmless recovery copy. A
 non-drafted driver command moves the entry under its key's path lock,
 rechecking clean input, bytes, config and the folded alias. It keeps the
 key, held page and queued requests, and moves the spelling and lock handle.
-The single-page alias branch refuses unsaved input; namespace renames keep
+A single-page rename refuses unsaved input; namespace renames keep
 their existing flush policy. Several folded entries use this same command
 in turn before the shared content operation, which repeats full admission
 at the observed destination spellings. The model has no spelling
@@ -1831,15 +1840,14 @@ seam (`page_host/production.rs`, `cost_counters`). No transport bytes.
 
 ### Rename reads (GH #623, QF3b)
 
-A rename opens each rewritten referrer four times: the planner's read, the
-preflight base-revision stage, the final pre-rename guard inside
+A rename opens each rewritten referrer five times: the planner's read,
+PagePlan's base-revision stage, the host admission load, the final guard inside
 `atomic_write_with_check`, and the publication read. The planner names only
 the renamed page's own files (`WholeGraph::inventory(InventoryScope::FilesAtOrUnder)`), not the
 whole-graph inventory. It queues each unmoved, marker-free referrer with
-`PagePlan::rewrite_refs` and the text it read; the call reports whether the
-rewrite (`tine_core::refs::rename_rewrite`, the one rewriter both the planner
-and the store use) changes it, queues nothing for an unchanged non-title
-referrer, and keeps a changing rewrite in the queued step. Moved and
+`PagePlan::rewrite_refs_prepared` and the old/new text already selected by
+`RenamePlan::pages`; unchanged non-title referrers queue nothing. The shared
+`tine_core::refs::rename_rewrite` supplies the prepared text. Moved and
 marker-bearing referrers are asked of `rename_rewrite` directly, since a move
 rewrites inside its own step and a marker-bearing file must not be queued
 before the planner's VCS-marker skip. Preflight still stages the file against

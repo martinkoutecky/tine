@@ -50,6 +50,9 @@ impl std::error::Error for Busy {}
 pub(crate) fn plan(tx: tine_store::PagePlan<'_>) -> io::Result<HostOp> {
     tx.plan().map_err(|why| match why {
         tine_store::Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, Replan),
+        tine_store::Why::Failed(error) if error.kind == io::ErrorKind::WouldBlock => {
+            io::Error::new(error.kind, Busy(error.message))
+        }
         why => crate::why_error(why),
     })
 }
