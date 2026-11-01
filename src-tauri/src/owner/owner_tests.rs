@@ -1421,17 +1421,16 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         )
         .unwrap();
         let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
-        // An ordinary block's author is editor text, as on OG; replacing that
-        // buffer removes it. A comment's hidden author is covered separately.
-        assert_eq!(bytes.matches("author::").count(), 2);
+        // The edit keeps the block's author and adds none (#840).
+        assert_eq!(bytes.matches("author::").count(), 3);
         assert!(!bytes.contains("author:: agent"));
     }
 }
 
 #[test]
-fn block_edit_preserves_comment_metadata_but_replaces_ordinary_author_text() {
+fn block_edit_preserves_comment_metadata_and_ordinary_author() {
     for (content, expected) in [
-        ("ordinary\nauthor:: Ada", "edited"),
+        ("ordinary\nauthor:: Ada", "edited\nauthor:: Ada"),
         (
             "comment\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
             "edited\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
@@ -1453,6 +1452,199 @@ fn block_edit_preserves_comment_metadata_but_replaces_ordinary_author_text() {
         .unwrap();
         let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
         assert_eq!(doc.blocks.last().unwrap().raw, expected);
+    }
+}
+
+/// One block's raw text after `block.edit` on a one-block page. `extra` merges
+/// into the verb's arguments.
+fn gh840_edit(org: bool, raw: &str, text: &str, extra: Value) -> Result<String, ErrorBody> {
+    let graph = Graph::new();
+    let (rel, file) = if org {
+        ("pages/p.org", format!("* {raw}\n"))
+    } else {
+        ("pages/p.md", format!("- {}\n", raw.replace('\n', "\n  ")))
+    };
+    std::fs::write(graph.root.join(rel), file).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "p"})).unwrap();
+    let mut args = json!({"handle": format!("p/{}", block_handle(&read, 0)), "text": text});
+    for (key, value) in extra.as_object().unwrap() {
+        args[key] = value.clone();
+    }
+    verb(&slot, "block.edit", args)?;
+    Ok(graph.store.page(&PageId::from(rel)).unwrap().doc.blocks[0]
+        .raw
+        .clone())
+}
+
+fn gh840_values(raw: &str, org: bool, key: &str) -> Vec<String> {
+    tine_core::block_regions::parse(raw, org)
+        .properties
+        .iter()
+        .filter(|p| p.primary && p.key.eq_ignore_ascii_case(key))
+        .map(|p| p.value.clone())
+        .collect()
+}
+
+#[test]
+fn gh840_block_edit_keeps_properties_not_named_in_the_text() {
+    // The reporter's three shapes. Intentional difference from OG and from the
+    // app's editor buffer: OG has no command line (D-20261101-CLIE).
+    for (raw, text, expected) in [
+        ("plain block\nauthor:: claude", "x", "x\nauthor:: claude"),
+        (
+            "with status\nstatus:: done\nauthor:: claude",
+            "x",
+            "x\nstatus:: done\nauthor:: claude",
+        ),
+        (
+            "comment\nquote:: words\nauthor:: claude",
+            "x",
+            "x\nquote:: words\nauthor:: claude",
+        ),
+        // Bytes of a kept row stay exact, including trailing space.
+        (
+            "a\nsrc:: https://x.test/1  ",
+            "x",
+            "x\nsrc:: https://x.test/1  ",
+        ),
+        // A named key replaces its row and leaves the others, in any spelling.
+        (
+            "a\nstatus:: done\nauthor:: claude",
+            "x\nstatus:: doing",
+            "x\nstatus:: doing\nauthor:: claude",
+        ),
+        (
+            "a\nstatus:: done\nauthor:: claude",
+            "x\nSTATUS:: doing",
+            "x\nSTATUS:: doing\nauthor:: claude",
+        ),
+        // A new key joins the one group OG reads.
+        (
+            "a\nsrc:: one",
+            "x\nbody\nowner:: Ada",
+            "x\nbody\nowner:: Ada\nsrc:: one",
+        ),
+        // Multi-line bodies keep one group too.
+        ("a\nsrc:: one\nbody", "x\ny", "x\nsrc:: one\ny"),
+        ("a\nsrc:: one", "", "\nsrc:: one"),
+    ] {
+        let edited = gh840_edit(false, raw, text, json!({})).unwrap();
+        assert_eq!(edited, expected, "{raw:?} <- {text:?}");
+        assert!(
+            tine_core::block_regions::parse(&edited, false)
+                .property_regions
+                .len()
+                <= 1,
+            "{edited:?}"
+        );
+    }
+    let org = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:\nbody",
+        "x",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&org, true, "status"), ["done"], "{org}");
+    assert_eq!(gh840_values(&org, true, "author"), ["claude"], "{org}");
+    assert!(org.starts_with('x') && !org.contains("body"), "{org}");
+    let named = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:",
+        "x\n:PROPERTIES:\n:STATUS: doing\n:END:",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&named, true, "status"), ["doing"], "{named}");
+    assert_eq!(gh840_values(&named, true, "author"), ["claude"], "{named}");
+}
+
+#[test]
+fn gh840_read_then_edit_keeps_one_copy_and_fences_stay_text() {
+    for raw in [
+        format!("a\nid:: {UUID}\nstatus:: done\nauthor:: claude"),
+        "a\nstatus:: done\nbody\nauthor:: claude".to_string(),
+    ] {
+        // The raw text a read returns, sent back unchanged or changed only in
+        // its title, gains no second copy of anything.
+        for text in [raw.clone(), raw.replacen('a', "b", 1)] {
+            let edited = gh840_edit(false, &raw, &text, json!({})).unwrap();
+            for key in ["status", "author"] {
+                assert_eq!(gh840_values(&edited, false, key).len(), 1, "{edited:?}");
+            }
+            assert_eq!(edited.matches("id::").count(), raw.matches("id::").count());
+        }
+    }
+    let org = "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:";
+    let edited = gh840_edit(true, org, org, json!({})).unwrap();
+    assert_eq!(edited, org);
+    // A fenced lookalike is text: it names nothing, so the row stays.
+    let fenced = "x\n```\nstatus:: example\n```";
+    let edited = gh840_edit(false, "a\nstatus:: done", fenced, json!({})).unwrap();
+    assert_eq!(
+        gh840_values(&edited, false, "status"),
+        ["done"],
+        "{edited:?}"
+    );
+    assert!(edited.contains("```\nstatus:: example\n```"), "{edited:?}");
+    // History stays as well, with visible rows around it.
+    let drawer = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+    let edited = gh840_edit(
+        false,
+        &format!("a\nstatus:: done\n{drawer}"),
+        "x",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(
+        gh840_values(&edited, false, "status"),
+        ["done"],
+        "{edited:?}"
+    );
+    assert!(edited.contains(drawer), "{edited:?}");
+}
+
+#[test]
+fn gh840_explicit_author_replaces_and_empty_refuses() {
+    let name = json!({"author_property": "codex"});
+    for (raw, text, expected) in [
+        ("a", "x", "x\nauthor:: codex"),
+        ("a\nauthor:: claude", "x", "x\nauthor:: codex"),
+        ("a\nAuthor:: claude", "x", "x\nAuthor:: codex"),
+        (
+            "a\nauthor:: claude",
+            "x\nauthor:: typed",
+            "x\nauthor:: codex",
+        ),
+        (
+            "a\nquote:: words\nauthor:: claude",
+            "x",
+            "x\nquote:: words\nauthor:: codex",
+        ),
+    ] {
+        assert_eq!(
+            gh840_edit(false, raw, text, name.clone()).unwrap(),
+            expected
+        );
+    }
+    let org = gh840_edit(true, "a\n:PROPERTIES:\n:author: claude\n:END:", "x", name).unwrap();
+    assert_eq!(gh840_values(&org, true, "author"), ["codex"], "{org}");
+    // The `author` every write carries (TINE_AUTHOR) names commits, not the block.
+    let edited = gh840_edit(false, "a\nauthor:: Ada", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(edited, "x\nauthor:: Ada");
+    let plain = gh840_edit(false, "a", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(plain, "x");
+    for bad in ["", "  ", "two\nlines"] {
+        let error = gh840_edit(
+            false,
+            "a\nauthor:: Ada",
+            "x",
+            json!({"author_property": bad}),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "refused", "{bad:?}");
     }
 }
 
