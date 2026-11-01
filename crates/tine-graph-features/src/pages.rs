@@ -774,14 +774,17 @@ fn rename_transaction<'s>(
                     == RewriteEffect::Changes
             }
         };
-        if changed && marked {
+        let org_refuses = org && (changed || own_title) && !tine_core::org::org_editable(&content);
+        // A single rename's own marked Org source refuses like any other that
+        // does not round-trip; the marker skip must not move it unrewritten.
+        if changed && marked && !(single && moved && org_refuses) {
             skipped.push(id.as_str().to_owned());
             if moved {
                 edits.push((id, rev, false));
             }
             continue;
         }
-        if org && (changed || own_title) && !tine_core::org::org_editable(&content) {
+        if org_refuses {
             let display = store
                 .path_for_os_handoff(&file, false)
                 .map_err(store_error)?;

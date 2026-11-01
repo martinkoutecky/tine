@@ -40,6 +40,51 @@ fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>
 const CONFLICTED: &str =
     "- intro\n<<<<<<< HEAD\n- mine sees [[Alpha]]\n=======\n- theirs sees [[Alpha]]\n>>>>>>> branch\n";
 
+const MARKED_ORG: &str =
+    "* [[Old]]\n*** skipped level\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n";
+
+#[test]
+fn single_rename_refuses_its_marked_org_source_that_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
+    let source = format!("#+TITLE: Old\n{MARKED_ORG}");
+    let (root, store) = graph("marked-org-source", &[("pages/Old.org", source.as_str())]);
+    let refusal = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(refusal.to_string().contains("read-only .org file"));
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Old.org")).unwrap(),
+        source
+    );
+    assert!(!root.join("pages/New.org").exists());
+}
+
+#[test]
+fn single_rename_refuses_a_held_marked_org_referrer_that_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
+    let (root, store) = graph(
+        "marked-org-held",
+        &[("pages/Old.org", "* body\n"), ("pages/r.org", MARKED_ORG)],
+    );
+    let refusal = hosted(&store, |host| {
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        host.open(session, 1, &tine_store::PageId::from("pages/r.org"), "r")
+            .unwrap();
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(root.join("pages/Old.org").exists() && !root.join("pages/New.org").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("pages/r.org")).unwrap(),
+        MARKED_ORG
+    );
+}
+
 #[test]
 fn rename_skips_marker_bearing_referrers_and_reports_them() {
     let _integration_guard = crate::integration_lock();

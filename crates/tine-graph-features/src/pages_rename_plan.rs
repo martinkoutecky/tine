@@ -60,6 +60,14 @@ impl RenamePlan {
             if changed && !marked && !clean {
                 return Err(unsaved_error(&self.graph, id.as_str()));
             }
+            if changed
+                && marked
+                && source.is_some()
+                && format == Format::Org
+                && !tine_core::org::org_editable(text)
+            {
+                return Err(unwritable(store, id));
+            }
             if changed && marked {
                 self.skipped.push(id.clone());
             }
