@@ -1044,6 +1044,7 @@ mod rename_guide_tests {
             "**quoted text changed**",
             "**Reply…**",
             "`author:: <your name>`",
+            "the first comment or reply you write without a name asks for one once",
             "**Ctrl/Cmd+Z** restores them together",
             "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
             "zooming into a commented bullet also shows them there",
