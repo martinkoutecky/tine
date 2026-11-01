@@ -1,7 +1,25 @@
 import { onCleanup } from "solid-js";
 import { textareaCaretLineRect } from "../../editor/caretRows";
 import { nearestScrollableY } from "../blockParts";
-import { listen, newResizeObserver, viewportOf } from "../../windowRealm";
+import { documentOf, listen, newResizeObserver, viewportOf } from "../../windowRealm";
+
+/** The mobile formatting row can wrap at high interface zoom. Publish its
+ * layout height so the help button clears the whole row, including a wrap. */
+export function trackSelectionToolbarHeight(toolbar: HTMLDivElement): void {
+  const root = documentOf(toolbar).documentElement;
+  const update = () => {
+    if (toolbar.isConnected && toolbar.offsetHeight > 0) {
+      root.style.setProperty("--mobile-selection-toolbar-height", `${toolbar.offsetHeight}px`);
+    }
+  };
+  const observer = newResizeObserver(toolbar, update);
+  observer?.observe(toolbar);
+  queueMicrotask(update);
+  onCleanup(() => {
+    observer?.disconnect();
+    root.style.removeProperty("--mobile-selection-toolbar-height");
+  });
+}
 
 /** Desktop selection toolbar placement (UI-SEL-TOOLBAR): above the selection's
  * first line, below its last when there is no room, clamped to the pane and
@@ -40,6 +58,7 @@ export function selectionToolbarPlacement(editor: () => HTMLTextAreaElement | un
     position,
     toolbar: (el: HTMLDivElement) => {
       toolbarRef = el;
+      trackSelectionToolbarHeight(el);
       queueMicrotask(position);
     },
     /** Call from the editor's onMount: follows scroll and editor resizing. */

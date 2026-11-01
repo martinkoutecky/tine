@@ -6,6 +6,7 @@ import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
 import { revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
+import { cssInterfaceZoom } from "../zoom";
 
 type ToolbarIcon =
   | "outdent"
@@ -78,7 +79,7 @@ export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   );
   const overlap = scrollToClearToolbar(editor, scroller, top);
   if (overlap <= 0) return false;
-  if (scroller) scroller.scrollTop += overlap;
+  if (scroller) scroller.scrollTop += overlap / cssInterfaceZoom();
   else window.scrollBy({ top: overlap });
   return true;
 }
@@ -259,6 +260,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
   createEffect(() => {
     const shown = touchPrimary() && visible();
     dockTop(); // re-measure when the keyboard/dock moves
+    cssInterfaceZoom(); // zoom can move the dock without resizing the viewport
     const root = typeof document !== "undefined" ? document.documentElement : null;
     if (!root) return;
     // The editing dock replaces the bottom navigation row while it is up.
@@ -272,7 +274,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       // resize); measuring it now would publish a lift from a 0 top (GH #716).
       if (!toolbarRef || !visible()) return;
       const top = toolbarRef.getBoundingClientRect().top;
-      const lift = Math.max(0, window.innerHeight - top) + 8;
+      const lift = Math.max(0, window.innerHeight - top) / cssInterfaceZoom() + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
       revealFocusedEditorAboveToolbar(top);
     });
@@ -288,7 +290,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     // The viewport grows while the keyboard closes. Keep the button under the
     // active pointer until its trailing click is consumed; otherwise a mounted
     // toolbar can still move away and expose the note before pointer-up.
-    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - var(--system-inset-bottom))`,
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop()) / cssInterfaceZoom()}px - var(--system-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 
