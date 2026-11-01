@@ -232,8 +232,8 @@ and the offline Flatpak setup.
 ### PDF decoder SDK
 
 Emscripten's SDK manager, `emsdk`, comes from its own repository and installs into
-any directory you choose. It does not need root. These steps download about 1 GB
-(on Windows, use `emsdk.bat` and `emsdk_env.bat`):
+any directory you choose. It does not need root, and the install takes about 2 GB
+of disk (on Windows, use `emsdk.bat` and `emsdk_env.bat`):
 
 ```bash
 git clone https://github.com/emscripten-core/emsdk.git ~/.local/share/emsdk
