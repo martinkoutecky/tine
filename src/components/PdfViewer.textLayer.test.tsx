@@ -46,8 +46,8 @@ class Observer {
   unobserve() {}
   disconnect() {}
   takeRecords() { return []; }
-  show(element: Element) {
-    this.callback([{ isIntersecting: true, target: element } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  show(element: Element, isIntersecting = true) {
+    this.callback([{ isIntersecting, target: element } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
   }
 }
 
@@ -62,14 +62,15 @@ function pdfPage(userUnit = 1) {
 
 async function flush() { for (let i = 0; i < 24; i++) await Promise.resolve(); }
 
-async function mount(userUnit = 1) {
+async function mount(userUnit = 1, numPages = 1, secondRaster?: Promise<void>) {
   vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
   vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
   vi.spyOn(backend(), "readHighlights").mockResolvedValue([]);
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
-  const page = pdfPage(userUnit);
+  const pages = Array.from({ length: numPages }, () => pdfPage(userUnit));
+  if (secondRaster) pages[1].render.mockReturnValue({ promise: secondRaster, cancel: vi.fn() });
   h.getDocument.mockReturnValue({ promise: Promise.resolve({
-    numPages: 1, getPage: vi.fn(async () => page), getOutline: vi.fn().mockResolvedValue([]),
+    numPages, getPage: vi.fn(async (n: number) => pages[n - 1]), getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null), getPageIndex: vi.fn().mockResolvedValue(0),
     destroy: vi.fn().mockResolvedValue(undefined),
   }) });
@@ -80,7 +81,7 @@ async function mount(userUnit = 1) {
   await flush();
   Observer.instances.at(-1)!.show(host.querySelector(".pdf-page")!);
   await flush();
-  return { host, dispose };
+  return { host, dispose, pages };
 }
 
 describe("PdfViewer text layer ownership", () => {
@@ -99,6 +100,119 @@ describe("PdfViewer text layer ownership", () => {
     vi.restoreAllMocks();
     document.body.replaceChildren();
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  // UI-PDF9-TEXT-SCROLL-IDLE: page paint gets the main thread during scroll;
+  // a resting page still gets selectable text even if no new raster completes.
+  it("waits for scroll idle before building first text on an already rasterized page", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount(1, 3);
+    try {
+      const page = host.querySelector('[data-page="2"]')!;
+      expect(page.querySelector("canvas")).not.toBeNull(); // prefetched raster
+      const scroller = host.querySelector(".pdf-scroll")!;
+      scroller.dispatchEvent(new Event("scroll"));
+      Observer.instances.at(-1)!.show(page);
+      await flush();
+      expect(h.layers).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(100);
+      scroller.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(119);
+      expect(h.layers).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1); await flush();
+      expect(h.layers).toHaveLength(2);
+      h.layers[1].finish(); await flush();
+      expect((page.querySelector(".textLayer") as HTMLElement).hidden).toBe(false);
+    } finally { dispose(); }
+  });
+
+  it("drops deferred first text when its page leaves view, then builds on resting reentry", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount(1, 3);
+    try {
+      const page = host.querySelector('[data-page="2"]')!;
+      host.querySelector(".pdf-scroll")!.dispatchEvent(new Event("scroll"));
+      Observer.instances.at(-1)!.show(page);
+      Observer.instances.at(-1)!.show(page, false);
+      await vi.advanceTimersByTimeAsync(120); await flush();
+      expect(h.layers).toHaveLength(1);
+      Observer.instances.at(-1)!.show(page);
+      await flush();
+      expect(h.layers).toHaveLength(2);
+    } finally { dispose(); }
+  });
+
+  it("also defers first text when the raster finishes during scrolling", async () => {
+    vi.useFakeTimers();
+    let finishRaster = () => {};
+    const raster = new Promise<void>(resolve => { finishRaster = resolve; });
+    const { host, dispose } = await mount(1, 3, raster);
+    try {
+      host.querySelector(".pdf-scroll")!.dispatchEvent(new Event("scroll"));
+      Observer.instances.at(-1)!.show(host.querySelector('[data-page="2"]')!);
+      finishRaster(); await flush();
+      expect(h.layers).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(120); await flush();
+      expect(h.layers).toHaveLength(2);
+    } finally { dispose(); }
+  });
+
+  it("drops deferred first text when the viewer closes", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount(1, 3);
+    host.querySelector(".pdf-scroll")!.dispatchEvent(new Event("scroll"));
+    Observer.instances.at(-1)!.show(host.querySelector('[data-page="2"]')!);
+    await flush();
+    dispose();
+    await vi.advanceTimersByTimeAsync(200); await flush();
+    expect(h.layers).toHaveLength(1);
+  });
+
+  it("builds a keyboard page-field landing immediately during scrolling", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount(1, 3);
+    try {
+      host.querySelector(".pdf-scroll")!.dispatchEvent(new Event("scroll"));
+      Observer.instances.at(-1)!.show(host.querySelector('[data-page="2"]')!);
+      await flush();
+      expect(h.layers).toHaveLength(1);
+      const input = host.querySelector<HTMLInputElement>(".pdf-page-input")!;
+      input.value = "2";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await flush();
+      expect(h.layers).toHaveLength(2);
+    } finally { dispose(); }
+  });
+
+  it("builds and selects Find results while scrolling is still active", async () => {
+    vi.useFakeTimers();
+    const { host, dispose, pages } = await mount(1, 3);
+    try {
+      pages[1].getTextContent.mockResolvedValue({ items: [{ str: "needle" }] } as any);
+      h.layers[0].finish(); await flush();
+      const scroller = host.querySelector(".pdf-scroll")!;
+      scroller.dispatchEvent(new Event("scroll"));
+      Observer.instances.at(-1)!.show(host.querySelector('[data-page="2"]')!);
+      (host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
+      const input = host.querySelector<HTMLInputElement>(".pdf-find-input")!;
+      input.value = "needle";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(100);
+      scroller.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(80); await flush();
+      expect(h.layers).toHaveLength(2);
+      const text = host.querySelector('[data-page="2"] .textLayer')!;
+      text.textContent = "needle";
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(0, 50, 30, 10) });
+      h.layers[1].finish(); await flush();
+      expect(host.querySelector(".pdf-find-count")?.textContent).toBe("1 / 1");
+      expect(window.getSelection()?.toString()).toBe("needle");
+    } finally {
+      Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+      window.getSelection()?.removeAllRanges();
+      dispose();
+    }
   });
 
   it("keeps pdf.js 5 glyph scale aligned for UserUnit pages across zoom and text updates", async () => {
