@@ -2,6 +2,26 @@
 use super::*;
 use crate::{HostEffect, HostExpected, HostOp, Input};
 
+fn planning_lock<T>(
+    lock: &std::sync::Mutex<T>,
+    deadline: std::time::Instant,
+) -> Result<std::sync::MutexGuard<'_, T>, Why> {
+    loop {
+        match lock.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(_)) => panic!("poisoned planning lock"),
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "page host planning is busy",
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 impl PagePlan<'_> {
     /// Prepare this transaction as a page-host operation without publishing
     /// or writing anything. Runs commit's preflight and stages its guarded old
@@ -13,7 +33,8 @@ impl PagePlan<'_> {
     pub fn plan(mut self) -> Result<HostOp, Why> {
         self.for_host = true;
         self.await_reference_publication();
-        let _writer = self.store.writer.lock().unwrap();
+        let deadline = std::time::Instant::now() + crate::PageHost::PLANNING_WAIT;
+        let _writer = planning_lock(&self.store.writer, deadline)?;
         let names = self.preflight_names().map_err(|(_, why)| why)?;
         let locks: Vec<_> = names
             .iter()
@@ -23,9 +44,14 @@ impl PagePlan<'_> {
                     .page_lock(&self.store.graph.root.join(file.as_str()))
             })
             .collect();
-        let _guards: Vec<_> = locks.iter().map(|lock| lock.lock().unwrap()).collect();
+        let _guards: Vec<_> = locks
+            .iter()
+            .map(|lock| planning_lock(lock, deadline))
+            .collect::<Result<_, _>>()?;
         let prepared = self.prepare_steps().map_err(|(_, why)| why)?;
         let mut op = HostOp {
+            separate_case_entries: false,
+            inputs: None,
             pages: Vec::new(),
             kinds: self.kinds.clone(),
             policy: Input::Refuse,
@@ -100,21 +126,22 @@ impl PagePlan<'_> {
         Ok(op)
     }
 
-    /// The same live slot checks as preflight; a move exempts its source,
-    /// while a CreateNew save also checks its DTO name for unreadable owners.
+    /// Live preflight slot checks, returning a move's local absence proof.
+    /// Moves exempt their source; CreateNew checks its DTO name for unreadable owners.
     pub(crate) fn admission_slot(
         &self,
         file: &FileId,
         name: Option<&str>,
         source: Option<&FileId>,
-    ) -> Result<(), Why> {
+    ) -> Result<bool, Why> {
         if let Some(source) = source {
-            self.available_move_destination(source, file)?;
-            self.twin(file, Some(source))
+            let absent = self.available_move_destination(source, file)?;
+            self.twin_with_absence(file, Some(source), absent)?;
+            Ok(absent)
         } else if let Some(name) = name {
-            self.page_create_checks(file, name)
+            self.page_create_checks(file, name).map(|()| false)
         } else {
-            self.raw_create_slot(file)
+            self.raw_create_slot(file).map(|()| false)
         }
     }
 }

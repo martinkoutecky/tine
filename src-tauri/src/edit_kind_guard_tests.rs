@@ -147,10 +147,8 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
     }
     let destinations = [
-        // A rename's transaction is `rename_transaction`: a rename of
-        // several pages plans it as a host operation (`multi_rename`), a
-        // case-only spelling moves run on the host driver;
-        // a single page's rename is the host's.
+        // Every rename plans rename_transaction as one HostOp through
+        // multi_rename; folded entry moves run on the host driver.
         (PAGES, "rename_page_after_inventory", "multi_rename("),
         (PAGES, "multi_rename", "rename_transaction("),
         (

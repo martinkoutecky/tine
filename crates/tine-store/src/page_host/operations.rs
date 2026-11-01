@@ -105,6 +105,7 @@ impl<F: HostIo> Host<F> {
 
     // The model deliberately abstracts the pure rewrite. Tests substitute
     // opaque labels here; all locks, guards, allocation and I/O remain shared.
+    #[cfg(test)]
     pub(super) fn rename_with(
         &mut self,
         source: &str,
@@ -299,7 +300,7 @@ impl<F: HostIo> Host<F> {
 }
 
 /// The model scheduler's rename policy: rewrite references, rebind the
-/// moved page's title. Production supplies its own (`PageHost::rename`).
+/// moved page's title. Production supplies planned HostOp effects.
 #[cfg(test)]
 impl<F: HostIo> Host<F> {
     fn rewrite(

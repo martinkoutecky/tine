@@ -27,9 +27,40 @@ pub enum Expected {
     Absent,
 }
 
+/// Held input used to select an operation's write set. Admission checks the
+/// entire set again, including pages excluded because their input was unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostInputs(u64, BTreeMap<PageKey, (PageId, Text, u64, bool)>);
+
+impl HostInputs {
+    /// Each held page's current spelling, buffer and saved-input status.
+    pub fn pages(&self) -> impl Iterator<Item = (&PageId, Option<&[u8]>, bool)> {
+        self.1
+            .values()
+            .map(|(id, text, _, clean)| (id, text.as_deref(), *clean))
+    }
+
+    pub(super) fn current<F: HostIo>(&self, host: &Host<F>) -> bool {
+        self.0 == host.incarnation
+            && self.1.len() == host.pages.len()
+            && self.1.iter().all(|(key, (id, text, version, clean))| {
+                host.pages.get(key).is_some_and(|page| {
+                    page.buf == *text
+                        && page.version == *version
+                        && page.clean() == *clean
+                        && host.fs.spelling(key) == id.as_str()
+                })
+            })
+    }
+}
+
 /// One feature write (DESIGN §3.1).
 #[derive(Clone, Debug)]
 pub struct HostOp {
+    /// Use distinct entries for an absent case-only target on a sensitive volume.
+    pub separate_case_entries: bool,
+    /// Optional held-input selection guard, checked before admission effects.
+    pub inputs: Option<HostInputs>,
     /// Every page's effect, with the content it was computed from.
     pub pages: Vec<(PageId, Effect, Expected)>,
     /// The edit kinds recorded for its pages (OG-RULES Rule 8).
@@ -102,6 +133,36 @@ enum Admitted {
 }
 
 impl PageHost {
+    pub(crate) const PLANNING_WAIT: std::time::Duration = OPERATION_WAIT;
+
+    /// Capture held input without reading disk or saving typed text. A feature
+    /// selecting from it attaches the snapshot to its resulting operation.
+    pub fn inputs(&self) -> Result<HostInputs, ApplyRefusal> {
+        self.driver
+            .shared
+            .read(|state: &HostState| {
+                let host = &state.progress.host;
+                HostInputs(
+                    host.incarnation,
+                    host.pages
+                        .iter()
+                        .map(|(key, page)| {
+                            (
+                                key.clone(),
+                                (
+                                    PageId::from(host.fs.spelling(key)),
+                                    page.buf.clone(),
+                                    page.version,
+                                    page.clean(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .map_err(|_| ApplyRefusal::Refused)
+    }
+
     /// Run `op` as one host operation (DESIGN §3.1). Admission is one
     /// decision on the driver under the operation's path locks: unsaved
     /// input refuses (`Input::Refuse`) or is saved first (`Input::Flush`);
@@ -122,21 +183,24 @@ impl PageHost {
         // an ordinary operation; the byte-preserving entry move runs on the
         // driver before that operation is admitted (S3, no new draft record).
         let mut spellings = Vec::new();
+        let mut distinct_case_entries = BTreeSet::new();
         for (dst, src) in &op.moves {
             let source = self.try_identify(src).ok_or(ApplyRefusal::Refused)?;
             let target = self.try_identify(dst).ok_or(ApplyRefusal::Refused)?;
-            // A case-only move on a sensitive volume also needs the
-            // entry-first path: registering its source would otherwise make
-            // the absent destination an unproved folded collision. A real
-            // second entry (or a separately held destination) still refuses.
+            // Single-page policy keeps distinct entries on sensitive volumes,
+            // including source-trash custody. Carry local absence through
+            // registration; other operations retain their entry-first policy.
             let sensitive_case_move = crate::file_kind::case_only(&src.file(), &dst.file())
                 && !target.2
                 && self
                     .store
                     .page_plan(None)
                     .admission_slot(&dst.file(), None, Some(&src.file()))
-                    .is_ok();
-            if source.0 == target.0 || sensitive_case_move {
+                    .is_ok_and(|absent| absent);
+            if op.separate_case_entries && sensitive_case_move && source.0 != target.0 {
+                distinct_case_entries.extend([src.clone(), dst.clone()]);
+            }
+            if source.0 == target.0 || (sensitive_case_move && !op.separate_case_entries) {
                 spellings.push((dst.clone(), src.clone(), source.0, source.1));
             }
         }
@@ -158,7 +222,7 @@ impl PageHost {
             }
             // A path that only collides with a registered entry, unproved,
             // is not the page the feature planned from (DESIGN §3.1).
-            if !proved {
+            if !proved && !distinct_case_entries.contains(page) {
                 return Err(ApplyRefusal::Changed);
             }
             self.try_register(&key, &spelling).ok_or_else(ended)?;
@@ -250,10 +314,14 @@ impl PageHost {
             let save_rules = save_rules.clone();
             let publications = publications.clone();
             let publication_names = publication_names.clone();
+            let inputs = op.inputs.clone();
             let admit = move |state: &mut HostState| {
                 let host = &state.progress.host;
                 if !host.alive {
                     return Wait::Ready(Err(ApplyRefusal::Refused));
+                }
+                if inputs.as_ref().is_some_and(|inputs| !inputs.current(host)) {
+                    return Wait::Ready(Err(ApplyRefusal::Changed));
                 }
                 // The planner's receipt snapshot may predate an older
                 // Uncertain operation's publication and a window undo.

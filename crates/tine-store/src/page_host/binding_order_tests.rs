@@ -4,7 +4,8 @@
 //! deletion while Tine runs; every caller exit removes its slot (Finding B,
 //! R2); a stop carries gated pages by their drafts (R3); a Discard of the
 //! unwitnessed destination cancels in memory; D4 never chains.
-use super::super::retained::{RenameRefusal, OPERATION_WAIT};
+use super::super::retained::OPERATION_WAIT;
+use super::rename::RenameRefusal;
 use super::*;
 use crate::page_host::io::Phase;
 use crate::RenameMap;
@@ -145,14 +146,10 @@ fn rename(host: &PageHost, store: &Store) -> Result<(Vec<PageId>, Vec<PageId>), 
     replanned(host, store, OLD, NEW, &[REF], ("Old", "New"))
 }
 
-/// A host rename as `pages.rs` drives it: planned in a fresh view, and
-/// replanned in a new one when a publication made it stale (B2: `Refused`
-/// is `pages.rs`'s replan). A save's publication bumps the graph revision
-/// after the host already shows the page saved, so a view taken right
-/// after a save can be stale by the time the host checks it.
+/// Share the general-operation fixture's fresh-view retries (B2).
 fn replanned(
     host: &PageHost,
-    store: &Store,
+    _store: &Store,
     source: &str,
     target: &str,
     referrers: &[&str],
@@ -160,21 +157,13 @@ fn replanned(
 ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
     let referrers: Vec<PageId> = referrers.iter().map(|page| PageId::from(*page)).collect();
     let map = RenameMap(vec![(old.into(), new.into())]);
-    for _ in 0..20 {
-        let view = store.whole_graph().unwrap();
-        match host.rename(
-            &PageId::from(source),
-            &PageId::from(target),
-            &referrers,
-            &map,
-            &view,
-            Arc::new(|_: &PageId, _: &[u8], _| None),
-        ) {
-            Err(RenameRefusal::Refused) => continue,
-            done => return done,
-        }
-    }
-    Err(RenameRefusal::Refused)
+    super::rename::rename(
+        host,
+        &PageId::from(source),
+        &PageId::from(target),
+        &referrers,
+        &map,
+    )
 }
 
 fn clear_faults(live: &Live) {

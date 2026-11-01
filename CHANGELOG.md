@@ -51,6 +51,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Page menu: **Copy as ▸ → Copy page embed** copies `{{embed [[Page]]}}`, the page counterpart of a block's **Copy block embed** (GH #418).
 - The Guide (Find and revisit → Query text (TQL)) now says you can let an AI assistant write your TQL, with a short prompt to copy: what TQL is, where its reference lives, and what you want to find (#551).
 - Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).
+- Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.
 
 ## [0.9.0-beta.3] - 2026-10-31
 

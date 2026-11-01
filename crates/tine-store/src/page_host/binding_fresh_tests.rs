@@ -657,14 +657,7 @@ impl Run<'_> {
             let view = live.store.whole_graph().unwrap();
             let mut referrers = view.explicit_referrers(std::slice::from_ref(&name));
             referrers.retain(|id| *id != source);
-            outcome = live.host.rename(
-                &source,
-                &target,
-                &referrers,
-                &map,
-                &view,
-                Arc::new(|_: &PageId, _: &[u8], _| None),
-            );
+            outcome = live.host.rename(&source, &target, &referrers, &map, &view);
             if outcome != Err(RenameRefusal::Refused) {
                 break;
             }

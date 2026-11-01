@@ -1228,13 +1228,14 @@ mod apply;
 mod spelling;
 #[cfg(test)]
 pub(super) use apply::creation_refusal;
-pub use apply::{ApplyRefusal, Effect, Expected, HostOp};
+pub use apply::{ApplyRefusal, Effect, Expected, HostInputs, HostOp};
 #[cfg(test)]
 pub(super) use retained::unsaved;
 pub(super) use retained::FlushRefusal;
-pub use retained::RenameRefusal;
 #[cfg(feature = "test-faults")]
 pub use retained::OPERATION_WAIT;
+#[cfg(test)]
+use tests::rename::RenameRefusal;
 #[cfg(test)]
 #[path = "binding_tests.rs"]
 mod tests;
