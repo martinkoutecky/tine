@@ -18,6 +18,7 @@ import { pushToast } from "./toasts";
 import { msg, t } from "./i18n";
 import { commentsWritten } from "./margin";
 import { commentAuthorName } from "./commentIdentity";
+import { runWithCommentName } from "./commentNamePrompt";
 import { selectionOf } from "./windowRealm";
 import { threadRootOf } from "./margin";
 import { deleteBlock } from "./document";
@@ -58,14 +59,24 @@ export function commentAndEdit(parentId: string, editorText: string, start: numb
 export function commentFromEditor(id: string, ref: HTMLTextAreaElement, commit: (text: string) => void, surface: string | null): void {
   const { value, selectionStart, selectionEnd } = ref;
   commit(value);
-  if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface)) pushToast(msg("comment-block-cannot-take"), "warn");
+  const rawBefore = docNode(id)?.raw;
+  // The first comment of a person with no name asks for one first (tine#841);
+  // the block may have changed while the dialog was open.
+  runWithCommentName(() => {
+    if (docNode(id)?.raw !== rawBefore) return pushToast(msg("comment-block-changed"), "warn");
+    if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface)) pushToast(msg("comment-block-cannot-take"), "warn");
+  });
+}
+
+function canReplyTo(commentId: string): boolean {
+  return blockWritable(commentId) && threadRootOf(commentId, formatForBlock(commentId)) !== null;
 }
 
 /** Enter in a comment opens an ordinary last child in its thread. The composer
  * uses submitReply instead, so it need not persist an empty child first. */
 export function replyAndEdit(commentId: string, surface: string | null = null): string | null {
   const comment = docNode(commentId);
-  if (!comment || !blockWritable(commentId) || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
+  if (!comment || !canReplyTo(commentId)) return null;
   let id: string | null = null;
   withUndoUnit("comment:reply", [comment.page], () => {
     id = insertEmptyChildBlock(commentId, comment.children.length);
@@ -132,7 +143,9 @@ export function replyOnEnter(commentId: string, editorText: string, caret: numbe
   if (quoteSelectorOf(facetsOf(comment.raw, format).properties) === null) return false;
   const lines = blockRegions(editorText, format).properties.map((p) => p.line[0]);
   if (lines.length > 0 && utf8ByteLength(editorText.slice(0, caret)) > Math.min(...lines)) return false;
-  return replyAndEdit(commentId, surface) !== null;
+  if (!canReplyTo(commentId)) return false;
+  runWithCommentName(() => { replyAndEdit(commentId, surface); });
+  return true;
 }
 
 // The palette closes the editor before its command runs (opening it blurs the
@@ -165,16 +178,10 @@ export function commentOnPaletteSelection(): void {
     pushToast(msg("comment-select-first"), "warn");
     return;
   }
-  const parent = docNode(held.blockId);
-  const format = formatForBlock(held.blockId);
   // Refusal scenario: the block's text changed while the palette was open (an
   // external editor or a synced copy landed), so the remembered offsets no
   // longer name the selected words. Nothing is written; selecting again works.
-  if (!parent || splitProps(parent.raw, BUILTIN_HIDE, format).visible !== held.text) {
-    pushToast(msg("comment-block-changed"), "warn");
-    return;
-  }
-  commentAndEdit(held.blockId, held.text, held.start, held.end);
+  commentOnRenderedSelection(held);
 }
 
 // --- the right-click route: text selected in a block's rendered view --------
@@ -217,10 +224,13 @@ export function renderedSelectionIn(blockId: string): PaletteSelection | null {
  * Refuses (a toast, nothing written) when the block's text changed since, the
  * same stale-selection rule as the palette. */
 export function commentOnRenderedSelection(held: NonNullable<ReturnType<typeof renderedSelectionIn>>): void {
-  const parent = docNode(held.blockId);
-  if (!parent || splitProps(parent.raw, BUILTIN_HIDE, formatForBlock(held.blockId)).visible !== held.text) {
-    pushToast(msg("comment-block-changed"), "warn");
-    return;
-  }
-  if (!commentAndEdit(held.blockId, held.text, held.start, held.end)) pushToast(msg("comment-block-cannot-take"), "warn");
+  // The check runs after the name dialog (tine#841), which may stay open a while.
+  runWithCommentName(() => {
+    const parent = docNode(held.blockId);
+    if (!parent || splitProps(parent.raw, BUILTIN_HIDE, formatForBlock(held.blockId)).visible !== held.text) {
+      pushToast(msg("comment-block-changed"), "warn");
+      return;
+    }
+    if (!commentAndEdit(held.blockId, held.text, held.start, held.end)) pushToast(msg("comment-block-cannot-take"), "warn");
+  });
 }

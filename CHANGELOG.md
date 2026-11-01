@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- The first margin comment or reply you write in a graph that is under git, when you have not set **Your name**, now asks for a name once, so comments you share show who wrote them instead of reading "you" to everyone. The name is a Tine setting on this device, used in all graphs. Skipping is remembered for all graphs and is not asked again; the comment is written either way, and the setting stays under Settings > Editor (#841).
+
 ## [0.9.0-beta.4] - 2026-11-01
 
 ### Fixed

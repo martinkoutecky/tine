@@ -13,6 +13,7 @@ import { facetsOf } from "../render/facets";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
 import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
+import { runWithCommentName } from "../commentNamePrompt";
 import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { openContextMenu } from "../ui";
@@ -127,7 +128,9 @@ export function CommentComposer(props: { id: string; surface: string }): JSX.Ele
   const [expanded, setExpanded] = createSignal(false);
   let input!: HTMLTextAreaElement;
   const cancel = () => { setDraft(""); setExpanded(false); input.blur(); };
-  const submit = () => { if (submitReply(props.id, draft())) cancel(); };
+  // The first reply of a person with no name asks for one first (tine#841); the
+  // draft stays in the composer while the dialog is open.
+  const submit = () => { if (draft().trim()) runWithCommentName(() => { if (submitReply(props.id, draft())) cancel(); }); };
   return <Show when={blockWritable(props.id)}>
     <div class="comment-composer" classList={{ expanded: expanded() }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       <textarea ref={input} class="comment-reply-draft" rows={expanded() ? 3 : 1}
@@ -139,7 +142,8 @@ export function CommentComposer(props: { id: string; surface: string }): JSX.Ele
           e.stopPropagation();
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
             e.preventDefault();
-            if (commentFromReplyDraft(props.id, draft(), input.selectionStart, input.selectionEnd, props.surface)) cancel();
+            const { selectionStart, selectionEnd } = input;
+            if (draft().trim()) runWithCommentName(() => { if (commentFromReplyDraft(props.id, draft(), selectionStart, selectionEnd, props.surface)) cancel(); });
           }
           else if (e.key === "Escape") { e.preventDefault(); cancel(); }
           else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
