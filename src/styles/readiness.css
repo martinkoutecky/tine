@@ -13,7 +13,7 @@
   width: 15px;
   height: 15px;
   border: 2px solid currentColor;
-  border-right-color: transparent;
+  border-inline-end-color: transparent;
   border-radius: 50%;
   animation: page-loading-spin 0.8s linear infinite;
 }

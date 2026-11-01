@@ -12,7 +12,7 @@ function touch(type: string, x: number, y: number, target: EventTarget = documen
   return e as Event;
 }
 
-afterEach(() => { document.body.innerHTML = ""; });
+afterEach(() => { document.body.innerHTML = ""; document.documentElement.removeAttribute("dir"); });
 
 function setup(platform: "ios" | "android" | "desktop", over: Record<string, unknown> = {}) {
   const surface = document.createElement("div");
@@ -32,6 +32,20 @@ function setup(platform: "ios" | "android" | "desktop", over: Record<string, unk
 }
 
 describe("installEdgeSwipe on the DOM", () => {
+  it("RTL: the page follows a leftward finger from the physical right edge", () => {
+    vi.useFakeTimers();
+    document.documentElement.dir = "rtl";
+    const { surface, deps, uninstall } = setup("ios");
+    touch("touchstart", 395, 100);
+    touch("touchmove", 335, 100, document.body, 100);
+    expect(surface.style.transform).toBe("translateX(-60px)");
+    touch("touchmove", 245, 100, document.body, 300);
+    touch("touchend", 245, 100, document.body, 300);
+    expect(surface.style.transform).toBe("translateX(-400px)");
+    vi.advanceTimersByTime(300);
+    expect(deps.back).toHaveBeenCalledOnce();
+    uninstall(); vi.useRealTimers();
+  });
   it("installs nothing on desktop", () => {
     const { deps, uninstall } = setup("desktop");
     touch("touchstart", 5, 100); touch("touchmove", 100, 100); touch("touchend", 200, 100);

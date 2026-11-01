@@ -1,4 +1,5 @@
 import { newResizeObserver, requestFrame, viewportOf, windowOf } from "../windowRealm";
+import { isRtlContext } from "../render/textDirection";
 // **A query-sheet popover always fits the viewport (GH #619).** The popovers are `position:absolute` under their
 // trigger. A long list (the Task value list in the original report, the field chooser) hung off the bottom of
 // the screen, and since the sheet is `position:fixed` nothing could scroll it back: the wheel had nowhere to
@@ -108,6 +109,15 @@ export function fitPopoverToViewport(menu: HTMLElement): () => void {
     }
     // Horizontal: a popover that would cross the right edge hangs off its trigger's right side instead.
     const wide = Math.min(menu.offsetWidth, width);
+    if (isRtlContext(menu)) {
+      // The CSS default anchors at inline-start (the trigger's physical right).
+      // Clamp that actual position, then express it in physical coordinates,
+      // overriding both sides so a remaining logical inset cannot stretch it.
+      const left = Math.max(EDGE, Math.min(box.right - wide, width - wide - EDGE));
+      menu.style.left = `${left - box.left}px`;
+      menu.style.right = "auto";
+      return;
+    }
     const crosses = box.left + wide > width - EDGE && box.right - wide >= EDGE;
     const left = crosses ? "auto" : "";
     if (menu.style.left !== left) {

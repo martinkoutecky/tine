@@ -1,4 +1,5 @@
 import { msg, t } from "../i18n";
+import { isRtlContext } from "./textDirection";
 import { hoverPreviewDelayMs } from "../hoverPreviewSettings";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
@@ -755,6 +756,7 @@ function mediaResizeGrip(
     const grip = event.currentTarget as HTMLElement;
     const dragWindow = windowOf(event); // the drag's own window (P1)
     const refW = blockRefWidth(wrap), startX = event.clientX, startW = wrap.getBoundingClientRect().width;
+    const resizeSign = isRtlContext(wrap) ? -1 : 1;
     const oldWidth = wrap.style.width, element = media(), oldMediaWidth = element?.style.width ?? "";
     if (element) element.style.width = "100%";
     const stop = (restore = true) => {
@@ -769,7 +771,7 @@ function mediaResizeGrip(
     const move = (next: PointerEvent) => {
       if (!owner()) { cancel(); return; }
       if (next.pointerId !== event.pointerId) return;
-      wrap.style.width = `${Math.max(minimum, Math.min(refW, startW + next.clientX - startX))}px`;
+      wrap.style.width = `${Math.max(minimum, Math.min(refW, startW + (next.clientX - startX) * resizeSign))}px`;
     };
     const up = (next: PointerEvent) => {
       if (!owner()) { cancel(); return; }

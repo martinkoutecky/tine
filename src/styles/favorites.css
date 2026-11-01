@@ -65,7 +65,7 @@
   font-size: 0.78rem;
   opacity: 0.5;
   padding: 3px 10px;
-  text-align: left;
+  text-align: start;
   width: 100%;
 }
 /* The insertion line starts at the depth the drop would land at. */
@@ -80,6 +80,9 @@
 }
 #sidebar-favorites-list .nav-page.row-drop-after {
   background-position: bottom left;
+}
+:root[dir="rtl"] #sidebar-favorites-list .nav-page:is(.row-drop-before, .row-drop-after) {
+  background-image: linear-gradient(to left, transparent 0 var(--fav-drop-indent, 0px), var(--link-color) var(--fav-drop-indent, 0px));
 }
 /* A move-drag is not a text gesture (see dragSelectionGuard.ts): favorites
    reorder and the outline bullet drag (GH #424). */

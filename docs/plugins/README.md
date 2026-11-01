@@ -35,6 +35,25 @@ imports/exports, declared capabilities, and a coarse risk disposition.
 If `port-gap.json` is present, the same command validates its structured explanation
 of omitted behavior and includes `portGap.status` in the report.
 
+The host and checker share the pure ID/path parser in
+`src/plugins/grammar.mjs`; the manifest schema is checked against its definitions
+by `src/plugins/grammar.test.ts`. Package IDs keep their lowercase dotted syntax
+(at most 64 characters, alphanumeric ends). All command, slash-command and
+decoration IDs match `[a-z0-9][a-z0-9._-]{0,63}`. An entry is a relative `.wasm`
+path of at most 160 characters, using ASCII letters, digits, `.`, `_`, `-` and
+`/`, starting with a letter or digit and containing no `..` path segment.
+`dist/./plugin.wasm` and `dist/plugin..wasm` remain valid. Checker filesystem
+containment and symlink checks apply after this grammar check.
+
+| Manifest refusal | In-scope threat | Result |
+|---|---|---|
+| Invalid package or contribution ID | Malformed plugin input | Host and checker reject the manifest |
+| Invalid, oversized or traversing entry path | Malformed plugin input / path traversal | Reject before reading or compiling the entry |
+
+Packages previously accepted by the checker may now be refused before submission
+if the host would reject their contribution IDs or paths. This adds no capability
+or native surface (ADR 0052).
+
 ## ABI
 
 The module must import exactly one item:

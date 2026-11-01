@@ -2,7 +2,7 @@
   position: fixed;
   /* position:fixed escapes .app-container's system-inset padding, so the four
      --overlay-inset-* gutters (app.css :root) have to be reapplied here. */
-  right: calc(var(--overlay-inset-right, 0px) + 16px);
+  inset-inline-end: calc(var(--overlay-inset-inline-end, 0px) + 16px);
   /* Sits 16px off the bottom normally; on mobile, when the above-keyboard editor
      toolbar is up it publishes --mobile-kb-toolbar-lift so this FAB rises ABOVE
      the toolbar instead of overlapping it (var is unset otherwise → 16px). The
@@ -49,7 +49,7 @@
 
 .help-menu {
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   bottom: 44px;
   width: min(320px, calc(100vw - 32px));
   padding: 6px;
@@ -70,7 +70,7 @@
   border-radius: 7px;
   background: transparent;
   color: var(--text-primary);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -148,7 +148,7 @@
   border-bottom: 1px solid var(--border-color);
   color: var(--text-muted);
   font-weight: 700;
-  text-align: left;
+  text-align: start;
 }
 
 .help-table td {
@@ -365,7 +365,7 @@
 .welcome-close {
   position: absolute;
   top: 12px;
-  right: 12px;
+  inset-inline-end: 12px;
   width: 30px;
   height: 30px;
   border: 1px solid var(--border-color);
@@ -384,7 +384,7 @@
 
 @media (max-width: 720px) {
   .help-corner {
-    right: calc(var(--overlay-inset-right, 0px) + 12px);
+    inset-inline-end: calc(var(--overlay-inset-inline-end, 0px) + 12px);
     /* Keep the keyboard-toolbar lift on small screens too (see the base rule);
        fall back to 12px plus the gesture-bar inset when the toolbar isn't up.
        This is the width at which Android actually renders, so dropping the

@@ -76,6 +76,7 @@ import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
 import { createRecordFieldsMemo, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
 import { createTableColumnResize } from "../sheet/tableColumnResize";
 import { windowOf } from "../windowRealm";
+import { blockDirAttr } from "../render/textDirection";
 
 interface RowRecord extends FormulaEvalRow {}
 
@@ -1128,7 +1129,7 @@ function TitleBody(props: { row: FormulaEvalRow; format: "md" | "org" }): JSX.El
     <Show when={placeholder() === null} fallback={<InlineText text={placeholder() ?? ""} format={props.format} />}>
       {/* Clamped (CSS max-height) so a long block cannot make a tall row: the cell shows the first lines, whole
           blocks as the page draws them, and the full text opens with the result. */}
-      <div class="sheet-title-body">
+      <div class="sheet-title-body" dir={blockDirAttr(rowRaw(props.row), props.format)}>
         <BlockRenderBoundary raw={rowRaw(props.row)}>
         <AstBody raw={rowRaw(props.row)} format={props.format} />
         </BlockRenderBoundary>

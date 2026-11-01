@@ -2,6 +2,7 @@ export type BlockDropPosition = "before" | "after" | "child";
 
 interface RectLike {
   left: number;
+  right?: number;
   top: number;
   height: number;
 }
@@ -13,7 +14,9 @@ export function blockDropPosition(
   clientY: number,
   blockRect: RectLike,
   mainRect: RectLike,
+  rtl = false,
 ): BlockDropPosition {
-  if (clientX - blockRect.left > 50) return "child";
+  // GH #823: in the mirrored note layout, depth grows from the right edge.
+  if ((rtl ? (blockRect.right ?? blockRect.left) - clientX : clientX - blockRect.left) > 50) return "child";
   return clientY < mainRect.top + mainRect.height / 2 ? "before" : "after";
 }

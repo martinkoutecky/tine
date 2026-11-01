@@ -473,6 +473,8 @@ settings-ui-spell-checker = 拼写检查
 settings-ui-underline-misspelled-words-while-editing-with-right-click-suggestions = 编辑时为拼写错误加下划线，右键可查看建议或“添加到词典”（使用系统拼写检查）。<strong>默认开启</strong>，与 Logseq 一致。立即生效，无需重启。
 
 settings-ui-logical-outdenting = 逻辑取消缩进
+settings-ui-right-to-left-note-layout = 从右到左的笔记布局
+settings-ui-mirror-bullets-indentation-and-guide-lines-in-note-panes = 在笔记窗格中镜像项目符号、缩进和引导线。无论是否开启，每个块的文字方向都会自动确定。
 
 settings-ui-move-an-outdented-block-after-its-parent-while-leaving = 将取消缩进的块移到父块后方，后续同级块留在原处。关闭时（默认），这些同级块会成为被移动块的子块。保存在 <code>config.edn</code> 的 <code>:editor/logical-outdenting?</code> 中。
 

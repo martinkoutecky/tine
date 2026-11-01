@@ -30,13 +30,13 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  margin-right: 6px;
+  margin-inline-end: 6px;
 }
 /* Marks a preview that starts below line 0. Deliberately its own element: the
    marker is never part of the previewed text. */
 .sync-merge-elided {
   color: var(--text-muted);
-  margin-right: 4px;
+  margin-inline-end: 4px;
 }
 .sync-merge-expand {
   flex-shrink: 0;
@@ -100,7 +100,7 @@
   margin-bottom: 8px;
   padding: 6px 10px;
   font-size: 12px;
-  text-align: left;
+  text-align: start;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--bg-secondary);
@@ -122,7 +122,7 @@
 .page-conflict {
   margin: 0 0 14px;
   border: 1px solid var(--border-color);
-  border-left: 3px solid #b45309;
+  border-inline-start: 3px solid #b45309;
   border-radius: 6px;
   background: var(--bg-secondary);
   /* Narrow layout is driven by the PANEL's own width (container query), not
@@ -147,7 +147,7 @@
 }
 .sync-merge-seg .sync-merge-seg-dot {
   display: none;
-  margin-right: 5px;
+  margin-inline-end: 5px;
 }
 /* On the active segment's filled background the bare hue almost vanishes;
    a thin light ring keeps the side color legible. */
@@ -234,7 +234,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .page-conflict-count {
   font-size: 12px;
@@ -270,24 +270,24 @@
   background: var(--text-muted);
 }
 .page-conflict .sync-merge-cell.mine {
-  border-left: 3px solid color-mix(in srgb, #2e7d32 55%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, #2e7d32 55%, transparent);
 }
 .page-conflict .sync-merge-cell.theirs {
-  border-left: 3px solid color-mix(in srgb, #1565c0 55%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, #1565c0 55%, transparent);
 }
 /* The merged proposal is neither side, so it gets its own hue rather than
    borrowing one of theirs. */
 .page-conflict .sync-merge-cell.merged {
-  border-left: 3px solid color-mix(in srgb, #6f42c1 55%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, #6f42c1 55%, transparent);
 }
 .page-conflict .sync-merge-fulltext[data-side="mine"] .sync-merge-fulltext-body {
-  border-left: 3px solid color-mix(in srgb, #2e7d32 55%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, #2e7d32 55%, transparent);
 }
 .page-conflict .sync-merge-fulltext[data-side="theirs"] .sync-merge-fulltext-body {
-  border-left: 3px solid color-mix(in srgb, #1565c0 55%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, #1565c0 55%, transparent);
 }
 .page-conflict .sync-merge-fulltext[data-side="merged"] .sync-merge-fulltext-body {
-  border-left: 3px solid color-mix(in srgb, #6f42c1 55%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, #6f42c1 55%, transparent);
 }
 .page-conflict-rows {
   padding: 2px 14px 8px;
@@ -312,13 +312,13 @@
   border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 .page-conflict-foot button {
-  margin-left: auto;
+  margin-inline-start: auto;
   flex-shrink: 0;
 }
 .page-conflict .sync-merge-toolbar,
 .page-conflict .sync-merge-collabels {
-  padding-left: 14px;
-  padding-right: 14px;
+  padding-inline-start: 14px;
+  padding-inline-end: 14px;
 }
 
 /* Conflict overview (GH #536): the route the `N conflicts` badge opens. */
@@ -357,7 +357,7 @@
   background: none;
   color: var(--link-color, var(--text-primary));
   font: inherit;
-  text-align: left;
+  text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
@@ -382,7 +382,7 @@
   color: var(--text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 @media (max-width: 640px) {
   .conflict-overview-row {
@@ -405,10 +405,10 @@
    the mobile keyboard toolbar, and is dimmed so it stays peripheral. */
 .focus-refresh-status {
   position: fixed;
-  right: calc(var(--overlay-inset-right, 0px) + 16px + 34px + 8px);
+  inset-inline-end: calc(var(--overlay-inset-inline-end, 0px) + 16px + 34px + 8px);
   bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + 16px), var(--mobile-kb-toolbar-lift, 16px)) + 3px);
   z-index: 10020;
-  max-width: calc(100vw - var(--overlay-inset-right, 0px) - 16px - 34px - 8px - 12px);
+  max-width: calc(100vw - var(--overlay-inset-inline-end, 0px) - 16px - 34px - 8px - 12px);
   padding: 0.3rem 0.62rem;
   /* ~60% dimmed: border and text are 60% of their colour over an OPAQUE pill,
      so page text underneath is covered rather than read through it (a plain
@@ -427,9 +427,9 @@
 @media (max-width: 720px) {
   /* Same geometry as the help "?" FAB's small-screen rule (12px gutter). */
   .focus-refresh-status {
-    right: calc(var(--overlay-inset-right, 0px) + 12px + 34px + 8px);
+    inset-inline-end: calc(var(--overlay-inset-inline-end, 0px) + 12px + 34px + 8px);
     bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + 12px), var(--mobile-kb-toolbar-lift, 12px)) + 3px);
-    max-width: calc(100vw - var(--overlay-inset-right, 0px) - 12px - 34px - 8px - 12px);
+    max-width: calc(100vw - var(--overlay-inset-inline-end, 0px) - 12px - 34px - 8px - 12px);
   }
 }
 
@@ -444,7 +444,7 @@
   margin: 0 0 10px;
   padding: 8px 12px;
   border: 1px solid var(--border-color);
-  border-left: 3px solid var(--accent, #3b82f6);
+  border-inline-start: 3px solid var(--accent, #3b82f6);
   border-radius: 6px;
   background: var(--bg-secondary, transparent);
   font-size: 13px;
@@ -485,14 +485,14 @@
   width: 100%;
   padding: 6px 10px;
   border: 1px solid var(--border-color);
-  border-left: 3px solid #b45309;
+  border-inline-start: 3px solid #b45309;
   border-top: none;
   border-radius: 0 0 6px 6px;
   background: var(--bg-secondary);
   color: var(--text-primary);
   font: inherit;
   font-size: 13px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
   white-space: nowrap;
@@ -513,7 +513,7 @@
 }
 .page-conflict-dockbar-chevron {
   flex: none;
-  margin-left: auto;
+  margin-inline-start: auto;
   opacity: 0.7;
 }
 .page-conflict-sheet {

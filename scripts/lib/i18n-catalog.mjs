@@ -146,7 +146,9 @@ export function localeMeta(locale) {
   };
   const name = text("-locale-name");
   const matches = (text("-locale-matches") ?? locale.tag).split(/[\s,]+/).filter(Boolean);
-  return { tag: locale.tag, name, matches };
+  // Absent means left to right; only a right-to-left locale declares it (tine#823).
+  const direction = text("-locale-direction") || "ltr";
+  return { tag: locale.tag, name, matches, direction };
 }
 
 /** A shell message's literal text, or why it is not literal. */
@@ -178,6 +180,7 @@ export function checkCatalog(dir = LOCALES_DIR) {
   for (const locale of locales) {
     const meta = localeMeta(locale);
     if (!meta.name) errors.push(`${locale.tag}: meta.ftl needs a literal \`-locale-name\``);
+    if (meta.direction !== "ltr" && meta.direction !== "rtl") errors.push(`${locale.tag}: \`-locale-direction\` must be ltr or rtl`);
     for (const [id, found] of locale.entries) {
       const u = uses(found);
       for (const fn of u.functions) {

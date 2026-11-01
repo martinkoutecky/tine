@@ -209,6 +209,7 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
           el = node;
         }}
         class="block-sheet-container"
+        dir="ltr"
         onPointerEnter={() => setHovering(true)}
         onPointerLeave={() => setHovering(false)}
       >

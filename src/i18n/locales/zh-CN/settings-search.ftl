@@ -219,3 +219,5 @@ settings-search-quick-share-find = 快速分享：列出你 GitHub 账号中的 
 settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = 手机 平板 安卓 顶栏 底部 单手 后退 前进 搜索 侧边栏
 
 settings-search-search-tab-results-open-in-new-tab-this-tab = 搜索 标签页 结果 点击 打开 新标签页 当前标签页 原地 后台 窗格 侧边栏
+settings-search-right-to-left-note-layout = 从右到左的笔记布局
+settings-search-mirror-bullets-indentation-rtl = 在笔记窗格中镜像项目符号、缩进和引导线

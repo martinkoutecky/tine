@@ -2557,6 +2557,7 @@ export interface MessageArgs {
   "settings-search-logical-outdenting": {};
   "settings-search-logseq-custom-css-stylesheet-theming-tokens-css-variables": {};
   "settings-search-minimize-to-tray": {};
+  "settings-search-mirror-bullets-indentation-rtl": {};
   "settings-search-native-frame-chrome": {};
   "settings-search-new-asset-filename": {};
   "settings-search-new-journal-template": {};
@@ -2576,6 +2577,7 @@ export interface MessageArgs {
   "settings-search-reference-navigation": {};
   "settings-search-result-location": { "level": string | number; "tab": string | number };
   "settings-search-reuse-tabs": {};
+  "settings-search-right-to-left-note-layout": {};
   "settings-search-safe-mode-broken-stylesheet-unreadable-session": {};
   "settings-search-scheduled-deadline-days": {};
   "settings-search-search-tab-results-open-in-new-tab-this-tab": {};
@@ -2709,6 +2711,7 @@ export interface MessageArgs {
   "settings-ui-marker-transitions-write-og-compatible-logbook-clock-rows-saved": { "choice1": string | number };
   "settings-ui-match-logseq": {};
   "settings-ui-maximize-settings": {};
+  "settings-ui-mirror-bullets-indentation-and-guide-lines-in-note-panes": {};
   "settings-ui-mode": {};
   "settings-ui-monday": {};
   "settings-ui-move-an-outdented-block-after-its-parent-while-leaving": {};
@@ -2751,6 +2754,7 @@ export interface MessageArgs {
   "settings-ui-restore": {};
   "settings-ui-restore-settings-size": {};
   "settings-ui-retry": {};
+  "settings-ui-right-to-left-note-layout": {};
   "settings-ui-saturday": {};
   "settings-ui-saved-restart-tine-to-apply-the-window-frame-change": {};
   "settings-ui-search-settings": {};
@@ -3179,8 +3183,9 @@ export interface MessageArgs {
 
 export type MessageId = keyof MessageArgs;
 
-/** The shipped locales, source first: tag, endonym, and the language tags each serves. */
-export const LOCALES: readonly { readonly tag: string; readonly name: string; readonly matches: readonly string[] }[] = [
-  { tag: "en", name: "English", matches: ["en"] },
-  { tag: "zh-CN", name: "简体中文", matches: ["zh-CN","zh","zh-Hans","zh-Hans-CN","zh-SG","zh-Hans-SG"] },
+/** The shipped locales, source first: tag, endonym, the language tags each serves, and its direction. */
+export const LOCALES: readonly { readonly tag: string; readonly name: string; readonly matches: readonly string[]; readonly direction: "ltr" | "rtl" }[] = [
+  { tag: "en", name: "English", matches: ["en"], direction: "ltr" },
+  { tag: "fa", name: "فارسی", matches: ["fa","fa-IR","fa-AF"], direction: "rtl" },
+  { tag: "zh-CN", name: "简体中文", matches: ["zh-CN","zh","zh-Hans","zh-Hans-CN","zh-SG","zh-Hans-SG"], direction: "ltr" },
 ];

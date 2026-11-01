@@ -47,6 +47,7 @@ import {
   loadDictionaries,
   parseLanguages,
 } from "../spellcheckSettings";
+import { noteLayoutRtl, setNoteLayoutRtl } from "../noteLayoutSetting";
 import {
   assetNameFormat,
   setAssetNameFormat,
@@ -601,6 +602,12 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+      <Field
+        label={t("settings-ui-right-to-left-note-layout")}
+        hint={t("settings-ui-mirror-bullets-indentation-and-guide-lines-in-note-panes")}
+      >
+        <Toggle on={noteLayoutRtl()} onClick={() => setNoteLayoutRtl(!noteLayoutRtl())} />
+      </Field>
         <StyleKnobsSettings />
         <CustomCssSettings />
         <ContentWidthFields />

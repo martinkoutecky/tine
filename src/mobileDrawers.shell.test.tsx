@@ -118,6 +118,7 @@ afterEach(() => {
   cleanup?.();
   cleanup = undefined;
   vi.restoreAllMocks();
+  document.documentElement.removeAttribute("dir");
 });
 
 describe("GH #161 mounted responsive drawer shell", () => {
@@ -275,6 +276,12 @@ describe("GH #161 mounted responsive drawer shell", () => {
     // An opening-ward drag (rightward, away from the left edge) must NOT close it.
     await swipe([220, 300], [320, 300]);
     expect(activeDrawer()).toBe("left");
+
+    document.documentElement.dir = "rtl";
+    await swipe([220, 300], [120, 300]);
+    expect(activeDrawer()).toBe("left");
+    await swipe([220, 300], [320, 300]);
+    expect(activeDrawer()).toBeNull();
 
     dismissDrawerAndRestore("explicit");
     await settle();

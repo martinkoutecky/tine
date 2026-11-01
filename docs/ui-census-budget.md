@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-01, GH #823 (brief: one setting for the outline mirroring):
+  `settings.appearance.advanced` 14→15 for **Right-to-left note layout**. It sits behind
+  Advanced so the open count stays 28; an interface in a right-to-left language turns it on by
+  default, and search finds it.
 - 2026-11-01, D-20261031-PEEK / GH #824: `settings.editor.advanced` 12→13
   on Beta/development (11→12 without the Beta-only CM6 switch) for the explicitly
   decided numeric **Hover preview delay** setting. This one control also covers

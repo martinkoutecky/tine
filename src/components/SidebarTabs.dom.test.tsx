@@ -139,6 +139,19 @@ describe("SidebarTabs tree (GH #704 v2)", () => {
   afterEach(() => {
     document.elementFromPoint = realElementFromPoint;
     setContextMenu(null);
+    document.documentElement.removeAttribute("dir");
+  });
+
+  it("RTL: dragging left nests from the right edge, and dragging right unnests", async () => {
+    document.documentElement.dir = "rtl";
+    const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
+    try {
+      await drag(host, "Beta", -20, ROW_H + ROW_H / 2 + 2);
+      expect(depths(host)).toEqual([0, 1, 0]);
+      expect(rows(host)[1].style.paddingInlineStart).toBe("24px");
+      await drag(host, "Beta", 20, ROW_H + ROW_H / 2 + 2);
+      expect(depths(host)).toEqual([0, 0, 0]);
+    } finally { dispose(); }
   });
 
   it("dragging a row reorders the tabs, and the top strip follows", async () => {

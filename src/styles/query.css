@@ -213,7 +213,7 @@
   padding: 3px 8px;
   font-size: 13px;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   white-space: nowrap;
   max-width: 100%;
   overflow: hidden;
@@ -445,7 +445,7 @@
 /* The advanced chip opens the text pane, so it is a button and reads like one
    (§7.8): the part the sheet cannot draw is still reachable, never a dead end. */
 .qs-row-advanced .qs-advanced-open {
-  text-align: left;
+  text-align: start;
   border: 1px dashed var(--border-color);
   border-radius: 5px;
   background: transparent;
@@ -482,9 +482,9 @@
 .qs-group {
   /* GH #619 c6 (Q4): a group is told apart by a heavier rail, a ruled heading and a divider from its
      siblings, not by more indentation. */
-  border-left: 3px solid var(--text-muted);
-  padding-left: 8px;
-  margin-left: 2px;
+  border-inline-start: 3px solid var(--text-muted);
+  padding-inline-start: 8px;
+  margin-inline-start: 2px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -583,7 +583,7 @@
   overscroll-behavior: contain;
   position: absolute;
   top: 100%;
-  left: 0;
+  inset-inline-start: 0;
   z-index: 60;
   min-width: 200px;
   max-width: 320px;
@@ -649,7 +649,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  text-align: left;
+  text-align: start;
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -674,7 +674,7 @@
   color: var(--text-muted);
   font-size: 11px;
   min-width: 0;
-  text-align: right;
+  text-align: end;
 }
 .qs-option-section {
   padding: 6px 8px 2px;
@@ -798,7 +798,7 @@
   .qs-menu {
     max-width: none;
     width: auto;
-    right: 0;
+    inset-inline-end: 0;
   }
 }
 /* The §7.5 crossing notice: an inline region under the block (P4 hosts the same
@@ -875,7 +875,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .query-text-pane-actions .qb-commit { margin-top: 0; }
 .query-text-pane-error {
@@ -909,7 +909,7 @@
   flex-direction: column;
   gap: 2px;
   border-left: 2px solid var(--tine-danger-color, var(--palette-danger));
-  padding-left: 8px;
+  padding-inline-start: 8px;
 }
 .query-text-pane-diagnostic-message {
   color: var(--text-primary);
@@ -946,7 +946,7 @@
   border: none;
   background: none;
   padding: 0;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   color: var(--link-color);
   font-size: 12px;
   cursor: pointer;
@@ -968,14 +968,14 @@
 }
 /* One entry per requested aggregate, laid out on one line. */
 .query-summary .qs-entry + .qs-entry {
-  margin-left: 12px;
+  margin-inline-start: 12px;
 }
 /* Every aggregate column is a number; only the group key is a label. Anchored
    on :not(:first-child) rather than :last-child, which right-aligned exactly one
    column back when a summary could only show one. */
 .query-summary-table td:not(:first-child),
 .query-summary-table th:not(:first-child) {
-  text-align: right;
+  text-align: end;
 }
 .query-summary-note {
   margin: -4px 0 8px;
@@ -985,7 +985,7 @@
 .qd-root { position: relative; margin: .5rem 0; }
 .query-result-section-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .query-result-section-header h3 { margin: 0; }
-.query-result-section-header .qd-root { margin-left: auto; }
+.query-result-section-header .qd-root { margin-inline-start: auto; }
 .qd-trigger { border: 1px solid var(--border-color, #777); border-radius: 6px; padding: .25rem .55rem; background: transparent; color: inherit; }
 .qd-panel { position: relative; z-index: 4; max-height: min(calc(65vh / var(--interface-zoom, 1)), 34rem); overflow: auto; padding: .75rem; border: 1px solid var(--border-color, #777); border-radius: 8px; background: var(--bg-primary, #222); box-shadow: 0 8px 24px #0004; min-width: min(32rem, calc(90vw / var(--interface-zoom, 1))); }
 .qd-panel section { margin: .4rem 0 .8rem; border-bottom: 1px solid var(--border-color, #777); padding-bottom: .5rem; }
@@ -998,7 +998,7 @@
 .qs-vocab-options { max-height: 16rem; overflow-y: auto; }
 .qs-vocab-spacer { flex: none; }
 .qs-vocab-detail { display: block; padding: 0 10px; opacity: .8; font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.qs-vocab-options .qs-option { width: 100%; text-align: left; }
+.qs-vocab-options .qs-option { width: 100%; text-align: start; }
 /* One-line label + one-line detail inside the fixed 48px slot: long text is ellipsised, never wrapped (a wrapped
    detail overflowed the slot and was clipped). */
 .qs-vocab-row > .qs-option { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1006,7 +1006,7 @@
 .qb-prop-type { position: relative; display: inline-flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
 .qb-prop-type-badge { font-size: .75rem; opacity: .8; }
 .qb-prop-type-mismatch { font-size: .75rem; color: var(--color-warning, #c80); }
-.qb-prop-type-menu { position: absolute; z-index: 5; top: 100%; left: 0; min-width: 9rem; display: flex; flex-direction: column; padding: .3rem; background: var(--bg-primary, #222); border: 1px solid var(--border-color, #777); }
+.qb-prop-type-menu { position: absolute; z-index: 5; top: 100%; inset-inline-start: 0; min-width: 9rem; display: flex; flex-direction: column; padding: .3rem; background: var(--bg-primary, #222); border: 1px solid var(--border-color, #777); }
 /* GH #619 item 4: the query text sits behind a toggle. */
 .qs-text-toggle {
   align-self: flex-start;
@@ -1044,7 +1044,7 @@
   background: transparent;
   color: var(--link-color);
   font: inherit;
-  text-align: left;
+  text-align: start;
   white-space: normal;
   overflow-wrap: break-word;
   cursor: pointer;
@@ -1075,7 +1075,7 @@
   border-radius: 6px;
   background: var(--bg-primary);
   overflow-wrap: anywhere;
-  text-align: left;
+  text-align: start;
 }
 /* F5: the group breakdown folds behind its "Grouped by" line. */
 .query-summary-details { margin: 2px 0 6px; }

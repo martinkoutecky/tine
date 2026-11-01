@@ -132,7 +132,7 @@ export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }):
                     data-row-index={i()}
                     data-tab-depth={row.depth}
                     style={{
-                      ...(row.depth > 0 ? { "padding-left": `${8 + row.depth * INDENT_PX}px` } : {}),
+                      ...(row.depth > 0 ? { "padding-inline-start": `${8 + row.depth * INDENT_PX}px` } : {}),
                       ...(dropping() ? { "--tab-drop-indent": `${8 + dropDepth() * INDENT_PX}px` } : {}),
                     }}
                     onPointerDown={(event) => startDrag(i(), event)}

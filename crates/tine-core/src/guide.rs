@@ -971,8 +971,8 @@ mod rename_guide_tests {
             "Tine keeps the token in a private file on this device",
             "needs the graph folder to be the repository's top folder",
             "On Android and iOS git works as on a computer",
-            "When you switch to another app, Tine saves your pages and commits them, at most once per interval",
-            "it never starts bringing in changes while in the background",
+            "When you switch to another app, Tine saves your pages and commits pending edits immediately, without waiting for the interval",
+            "It never starts bringing in changes while in the background",
             "When you come back to Tine, **Commit and sync automatically** syncs at once",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
@@ -1838,6 +1838,14 @@ mod customize_look_guide_tests {
             .find(|t| t.title == TITLE)
             .unwrap_or_else(|| panic!("Guide page {TITLE:?} is not bundled"))
             .markdown
+    }
+
+    /// GH #823: the page names the setting and the way to overrule the guess.
+    #[test]
+    fn the_customize_page_teaches_right_to_left_notes() {
+        assert!(page().contains("Right-to-left note layout"));
+        assert!(page().contains("Choosing Persian"));
+        assert!(page().contains("U+200F"));
     }
 
     /// GH #610: a user who wants to change one visual detail must be able to

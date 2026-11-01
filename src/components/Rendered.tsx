@@ -3,6 +3,7 @@ import { Show, Switch, Match, useContext, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
 import { isPropertyLine } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
+import { blockDirAttr } from "../render/textDirection";
 import { AstBody } from "../render/body";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { QueryMacro, EmbedMacro } from "./Macro";
@@ -176,6 +177,7 @@ function RenderedContent(props: {
     <div
       ref={contentRef}
       class="block-content"
+      dir={blockDirAttr(node().raw, fmt())}
       // GH #375: the rendered-selection toolbar formats text selected here
       // (RenderedSelectionToolbar; the name is RENDERED_BLOCK_ATTR). An
       // annotation swatch edits through HIDE_ALL, which the BUILTIN_HIDE span

@@ -30,15 +30,15 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  padding-left: 6px;
+  border-inline-start: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-inline-start: 6px;
   font-style: italic;
 }
 .comment-quote-text.whole {
   font-style: normal;
 }
 .comment-quote.stale .comment-quote-text {
-  border-left-color: var(--text-muted);
+  border-inline-start-color: var(--text-muted);
 }
 .comment-quote-stale {
   flex: 0 1 auto;
@@ -55,7 +55,7 @@
 
 .author-chip {
   float: right;
-  margin-left: 8px;
+  margin-inline-start: 8px;
   padding: 0 6px;
   font-size: 11px;
   font-weight: 600;
@@ -103,21 +103,21 @@
 /* "Not yours": a block an agent wrote keeps a quiet mark at its content edge. */
 .ls-block.authored > .block-main > .block-content-wrapper {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
-  padding-left: 6px;
+  padding-inline-start: 6px;
 }
 
 /* Slice 2b: replies nest without the outline's full indent and without bullets
    or fold arrows (a comment's author chip is its handle). */
 .ls-block.comment-in-thread > .block-children-container {
-  margin-left: 0;
+  margin-inline-start: 0;
 }
 .ls-block.comment-in-thread > .block-children-container > .block-children {
-  margin-left: 0;
-  padding-left: var(--comment-reply-indent, 10px);
-  border-left: 2px solid var(--comment-rule);
+  margin-inline-start: 0;
+  padding-inline-start: var(--comment-reply-indent, 10px);
+  border-inline-start: 2px solid var(--comment-rule);
 }
 .ls-block.comment-card .block-children .block-children .block-children {
-  padding-left: 0;
+  padding-inline-start: 0;
 }
 .ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
   display: none;
@@ -126,7 +126,7 @@
    would read as a second depth rule. */
 .ls-block.comment-in-thread.authored > .block-main > .block-content-wrapper {
   box-shadow: none;
-  padding-left: 0;
+  padding-inline-start: 0;
 }
 .comment-handle {
   cursor: grab;
@@ -148,7 +148,7 @@
 }
 .comment-header > .author-chip {
   float: none;
-  margin-left: 0;
+  margin-inline-start: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -217,7 +217,7 @@
 }
 .main-content-inner:has(.page-blocks.margin-active) {
   max-width: calc(var(--tine-main-content-max-width, var(--ls-main-content-max-width)) + var(--margin-column-width) + var(--margin-column-gap));
-  padding-right: calc(48px + var(--margin-column-width) + var(--margin-column-gap));
+  padding-inline-end: calc(48px + var(--margin-column-width) + var(--margin-column-gap));
 }
 .wide-mode .main-content-inner:has(.page-blocks.margin-active) {
   max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
@@ -228,14 +228,14 @@
 .margin-column {
   position: absolute;
   top: 0;
-  left: calc(100% + var(--margin-column-gap));
+  inset-inline-start: calc(100% + var(--margin-column-gap));
   width: var(--margin-column-width);
 }
 .margin-thread {
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
 }
 .margin-thread > .ls-block.comment-card {
   margin: 0;
@@ -254,7 +254,8 @@
 .margin-marker {
   flex: 0 0 auto;
   align-self: flex-start;
-  margin: 3px 0 0 6px;
+  margin: 3px 0 0;
+  margin-inline-start: 6px;
   min-width: 20px;
   height: 18px;
   padding: 0 5px;

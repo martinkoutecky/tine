@@ -26,6 +26,7 @@ import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { caretInFence, caretInDisplayMath, caretOnOpeningFence } from "./fences";
 import { codeBodyExitTrim } from "./codeFence";
+import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { BUILTIN_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
 
 interface StructureContext {
@@ -267,8 +268,9 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && !e.shiftKey && s.empty) {
-      if (e.key === "ArrowLeft" && s.head === 0 || e.key === "ArrowRight" && s.head === raw.length) {
-        const forward = e.key === "ArrowRight", target = forward ? ctx.viewNext() : ctx.viewPrev();
+      const leave = cm6ArrowLeave(e.key, v);
+      if (leave) {
+        const forward = leave === "forward", target = forward ? ctx.viewNext() : ctx.viewPrev();
         if (target) { startEditing(target, forward ? 0 : Number.MAX_SAFE_INTEGER, null, navSurface()); return true; }
       }
       if (e.key === "ArrowUp" || e.key === "ArrowDown") return vertical(v, e.key === "ArrowDown");

@@ -40,6 +40,11 @@ describe("placeContextMenu", () => {
 // GH #471: a submenu was pure CSS at `left: 100%`, so a menu opened over a
 // table's rightmost column pushed "Show children as →" off the screen. Margin = 6.
 describe("placeSubmenu", () => {
+  it("prefers physical left in RTL, falls back right, then overlays", () => {
+    expect(placeSubmenu(400, 180, 160, VW, 6, true)).toBe("left");
+    expect(placeSubmenu(10, 180, 160, VW, 6, true)).toBe("right");
+    expect(placeSubmenu(6, 180, 160, 330, 6, true)).toBe("over");
+  });
   const side = (menuLeft: number, submenuWidth: number, vw = VW) =>
     placeSubmenu(menuLeft, 180, submenuWidth, vw);
 

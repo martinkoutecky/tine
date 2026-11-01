@@ -21,6 +21,14 @@ revisions 2 and 3).
 - `meta.ftl` per locale: `-locale-name` (the endonym the picker shows) and
   `-locale-matches` (the system language tags it serves). Adding a locale is
   catalog-only: the registry is generated.
+- `meta.ftl` may also declare `-locale-direction = rtl` (tine#823; absent means
+  `ltr`). The active locale's direction sets `dir` on the root element, and a
+  left-to-right locale leaves no attribute. A right-to-left locale's bundle, and
+  its English fallback, turn Fluent's isolation marks on; left-to-right bundles
+  keep them off, so copied text and reports carry no invisible characters. Until
+  the user chooses, the note layout setting follows this direction. Persian (`fa`)
+  is the shipped right-to-left catalog; `installPseudoRtlLocale` exists for tests
+  and screenshot scripts only.
 - Message ids are semantic and stable, kebab-case with an area prefix. A
   command's message is `command-` + its id with `/` replaced by `-`.
 - Supported Fluent: messages, attributes, terms, message and term references,
@@ -131,5 +139,6 @@ revisions 2 and 3).
 | Command message ids follow the command ids, without collisions | `src/i18n/commands.test.ts` |
 | Live switch, persistence, bounded startup read, late and failed reads | `src/components/LanguageSetting.test.tsx` |
 | Localized toasts keep English reports | `src/components/Toasts.test.tsx` |
+| A locale's direction sets the root `dir`, isolates its arguments and defaults the note layout; left-to-right locales leave no attribute or marks | `src/i18n/rtlLocale.test.tsx` |
 | Startup read, catalog loads, broadcasts, choices and failed saves resolve latest-first; only the latest reports to native | `src/i18n/preference.lifecycle.test.ts` |
 | Shell text falls back to English | `src-tauri/src/i18n_shell.rs` tests |

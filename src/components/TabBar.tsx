@@ -11,6 +11,7 @@ import { inlineText } from "../render/facets";
 import { moveTabToPane, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { MAIN_WINDOW_ID, isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
+import { isRtlContext } from "../render/textDirection";
 
 /** One predicate for the strip's ✕ and the overview's close button: closing is
  *  effective when another tab remains, or when this lone non-feed tab can close
@@ -180,7 +181,7 @@ export function tabDropTargetAt(
     const tabId = tab.dataset.tabId;
     if (!strip || !paneId || !tabId) return null;
     const rect = tab.getBoundingClientRect();
-    const before = x < rect.left + rect.width / 2;
+    const before = isRtlContext(tab) ? x >= rect.left + rect.width / 2 : x < rect.left + rect.width / 2;
     const tabIndex = tabIndexInStrip(tab, strip);
     return { kind: "tab", paneId, tabId, index: tabIndex + (before ? 0 : 1), before };
   }

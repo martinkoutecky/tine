@@ -20,7 +20,7 @@
   position: absolute;
   z-index: 70;
   top: calc(100% + 6px);
-  right: 0;
+  inset-inline-end: 0;
   min-width: 174px;
   padding: 4px;
   border: 1px solid var(--border-color);
@@ -37,7 +37,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--text-primary);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 .topbar-overflow-menu button:hover:not(:disabled),
@@ -70,7 +70,7 @@
     display: none;
   }
   .topbar:where(:has(.win-controls, .tab-bar)) .topbar-right {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
   .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow {
     display: block;
@@ -98,7 +98,7 @@
     display: none;
   }
   .topbar .topbar-right {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
   .topbar .topbar-overflow {
     display: block;

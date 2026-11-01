@@ -111,6 +111,12 @@ icon:: 🎨
   - A token seems to do nothing: check that you set it on `:root` or `html` (or `html[data-theme="dark"]`) and that the page-width Settings fields are reset for the two width tokens.
   - The whole window became unreadable: **Disable custom CSS** in Settings, or restart Tine with the file edited.
   - If a **custom.css could not be read** message appears, fix the file's permissions or size with an external text editor, then try **Edit custom.css** again.
+- ## Right-to-left notes
+  - Persian, Arabic and Hebrew blocks read right to left by themselves: each block takes its direction from its first word, leaving out task markers, links, tags and code. A block looks the same when you edit it. The left and right arrow keys keep their on-screen meaning.
+  - To overrule the guess for one block, start it with a right-to-left mark (U+200F) or a left-to-right mark (U+200E).
+  - **Settings → Appearance → Advanced → Right-to-left note layout** puts bullets, indentation and guide lines on the right in note panes. It is saved on this device, never in your graph, so the same files still open normally in Logseq.
+  - Choosing Persian (فارسی) as the interface language mirrors the whole interface too, and turns this layout on unless you set it yourself. Your notes and the Guide are not translated.
+  - Theme authors: Tine's outline uses logical sides (`margin-inline-start`, `border-inline-start`). A rule that sets `margin-left` or `border-left` on `.block-children` stays on the left in the mirrored layout. Test with `.ls-block[dir="rtl"]`.
 - ## Where next
   - [[Workflows/Extend Tine]] covers theme packages and plugins.
   - [[Reference/Files, external edits, and backups]] explains what else lives in your graph's `logseq/` folder.

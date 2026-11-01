@@ -24,6 +24,7 @@ import { EDGE_ZONE_PX, PRESS_ZONE_PX, scrollHome, startEdgeAutoscroll, type Edge
 import { codeFences } from "../editor/fences";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
+import { isRtlContext } from "../render/textDirection";
 import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
@@ -61,7 +62,7 @@ export function beginDrag(id: string, e: MouseEvent) {
     const tid = el?.dataset.blockId;
     if (tid) {
       const main = el!.querySelector(".block-main")!.getBoundingClientRect();
-      const position = blockDropPosition(x, y, el!.getBoundingClientRect(), main);
+      const position = blockDropPosition(x, y, el!.getBoundingClientRect(), main, isRtlContext(el!));
       // A whole-block embed's root row sits where its host does: a drop beside
       // it lands beside the host; a child drop joins the source's children.
       const host = position === "child" ? null : rowHostOf(el);

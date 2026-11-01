@@ -1,0 +1,51 @@
+export-modal-plain-text = متن ساده
+export-modal-cleaned-the-text-as-displayed-without-markup-markers = پاک‌شده: متن همان‌طور که نمایش داده می‌شود، بدون نشانه‌گذاری (پررنگ، برجسته، پیوند)
+export-modal-markdown = Markdown
+export-modal-formatting-preserved-block-references-resolved-and-embeds-expanded = قالب‌بندی حفظ می‌شود؛ ارجاع‌های بلوک جایگزین و جاسازی‌ها باز می‌شوند
+export-modal-text = متن
+export-modal-opml = OPML
+export-modal-html = HTML
+export-modal-dashes = خط تیره
+export-modal-logseq-outline-bullets = طرح کلی Logseq (گلوله‌های -)
+export-modal-spaces = فاصله
+export-modal-indent-no-bullets = تورفتگی، بدون گلوله
+export-modal-no-indent = بدون تورفتگی
+export-modal-flat-no-bullets = تخت، بدون گلوله
+export-modal-links-text = [[پیوندها]] ← متن
+export-modal-remove-emphasis = حذف تأکید
+export-modal-remove-tags = حذف #برچسب‌ها
+export-modal-remove-properties = حذف ویژگی‌ها
+export-modal-newline-after-block = خط جدید پس از بلوک
+export-modal-resolve-refs-fully = جایگزینی کامل ارجاع‌ها
+export-modal-copy-export = کپی / خروجی{ " " }
+export-modal-format = قالب
+export-modal-content = محتوا
+export-modal-indent = تورفتگی
+export-modal-level = سطح ≤
+export-modal-close = بستن
+export-modal-resolving = در حال یافتن...
+export-modal-copy = کپی
+reference-evidence-jump-to-mention =
+    { $kind ->
+        [explicit] رفتن به اشارهٔ صریح { $index }
+       *[plain] رفتن به اشارهٔ ساده { $index }
+    }
+reference-evidence-open-this-block-in = باز کردن این بلوک در { $page }
+reference-evidence-open-this-mention-in = باز کردن این اشاره در { $page }
+reference-evidence-open-mention-in = باز کردن اشارهٔ { $span } در { $page }
+reference-evidence-show-excerpt = نمایش گزیده
+reference-evidence-show-full-block = نمایش کل بلوک
+reference-export-chooser-copy-export = کپی / خروجی { $subject }
+reference-export-chooser-reference-selection = انتخاب ارجاع
+reference-export-chooser-all = همه
+reference-export-chooser-none = هیچ
+reference-export-chooser-entries = موارد { $subject }
+reference-export-chooser-no-entries-in-this-section = این بخش موردی ندارد.
+reference-export-chooser-cancel = انصراف
+reference-export-chooser-open = کپی / خروجی…
+export-modal-block-count = { NUMBER($count, useGrouping: 0) } بلوک
+reference-export-chooser-count = { $count } از { $total }
+reference-evidence-mention-count = { NUMBER($count, useGrouping: 0) } اشاره
+reference-evidence-occurrence-label = رفتن به اشارهٔ { $index } از { $total }
+export-prose-plain-text-output-has-no-markup-markers-to-remove = خروجی متن ساده نشانه‌گذاری‌ای برای حذف ندارد
+export-prose-only-applies-to-plain-text-output = فقط برای خروجی متن ساده

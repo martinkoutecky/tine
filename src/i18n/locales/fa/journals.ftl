@@ -1,0 +1,13 @@
+journal-sections-customize = سفارشی‌سازی بخش‌های امروز…
+journal-sections-explanation = این صفحه تعیین می‌کند چه چیزی همراه روزنوشت امروز نمایش داده شود: بلوک‌های پرس‌وجو، دستور کار، { "{{upcoming}}" }.
+journal-sections-create-failed = صفحهٔ «{ $page }» ساخته نشد: { $error }
+journal-sections-ambiguous = چند صفحه با tine/journal-sections مشخص شده‌اند؛ از «{ $page }» استفاده می‌شود. موارد دیگر: { $others }.
+journal-config-diagnostic = config.edn: { $message }
+journal-query-error = { $title }: { $error }
+journal-query-untitled = پرس‌وجو
+journal-agenda-title = زمان‌بندی‌شده و مهلت‌دار
+settings-sections-page = بخش‌های امروز در صفحهٔ «{ $page }» تعریف شده‌اند. پرس‌وجوی دستور کار را آنجا ویرایش کنید.
+settings-sections-open = باز کردن صفحه
+journals-prose-tasks-today = { NUMBER($count, useGrouping: 0) } وظیفه برای امروز
+journals-prose-in-progress = { NUMBER($count, useGrouping: 0) } در حال انجام
+journals-prose-task-summary = { $tasks }، { $progress }

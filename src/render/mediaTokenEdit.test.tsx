@@ -101,6 +101,18 @@ describe("media token edits target the clicked token", () => {
 });
 
 describe("media resize gesture ownership", () => {
+  it.each(["ltr", "rtl"])("%s: dragging the trailing grip outward enlarges the clicked image", async dir => {
+    const { host, dispose } = await mount(IMG);
+    host.dir = dir;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+      return { width: this.classList.contains("inline-image-wrap") ? parseFloat(this.style.width) || 100 : 200 } as DOMRect;
+    });
+    host.querySelector(".img-resize-grip")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7, clientX: 100 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: dir === "rtl" ? 50 : 150 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7 }));
+    expect(doc.byId.body.raw).toContain('{:width "75%"}');
+    dispose();
+  });
   it.each(["png", "mp4"].flatMap((ext) => ["pointercancel", "lostpointercapture", "unmount", "graph switch"].map((retire) => [ext, retire])))("%s resize ends on %s and cannot edit the next graph", async (ext, retire) => {
     const raw = `![a](../assets/x.${ext})`;
     vi.spyOn(backend(), "streamAsset").mockResolvedValue("https://assets.test/video.mp4");

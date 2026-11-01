@@ -1,0 +1,40 @@
+macro-block-changed = بلوک هنگام ذخیره تغییر کرد. این ویرایش را دوباره امتحان کنید.
+macro-query-read-only = این بلوک فقط‌خواندنی است. پرس‌وجو تغییر نکرد.
+macro-query-rewrite = بازنویسی گراف در جریان است. پرس‌وجو تغییر نکرد.
+macro-query-unchanged = پرس‌وجو تغییر نکرد: { $detail }
+macro-query-load-failed = پرس‌وجو بارگذاری نشد: { $detail }
+macro-query-diagnostics = <lead>Tine بخشی از این پرس‌وجو را نفهمید، پس نتیجه‌ای برنگرداند:</lead> { $detail }
+macro-advanced-ran = پرس‌وجوی پیشرفته اجرا شد: { $clauses }
+macro-advanced-unsupported = پرس‌وجوی پیشرفته (datalog) اجرا نشد: Tine نمی‌تواند { $hasClauses ->
+        [1] این بندها ({ $clauses })
+       *[other] برخی از بندهای آن
+    } را اجرا کند و پاسخ ناقص نادرست خواهد بود.
+macro-labeled-unsupported = { $label }: پرس‌وجو بندهای پشتیبانی‌نشده دارد.
+macro-macro-couldn-t-save-the-notice-preference = ترجیح اعلان ذخیره نشد: { $value1 }
+macro-macro-undo-is-unavailable-while-the-graph-is-being-rewritten = هنگام بازنویسی گراف، واگرد در دسترس نیست.
+macro-macro-hide = پنهان کردن
+macro-macro-why-empty = چرا خالی است؟
+macro-macro-checking = در حال بررسی…
+macro-macro-condition = شرط
+macro-macro-alone = به‌تنهایی
+macro-macro-without-it = بدون آن
+macro-macro-expand-results = باز کردن نتایج
+macro-macro-collapse-results = جمع کردن نتایج
+macro-macro-click-to-rename-this-query = برای تغییر نام این پرس‌وجو کلیک کنید
+macro-macro-query-title = عنوان پرس‌وجو
+macro-macro-search-results = نتایج جستجو
+macro-macro-video = ویدیو
+macro-macro-click-to-hide = برای پنهان کردن کلیک کنید
+macro-macro-click-to-reveal = برای نمایش کلیک کنید
+macro-macro-zotero-integration-isn-t-supported-in-tine = یکپارچگی با Zotero در Tine پشتیبانی نمی‌شود
+macro-macro-zotero-attachment = پیوست Zotero
+macro-source-task-checkbox-the-task-is-no-longer-on-so-it-was-not = وظیفه دیگر در «{ $value1 }» نیست، پس تغییر نکرد.
+macro-source-task-checkbox-mark-undone = علامت انجام‌نشده
+macro-source-task-checkbox-mark-done = علامت انجام‌شده
+macro-source-task-checkbox-couldn-t-load-the-task-s-page-so-the-task = صفحهٔ وظیفه بارگذاری نشد، پس وظیفه تغییر نکرد.
+macro-ref-blocks-page-property-reference = ارجاع ویژگی صفحه
+macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new = Shift+کلیک: نوار کناری؛ Ctrl/Cmd+کلیک یا کلیک میانی: زبانهٔ جدید؛ Alt+کلیک: قاب دیگر
+macro-ref-blocks-more-nested-blocks-are-available-on-the-page = بلوک‌های تودرتوی بیشتری در صفحه هست
+macro-prose-no-results = نتیجه‌ای نیست
+macro-prose-loading-query-results = در حال بارگذاری نتایج پرس‌وجو…
+macro-prose-query = پرس‌وجو

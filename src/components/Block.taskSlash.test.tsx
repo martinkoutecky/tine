@@ -9,7 +9,7 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
-import { setActiveLocale } from "../i18n";
+import { setActiveLocale, t } from "../i18n";
 import { COMMANDS, filterCommands } from "../editor/autocomplete";
 
 beforeAll(async () => {
@@ -84,6 +84,14 @@ describe("task-state slash commands (GH #225)", () => {
       choose(table.label);
       await vi.waitFor(() => expect(doc.byId["task-slash-host"].raw).toBe("tine.view:: table"));
     } finally { dispose(); }
+  });
+  it("finds a command from Persian slash input, and shows a marker without a gloss of itself (GH #823)", async () => {
+    await setActiveLocale("fa");
+    const table = COMMANDS.find(command => command.matchLabel === "Table")!;
+    expect(table.label).toBe(`Table (${t("editor-completion-table")})`);
+    expect(filterCommands(t("editor-completion-table"))).toContain(table);
+    expect(COMMANDS.find(command => command.matchLabel === "TODO")!.label).toBe("TODO");
+    await setActiveLocale("en");
   });
   it("shows English slash keywords with Chinese glosses and keeps marker insertion literal (GH #107)", async () => {
     const english = COMMANDS.map((command) => command.matchLabel ?? command.label);

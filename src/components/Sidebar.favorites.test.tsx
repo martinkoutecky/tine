@@ -108,18 +108,20 @@ describe("favorites arrangement in the sidebar", () => {
     dispose();
   });
 
-  it("nests a row under the one above when dragged right of the grab point", async () => {
+  it.each(["ltr", "rtl"])("%s: nests toward inline-end of the grab point", async dir => {
+    document.documentElement.dir = dir;
     const { dispose, rows, layoutRows } = mount();
     layoutRows();
     const [alpha, beta] = rows();
-    drag(beta, alpha, [10, 40], [30, 20]);
+    drag(beta, alpha, [30, 40], [dir === "rtl" ? 10 : 50, 20]);
     await settle();
-    expect(rows().map((row) => row.style.paddingLeft)).toEqual(["6px", "22px", "6px"]);
+    expect(rows().map((row) => row.style.paddingInlineStart)).toEqual(["6px", "22px", "6px"]);
     expect(favorites().map((f) => f.name)).toEqual(["Alpha", "Beta", "Gamma"]);
     expect(saved[0].page.blocks.map((b) => [b.raw, b.children.map((c) => c.raw)])).toEqual([["[[Alpha]]", ["[[Beta]]"]], ["[[Gamma]]", []]]);
     expect(saved[0].kinds).toEqual(["create-page"]);
     expect(configWrites.at(-1)).toEqual([["Alpha", "Beta", "Gamma"], "Favorites"]);
     dispose();
+    document.documentElement.removeAttribute("dir");
   });
 
   it("adds, renames, collapses and deletes a group without unfavoriting anything", async () => {
@@ -131,7 +133,7 @@ describe("favorites arrangement in the sidebar", () => {
     expect(group.querySelector<HTMLInputElement>(".nav-fav-group-name")!.value).toBe("New group");
     drag(rows()[0], group, [10, 10], [30, 80]); // Alpha into the group
     await settle();
-    expect(rows().map((r) => r.style.paddingLeft)).toEqual(["6px", "6px", "22px"]);
+    expect(rows().map((r) => r.style.paddingInlineStart)).toEqual(["6px", "6px", "22px"]);
     const input = root.querySelector<HTMLInputElement>(".nav-fav-group-name")!;
     input.value = "Work";
     input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -267,7 +269,7 @@ describe("favorites arrangement in the sidebar", () => {
       holdDrag(beta, alpha, [10, 40], [30, 20]);
       vi.useRealTimers();
       await settle();
-      expect(rows().map((row) => row.style.paddingLeft)).toEqual(["6px", "22px", "6px"]);
+      expect(rows().map((row) => row.style.paddingInlineStart)).toEqual(["6px", "22px", "6px"]);
       expect(saved[0].page.blocks.map((b) => [b.raw, b.children.map((c) => c.raw)])).toEqual([["[[Alpha]]", ["[[Beta]]"]], ["[[Gamma]]", []]]);
       expect(configWrites.at(-1)).toEqual([["Alpha", "Beta", "Gamma"], "Favorites"]);
       dispose();

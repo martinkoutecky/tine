@@ -10,11 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Notes in Persian, Arabic and Hebrew read right to left: each block takes its direction from its text, in the view and in both editors, and links, tags and code inside it keep their order. Settings offers a **Right-to-left note layout** that mirrors bullets, indentation and guide lines. Nothing is written into notes (#823).
+- Persian (فارسی) is available as an interface language, Tine's first right-to-left one: menus, settings and messages mirror, and the note layout defaults to right to left. Choose it under Settings → Appearance → Language. The Guide stays in English (#823).
 - Settings → Editor → Advanced offers one **Hover preview delay**, in seconds, for page and block references (#824). The default is 1 second; large values keep previews out of the way, and touch long-press keeps its own delay.
 - `tine export query GRAPH '((UUID))'` publishes the query block's result pages, with `--name` for the output and `--force` to replace an existing export while retaining it in recovery. It uses the shared query publisher; Sheets retain the command-line plain-outline rendering.
 
 ### Fixed
 
+- Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
+- Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
 - Ordinary text keeps the same line breaks when entering the experimental CodeMirror editor, including nested blocks and sidebar panes (UI-CM6-PLAIN-WRAP-WIDTH).
 - Typing in large pages and query results avoids rescanning unrelated block text for the compact Today task count, in-page find, query column choices, and sheet table and board fields.
@@ -35,6 +39,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- On Android and iOS, switching to another app commits pending edits immediately and, with **Commit and sync automatically**, pushes them, even inside the commit interval. Switching apps without edits adds no commit; the timed cadence is unchanged (D-20261101-GB).
 - `tine edit BLOCK TEXT` (including `TEXT` read from stdin with `-`) now refuses a supplied parser-owned LOGBOOK drawer without the read's `--rev`, preventing stale full buffers from replacing newer clock history. Plain text edits still retain current history without `--rev`.
 - The Quick capture Guide page now says Tine has no built-in system-wide hotkey (the **Quick-capture: file to today's journal** key, Ctrl+Shift+Enter by default, files what you typed inside the capture box) and gives the setup for Linux, Windows and macOS, plus the tray menu as a no-shortcut way in (GH #807).
 - The experimental CodeMirror editor keeps focus when a duplicate block mounts, respects newer clicks during journal loading, reveals the caret below sticky notices and after late images, and places desktop formatting over the selection (UI-CM6-SYNC).
