@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- A full **Namespaces** view opens in the main pane from **Open the full view…** at the top of the sidebar's Namespaces section, which keeps its inline tree (GH #335). It shows the whole tree with room for deep structures and long names, **Expand all** and **Collapse all**, how many pages lie below each namespace, and a filter over full paths that lists each match with the path above its name, so similar names under different parents can be told apart. Only the rows on screen are drawn, so a graph with tens of thousands of namespaced pages stays quick; it works the same from the phone drawer. Deleting pages from a list is not part of it.
 - Notes in Persian, Arabic and Hebrew read right to left: each block takes its direction from its text, in the view and in both editors, and links, tags and code inside it keep their order. Settings offers a **Right-to-left note layout** that mirrors bullets, indentation and guide lines. Nothing is written into notes (#823).
 - Persian (فارسی) is available as an interface language, Tine's first right-to-left one: menus, settings and messages mirror, and the note layout defaults to right to left. Choose it under Settings → Appearance → Language. The Guide stays in English (#823).
 - Settings → Editor → Advanced offers one **Hover preview delay**, in seconds, for page and block references (#824). The default is 1 second; large values keep previews out of the way, and touch long-press keeps its own delay.

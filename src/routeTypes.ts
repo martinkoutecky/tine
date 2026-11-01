@@ -53,6 +53,8 @@ export type Route =
   | { kind: "conflicts" }
   /** The full All Pages list: a view of the page inventory, never a file. */
   | { kind: "all-pages" }
+  /** The full Namespaces tree: a view of the page-name inventory, never a file. */
+  | { kind: "namespaces" }
   | { kind: "all-graphs" }
   | QueryRoute
   | PdfRoute

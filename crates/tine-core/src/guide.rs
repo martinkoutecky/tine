@@ -1967,6 +1967,24 @@ mod og_20d_guide_tests {
     }
 
     #[test]
+    fn where_things_are_documents_the_full_namespaces_view() {
+        // GH #335: the sidebar Namespaces section keeps its tree and opens the full view.
+        let map = page("Start/Where things are");
+        for detail in [
+            "**Open the full view…**",
+            "full **Namespaces** view",
+            "**Expand all** and **Collapse all**",
+            "The **Pages** column",
+            "each with the path above its name",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing Namespaces view detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
     fn troubleshooting_documents_the_launch_failure_card_and_failed_regions() {
         let recovery = page("Reference/Troubleshooting and recovery");
         for detail in [

@@ -1,0 +1,103 @@
+/* Full Namespaces view (GH #335): the All pages table's classes (container, controls,
+   scroll, spacer, window, row) with a two-track grid, name and size. Every row is
+   NAMESPACES_ROW_HEIGHT tall (Namespaces.tsx), so only the visible slice is in the DOM. */
+.ns-view {
+  width: min(100%, 1040px);
+}
+.ns-view-action {
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.ns-view-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+.ns-view-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ns-view-grid {
+  grid-template-columns: minmax(0, 1fr) 6em;
+}
+.ns-view-count-col,
+.ns-view-count {
+  text-align: end;
+}
+.ns-view-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ns-view-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.ns-view-toggle,
+.ns-view-spacer {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ns-view-toggle {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.ns-view-toggle:hover {
+  background: var(--bg-tertiary);
+}
+.ns-view-open {
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ns-view-open .all-pages-icon {
+  flex: 0 0 auto;
+}
+/* In a filtered list the path above the name gives way first, so the name stays readable. */
+.ns-view-prefix {
+  flex: 0 10 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+.ns-view-seg {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 640px) {
+  .ns-view-grid {
+    grid-template-columns: minmax(0, 1fr) 4.5em;
+  }
+}
+
+/* The sidebar's entry into the full view (inside the expanded Namespaces section); a
+   <button> that looks like the section's other rows. */
+.nav-namespaces-open {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+}
+.nav-namespaces-open:hover,
+.nav-namespaces-open.active {
+  background: var(--bg-tertiary);
+}

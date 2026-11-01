@@ -1445,6 +1445,18 @@ export interface MessageArgs {
   "pages-all-open-more": { "count": string | number };
   "pages-all-show-journals": {};
   "pages-all-title": {};
+  "pages-namespaces-collapse": { "name": string | number };
+  "pages-namespaces-collapse-all": {};
+  "pages-namespaces-column-namespace": {};
+  "pages-namespaces-column-pages": {};
+  "pages-namespaces-count": { "namespaces": number; "pages": number };
+  "pages-namespaces-empty": {};
+  "pages-namespaces-expand": { "name": string | number };
+  "pages-namespaces-expand-all": {};
+  "pages-namespaces-filter": {};
+  "pages-namespaces-matches": { "count": number };
+  "pages-namespaces-no-matches": {};
+  "pages-namespaces-open-full-view": {};
   "paste-pasted-as-a-copy-references-to-these-blocks": {};
   "paste-pasted-outline-is-too-deep": {};
   "pdf-area-highlight": {};
@@ -2947,6 +2959,7 @@ export interface MessageArgs {
   "sidebar-favorites-rename-group": { "groupName": string | number };
   "sidebar-journals": {};
   "sidebar-namespaces": {};
+  "sidebar-namespaces-title": {};
   "sidebar-new-graph": {};
   "sidebar-new-page": {};
   "sidebar-open-graph": {};

@@ -24,7 +24,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
  *  Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab
  *  (GH #283), Alt → other pane (GH #438). `stop` keeps a row's own click
  *  handler from also firing. */
-function nsLink(name: string, after?: () => void, stop = false) {
+export function nsLink(name: string, after?: () => void, stop = false) {
   return {
     "data-ref": pageIdentityKey(name),
     onMouseDown: internalLinkMouseDown,
@@ -69,6 +69,9 @@ export interface NsNode {
   seg: string;
   full: string;
   children: NsNode[];
+  /** True when the name list holds this exact name (a page, alias or referenced name);
+   *  false for a level that exists only as the prefix of longer names. */
+  listed?: boolean;
 }
 
 /** Build a nested namespace tree from page names containing `/`. Intermediate
@@ -76,20 +79,29 @@ export interface NsNode {
 export function buildNamespaceTree(names: string[]): NsNode[] {
   const roots: NsNode[] = [];
   const byFull = new Map<string, NsNode>();
+  const plain: string[] = [];
   for (const name of names) {
-    if (!name.includes("/")) continue;
+    if (!name.includes("/")) { plain.push(name); continue; }
     let level = roots;
     let prefix = "";
+    let node: NsNode | undefined;
     for (const seg of name.split("/")) {
       prefix = prefix ? `${prefix}/${seg}` : seg;
-      let node = byFull.get(pageIdentityKey(prefix));
+      const key = pageIdentityKey(prefix);
+      node = byFull.get(key);
       if (!node) {
         node = { seg, full: prefix, children: [] };
-        byFull.set(pageIdentityKey(prefix), node);
+        byFull.set(key, node);
         level.push(node);
       }
       level = node.children;
     }
+    if (node) node.listed = true;
+  }
+  // A top-level node is also a listed name when a plain (slash-free) name has its identity.
+  if (roots.length && plain.length) {
+    const plainKeys = new Set(plain.map((name) => pageIdentityKey(name)));
+    for (const root of roots) if (plainKeys.has(pageIdentityKey(root.full))) root.listed = true;
   }
   const pending = [roots];
   while (pending.length) {
@@ -98,6 +110,21 @@ export function buildNamespaceTree(names: string[]): NsNode[] {
     for (const node of level) if (node.children.length) pending.push(node.children);
   }
   return roots;
+}
+
+const treeOfNames = new WeakMap<readonly string[], NsNode[]>();
+
+/** `buildNamespaceTree` for a name list, built once per list object. The shared
+ *  inventory (`allPageNames()`) hands out the same array until the graph's page set
+ *  changes, so the sidebar tree and the full Namespaces view share one build instead
+ *  of each paying O(names x depth) identity-key calls. Callers must not mutate it. */
+export function namespaceTreeFor(names: readonly string[]): NsNode[] {
+  let tree = treeOfNames.get(names);
+  if (!tree) {
+    tree = buildNamespaceTree(names as string[]);
+    treeOfNames.set(names, tree);
+  }
+  return tree;
 }
 
 function NsNodeView(props: {
@@ -148,7 +175,7 @@ export function NamespaceTree(props: {
 } = {}): JSX.Element {
   // Pure CPU derivation off the shared page-name inventory (src/pageIndex.ts,
   // one page_inventory for every consumer), not its own whole-graph fetch.
-  const tree = createMemo(() => buildNamespaceTree(allPageNames()));
+  const tree = createMemo(() => namespaceTreeFor(allPageNames()));
   return (
     <Show when={tree().length > 0}>
       <div class="ns-tree">
