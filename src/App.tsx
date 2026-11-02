@@ -163,8 +163,8 @@ export const safeClose = createSafeCloseCoordinator({
   },
   onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
-  // The page host keeps a crash-recovery copy of every page it took and has
-  // not saved; the close only persists the session layout.
+  // `flushAll` already waited for publication (above); a page it could not
+  // save keeps its host draft. The close only persists the session layout.
   markPagesSeen: leaveAllSeenPages,
   flushSession,
   setTransition: setGraphTransitioning,

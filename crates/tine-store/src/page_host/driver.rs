@@ -14,7 +14,8 @@
 //! The state is private to this file (host-only-writer §3.2): every other
 //! thread reaches it through a request on the driver's inbox, run on the
 //! driver thread between its steps. A caller's only wait is for its answer,
-//! bounded by its deadline even while the driver sits in a disk call. A
+//! bounded by its deadline (plus the mid-ask grace) even while the driver sits
+//! in a disk call. A
 //! request that needs the store writer has the driver take it first (lock
 //! order); one whose path lock another thread holds is parked and retried
 //! (A4), so a caller never waits holding a lock the driver may need.

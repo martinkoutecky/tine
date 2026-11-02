@@ -63,8 +63,15 @@ impl DateToken {
         if let Some(token) = Self::relative(t) {
             return Some(token);
         }
-        if let Some(date) = JournalDate::from_file_stem(t) {
-            return Some(DateToken::Stem(date));
+        // Digits only: integer parsing alone would also take `+2026_01_05`
+        // (the preview in `dateExpr.ts` does not, and the shared golden pins it).
+        if t.bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'-' || byte == b'_')
+            && !t.starts_with('-')
+        {
+            if let Some(date) = JournalDate::from_file_stem(t) {
+                return Some(DateToken::Stem(date));
+            }
         }
         // master `journal_ordinal`: a default-format journal title literal.
         JournalDate::from_title(t).map(DateToken::Title)

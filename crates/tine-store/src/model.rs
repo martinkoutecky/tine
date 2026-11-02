@@ -4248,6 +4248,16 @@ impl Graph {
             }
             Err(error) => return Err(error),
         }
+        // Both entries durable before the outcome is reported, the entry that
+        // holds the bytes first: a crash must not persist the removal from one
+        // directory without the entry in the other (audit L9-13).
+        let source = path.parent();
+        let sync_dirs = |first: Option<&Path>, second: Option<&Path>| -> io::Result<()> {
+            for dir in [first, second].into_iter().flatten() {
+                crate::directory_durability::sync_directory_entry(dir)?;
+            }
+            Ok(())
+        };
         // A comparison can run arbitrary I/O; recheck the original target
         // before restoring displaced bytes through it.
         let restore = || {
@@ -4256,9 +4266,14 @@ impl Graph {
             } else {
                 self.ensure_write_target(path)?;
             }
-            move_file_noreplace(&staged, path)
+            move_file_noreplace(&staged, path)?;
+            // Best effort: the bytes are back at `path`, and an error here must
+            // not name the trash as their recovery.
+            let _ = sync_dirs(source, Some(trash.as_path()));
+            Ok::<(), io::Error>(())
         };
-        let equal = matches(&staged).map_err(|error| match restore() {
+        let compared = sync_dirs(Some(trash.as_path()), source).and_then(|()| matches(&staged));
+        let equal = compared.map_err(|error| match restore() {
             Ok(()) => error,
             Err(restore) => io::Error::new(
                 error.kind(),
@@ -11813,5 +11828,47 @@ mod fail_read_rollback_tests {
             "I-2/I-9: failed restore must preserve recovery evidence: {error}"
         );
         assert!(error.to_string().contains("comparison failed"));
+    }
+
+    // L9-13: the withdrawal's two directory entries are durable before its
+    // outcome is reported, and a failed sync leaves the bytes at their path.
+    #[cfg(all(feature = "test-faults", unix))]
+    #[test]
+    fn withdrawal_syncs_source_and_trash_and_restores_when_it_cannot() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("pages")).unwrap();
+        let path = temp.path().join("pages/A.md");
+        fs::write(&path, "- bytes\n").unwrap();
+        let graph = Graph::open(temp.path());
+
+        crate::directory_durability::take_synced_directories();
+        let staged = match graph
+            .transaction_withdraw_exact(&path, b"- bytes\n", "tx-undo")
+            .unwrap()
+        {
+            Withdrawal::Exact(staged) => staged,
+            _ => panic!("the bytes match"),
+        };
+        let synced = crate::directory_durability::take_synced_directories();
+        let last_sync_of = |dir: &Path| synced.iter().rposition(|synced| synced == dir);
+        let source_sync = last_sync_of(path.parent().unwrap()).expect("source synced");
+        let trash = staged.parent().unwrap();
+        let trash_sync = last_sync_of(trash).expect("trash synced");
+        assert!(
+            trash_sync < source_sync,
+            "a power cut between the syncs must not persist only the removal: {synced:?}"
+        );
+
+        // The trash exists now, so the injected failure lands on the move's sync.
+        fs::write(&path, "- bytes\n").unwrap();
+        let staged_before = fs::read_dir(trash).unwrap().count();
+        crate::directory_durability::fail_next_sync();
+        let error = graph
+            .transaction_withdraw_exact(&path, b"- bytes\n", "tx-undo")
+            .err()
+            .expect("a failed directory sync is not a durable withdrawal");
+        assert!(!error.to_string().is_empty());
+        assert_eq!(fs::read(&path).unwrap(), b"- bytes\n");
+        assert_eq!(fs::read_dir(trash).unwrap().count(), staged_before);
     }
 }

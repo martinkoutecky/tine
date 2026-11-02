@@ -924,7 +924,9 @@ struct ScoredBlock<'a> {
     index: usize,
     page: &'a PageEntry,
     block: &'a DocBlock,
-    breadcrumb: Vec<String>,
+    /// Borrowed, so a candidate that loses costs one pointer per ancestor; the
+    /// labels are built for winners only (audit L7s3-02).
+    ancestors: Vec<&'a DocBlock>,
 }
 
 impl ScoredBlock<'_> {
@@ -1643,6 +1645,35 @@ mod tests {
         assert!(!complete.has_more.blocks);
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    // L7s3-02: a sorted search keeps every match until it truncates; only the
+    // rows it returns may pay for breadcrumb labels.
+    #[test]
+    fn sorted_search_builds_breadcrumbs_only_for_the_rows_it_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pages")).unwrap();
+        let deep: String = (0..40)
+            .map(|depth| format!("{}- needle {depth}\n", "\t".repeat(depth)))
+            .collect();
+        fs::write(dir.path().join("pages/Deep.md"), deep).unwrap();
+        let graph = snapshot_for_dir(dir.path());
+        let view = ViewSettings {
+            sort: vec![(tine_core::query::ir::Field::new("content"), SortDir::Asc)],
+            ..Default::default()
+        };
+        crate::query::CRUMB_LINES.with(|count| count.set(0));
+        let result = QueryPlan::block_search("needle", 1)
+            .with_display(None, Some(view))
+            .execute(&graph, || false);
+        let QueryHit::Block { block, .. } = &result.hits[0] else {
+            panic!("a block hit");
+        };
+        assert_eq!(
+            crate::query::CRUMB_LINES.with(std::cell::Cell::get),
+            block.breadcrumb.len(),
+            "the 39 losers must not build labels"
+        );
     }
 
     #[test]

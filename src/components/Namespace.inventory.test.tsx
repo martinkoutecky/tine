@@ -10,6 +10,7 @@ const backendMock = vi.hoisted(() => {
     target: { kind: "absent" as const, id: `pages/${name.replaceAll("/", "___")}.md` },
   });
   return {
+    graphBindingGeneration: () => 0,
     pageInventory: vi.fn(async () => ({
       rev: "1",
       entries: [
@@ -30,13 +31,26 @@ const backendMock = vi.hoisted(() => {
 
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
-import { NamespaceHierarchy } from "./Namespace";
+import { NamespaceHierarchy, NamespaceMacro } from "./Namespace";
 import { createSignal } from "solid-js";
 import { resetReferenceSectionState } from "../referenceSectionState";
 
 afterEach(() => {
   resetReferenceSectionState();
   document.body.innerHTML = "";
+});
+
+// L7s6-04: OG's header is the namespace the macro names, and the tree is its descendants.
+describe("{{namespace a/b}}", () => {
+  it("heads with the named namespace and lists only what lies below it", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <NamespaceMacro root="test/testy test" />, root);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".ns-macro-head .page-ref")?.textContent).toBe("test/testy test"));
+      expect([...root.querySelectorAll(".ns-macro-tree .page-ref")].map((a) => a.textContent)).toEqual(["another"]);
+    } finally { dispose(); }
+  });
 });
 
 describe("GH #229 reference-only namespace descendants", () => {

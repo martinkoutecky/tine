@@ -83,7 +83,7 @@ export function convertPipeTableToGrid(id: string): boolean {
       }
     }
     return true;
-  });
+  }) ?? false;
 }
 
 export function escapedPipeCellsRoundTrip(): boolean {
@@ -236,7 +236,7 @@ export function convertGridToPipeTable(id: string): boolean {
     for (const rowId of rows) deleteBlock(rowId);
     if (docNode(id)?.children.length) throw new Error("failed to delete grid rows");
     return true;
-  });
+  }) ?? false;
 }
 
 export function delimitedCellCount(matrix: readonly (readonly string[])[]): number {

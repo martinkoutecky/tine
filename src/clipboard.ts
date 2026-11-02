@@ -99,7 +99,14 @@ export function outlineToHtml(md: string): string {
   for (const raw of md.split("\n")) {
     const m = /^(\t*)- ?(.*)$/.exec(raw);
     if (m) items.push({ depth: m[1].length, html: esc(m[2]) });
-    else if (items.length && raw.trim()) items[items.length - 1].html += "<br>" + esc(raw.replace(/^[\t ]+/, ""));
+    else if (items.length && raw.trim()) {
+      // A receiver collapses ordinary spaces, and these may be code.
+      // The serializer's own indentation is the block's tabs plus two spaces.
+      const item = items[items.length - 1];
+      const body = raw.slice(/^\t*/.exec(raw)![0].length).replace(/^ {1,2}/, "");
+      const indent = /^[\t ]*/.exec(body)![0];
+      item.html += "<br>" + indent.replace(/\t/g, "    ").replace(/ /g, "&nbsp;") + esc(body.slice(indent.length));
+    }
   }
   if (!items.length) return "";
   let out = "";

@@ -1,8 +1,9 @@
 //! Open, read, observe, and safely change a Logseq graph rooted on disk.
 //!
 //! [`Store::open`] returns after listing graph files and starts parsing in the
-//! background. [`Store::whole_graph`] waits for that first parse and returns a
-//! stable view for graph-wide queries. [`Store::page`] reads one page;
+//! background. [`Store::whole_graph`] returns a stable view for graph-wide
+//! queries, waiting for that first parse unless a launch checkpoint can answer
+//! first (destructive planners use [`Store::whole_graph_reconciled`]). [`Store::page`] reads one page;
 //! [`Store::read`] and [`Store::open_read`] provide raw file data. These calls
 //! are synchronous and should run off a UI thread.
 //!

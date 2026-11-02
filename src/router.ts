@@ -101,6 +101,8 @@ export interface AdoptedTab {
 
 export interface PaneRouter {
   paneId: string;
+  /** The pane closed: drop its browser history entries. O(entries). */
+  retireMobileHistory(): void;
   /** O(1) read of this pane's session-local foreground navigation revision.
    * Foreground routes, history, tab activation and closure advance it. Background
    * tab creation, page-target rewrites/removals, route replacement, query edits
@@ -331,6 +333,36 @@ export function installNavigationInterceptor(
   navigationInterceptor = handler;
 }
 
+/** A router's end of the browser history bridge. */
+interface MobileHistoryBridge {
+  /** Its in-app Back asked for this pop. */
+  requested(): boolean;
+  /** Take the pop; false when the router has nothing to go back to. */
+  pop(): boolean;
+}
+
+/** Who pushed each browser history entry this window made, oldest first. The
+ *  browser has ONE history for all panes, so one listener hands each pop to
+ *  one pane: the one that asked for it, else the pane whose navigation it undoes. */
+const mobileHistoryEntries: MobileHistoryBridge[] = [];
+let mobileHistoryListening = false;
+
+function listenForMobileHistory(): void {
+  if (mobileHistoryListening) return;
+  mobileHistoryListening = true;
+  window.addEventListener("popstate", () => {
+    const requester = [...mobileHistoryEntries].reverse().find((entry) => entry.requested());
+    if (requester) {
+      mobileHistoryEntries.splice(mobileHistoryEntries.lastIndexOf(requester), 1);
+      requester.pop();
+      return;
+    }
+    while (mobileHistoryEntries.length) {
+      if (mobileHistoryEntries.pop()!.pop()) return;
+    }
+  });
+}
+
 export function createPaneRouter(paneId = "main"): PaneRouter {
   let counter = 0;
   let intentRevision = 0;
@@ -367,7 +399,6 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   let mobileHistoryDepth = 0;
   let mobileHistoryBackPending = false;
   let handlingMobilePopState = false;
-  let mobileHistoryListenerAttached = false;
   let pdfViewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function setScrollerElement(el: HTMLElement | null) {
     scrollerElement = el;
@@ -420,28 +451,36 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     persist();
   }
 
-  function ensureMobileHistoryBridge() {
-    if (!mobileHistoryAvailable() || mobileHistoryListenerAttached) return;
-    mobileHistoryListenerAttached = true;
-    window.addEventListener("popstate", () => {
+  const mobileHistoryBridge: MobileHistoryBridge = {
+    requested: () => mobileHistoryBackPending,
+    pop() {
       if (mobileHistoryDepth > 0) mobileHistoryDepth--;
       mobileHistoryBackPending = false;
-      if (!canGoBack()) return;
+      if (!canGoBack()) return false;
       handlingMobilePopState = true;
       try {
         goBack();
       } finally {
         handlingMobilePopState = false;
       }
-    });
+      return true;
+    },
+  };
+
+  /** The pane closed: its entries stop answering Back and stop retaining it. */
+  function retireMobileHistory() {
+    for (let i = mobileHistoryEntries.length - 1; i >= 0; i--) {
+      if (mobileHistoryEntries[i] === mobileHistoryBridge) mobileHistoryEntries.splice(i, 1);
+    }
   }
 
   function pushMobileHistoryEntry() {
     if (!mobileHistoryAvailable() || !canGoBack()) return;
-    ensureMobileHistoryBridge();
+    listenForMobileHistory();
     try {
       window.history.pushState(MOBILE_HISTORY_STATE, "", window.location?.href);
       mobileHistoryDepth++;
+      mobileHistoryEntries.push(mobileHistoryBridge);
     } catch {
       // History is best-effort: if a WebView refuses pushState, router navigation still works.
     }
@@ -452,7 +491,6 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       return false;
     }
     if (mobileHistoryBackPending) return true;
-    ensureMobileHistoryBridge();
     mobileHistoryBackPending = true;
     try {
       window.history.back();
@@ -1153,6 +1191,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   return {
     paneId,
+    retireMobileHistory,
     routeIntentRevision,
     tabs,
     activeId,

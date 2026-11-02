@@ -1410,9 +1410,9 @@ export function PdfViewer(props: {
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     if (shortcutKey(e) === "f") {
-      // With a PDF pane focused, only that view searches (two views of one PDF
-      // are common now); otherwise every open reader keeps its old behavior.
-      if (props.focused && !props.focused() && focusedRouter().route().kind === "pdf") return;
+      // Only the focused pane's view searches: the global dispatcher answers
+      // Mod+F with page Find for any other route, and it keeps the focus.
+      if (props.focused && !props.focused()) return;
       e.preventDefault();
       openFind();
       return;

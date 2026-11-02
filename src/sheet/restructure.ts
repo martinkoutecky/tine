@@ -138,7 +138,7 @@ export function hierarchify(parentId: string, field: FieldId): boolean {
     nextOrders[parentId] = groupIds;
     if (!replaceChildOrders(nextOrders)) throw new Error("failed to reparent grouped rows");
     return true;
-  });
+  }) ?? false;
 }
 
 export function flatten(parentId: string): boolean {
@@ -190,5 +190,5 @@ export function flatten(parentId: string): boolean {
     if (!replaceChildOrders(orders)) throw new Error("failed to flatten rows");
     for (const group of groups) if (!group.retain) deleteBlock(group.id);
     return true;
-  });
+  }) ?? false;
 }

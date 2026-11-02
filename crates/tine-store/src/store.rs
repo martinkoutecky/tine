@@ -1989,8 +1989,8 @@ impl Store {
     /// No partial graph generation is available after failure.
     /// A launch checkpoint (ADR 0070) is served before Ready, while the launch
     /// diff reconciles edits made while closed; an operation acting on the
-    /// whole graph's answers waits for Ready first (`refresh` does;
-    /// inside the crate, `whole_graph_reconciled`).
+    /// whole graph's answers waits for Ready first (`refresh` and
+    /// [`Store::whole_graph_reconciled`] do).
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         self.whole_graph_when(true)
     }
@@ -2939,7 +2939,7 @@ impl WholeGraph {
     /// A cold search can scan O(P + B + text bytes); content page membership
     /// adds one block scan and keeps at most one candidate per matching physical
     /// page before applying the requested hit limits. An authored sort retains
-    /// all matching candidates in memory, O(matches) space and O(matches log
+    /// all matching candidates in memory, O(matches x depth) pointers and O(matches log
     /// matches) ordering, before the independent section samples and bounds.
     pub fn search(
         &self,

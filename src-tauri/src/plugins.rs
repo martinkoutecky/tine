@@ -198,7 +198,10 @@ pub(crate) enum PackagePublishOutcome {
 
 /// Serializes this process's package-store mutations (publish, retire,
 /// recovery) so concurrent Tauri commands cannot interleave inside one store.
-/// Other processes are handled by the no-replace moves themselves.
+/// It does not reach other processes: the no-replace moves keep a published
+/// version safe, but a second process's first-use recovery can remove this
+/// one's staging and fail its install (retried by the user). Single-instance
+/// per identifier makes two writers on one store rare (audit L7s5-04).
 fn lock_plugin_store() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -299,8 +302,9 @@ static RECOVERED_PLUGIN_STORES: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mute
 /// Reclaim residue once per process per store root, at first use (master
 /// 3f9dcdbdb). Recovering on every command would let one honest instance's
 /// plugin listing delete another live instance's in-flight `.install-*`
-/// staging (in-scope: honest concurrent instances). A previous process's
-/// crash residue is still reclaimed at the next first use.
+/// staging; once per process narrows that window for honest concurrent
+/// instances, it does not close it (see `lock_plugin_store`). A previous
+/// process's crash residue is still reclaimed at the next first use.
 fn recover_plugin_store_once(root: &Path) -> Result<(), String> {
     let mut recovered = RECOVERED_PLUGIN_STORES
         .lock()

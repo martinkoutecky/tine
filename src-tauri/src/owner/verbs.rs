@@ -267,11 +267,29 @@ fn in_run(
     let Some(run) = super::git_run::run_of(args)? else {
         return verb();
     };
+    // Before the lock too: the exit flush keeps it, so a later write would wait
+    // out the process instead of being told.
+    refuse_while_quitting(super::git_autocommit::exiting())?;
     // The save and its commits as one step, in save order (CL1).
     super::git_run::serialized(|| {
+        refuse_while_quitting(super::git_autocommit::exiting())?;
         super::git_run::check_repository(slot)?;
         super::write::in_run(Some(run), subject, verb)
     })
+}
+
+/// A run write that starts once the app is exiting could be cut between its save
+/// and its commit, and `tine run revert` would then miss it: `refused:quitting`,
+/// nothing saved (threat: quit or crash between the two, audit L9-11).
+fn refuse_while_quitting(exiting: bool) -> Result<(), ErrorBody> {
+    if exiting {
+        return Err(super::write::refused(
+            "quitting",
+            None,
+            "Tine is quitting; nothing was saved. Retry once it has restarted.",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -615,5 +633,19 @@ fn store_failed(error: StoreError) -> ErrorBody {
         StoreError::NotFound => not_found("the page does not exist"),
         StoreError::Closed => busy(),
         other => internal(Diag::StoreFailed, format!("{other:?}")),
+    }
+}
+
+#[cfg(test)]
+mod quitting_tests {
+    use super::*;
+
+    // L9-11: the verb is what saves, so a refusal here means no save and no
+    // missing commit. Flipping the real EXITING flag would poison this process.
+    #[test]
+    fn a_run_write_is_refused_as_quitting_only_once_the_app_exits() {
+        assert!(refuse_while_quitting(false).is_ok());
+        let error = refuse_while_quitting(true).unwrap_err();
+        assert_eq!(super::super::git_run::reason_of(&error), "refused:quitting");
     }
 }

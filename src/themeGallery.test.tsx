@@ -236,3 +236,21 @@ describe("theme gallery style layer", () => {
     set.mockRestore();
   });
 });
+
+// L7s8-03: the registry's startup refresh can beat the local read of the saved theme.
+describe("a registry refresh before the saved theme is read", () => {
+  it("does not overwrite the saved theme", async () => {
+    vi.resetModules();
+    const { backend: fresh } = await import("./backend");
+    const gallery = await import("./themeGallery");
+    const saved = JSON.stringify({ style: "", colors: "", typography: "" });
+    const get = vi.spyOn(fresh(), "getAppString").mockResolvedValue(saved);
+    const write = vi.spyOn(fresh(), "setAppString").mockResolvedValue();
+    gallery.reapplyThemeSelection();
+    await gallery.initThemeGallery();
+    expect(get).toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    gallery.reapplyThemeSelection(); // once read, a re-resolve works as before
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+  });
+});

@@ -442,9 +442,9 @@ function applyEntry(e: UndoEntry): UndoEntry {
  *  `false` return restores the snapshot and stacks (then rethrows / returns).
  *  A frozen rewrite or loaded read-only page skips `fn` and returns undefined;
  *  success-reporting callers must check it. */
-export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
-  if (graphRewriteFrozen()) return undefined as T;
-  if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined as T;
+export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T | undefined {
+  if (graphRewriteFrozen()) return undefined;
+  if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined;
   if (undoSuppressionDepth > 0) return fn();
 
   const undoBefore = undoStack.slice();

@@ -233,8 +233,9 @@ pub(crate) async fn query_registry(state: GraphContext<'_>) -> Result<RegistrySn
 /// (20,000 rows / 32 MiB, checked after `sample` for both anchors) is refused
 /// with `Err("result-too-large: …")`, never truncated. An invalid query is `Ok`
 /// with no rows and its `diagnostics`. `context` binds only an advanced
-/// source's typed `:current-page` input; without it that clause is dropped and
-/// listed in `report.ignored`, so the answer is broader. A statistics fold over
+/// source's typed `:current-page` input; without it a query needing that input
+/// is refused whole (`report.supported = false`, `report.ignored` names the
+/// clause, no rows), never broadened. A statistics fold over
 /// budget is an `Err`.
 #[tauri::command]
 pub(crate) async fn query_run(

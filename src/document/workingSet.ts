@@ -502,7 +502,7 @@ export async function reloadHlsIfLoaded(name: string): Promise<boolean> {
   if (result.kind !== "current" || !result.value) return false;
   return reloadPageIfStillSafe(name, result.value) || retryWhenFree();
 }
-function evictIfNeeded() {
+export function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
   const evicted: string[] = [];

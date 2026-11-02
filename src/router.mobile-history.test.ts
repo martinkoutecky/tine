@@ -70,6 +70,46 @@ describe("mobile History API bridge", () => {
     expect(windowShim.addEventListener).toHaveBeenCalledTimes(1);
   });
 
+  // L7s8-01: one Back moves one pane.
+  it("a native Back undoes the latest navigation, in the pane that made it", async () => {
+    const { history } = installBrowserShim(ANDROID_UA);
+    const router = await loadRouter();
+    const left = router.createPaneRouter("left");
+    const right = router.createPaneRouter("right");
+    left.openPage("Left page");
+    right.openPage("Right page");
+    history.back();
+    expect(right.route()).toEqual({ kind: "journals" });
+    expect(left.route().kind).toBe("page");
+    history.back();
+    expect(left.route()).toEqual({ kind: "journals" });
+  });
+
+  it("an in-app Back moves only the pane it was pressed in", async () => {
+    installBrowserShim(ANDROID_UA);
+    const router = await loadRouter();
+    const left = router.createPaneRouter("left");
+    const right = router.createPaneRouter("right");
+    left.openPage("Left page");
+    right.openPage("Right page");
+    left.goBack();
+    expect(left.route()).toEqual({ kind: "journals" });
+    expect(right.route().kind).toBe("page");
+  });
+
+  it("a closed pane no longer answers Back", async () => {
+    const { history } = installBrowserShim(ANDROID_UA);
+    const router = await loadRouter();
+    const left = router.createPaneRouter("left");
+    const closed = router.createPaneRouter("closed");
+    left.openPage("Left page");
+    closed.openPage("Closed page");
+    closed.retireMobileHistory();
+    history.back();
+    expect(closed.route().kind).toBe("page");
+    expect(left.route()).toEqual({ kind: "journals" });
+  });
+
   it("does not push when router navigation is a no-op", async () => {
     const { history } = installBrowserShim(ANDROID_UA);
     const router = await loadRouter();

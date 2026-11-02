@@ -154,6 +154,10 @@ export function setFocusedPaneId(paneId: string) {
 }
 
 const routers = new Map<string, PaneRouter>([["main", mainPaneRouter]]);
+function dropRouter(id: string): void {
+  routers.get(id)?.retireMobileHistory();
+  routers.delete(id);
+}
 let paneCounter = 1;
 
 function freshPaneId(): string {
@@ -423,7 +427,7 @@ export function closePane(paneId = focusedPaneId()): boolean {
   const res = closeLayoutPane(root, paneId);
   if (!res.closed) return false;
   commitLayout(res.node, windowId);
-  if (paneId !== "main") routers.delete(paneId);
+  if (paneId !== "main") dropRouter(paneId);
   // Closing a background pane must not manufacture a foreground visit. When
   // the focused pane closes, however, its sibling becomes the page the user is
   // actually looking at and must pass through the same activation boundary as
@@ -720,7 +724,7 @@ export function resetPaneLayoutToSingle(snapshot?: PaneSnapshot) {
   if (snapshot) mainRouter().restoreSnapshot(snapshot);
   const kept = new Set(allPaneIds());
   for (const id of [...routers.keys()]) {
-    if (id !== "main" && !kept.has(id)) routers.delete(id);
+    if (id !== "main" && !kept.has(id)) dropRouter(id);
   }
   setFocusedPaneId("main");
 }
@@ -745,7 +749,7 @@ export function restorePaneLayout(
   }
   commitLayout(root, windowId);
   for (const id of [...routers.keys()]) {
-    if (id !== "main" && !ids.includes(id) && !elsewhere.has(id)) routers.delete(id);
+    if (id !== "main" && !ids.includes(id) && !elsewhere.has(id)) dropRouter(id);
   }
   setFocusedPaneId(ids.includes(focused) ? focused : ids[0] ?? "main");
   return true;
@@ -772,7 +776,7 @@ export function dropWindowLayout(windowId: string) {
   delete nextFocus[windowId];
   setFocusedPanes(nextFocus);
   setMaximizedPaneId(windowId, null);
-  for (const id of ids) if (id !== "main") routers.delete(id);
+  for (const id of ids) if (id !== "main") dropRouter(id);
 }
 
 installPaneRouterRegistry({

@@ -108,3 +108,21 @@ it("D19 timed repetition shares all supported modes, both planning kinds and lit
       .toBe("DONE hour\nSCHEDULED: <2026-09-30 Wed +1h>");
   } finally { vi.useRealTimers(); }
 });
+
+describe("catch-up repeater with a date centuries old (L7s7-02)", () => {
+  it("still lands past today, however old the date is", () => {
+    vi.useFakeTimers({ now: new Date(2026, 10, 2, 12) });
+    try {
+      expect(rollRepeat("TODO x\nSCHEDULED: <0026-10-22 Thu ++1d>", "todo", "md")).toMatch(/<2026-11-03 \w+ \+\+1d>/);
+      expect(rollRepeat("TODO x\nSCHEDULED: <0026-10-22 Thu ++2w>", "todo", "md")).toMatch(/<2026-11-\d\d \w+ \+\+2w>/);
+    } finally { vi.useRealTimers(); }
+  });
+  it("rolls an ordinary overdue daily and weekly catch-up to the same day as stepping would", () => {
+    vi.useFakeTimers({ now: new Date(2026, 5, 16, 12) });
+    try {
+      expect(rollRepeat("TODO x\nSCHEDULED: <2026-06-16 Tue ++1d>", "todo", "md")).toContain("<2026-06-17");
+      expect(rollRepeat("TODO x\nSCHEDULED: <2026-06-02 Tue ++1w>", "todo", "md")).toContain("<2026-06-23");
+      expect(rollRepeat("TODO x\nSCHEDULED: <2026-06-20 Sat ++1w>", "todo", "md")).toContain("<2026-06-27");
+    } finally { vi.useRealTimers(); }
+  });
+});

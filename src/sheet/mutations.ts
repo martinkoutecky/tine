@@ -171,7 +171,7 @@ function withSheetUndo<T>(gridId: string, tag: string, fn: () => T): T | null {
   if (!gridRows(gridId)) return null;
   const page = gridPage(gridId);
   if (!page) return null;
-  return withUndoUnit(tag, [page], fn);
+  return withUndoUnit(tag, [page], fn) ?? null;
 }
 
 function colWidths(gridId: string): ReadonlyMap<number, number> {
@@ -248,7 +248,7 @@ export function insertRow(gridId: string, at: number): string | null {
   if (!rows || !page || at < 0 || at > rows.length) return null;
   const result = withUndoUnit("sheet:insert-row", [page], () => insertEmptyChildBlock(gridId, at));
   if (result) invalidateMatrixDimensions(gridId);
-  return result;
+  return result ?? null;
 }
 
 export function deleteRow(gridId: string, row: number): void {
@@ -345,7 +345,7 @@ export function materializeCell(gridId: string, row: number, col: number): strin
     return docNode(rowId)?.children[col] ?? made;
   });
   if (result) invalidateMatrixDimensions(gridId);
-  return result;
+  return result ?? null;
 }
 
 export function setColumnWidth(gridId: string, col: number, px: number | null): void {

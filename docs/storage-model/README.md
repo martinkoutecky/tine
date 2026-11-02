@@ -99,8 +99,9 @@ flushes. Detailed ITF, comparison and mutant logs live in `artifacts/sb1-model/`
   portable OS mechanism closes this window.
 - R3: a weak filesystem that reverts a save it acknowledged, on a power cut.
 - An external write after Tine's published save (it wins).
-- Text Tine never acknowledged: unsent input lost by a window reload, and text the backend accepted but had
-  not yet saved or drafted when the whole app crashed. Also three narrow cases of text the user saw but Tine
+- Text Tine never acknowledged: unsent input lost by a window reload, a renderer crash or an OS kill of a
+  foreground window (the client sends within 1 s of typing, `client.ts` `SEND_MAX_WAIT_MS`; hiding a window
+  flushes first), and text the backend accepted but had not yet saved or drafted when the whole app crashed. Also three narrow cases of text the user saw but Tine
   never acknowledged as durable, reverted by a power cut (SPEC-s2 §5 lists them).
 - A duplicate left by an interrupted move: the moved text may end up in both places, never in neither.
 - A refused discard still drops the unsent input it was asked to drop.

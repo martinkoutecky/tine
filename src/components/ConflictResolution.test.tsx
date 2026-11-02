@@ -203,6 +203,26 @@ describe("in-page conflict resolution", () => {
     dispose();
   });
 
+  // L7s6-02: the write lands whatever the panel does meanwhile, so the page and the queue must catch up.
+  it("reconciles the page and the queue when the panel closes before the guarded write answers", async () => {
+    setConflictInventory(inventoryWith(markerConflict));
+    vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows, "marker-rev") });
+    let land!: () => void;
+    vi.spyOn(backend(), "resolveVcsMarkerConflict").mockImplementation(() => new Promise<void>((resolve) => { land = resolve; }));
+    const inventory = vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    dispose();
+    land();
+    await settle();
+    expect(conflictQueue()).toEqual([]);
+    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "pages/Merged.md", name: "Merged", kind: "page", created: false, removed: false }, true);
+    expect(inventory).toHaveBeenCalled();
+    expect(toasts().filter((toast) => toast.message.includes("Applied"))).toEqual([]); // no success toast from a closed panel
+  });
+
   // og 20a (master ADR 0056): a sync copy reviewed 3-way against the Concord
   // base ledger sends the base's identity back, so the resolve applies a
   // "merged" row only against the base the user saw.
