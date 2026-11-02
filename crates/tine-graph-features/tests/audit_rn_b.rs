@@ -76,7 +76,7 @@ fn audit_l7s1_01_character_literals_keep_hidden_and_surgical_config_edits() {
             !store
                 .whole_graph()
                 .unwrap()
-                .corpus()
+                .corpus(None)
                 .pages
                 .iter()
                 .any(|p| p.name == "Secret"),

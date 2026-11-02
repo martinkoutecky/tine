@@ -1,7 +1,8 @@
 //! Single-page print document client.
 
 use std::io;
-use tine_store::Store;
+use tine_core::{Corpus, CorpusPage};
+use tine_store::{Store, WholeGraph};
 
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 
@@ -40,32 +41,62 @@ pub fn page_print_html_with_sheets(
     sheets: Vec<SheetExport>,
 ) -> io::Result<Option<String>> {
     let sheets = SheetIndex::new(sheets);
-    // I-13: this is a single-page export. The printed page is read fresh
-    // (`Store::page` publishes it if it changed); every other page the render
-    // reaches (embeds, queries) comes from the last published graph view, the
-    // view every other read uses. No graph-wide refresh scan.
+    let Some((whole, corpus)) = fresh_named_pages(store, &[name.to_owned()])? else {
+        return Ok(None);
+    };
+    render::page_print_html(
+        &RenderGraph::for_pages(&corpus, &whole, store, Some(&sheets)),
+        name,
+        opts,
+    )
+}
+
+/// The named pages, read fresh, with the view that holds them; `None` when no
+/// page has any of these names. I-13: a print is single-page work. Each
+/// printed page is read from disk (`Store::page` publishes it if an external
+/// editor or sync changed it since the last publication); every other page
+/// the render reaches (embeds, block references, queries) comes from the
+/// last published view, the one every other read uses, which the watcher
+/// keeps current (docs/storage-contract.md). No graph-wide refresh scan and no
+/// whole-graph corpus: the pages are found through the view's name table.
+/// Cost O(named pages' bytes + claimants x log P).
+pub(crate) fn fresh_named_pages(
+    store: &Store,
+    names: &[String],
+) -> io::Result<Option<(WholeGraph, Corpus)>> {
     let load = |store: &Store| {
         store
             .whole_graph()
             .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))
     };
-    let mut whole = load(store)?;
-    let mut corpus = whole.corpus();
-    let Some(id) = (corpus.pages.iter())
-        .find(|page| page.name == name)
-        .map(|page| page.id.clone())
-    else {
-        return Ok(None);
+    let mut names: Vec<&String> = names.iter().collect();
+    names.sort();
+    names.dedup();
+    let named = |whole: &WholeGraph| -> Vec<CorpusPage> {
+        let mut pages: Vec<CorpusPage> = (names.iter())
+            .flat_map(|name| {
+                (whole.corpus(Some(name.as_str())).pages.into_iter())
+                    .filter(move |page| page.name == **name)
+            })
+            .collect();
+        // Name order, page order within a name: what sorting a corpus gives.
+        pages.sort_by(|a, b| a.name.cmp(&b.name));
+        pages
     };
-    store.page(&id).map_err(crate::store_error)?;
-    let fresh = load(store)?;
-    if fresh.rev() != whole.rev() {
-        corpus = fresh.corpus();
-        whole = fresh;
+    let mut whole = load(store)?;
+    let pages = named(&whole);
+    if pages.is_empty() {
+        return Ok(None);
     }
-    render::page_print_html(
-        &RenderGraph::new(&corpus, &whole, store, Some(&sheets)),
-        name,
-        opts,
-    )
+    for page in &pages {
+        store.page(&page.id).map_err(crate::store_error)?;
+    }
+    let fresh = load(store)?;
+    let pages = if fresh.rev() != whole.rev() {
+        whole = fresh;
+        named(&whole)
+    } else {
+        pages
+    };
+    Ok(Some((whole, Corpus { pages })))
 }

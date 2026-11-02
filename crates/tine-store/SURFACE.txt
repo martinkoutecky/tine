@@ -352,6 +352,8 @@ fn store::WholeGraph::complete_page_names
 # GH #623: the rename planner asks for the page files under one key through
 # `InventoryScope` instead of a sibling method (rule 3).
 fn store::WholeGraph::inventory
+# Cost-model audit 2026-11-02 row 5: print asks for the pages of one name
+# through `corpus(Some(name))` (a parameter, rule 3), not a sibling method.
 fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::resolve

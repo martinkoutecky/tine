@@ -12,7 +12,9 @@ impl PagePlan<'_> {
                 }
             )
         }) {
-            let _ = self.store.whole_graph_reconciled();
+            // Build the view's asset index before the writer is held, so
+            // the check under it is a lookup (cost-model audit row 9a).
+            self.store.warm_asset_refs();
         }
     }
     pub(super) fn config_write_failure(&self) -> Option<TxOutcome> {
@@ -65,11 +67,10 @@ impl PagePlan<'_> {
                     .into(),
             )
         })?;
-        let referenced = self
-            .store
-            .referenced_assets_in(&view)
-            .map_err(|error| Why::Failed(error.into()))?;
-        if referenced.contains(name) {
+        let check = || self.store.asset_referenced_in(&view, name);
+        #[cfg(feature = "test-faults")]
+        let check = || crate::cost_counters::orphan_check(check);
+        if check().map_err(|error| Why::Failed(error.into()))? {
             return Err(Why::Refused(Refusal::AssetReferenced));
         }
         Ok(())

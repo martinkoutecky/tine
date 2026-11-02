@@ -107,7 +107,7 @@ fn snapshot_names_a_held_page_from_owner_bytes() {
         None,
         "(G): the published snapshot names a held page from its file"
     );
-    let corpus = store.whole_graph().unwrap().corpus();
+    let corpus = store.whole_graph().unwrap().corpus(None);
     let docs: Vec<(String, String)> = corpus
         .pages
         .iter()

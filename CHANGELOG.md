@@ -68,6 +68,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Trashing an asset (removing an inline image, or the trash buttons under Settings > unused assets) no longer reads every page while other saves wait: on a 10,000-page graph each trash took about 50 ms with the graph's writer held, now under 2 ms, after a one-time build at the first trash of a session. Every reference that protected an asset before still protects it (REG-COST-ASSET-TRASH-NO-GRAPH-WALK).
+- Printing or saving one page as PDF no longer scans the whole graph first: on a 10,000-page graph preparing the page took about 0.6 s and now takes about 1 ms. The printed page is read fresh from disk; embedded pages and blocks come from the graph as last loaded (REG-COST-PRINT-ONE-PAGE).
+
 - On Android and iOS, switching to another app commits pending edits immediately and, with **Commit and sync automatically**, pushes them, even inside the commit interval. Switching apps without edits adds no commit; the timed cadence is unchanged (D-20261101-GB).
 - `tine edit BLOCK TEXT` (including `TEXT` read from stdin with `-`) now refuses a supplied parser-owned LOGBOOK drawer without the read's `--rev`, preventing stale full buffers from replacing newer clock history. Plain text edits still retain current history without `--rev`.
 - The Quick capture Guide page now says Tine has no built-in system-wide hotkey (the **Quick-capture: file to today's journal** key, Ctrl+Shift+Enter by default, files what you typed inside the capture box) and gives the setup for Linux, Windows and macOS, plus the tray menu as a no-shortcut way in (GH #807).

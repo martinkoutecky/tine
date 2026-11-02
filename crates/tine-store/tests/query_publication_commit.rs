@@ -59,7 +59,7 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
     );
     assert_eq!(fs::read(result.site.join("index.html")).unwrap(), b"new");
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
+    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 1);
     store.close();
 }
 
@@ -149,7 +149,7 @@ fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
     assert_eq!(kept.len(), 1);
     assert_eq!(fs::read(kept[0].join("index.html")).unwrap(), b"old");
     let store = open(root);
-    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
+    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 1);
     let result = store
         .publish(
             tine_store::PublishDest::QueryLeaf {

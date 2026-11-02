@@ -16,6 +16,7 @@ mod launch_patch;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
+pub(crate) mod asset_ref_index;
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) mod index_oracle;
 #[cfg(test)]
@@ -387,6 +388,14 @@ fn parse_doc(path: &Path, content: &str) -> Document {
 
 /// Asset safety also includes physical files omitted from the query snapshot.
 /// Use the normal bounded input and format parser, isolating parser failures.
+/// [`tine_core::asset_refs::collect_document_asset_refs`], counted for cost
+/// tests: the one entry the store uses to scan a document for asset names.
+pub(crate) fn collect_document_asset_refs(doc: &Document, names: &mut HashSet<String>) {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::asset_ref_document();
+    tine_core::asset_refs::collect_document_asset_refs(doc, names);
+}
+
 pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
     let mut input = fs::File::open(path)?;
     let (bytes, before) = read_parse_open_file(&mut input)?;
@@ -395,7 +404,7 @@ pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) 
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let doc = parse_doc(path, content);
-        tine_core::asset_refs::collect_document_asset_refs(&doc, names);
+        collect_document_asset_refs(&doc, names);
     }))
     .map_err(|_| io::Error::other("asset reference parser panicked"))?;
 
@@ -550,6 +559,9 @@ pub(crate) struct ReadSnapshot {
     block_index: std::sync::OnceLock<SnapshotBlockIndex>,
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
+    /// Asset references by page and by name (`asset_ref_index.rs`): built on
+    /// first use, then carried by per-file deltas. In memory only.
+    asset_refs: std::sync::OnceLock<asset_ref_index::AssetRefIndex>,
     real_page_names: Arc<crate::query::RealPageNames>,
     /// The alias relation: edge index, owner paths and alias list in one
     /// persistent value. Built on first use by one walk; a later generation
@@ -874,6 +886,18 @@ impl ReadSnapshot {
             }),
             collect_document_referenced_names,
         );
+        let asset_refs = std::sync::OnceLock::new();
+        if let Some(carried) = old.and_then(|old| {
+            asset_ref_index::AssetRefIndex::carry(
+                old.asset_refs.get()?,
+                &old.pages,
+                &pages,
+                changed_paths,
+                position_pair,
+            )
+        }) {
+            let _ = asset_refs.set(carried);
+        }
         let real_page_names = Arc::new(crate::query::RealPageNames::capture(
             old.map(|old| (old.real_page_names.as_ref(), old.pages.as_ref())),
             &pages,
@@ -899,6 +923,7 @@ impl ReadSnapshot {
             block_index,
             alias_index,
             referenced_name_index,
+            asset_refs,
             real_page_names,
             alias_relation: std::sync::OnceLock::new(),
             link_graph: std::sync::OnceLock::new(),

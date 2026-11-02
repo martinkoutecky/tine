@@ -349,6 +349,11 @@ struct Snapshot {
     answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
     /// This publication only folded or unfolded blocks (GH #623 item 3).
     folds_only: bool,
+    /// Named page files without a parsed page in `graph` (duplicate-day
+    /// strays set aside): the files the orphan-asset guard reads itself.
+    /// Built on first use, then carried by per-file deltas
+    /// (`asset_inventory.rs`). In memory only.
+    unparsed: std::sync::OnceLock<Arc<SharedMap<PathBuf, ()>>>,
 }
 
 mod answer_changes;
@@ -369,6 +374,7 @@ mod load_panic_tests;
 #[cfg(test)]
 mod loading_save_tests;
 mod name_search;
+mod page_lookup;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
@@ -2684,10 +2690,18 @@ impl WholeGraph {
             .collect()
     }
 
-    /// Return an owned `Corpus` of pages in this view for evaluation. Cost
-    /// O(P); parsed documents are shared while the result is held.
+    /// Return an owned `Corpus` of pages in this view for evaluation: every
+    /// page for `None`; for `Some(name)`, the parsed pages whose Logseq
+    /// identity (`refs::page_key`) is `name`'s, ordinary pages and journals
+    /// alike, in page order (what filtering the whole corpus by that key
+    /// gives). Set-aside duplicate-day files are absent either way. Cost O(P)
+    /// for `None`, O(C log P) for C claimants of the name; parsed documents
+    /// are shared while the result is held.
     // The evaluator receives a copy of the parsed-page table.
-    pub fn corpus(&self) -> tine_core::Corpus {
+    pub fn corpus(&self, name: Option<&str>) -> tine_core::Corpus {
+        if let Some(name) = name {
+            return self.corpus_named(name);
+        }
         #[cfg(feature = "test-faults")]
         crate::cost_counters::corpus();
         let pages = self.graph.with_pages(|pages| {
@@ -2710,12 +2724,14 @@ impl WholeGraph {
     /// spellings and the first segment of nested image references. Cost
     /// O(P + B + scanned text bytes) on every call. This does not infer a
     /// sidecar reference merely from its PDF base name. Parsed pages only:
-    /// orphan safety uses [`Store::referenced_assets`] (set-aside files too).
+    /// orphan safety uses [`Store::referenced_assets`] (set-aside files too),
+    /// answered by the view's asset index; this full scan is its test oracle.
+    #[cfg(test)]
     pub(crate) fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {
             for (_, doc) in pages {
-                tine_core::asset_refs::collect_document_asset_refs(doc, &mut names);
+                crate::model::collect_document_asset_refs(doc, &mut names);
             }
         });
         Arc::new(names)
@@ -3521,7 +3537,7 @@ mod rev5_tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         let recovered = store.whole_graph().unwrap();
         assert!(recovered.rev() > prior);
-        assert!(recovered.corpus().pages.iter().any(|page| {
+        assert!(recovered.corpus(None).pages.iter().any(|page| {
             page.name == "A"
                 && page.document.roots[0]
                     .raw()
@@ -3589,7 +3605,7 @@ mod rev5_tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(matches!(store.is_graph_ready(), Ok(true)));
         let view = store.whole_graph().unwrap();
-        assert!(view.corpus().pages.iter().any(|page| {
+        assert!(view.corpus(None).pages.iter().any(|page| {
             page.name == "A" && page.document.roots[0].raw().contains("changed here")
         }));
         assert!(store.page(&id).unwrap().doc.blocks[0]
@@ -3628,7 +3644,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| { page.name == "A" && page.document.roots[0].raw().contains("arrived") }));
@@ -3690,7 +3706,7 @@ mod rev5_tests {
         assert!(matches!(save.join().unwrap(), Ok(_)));
         let view = store.whole_graph().unwrap();
         assert!(view.rev() > old.rev());
-        assert!(view.corpus().pages.iter().any(|page| {
+        assert!(view.corpus(None).pages.iter().any(|page| {
             page.name == "A"
                 && page.document.roots[0]
                     .raw()
@@ -3802,12 +3818,12 @@ mod rev5_tests {
         release_hook(&pause);
         let view = store.whole_graph().unwrap();
         assert!(view
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| page.name == "A" && page.document.roots[0].raw().contains("new A")));
         assert!(view
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| page.name == "B" && page.document.roots[0].raw().contains("external B")));
@@ -3870,7 +3886,11 @@ mod rev5_tests {
         release_hook(&installed_pause);
         assert!(matches!(save.join().unwrap(), Ok(_)));
         let view = store.whole_graph().unwrap();
-        assert!(view.corpus().pages.iter().any(|page| page.name == "Meta"));
+        assert!(view
+            .corpus(None)
+            .pages
+            .iter()
+            .any(|page| page.name == "Meta"));
         assert!(matches!(
             view.resolve("Meta", false),
             Resolved::Existing { .. }
@@ -3955,7 +3975,7 @@ mod rev5_tests {
             assert!(store
                 .whole_graph()
                 .unwrap()
-                .corpus()
+                .corpus(None)
                 .pages
                 .iter()
                 .any(|page| {
@@ -4005,7 +4025,7 @@ mod rev5_tests {
                 restored.resolve("B", false),
                 Resolved::Existing { .. }
             ));
-            assert!(restored.corpus().pages.iter().any(|page| {
+            assert!(restored.corpus(None).pages.iter().any(|page| {
                 page.name == "C" && page.document.roots[0].raw().contains("restored word")
             }));
             store.close();
@@ -4080,7 +4100,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -4140,7 +4160,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -4207,7 +4227,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| page.name == "A" && page.document.roots[0].raw().contains("before")));
@@ -4242,7 +4262,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .all(|page| page.name != "A"));
@@ -4296,7 +4316,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| page.name == "B"));
@@ -4315,7 +4335,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -5007,13 +5027,13 @@ mod rev5_tests {
                 while !stop.load(Ordering::Acquire) {
                     let view = store.whole_graph().unwrap();
                     let rev = view.rev();
-                    let page_count = view.corpus().pages.len();
+                    let page_count = view.corpus(None).pages.len();
                     let _ = view.backlinks("Target").unwrap();
                     let _ = view.query("[[Target]]", QueryDialect::Simple).unwrap();
                     let _ = view.resolve("External", false);
                     let _ = view.inventory(crate::InventoryScope::All);
                     assert_eq!(view.rev(), rev);
-                    assert_eq!(view.corpus().pages.len(), page_count);
+                    assert_eq!(view.corpus(None).pages.len(), page_count);
                     reads.fetch_add(1, Ordering::Relaxed);
                 }
             }));
@@ -5083,7 +5103,7 @@ mod rev5_tests {
                 "corpus",
                 format!(
                     "{:?}",
-                    view.corpus()
+                    view.corpus(None)
                         .pages
                         .iter()
                         .map(|p| &p.name)
@@ -5216,7 +5236,7 @@ mod rev5_tests {
         let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let old = store.whole_graph().unwrap();
         let original_answers = view_answers(&old);
-        let old_corpus = old.corpus().pages.len();
+        let old_corpus = old.corpus(None).pages.len();
         let old_backlinks = old.backlinks("Target").unwrap().len();
         let old_inventory = old.inventory(crate::InventoryScope::All).0.len();
         assert!(matches!(
@@ -5280,7 +5300,7 @@ mod rev5_tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         let fresh = store.whole_graph().unwrap();
         assert!(fresh.rev() != old.rev());
-        assert_eq!(old.corpus().pages.len(), old_corpus);
+        assert_eq!(old.corpus(None).pages.len(), old_corpus);
         assert_eq!(old.backlinks("Target").unwrap().len(), old_backlinks);
         assert_eq!(
             old.inventory(crate::InventoryScope::All).0.len(),

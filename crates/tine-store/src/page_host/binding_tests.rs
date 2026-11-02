@@ -1718,7 +1718,9 @@ fn a_filtered_echo_keeps_the_delivery_that_raced_it() {
         store.publish_retired();
     }
     let view = store.whole_graph().unwrap();
-    let raw = view.corpus().pages[0].document.roots[0].raw().to_owned();
+    let raw = view.corpus(None).pages[0].document.roots[0]
+        .raw()
+        .to_owned();
     assert_eq!(raw, "delivered");
     store.close();
 }

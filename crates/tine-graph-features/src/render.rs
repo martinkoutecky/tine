@@ -64,9 +64,24 @@ impl<'a> RenderGraph<'a> {
         }
     }
 
+    /// A render of the pages in `corpus` only (single-page print): embeds,
+    /// block references and query results reach other pages through the
+    /// view's keyed indexes, never a whole-graph corpus (I-13, D-10).
+    pub(crate) fn for_pages(
+        corpus: &'a Corpus,
+        whole: &'a WholeGraph,
+        store: &'a Store,
+        sheets: Option<&'a SheetIndex>,
+    ) -> Self {
+        let mut graph = Self::new(corpus, whole, store, sheets);
+        graph.lookups.keyed = true;
+        graph
+    }
+
     /// The bounded preview of a block and whether its page is Org.
     fn publish_preview_block(&self, uuid: &str) -> Option<(BlockPreview, bool)> {
-        let (page, block) = self.lookups.block(self.corpus, uuid)?;
+        let hit = self.lookups.block(self.corpus, self.whole, uuid)?;
+        let (page, block) = (&hit.page, hit.block());
         let total = subtree_node_count(block);
         let mut remaining_nodes = 10_000;
         let mut remaining_bytes = 8 * 1024 * 1024;
@@ -1187,7 +1202,8 @@ fn render_query_groups(
     for group in groups {
         // The export-wide page index; a result without a source in this exact
         // projection has no publication capability. Never fall back to DTO bytes.
-        let Some(doc) = (graph.lookups).doc(graph.corpus, &group.page, group.kind) else {
+        let Some(doc) = (graph.lookups).doc(graph.corpus, graph.whole, &group.page, group.kind)
+        else {
             continue;
         };
         let wanted = group
@@ -1368,7 +1384,7 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
                 .into();
         }
         return match load_page_doc(graph, page) {
-            Some(doc) => render_page_embed_doc(page, doc, ctx, depth),
+            Some(doc) => render_page_embed_doc(page, &doc, ctx, depth),
             None => "<div class=\"embed embed-missing\">Embedded page not found.</div>".into(),
         };
     }
@@ -1427,7 +1443,9 @@ fn youtube_id(url: &str) -> Option<String> {
 /// List every page under a `{{namespace X}}` prefix (`X/…`, any depth) as links.
 fn render_namespace(graph: &RenderGraph<'_>, ns: &str, ctx: &Ctx) -> String {
     let prefix = format!("{}/", ns.trim());
-    let mut children = graph.lookups.names_under(graph.corpus, &prefix);
+    let mut children = graph
+        .lookups
+        .names_under(graph.corpus, graph.whole, &prefix);
     children.retain(|name| publish_page_allowed(ctx, name));
     if children.is_empty() {
         return format!(
@@ -1479,8 +1497,8 @@ fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) 
 }
 
 /// Find a parsed page by name in the supplied corpus, case-insensitively.
-fn load_page_doc<'a>(graph: &RenderGraph<'a>, name: &str) -> Option<&'a doc::Document> {
-    graph.lookups.doc_named(graph.corpus, name)
+fn load_page_doc(graph: &RenderGraph<'_>, name: &str) -> Option<Arc<doc::Document>> {
+    graph.lookups.doc_named(graph.corpus, graph.whole, name)
 }
 
 /// Every block's anchor on one page: its `id::` value, else `b{n}` in source

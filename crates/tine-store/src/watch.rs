@@ -2126,7 +2126,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| { page.name == "A" && page.document.roots[0].raw().contains("old") }));
@@ -2140,7 +2140,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -2161,7 +2161,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -2180,7 +2180,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {

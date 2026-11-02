@@ -30,7 +30,7 @@ fn created_page_patches_reference_tables() {
         counts.icon_page_probes <= 2,
         "I-25: patch affected icon names; exemplar model/page_icons.rs: {counts:?}"
     );
-    assert_eq!(held.corpus().pages.len(), 128);
-    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 129);
+    assert_eq!(held.corpus(None).pages.len(), 128);
+    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 129);
     store.close();
 }

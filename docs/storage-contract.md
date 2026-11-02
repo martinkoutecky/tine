@@ -62,6 +62,22 @@ Stamp-invisible in-place writes and changes after this final observation can
 still race the move. Only set-aside files are read and parsed again; they are
 not added to backlinks or query indexes.
 
+The guard and the inventory answer parsed pages from an in-memory
+asset-reference index of the published view (per page, the names the same
+collector finds, with a per-name page count), never persisted or checkpointed.
+A view builds it on first use with one walk of its pages, before the trash takes
+the Store writer, and each later publication carries it by the files it changed,
+so a trash holds the writer for a lookup plus the set-aside files' reads, not a
+walk of the graph (cost-model audit 2026-11-02, row 9a; D-10). The set of
+set-aside files is carried the same way. The answer protects exactly what the
+full scan protected; tine-store's own unit tests (`cfg(test)`) compare the index with a full scan on every use; other builds do not.
+
+Printing a page (and its sheet inputs) reads the printed page through
+`Store::page`, which publishes an external edit already on disk, and resolves
+embeds, block references and queries from the last published view, which the
+watcher keeps current. It runs no graph-wide stamp refresh: an external edit to
+an embedded page that the watcher has not yet published prints as before it.
+
 `Store::read_is_current` compares a streaming descriptor with a fresh validated
 open using the existing cross-platform file-identity primitive, O(1). Verification
 uses it after hashing and requires successful metadata reads; a displaced

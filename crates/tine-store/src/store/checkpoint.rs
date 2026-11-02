@@ -588,6 +588,7 @@ impl ChangeFeed {
             unreadable: Arc::new(Vec::new()),
             answers: Default::default(),
             folds_only: false,
+            unparsed: std::sync::OnceLock::new(),
         };
         // The first publication carries every answer, as a cold one does.
         let (inventory, counts) = snapshot.answer_changes(None, &[], true);

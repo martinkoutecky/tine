@@ -33,6 +33,9 @@ static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static OBSERVATION_READS: AtomicU64 = AtomicU64::new(0);
 static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
+static ASSET_REF_DOCUMENTS: AtomicU64 = AtomicU64::new(0);
+static ORPHAN_CHECK_DOCUMENTS: AtomicU64 = AtomicU64::new(0);
+static ORPHAN_CHECK_NANOS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -188,6 +191,14 @@ pub struct Counts {
     /// Keys copied, checked or locked for the draft worker's phases and the
     /// driver's lock acquisition and revalidation.
     pub host_worker_key_visits: u64,
+    /// Page documents (indexed or set-aside) scanned for asset references.
+    pub asset_ref_documents: u64,
+    /// `asset_ref_documents` scanned inside the orphan-asset check, which
+    /// holds the Store writer (a save issued meanwhile waits for it).
+    pub orphan_check_documents: u64,
+    /// Time inside the orphan-asset check under the writer, for diagnostic
+    /// measurement only.
+    pub orphan_check_nanos: u64,
     /// Keys the binding's `Book::collect` examines: claims, eviction
     /// candidates (with their queued requests and pending publications) and
     /// subscribed pages' notices.
@@ -235,6 +246,9 @@ pub fn reset() {
         &HOST_CANDIDATE_VISITS,
         &HOST_WORKER_KEY_VISITS,
         &HOST_BOOK_VISITS,
+        &ASSET_REF_DOCUMENTS,
+        &ORPHAN_CHECK_DOCUMENTS,
+        &ORPHAN_CHECK_NANOS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -281,7 +295,27 @@ pub fn snapshot() -> Counts {
         host_candidate_visits: HOST_CANDIDATE_VISITS.load(Ordering::Relaxed),
         host_worker_key_visits: HOST_WORKER_KEY_VISITS.load(Ordering::Relaxed),
         host_book_visits: HOST_BOOK_VISITS.load(Ordering::Relaxed),
+        asset_ref_documents: ASSET_REF_DOCUMENTS.load(Ordering::Relaxed),
+        orphan_check_documents: ORPHAN_CHECK_DOCUMENTS.load(Ordering::Relaxed),
+        orphan_check_nanos: ORPHAN_CHECK_NANOS.load(Ordering::Relaxed),
     }
+}
+
+pub(crate) fn asset_ref_document() {
+    ASSET_REF_DOCUMENTS.fetch_add(1, Ordering::Relaxed);
+}
+/// Bill the asset-reference scans and time of one orphan check made under
+/// the writer: `scan` returns its result, and the documents it scanned are
+/// the counter's growth meanwhile (one caller at a time in cost tests).
+pub(crate) fn orphan_check<R>(scan: impl FnOnce() -> R) -> R {
+    let before = ASSET_REF_DOCUMENTS.load(Ordering::Relaxed);
+    let started = std::time::Instant::now();
+    let result = scan();
+    let nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    ORPHAN_CHECK_NANOS.fetch_add(nanos, Ordering::Relaxed);
+    let after = ASSET_REF_DOCUMENTS.load(Ordering::Relaxed);
+    ORPHAN_CHECK_DOCUMENTS.fetch_add(after.saturating_sub(before), Ordering::Relaxed);
+    result
 }
 
 pub(crate) fn host_publication_probes(count: usize) {

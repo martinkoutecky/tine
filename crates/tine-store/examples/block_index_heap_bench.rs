@@ -47,7 +47,7 @@ fn main() {
     let (store, _, _) =
         tine_store::Store::open(std::path::Path::new(&root), Default::default()).unwrap();
     let view = store.whole_graph_reconciled().unwrap();
-    let pages = view.corpus().pages.len();
+    let pages = view.corpus(None).pages.len();
     TRACK.set(true);
     let mut measurement = (0, 0, 0, 0);
     let start = std::time::Instant::now();

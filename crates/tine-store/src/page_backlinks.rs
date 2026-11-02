@@ -17,7 +17,7 @@ impl WholeGraph {
     /// and page-header projection. Read separately, coalesced only in All pages;
     /// incremental maintenance remains a follow-up.
     pub fn page_backlink_counts(&self) -> Vec<(String, usize)> {
-        page_backlink_counts(&self.corpus(), &self.config.config)
+        page_backlink_counts(&self.corpus(None), &self.config.config)
     }
 }
 

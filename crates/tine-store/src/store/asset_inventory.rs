@@ -2,27 +2,120 @@
 use super::*;
 use std::io;
 
+impl Snapshot {
+    /// Carry the previous generation's set-aside files by the paths this
+    /// publication changed: each changed path is set aside when it is named
+    /// but holds no parsed page. Unset when the previous generation had none
+    /// built, or its change list cannot describe the move (a whole-table
+    /// replacement); the next orphan check builds it. Cost O(changed x log P).
+    pub(super) fn carry_unparsed(&self, graph: &Graph, old: Option<&Snapshot>, changed: &[String]) {
+        let Some((old, previous)) = old.and_then(|old| Some((old, old.unparsed.get()?))) else {
+            return;
+        };
+        if changed.is_empty() && !self.graph.same_pages(&old.graph) {
+            return;
+        }
+        let mut unparsed = Arc::clone(previous);
+        for rel in changed {
+            let path = graph.root.join(rel);
+            let set_aside =
+                self.name_by_path.contains_key(&path) && !self.graph.holds_page_at(rel, &path);
+            if set_aside != unparsed.contains_key(&path) {
+                let map = Arc::make_mut(&mut unparsed);
+                if set_aside {
+                    map.insert(path, ());
+                } else {
+                    map.remove(&path);
+                }
+            }
+        }
+        let _ = self.unparsed.set(unparsed);
+    }
+
+    /// Named page files without a parsed page; one walk of the name table on
+    /// a generation's first use. Cost O(P log P) then, O(1) after.
+    fn unparsed(&self, graph: &Graph) -> &Arc<SharedMap<PathBuf, ()>> {
+        let unparsed = self.unparsed.get_or_init(|| {
+            Arc::new(
+                self.name_by_path
+                    .iter()
+                    .filter(|(path, _)| !self.graph.holds_page_at(&graph.rel_path(path), path))
+                    .map(|(path, _)| (path.clone(), ()))
+                    .collect(),
+            )
+        });
+        #[cfg(test)]
+        {
+            // Oracle: the carried set is the full comparison's answer.
+            let parsed: HashSet<_> = self
+                .graph
+                .pages
+                .iter()
+                .map(|(entry, _)| &entry.path)
+                .collect();
+            let scanned: Vec<_> = (self.name_by_path.iter())
+                .filter(|(path, _)| !parsed.contains(path))
+                .map(|(path, _)| path.clone())
+                .collect();
+            let carried: Vec<_> = unparsed.iter().map(|(path, _)| path.clone()).collect();
+            assert_eq!(
+                carried, scanned,
+                "set-aside file set drifted from a full comparison"
+            );
+        }
+        unparsed
+    }
+}
+
 impl Store {
     /// Asset references from every published physical page file, including
     /// duplicate-day journals omitted from queries. Waits for launch reconciliation.
     /// An unreadable or unanalyzable file fails the inventory, naming that file.
-    /// No writes or new
-    /// index: only files absent from the parsed snapshot are read and parsed.
-    /// Cost O(P + B + scanned text bytes), plus those set-aside files' bytes.
+    /// No writes and nothing persisted; only set-aside files are read and
+    /// parsed. Cost O(referenced names) plus those set-aside files' bytes,
+    /// after a one-time O(P + B + text bytes) walk per session.
     pub fn referenced_assets(&self) -> io::Result<Arc<HashSet<String>>> {
         let view = self.whole_graph_reconciled().map_err(|error| match error {
             LoadError::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
             LoadError::Failed { reason } => io::Error::other(reason),
         })?;
-        self.referenced_assets_in(&view)
+        let mut names = self.set_aside_asset_refs(&view)?;
+        names.extend(view.graph.asset_refs().names().cloned());
+        Ok(Arc::new(names))
+    }
+
+    /// Build the latest view's asset index and set-aside file set if it
+    /// inherited none, so the orphan check that follows under the writer
+    /// finds them built. A publication captured while a build runs does not
+    /// inherit it, so recheck the latest view, a bounded number of times
+    /// (a save during every build would leave the check to build under the
+    /// writer, as before this index). No file reads.
+    pub(crate) fn warm_asset_refs(&self) {
+        for _ in 0..3 {
+            let Ok(view) = self.whole_graph_reconciled() else {
+                return;
+            };
+            if view.graph.asset_refs_built() && view._snapshot.unparsed.get().is_some() {
+                return;
+            }
+            view.graph.asset_refs();
+            view._snapshot.unparsed(&self.graph);
+        }
     }
 
     // The orphan-trash guard holds the writer through this check and the move.
     // A listing uses its captured view; the guard rechecks the latest view.
-    pub(crate) fn referenced_assets_in(
-        &self,
-        view: &WholeGraph,
-    ) -> io::Result<Arc<HashSet<String>>> {
+    /// Whether any published page file references asset `name`. Cost
+    /// O(log A) on the view's asset index plus the set-aside files' bytes;
+    /// the index is built here only if no earlier reader warmed it.
+    pub(crate) fn asset_referenced_in(&self, view: &WholeGraph, name: &str) -> io::Result<bool> {
+        let set_aside = self.set_aside_asset_refs(view)?;
+        Ok(set_aside.contains(name) || view.graph.asset_refs().references(name))
+    }
+
+    /// Asset references of the files set aside from `view`'s parsed pages,
+    /// after refusing any unreadable file in the view or the live graph.
+    fn set_aside_asset_refs(&self, view: &WholeGraph) -> io::Result<HashSet<String>> {
         // A quiet in-flux read is still an incomplete reference inventory.
         // Never use delayed automatic notices as proof that trash is safe.
         let current_failures = self.graph.unreadable_pages();
@@ -32,17 +125,8 @@ impl Store {
         {
             return Err(io::Error::other(format!("{}: {reason}", file.as_str())));
         }
-        let mut names = Arc::unwrap_or_clone(view.referenced_assets());
-        let parsed: HashSet<_> = view
-            .graph
-            .pages
-            .iter()
-            .map(|(entry, _)| &entry.path)
-            .collect();
-        for (path, _) in view._snapshot.name_by_path.iter() {
-            if parsed.contains(path) {
-                continue;
-            }
+        let mut names = HashSet::new();
+        for (path, _) in view._snapshot.unparsed(&self.graph).iter() {
             let id = PageId::from(self.graph.rel_path(path));
             let result = self
                 .page_spot(&id)
@@ -52,7 +136,7 @@ impl Store {
                 io::Error::new(error.kind(), format!("{}: {error}", id.as_str()))
             })?;
         }
-        Ok(Arc::new(names))
+        Ok(names)
     }
 }
 

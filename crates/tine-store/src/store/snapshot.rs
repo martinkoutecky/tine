@@ -393,7 +393,14 @@ impl Snapshot {
             unreadable: graph.reported_unreadable_pages(),
             answers: Default::default(),
             folds_only,
+            unparsed: std::sync::OnceLock::new(),
         };
+        // A config change or rescan renames the whole table: rebuilt on demand.
+        snapshot.carry_unparsed(
+            graph,
+            old.filter(|_| !config_changed && !rebuild),
+            &changed_paths,
+        );
         let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
         let summary = snapshot.change_summary(
             old,

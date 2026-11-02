@@ -62,3 +62,5 @@ mod og_gh609_case_rename;
 
 #[path = "../tests/alias_edit_cost.rs"]
 mod alias_edit_cost;
+#[path = "../tests/asset_trash_cost.rs"]
+mod asset_trash_cost;

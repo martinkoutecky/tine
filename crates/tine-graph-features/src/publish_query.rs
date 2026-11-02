@@ -93,7 +93,7 @@ pub fn query_request_by_uuid(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let corpus = graph.corpus();
+    let corpus = graph.corpus(None);
     let mut found = None;
     for page in &corpus.pages {
         let mut stack: Vec<_> = page.document.roots.iter().collect();
@@ -338,7 +338,7 @@ fn resolve_plan_review(
         result.total = groups.iter().map(|group| group.blocks.len()).sum();
         result.matched_total = Some(result.total);
     }
-    let corpus = graph.corpus();
+    let corpus = graph.corpus(None);
     // Owner files by (kind, ASCII-folded name), built once rather than per group.
     let mut owners: HashMap<_, Vec<&str>> = HashMap::new();
     for page in &corpus.pages {
@@ -1121,7 +1121,7 @@ fn live(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let mut corpus = graph.corpus();
+    let mut corpus = graph.corpus(None);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
     if corpus.pages.len() > MAX_PAGES {
@@ -1180,7 +1180,7 @@ pub fn publish_static(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let mut corpus = graph.corpus();
+    let mut corpus = graph.corpus(None);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
     if corpus.pages.len() > MAX_PAGES {
@@ -1223,7 +1223,7 @@ mod snapshot_consistency_tests {
         )
         .unwrap();
         let (store, _, _) = Store::open(root, Default::default()).unwrap();
-        let corpus = store.whole_graph().unwrap().corpus();
+        let corpus = store.whole_graph().unwrap().corpus(None);
         let assets =
             publication_assets(&store, &corpus, 32 * 1024 * 1024, &mut Vec::new()).unwrap();
         let names: Vec<_> = assets.iter().map(|(name, _)| name.as_str()).collect();
