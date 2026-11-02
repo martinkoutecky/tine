@@ -467,6 +467,13 @@ concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).
+`InventoryScope::JournalFiles` (cost audit 2026-11-02 row 8) lists the journal
+days files claim in the captured view, one entry per day, from the view's
+existing day index (O(J log J), no file reads, no new index). The Journals
+feed's scroll steps page through it on a loaded graph; its first page still
+lists the journals directory, which reports unreadable entries and shows files
+no publication has named yet. A journal file written outside the watcher reaches
+later steps by the ordinary rescan (focus return, poll, `refresh`).
 R5 adds prepared referrer text to the existing rewrite protocol, with no new persisted record.
 
 Clone setup (D-20261031-GCL) shares GS1's existing Unicode candidate rule through

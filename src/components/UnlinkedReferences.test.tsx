@@ -31,6 +31,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     try {
       await tick();
       (root.querySelector(".references-header") as HTMLElement).click();
+      await tick();
       setName("New");
       await tick();
       rejectOld(new Error("old read failed"));
@@ -105,15 +106,31 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     }
   });
 
-  it("computes eagerly while collapsed and mounts results only after expansion (GH #236)", async () => {
+  it("asks for nothing while collapsed, then loads asynchronously on expansion (GH #236, cost audit 6a)", async () => {
+    // D-10: the unlinked answer is an O(blocks) scan plus up to 32 MiB of rows.
+    // Like OG's foldable (reference.cljs:280-292), a collapsed section neither
+    // reads it nor registers a live matcher; expansion shows a loading state.
     let resolve!: (groups: RefGroup[]) => void;
     const request = vi.spyOn(backend(), "getUnlinkedRefs").mockImplementation(
       () => new Promise<RefGroup[]>((done) => { resolve = done; })
     );
+    const host = backend();
+    const register = host.registerUnlinkedReference
+      ? vi.spyOn(host as Required<typeof host>, "registerUnlinkedReference")
+      : undefined;
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <UnlinkedReferences name="Target" />, root);
 
+    await tick();
+    await tick();
+    expect(request, "a collapsed section reads no unlinked answer").not.toHaveBeenCalled();
+    expect(register?.mock.calls.filter(([, name]) => name !== null) ?? [], "a collapsed section registers no matcher").toHaveLength(0);
+    expect(root.querySelector(".references-count"), "no count is claimed before anything was computed (OG shows none)").toBeNull();
+    expect(root.querySelector(".reference-excerpt-row")).toBeNull();
+
+    root.querySelector<HTMLElement>(".references-header")!.click();
+    await tick();
     await tick();
     expect(request).toHaveBeenCalledOnce();
     expect(root.querySelector(".unlinked-references")?.textContent).toContain("Loading");
@@ -126,9 +143,17 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     await tick();
     await tick();
     expect(root.querySelector(".references-count")?.textContent).toBe("1");
-    expect(root.querySelector(".reference-excerpt-row")).toBeNull();
+    expect(root.querySelector(".reference-excerpt-row")).not.toBeNull();
 
+    // Refolding keeps the answer; reopening without a change reads nothing new.
     root.querySelector<HTMLElement>(".references-header")!.click();
+    await tick();
+    expect(root.querySelector(".reference-excerpt-row")).toBeNull();
+    expect(root.querySelector(".references-count")?.textContent).toBe("1");
+    root.querySelector<HTMLElement>(".references-header")!.click();
+    await tick();
+    await tick();
+    expect(request).toHaveBeenCalledOnce();
     expect(root.querySelector(".reference-excerpt-row")).not.toBeNull();
     dispose();
   });

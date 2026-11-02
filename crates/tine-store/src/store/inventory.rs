@@ -37,6 +37,9 @@ pub enum InventoryScope<'a> {
     FilesAtOrUnder(&'a str),
     /// The other members of this name's alias group (D-20261019-AL1), as `All` lists them.
     AliasGroup(&'a str),
+    /// Every journal day a file claims in this view, once per day: the
+    /// view's day index, not a directory listing.
+    JournalFiles,
 }
 
 impl WholeGraph {
@@ -80,6 +83,13 @@ impl WholeGraph {
     /// nothing. The page header shows them (D-20261019-AL2). Cost
     /// O(component log P) over the snapshot's alias edges and real-name
     /// table; no parse and no disk access.
+    /// [`InventoryScope::JournalFiles`] lists one entry per journal day that a
+    /// file claims in this view (duplicate-day strays are `others` of the
+    /// day's target, as in `All`), from the view's day index, which
+    /// publications keep per file: O(J log J) for J journal days, no parse and
+    /// no disk access (cost audit 2026-11-02 row 8: the Journals feed pages
+    /// through it instead of listing the journals directory per step).
+    ///
     /// [`InventoryScope::File`] uses the existing page-position map and
     /// resolves its name in this view: O(log P + C) for C name claimants,
     /// with no document traversal or file reads. An absent page returns empty.
@@ -122,6 +132,19 @@ impl WholeGraph {
                 Arc::new(Inventory(self.page_files_at_or_under(key)))
             }
             InventoryScope::AliasGroup(name) => Arc::new(Inventory(self.alias_group(name))),
+            InventoryScope::JournalFiles => {
+                let mut entries: Vec<_> = self
+                    .list
+                    .journal_days()
+                    .filter_map(|page| {
+                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
+                            .into_iter()
+                            .next()
+                    })
+                    .collect();
+                sort_inventory(&mut entries);
+                Arc::new(Inventory(entries))
+            }
         }
     }
 

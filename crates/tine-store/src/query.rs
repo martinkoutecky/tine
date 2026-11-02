@@ -99,7 +99,7 @@ impl ConstructionBudget {
 }
 
 /// Walk all blocks of a document depth-first, calling `f(block)`.
-fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
+pub(crate) fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     for b in blocks {
         f(b);
         walk(&b.children, f);
@@ -510,15 +510,13 @@ fn graph_equivalent_page_names(
         &graph.alias_edges(),
         &format,
         target,
+        // Keyed: only claimants of the day's title (cost audit 2026-11-02
+        // row 8; was a parse of every journal name per day shown). The same
+        // lookup scoped unlinked invalidation uses (I-12).
         |day| {
-            // O(journals) name parses, only for a date-shaped target.
-            graph
-                .page_list_arc()
-                .iter()
-                .find(|entry| {
-                    entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(day)
-                })
-                .map(|entry| entry.name.clone())
+            #[cfg(test)]
+            JOURNAL_DAY_LOOKUPS.with(|count| count.set(count.get() + 1));
+            graph.reference_journal_name(day)
         },
     )
 }
@@ -2317,29 +2315,56 @@ pub(crate) fn preview_block_with_budget(
 }
 
 /// The pages holding a block whose persisted `id::` is `uuid`, in page
-/// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
-/// one block's page. A writer's check, so it walks every page itself rather
-/// than trust the block-id index (O(B), one in-memory pass; no cache).
+/// order, compared case-insensitively, stopping at the second: a writer needs
+/// to know the id names exactly one block's page. The block-id index of this
+/// same snapshot names every page that can hold the id (exact per generation,
+/// I-13); each candidate is then walked with the writer's own predicate, so a
+/// runtime id never counts and a duplicate `id::` on two pages is still seen.
+/// Cost O(log I + S + candidate pages' blocks), not O(B) (cost audit
+/// 2026-11-02 row 9b); S as in `block_id_candidate_pages`.
 pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
-    graph.with_pages(|pages| {
-        let mut found = Vec::new();
-        for (entry, doc) in pages.iter() {
-            let mut here = false;
-            walk(&doc.roots, &mut |block| {
-                // The persisted `id::` only: a runtime uuid is not a handle.
-                here |= block
-                    .property("id")
-                    .is_some_and(|id| id.trim().eq_ignore_ascii_case(uuid));
-            });
-            if here {
-                found.push(entry.name.clone());
-                if found.len() == 2 {
-                    break;
-                }
+    let mut found = Vec::new();
+    let wanted = uuid.trim();
+    for (entry, doc) in graph.block_id_candidate_pages(uuid) {
+        #[cfg(test)]
+        BLOCK_PAGES_WALKED.with(|count| count.set(count.get() + 1));
+        let mut here = false;
+        walk(&doc.roots, &mut |block| {
+            // The persisted `id::` only: a runtime uuid is not a handle.
+            here |= block
+                .property("id")
+                .is_some_and(|id| id.trim().eq_ignore_ascii_case(wanted));
+        });
+        if here {
+            found.push(entry.name.clone());
+            if found.len() == 2 {
+                break;
             }
         }
-        found
-    })
+    }
+    found
+}
+
+#[cfg(test)]
+thread_local! {
+    static JOURNAL_DAY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Date-shaped reference targets resolved to their journal on this thread.
+#[cfg(test)]
+pub(crate) fn journal_day_lookups() -> usize {
+    JOURNAL_DAY_LOOKUPS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    static BLOCK_PAGES_WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Pages `block_pages` walked on this thread (cost audit row 9b).
+#[cfg(test)]
+pub(crate) fn block_pages_walked() -> usize {
+    BLOCK_PAGES_WALKED.with(std::cell::Cell::get)
 }
 
 /// Walk `doc` once, resolving every still-unresolved id in `want` that is a

@@ -477,6 +477,10 @@ impl EntryList {
             self.projected.take();
         }
     }
+    /// One journal entry per day, ascending by day. O(J) to iterate.
+    pub(crate) fn journal_days(&self) -> impl Iterator<Item = &PageEntry> {
+        self.days.iter().filter_map(|(_, slot)| self.rows.get(slot))
+    }
     pub(crate) fn remove_day(&mut self, day: i64) {
         if let Some(path) = self
             .days

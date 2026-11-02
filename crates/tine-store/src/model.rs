@@ -1452,6 +1452,21 @@ impl ReadSnapshot {
     pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
     }
+    /// The pages that may hold a block whose id (runtime or persisted) is
+    /// `uuid` ignoring ASCII case and surrounding whitespace, in page order:
+    /// a superset of the pages a whole-graph walk would find, from keyed
+    /// lookups plus the (normally empty) non-canonical keys. Callers verify
+    /// their own predicate on these pages only (I-13: no whole-graph scan).
+    pub(crate) fn block_id_candidate_pages(&self, uuid: &str) -> Vec<&(PageEntry, Arc<Document>)> {
+        self.block_index
+            .get()
+            .expect("published generations hold the exact block index")
+            .owners_ignoring_case(uuid)
+            .into_iter()
+            .filter_map(|slot| self.pages.get(slot))
+            .collect()
+    }
+
     /// The page that answers a lookup of block `uuid` (a runtime id or a
     /// persisted `id::`): the first page, in page order, whose document holds
     /// a block with that id, with its slot. `None` means no page in this
@@ -1531,6 +1546,8 @@ impl ReadSnapshot {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
     pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
+        #[cfg(test)]
+        PAGE_LIST_READS.with(|count| count.set(count.get() + 1));
         self.list.materialize()
     }
     pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
@@ -1832,6 +1849,17 @@ impl BlockOwners {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static PAGE_LIST_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whole page-list reads (`page_list_arc`) on this thread (cost audit row 8).
+#[cfg(test)]
+pub(crate) fn page_list_reads() -> usize {
+    PAGE_LIST_READS.with(std::cell::Cell::get)
+}
+
 /// Block id (runtime uuid or persisted `id::`) → the pages that hold it.
 /// Exact for the pages it was captured against: a full build walks every
 /// page, and each publication swaps a changed path's previous ids for its
@@ -2069,6 +2097,37 @@ impl SnapshotBlockIndex {
     /// The first page, in page order, holding `id`.
     fn first_owner(&self, id: &str) -> Option<usize> {
         self.owners(id).map(|owners| owners.slots()[0])
+    }
+
+    /// Every slot holding a block id equal to `id` ignoring ASCII case and
+    /// surrounding whitespace, ascending (page order). Keys are exact, so the
+    /// canonical lowercase spelling is one keyed probe; any other spelling of
+    /// the same id (uppercase, padded) can only be a string key, and those
+    /// keys are scanned: O(log I + S), S = ids that are not canonical
+    /// lowercase UUIDs (runtime ids and Logseq-written `id::` never are).
+    fn owners_ignoring_case(&self, id: &str) -> Vec<usize> {
+        let id = id.trim();
+        let lower = id.to_ascii_lowercase();
+        let mut slots: Vec<usize> = self
+            .owners(&lower)
+            .map_or_else(Vec::new, |owners| owners.slots().to_vec());
+        let strings = self
+            .base
+            .iter()
+            .filter(|(key, _)| self.overlay.get(key.as_str()).is_none())
+            .chain(
+                self.overlay
+                    .iter()
+                    .filter_map(|(key, owners)| owners.as_ref().map(|owners| (key, owners))),
+            );
+        for (key, owners) in strings {
+            if key.as_str() != lower && key.trim().eq_ignore_ascii_case(id) {
+                slots.extend_from_slice(owners.slots());
+            }
+        }
+        slots.sort_unstable();
+        slots.dedup();
+        slots
     }
 }
 
