@@ -1,0 +1,140 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "alpha",
+      "name": "Alpha",
+      "target": {
+        "id": "pages/Alpha.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "beta",
+      "name": "Beta",
+      "target": {
+        "id": "pages/Beta.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "shared",
+      "name": "Shared",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Alpha.md",
+          "pages/Beta.md"
+        ]
+      }
+    }
+  ],
+  "journalTitleFormat": null,
+  "open": {
+    "Alpha": {
+      "journal": [
+        "journal",
+        "alpha"
+      ],
+      "page": [
+        "page",
+        "alpha"
+      ]
+    },
+    "Beta": {
+      "journal": [
+        "journal",
+        "beta"
+      ],
+      "page": [
+        "page",
+        "beta"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Shared": {
+      "journal": [
+        "journal",
+        "shared"
+      ],
+      "page": [
+        "page",
+        "alpha"
+      ]
+    }
+  },
+  "spellings": {
+    "Alpha": {
+      "backend": [
+        "page",
+        "alpha"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "alpha"
+      ]
+    },
+    "Beta": {
+      "backend": [
+        "page",
+        "beta"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "beta"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Shared": {
+      "backend": [
+        "page",
+        "alpha"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "alpha"
+      ]
+    }
+  }
+}

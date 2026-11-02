@@ -17,7 +17,7 @@
 //! Favorites follow rename only in the frontend (`src/favorites.ts`, Q12):
 //! the model's `favorites` answer is not compared here (a harness gap).
 //!
-//! Shares `cm_conformance_shared.rs` with the store harness (which also holds
+//! Shares `cm_conformance_shared_tests.rs` with the store harness (which also holds
 //! the test-side alias extractor copy to the original). Step 1 changes no
 //! production code. Without `CM_BRIDGE` the test skips; `CM_REFRESH=1`
 //! rewrites the `rename` part of the expected differences; `CM_RANDOM_RENAMES`
@@ -35,7 +35,7 @@ use tine_store::{Resolved, Store};
 
 use tine_store as store_crate;
 
-#[path = "../../tine-store/src/cm_conformance_shared.rs"]
+#[path = "../../tine-store/src/cm_conformance_shared_tests.rs"]
 mod shared;
 
 use shared::{Ctx, Diff, GraphSpec, Section};
@@ -218,13 +218,13 @@ fn run_rename(
         }
     };
     diffs.extend(shared::harness_reports(&model));
-    let ctx = Ctx::new(&view, &input, &model);
+    let ctx = Ctx::new(&view, spec.journal_format(), &input, &model);
     let duplicate = shared::has_duplicate_claim(&ctx);
     let before: BTreeSet<String> = shared::compare_meaning(&ctx, &spec.queries)
         .into_iter()
         .map(|d| d.class)
         .collect();
-    let journal = tine_core::date::JournalFormat::default();
+    let journal = spec.journal_format();
     let key = |s: &str| shared::fold(&journal, s);
     // The model's final path of each before file: its own, or for a moved
     // file the after file named by its new name.
@@ -338,6 +338,8 @@ fn run_rename(
         name: format!("{} after {rename}", spec.name),
         files: after_files.clone(),
         favorites_page: spec.favorites_page.clone(),
+        journal_title_format: spec.journal_title_format.clone(),
+        journal_file_format: spec.journal_file_format.clone(),
         queries: spec
             .queries
             .iter()
@@ -366,7 +368,12 @@ fn run_rename(
         }
     };
     diffs.extend(shared::harness_reports(&after_model));
-    let after_ctx = Ctx::new(&view2, &after_input, &after_model);
+    let after_ctx = Ctx::new(
+        &view2,
+        after_spec.journal_format(),
+        &after_input,
+        &after_model,
+    );
     // After paths by name key.
     let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (p, f) in &after_ctx.files {

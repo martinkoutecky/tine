@@ -1,0 +1,244 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026-10-2",
+      "name": "2026-10-2",
+      "target": {
+        "id": "pages/2026-10-2.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261022,
+      "is_journal": true,
+      "key": "oct 22nd, 2026",
+      "name": "Oct 22nd, 2026",
+      "target": {
+        "id": "journals/2026_10_22.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "oct 22st, 2026",
+      "name": "Oct 22st, 2026",
+      "target": {
+        "id": "pages/Oct 22st, 2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": 20261002,
+      "is_journal": true,
+      "key": "oct 2nd, 2026",
+      "name": "Oct 2nd, 2026",
+      "target": {
+        "id": "journals/2026_10_02.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "october 22nd, 2026",
+      "name": "October 22nd, 2026",
+      "target": {
+        "id": "pages/October 22nd, 2026.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalTitleFormat": null,
+  "open": {
+    "2026-10-2": {
+      "journal": [
+        "journal",
+        "oct 2nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 2nd, 2026"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    },
+    "Oct 22st, 2026": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    },
+    "Oct 2nd, 2026": {
+      "journal": [
+        "journal",
+        "oct 2nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 2nd, 2026"
+      ]
+    },
+    "October 22nd, 2026": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    },
+    "oct 22nd, 2026": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    }
+  },
+  "spellings": {
+    "2026-10-2": {
+      "backend": [
+        "journal",
+        "oct 2nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        2
+      ],
+      "model": [
+        "journal",
+        "oct 2nd, 2026"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    "Oct 22st, 2026": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    "Oct 2nd, 2026": {
+      "backend": [
+        "journal",
+        "oct 2nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        2
+      ],
+      "model": [
+        "journal",
+        "oct 2nd, 2026"
+      ]
+    },
+    "October 22nd, 2026": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    "oct 22nd, 2026": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    }
+  }
+}

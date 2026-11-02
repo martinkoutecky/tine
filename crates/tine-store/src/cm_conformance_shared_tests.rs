@@ -255,6 +255,11 @@ pub struct GraphSpec {
     pub name: String,
     pub files: BTreeMap<String, String>,
     pub favorites_page: Option<String>,
+    /// `:journal/page-title-format` and `:journal/file-name-format` in the
+    /// graph's `config.edn` (fixture `config.journalTitleFormat` /
+    /// `config.journalFileFormat`); `None` leaves the Logseq default.
+    pub journal_title_format: Option<String>,
+    pub journal_file_format: Option<String>,
     pub navigate: Vec<String>,
     pub queries: Vec<QuerySpec>,
     pub renames: Vec<(String, String)>,
@@ -315,6 +320,10 @@ impl GraphSpec {
             name: name.to_owned(),
             files,
             favorites_page: v["favoritesPage"].as_str().map(str::to_owned),
+            journal_title_format: v["config"]["journalTitleFormat"]
+                .as_str()
+                .map(str::to_owned),
+            journal_file_format: v["config"]["journalFileFormat"].as_str().map(str::to_owned),
             navigate: strings(&v["navigate"]),
             queries,
             renames,
@@ -326,6 +335,12 @@ impl GraphSpec {
         let mut v = json!({"files": self.files});
         if let Some(f) = &self.favorites_page {
             v["favoritesPage"] = json!(f);
+        }
+        if let Some(f) = &self.journal_title_format {
+            v["config"]["journalTitleFormat"] = json!(f);
+        }
+        if let Some(f) = &self.journal_file_format {
+            v["config"]["journalFileFormat"] = json!(f);
         }
         if !self.queries.is_empty() {
             v["queries"] = json!(self
@@ -350,16 +365,38 @@ impl GraphSpec {
         self.files.values().map(|t| t.len() + 8).sum::<usize>() + self.files.len() * 16
     }
 
+    /// The graph's journal formats, as the store builds them from its config
+    /// (`query::journal_format`: `JournalFormat::new(file, title)`). The
+    /// harness's date fold, and so the model's `dateKey`, is this native
+    /// parse list, the one list Martin chose (D-20261102-JDL: native list,
+    /// configured file-name format included, a deliberate OG deviation).
+    pub fn journal_format(&self) -> JournalFormat {
+        JournalFormat::new(
+            self.journal_file_format.as_deref(),
+            self.journal_title_format.as_deref(),
+        )
+    }
+
     /// Write the graph under `root` (pages/, journals/, and a config only
-    /// when the fixture configures a Favorites page).
+    /// when the fixture configures a Favorites page or a journal format).
     pub fn write(&self, root: &Path) {
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
+        let mut config = Vec::new();
         if let Some(f) = &self.favorites_page {
+            config.push(format!(":tine/favorites-page {f:?}"));
+        }
+        if let Some(f) = &self.journal_title_format {
+            config.push(format!(":journal/page-title-format {f:?}"));
+        }
+        if let Some(f) = &self.journal_file_format {
+            config.push(format!(":journal/file-name-format {f:?}"));
+        }
+        if !config.is_empty() {
             fs::create_dir_all(root.join("logseq")).unwrap();
             fs::write(
                 root.join("logseq/config.edn"),
-                format!("{{:tine/favorites-page {f:?}}}\n"),
+                format!("{{{}}}\n", config.join("\n ")),
             )
             .unwrap();
         }
@@ -555,7 +592,7 @@ pub fn model_input(
     aliases: AliasFn,
     map_strings: &[String],
 ) -> Value {
-    let journal = JournalFormat::default();
+    let journal = spec.journal_format();
     let mut input = json!({
         "files": spec.files.iter().map(|(rel, text)| file_json(view, rel, text, aliases)).collect::<Vec<_>>(),
         "navigate": spec.navigate,
@@ -686,8 +723,12 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(view: &'a WholeGraph, input: &'a Value, model: &'a Value) -> Ctx<'a> {
-        let journal = JournalFormat::default();
+    pub fn new(
+        view: &'a WholeGraph,
+        journal: JournalFormat,
+        input: &'a Value,
+        model: &'a Value,
+    ) -> Ctx<'a> {
         let mut files = BTreeMap::new();
         for f in input["files"].as_array().unwrap() {
             let path = f["path"].as_str().unwrap().to_owned();
@@ -921,7 +962,7 @@ fn tine_block_ids(view: &WholeGraph) -> BTreeMap<String, BlockId> {
         }
     }
     let mut out = BTreeMap::new();
-    for page in view.corpus().pages {
+    for page in view.corpus(None).pages {
         let path = page.id.to_string();
         let mut i = 0;
         if page.document.pre_block.is_some() {
@@ -980,6 +1021,85 @@ fn navigate(view: &WholeGraph, journal: &JournalFormat, name: &str) -> Page {
         return tine_page(view, journal, &as_journal, name, true);
     }
     tine_page(view, journal, &view.resolve(name, false), name, false)
+}
+
+/// The wire form of a resolution (`src-tauri` `ResolvedWire`, the
+/// frontend's `ResolvedPage`).
+fn resolved_wire(r: &Resolved) -> Value {
+    match r {
+        Resolved::Existing { id, others } => json!({
+            "kind": "existing",
+            "id": id.as_str(),
+            "others": others.iter().map(|o| o.as_str()).collect::<Vec<_>>(),
+        }),
+        Resolved::Alias { owners } => json!({
+            "kind": "alias",
+            "owners": owners.iter().map(|o| o.as_str()).collect::<Vec<_>>(),
+        }),
+        Resolved::Absent { id } => json!({"kind": "absent", "id": id.as_str()}),
+    }
+}
+
+/// Harness gap H3 closed for fixtures: what the frontend's link decision
+/// needs to run in vitest (`src/cmConformanceNavigate.test.ts`), with the
+/// answers it is compared to.
+/// - `journalTitleFormat`: what `GraphMeta.journal_page_title_format` hands
+///   `setJournalTitleFormat` (the frontend receives no file-name format);
+/// - `inventory`: `page_inventory`'s entries, built as `src-tauri`'s
+///   `entry_wire` builds them;
+/// - `spellings`: per spelling the model answers for, the native parse's day,
+///   the model's page and the backend's own answer (`navigate`);
+/// - `open`: per name the click path can route to (every spelling and every
+///   inventory name), the page `get_page(name, kind)` opens for each kind
+///   (`WholeGraph::resolve`, first alias owner, as `Store::page_named`).
+pub fn frontend_case(ctx: &Ctx, journal_title_format: Option<&str>) -> Value {
+    let view = ctx.view;
+    let journal = &ctx.journal;
+    let inventory = view.inventory(InventoryScope::All);
+    let entries: Vec<Value> = inventory
+        .0
+        .iter()
+        .map(|e| {
+            json!({
+                "key": page_key(&e.name),
+                "name": e.name,
+                "is_journal": e.is_journal,
+                "day": e.day.map(|d| d.0),
+                "target": resolved_wire(&e.target),
+            })
+        })
+        .collect();
+    let mut names: BTreeSet<String> = inventory.0.iter().map(|e| e.name.clone()).collect();
+    let mut spellings = BTreeMap::new();
+    for (s, page) in ctx.model["navigate"].as_object().unwrap() {
+        names.insert(s.clone());
+        let day = journal
+            .parse(s.trim())
+            .map(|d| json!([d.year, d.month, d.day]));
+        let backend = navigate(view, journal, s);
+        spellings.insert(
+            s.clone(),
+            json!({"day": day, "model": page, "backend": [backend.0, backend.1]}),
+        );
+    }
+    let open: BTreeMap<String, Value> = names
+        .iter()
+        .map(|n| {
+            let j = tine_page(view, journal, &view.resolve(n, true), n, true);
+            let p = tine_page(view, journal, &view.resolve(n, false), n, false);
+            (
+                n.clone(),
+                json!({"journal": [j.0, j.1], "page": [p.0, p.1]}),
+            )
+        })
+        .collect();
+    json!({
+        "journalTitleFormat": journal_title_format,
+        "conflicts": ctx.conflicts,
+        "inventory": entries,
+        "spellings": spellings,
+        "open": open,
+    })
 }
 
 /// Rule 1 and 3 (the manager's first slice): pages, conflicts, owners and
@@ -1593,6 +1713,74 @@ pub fn compare_queries(ctx: &Ctx, queries: &[QuerySpec]) -> Vec<Diff> {
                 format!("query {:?}: Tine has page {p:?}, model does not", q.tine),
             ));
         }
+    }
+    diffs
+}
+
+/// Census Q3 item 2: the query evaluator's "does this referenced name
+/// denote a journal day" (`query/eval.rs reference_day`, which leaves the
+/// configured file-name format out of its list) against the harness's date
+/// fold (the native list, the model's `dateKey`). The model has no `journal`
+/// leaf, so this compares Tine's query answer with the blocks that hold a
+/// date-shaped occurrence under the native list. Fixtures only: random
+/// graphs use the default formats, where the two lists coincide.
+pub fn compare_reference_days(ctx: &Ctx) -> Vec<Diff> {
+    let mut diffs = Vec::new();
+    let text = "any(direct_refs, journal = true)";
+    let (query, qview) = parse_query_text(text, QueryDialect::Tql, JournalDate::today());
+    if query.is_invalid() {
+        diffs.push(Diff::new(
+            "harness: Tine rejects query text (reference day)",
+            format!("query {text:?}: {:?}", query.diagnostics),
+        ));
+        return diffs;
+    }
+    let tine = match ctx.view.query_ir(
+        IrRequest::Run {
+            query: &query,
+            view: &qview,
+            context: &ExecutionContext::none(),
+        },
+        &Cancel::default(),
+    ) {
+        Ok(Some(IrAnswer::Result(result))) => match &result.rows {
+            QueryRows::Block { groups } => group_blocks(ctx, groups, &mut diffs, "reference day"),
+            QueryRows::Page { .. } => BTreeSet::new(),
+        },
+        other => {
+            diffs.push(Diff::new(
+                "harness: query did not run",
+                format!("query {text:?}: {:?}", other.map(|a| a.is_some())),
+            ));
+            return diffs;
+        }
+    };
+    let mut native: BTreeMap<BlockId, Vec<String>> = BTreeMap::new();
+    for (path, f) in &ctx.files {
+        for (i, (_, occ)) in f.blocks.iter().enumerate() {
+            let dated: Vec<String> = occ
+                .iter()
+                .filter(|(_, s)| ctx.journal.parse(s.trim()).is_some())
+                .map(|(_, s)| s.clone())
+                .collect();
+            if !dated.is_empty() {
+                native.insert((path.clone(), i), dated);
+            }
+        }
+    }
+    for (b, spellings) in &native {
+        if !tine.contains(b) {
+            diffs.push(Diff::new(
+                "date answerers: query `journal` fact misses a native date spelling",
+                format!("query {text:?}: native list reads {spellings:?} in block {b:?} as a day, the query does not"),
+            ));
+        }
+    }
+    for b in tine.iter().filter(|b| !native.contains_key(*b)) {
+        diffs.push(Diff::new(
+            "date answerers: query `journal` fact on a spelling the native list rejects",
+            format!("query {text:?}: block {b:?} matches, the native list reads no day in it"),
+        ));
     }
     diffs
 }

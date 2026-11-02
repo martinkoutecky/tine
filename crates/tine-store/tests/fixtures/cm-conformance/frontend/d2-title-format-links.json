@@ -1,0 +1,218 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026-10-22",
+      "name": "2026-10-22",
+      "target": {
+        "id": "pages/2026-10-22.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026_10_22",
+      "name": "2026_10_22",
+      "target": {
+        "id": "pages/2026_10_22.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": 20261022,
+      "is_journal": true,
+      "key": "22.10.2026",
+      "name": "22.10.2026",
+      "target": {
+        "id": "journals/2026_10_22.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "23.10.2026",
+      "name": "23.10.2026",
+      "target": {
+        "id": "pages/23%2E10%2E2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "oct 22nd, 2026",
+      "name": "Oct 22nd, 2026",
+      "target": {
+        "id": "pages/Oct 22nd, 2026.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalTitleFormat": "dd.MM.yyyy",
+  "open": {
+    "2026-10-22": {
+      "journal": [
+        "journal",
+        "22.10.2026"
+      ],
+      "page": [
+        "page",
+        "22.10.2026"
+      ]
+    },
+    "2026_10_22": {
+      "journal": [
+        "journal",
+        "22.10.2026"
+      ],
+      "page": [
+        "page",
+        "22.10.2026"
+      ]
+    },
+    "22.10.2026": {
+      "journal": [
+        "journal",
+        "22.10.2026"
+      ],
+      "page": [
+        "page",
+        "22.10.2026"
+      ]
+    },
+    "23.10.2026": {
+      "journal": [
+        "journal",
+        "23.10.2026"
+      ],
+      "page": [
+        "page",
+        "23.10.2026"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "journal": [
+        "journal",
+        "22.10.2026"
+      ],
+      "page": [
+        "page",
+        "22.10.2026"
+      ]
+    }
+  },
+  "spellings": {
+    "2026-10-22": {
+      "backend": [
+        "journal",
+        "22.10.2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "22.10.2026"
+      ]
+    },
+    "2026_10_22": {
+      "backend": [
+        "journal",
+        "22.10.2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "22.10.2026"
+      ]
+    },
+    "22.10.2026": {
+      "backend": [
+        "journal",
+        "22.10.2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "22.10.2026"
+      ]
+    },
+    "23.10.2026": {
+      "backend": [
+        "journal",
+        "23.10.2026"
+      ],
+      "day": [
+        2026,
+        10,
+        23
+      ],
+      "model": [
+        "journal",
+        "23.10.2026"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "backend": [
+        "journal",
+        "22.10.2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "22.10.2026"
+      ]
+    }
+  }
+}

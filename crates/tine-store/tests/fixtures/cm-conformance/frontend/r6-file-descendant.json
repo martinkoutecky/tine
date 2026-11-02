@@ -1,0 +1,106 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old",
+      "name": "old",
+      "target": {
+        "id": "pages/old.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old/sub",
+      "name": "old/sub",
+      "target": {
+        "id": "pages/old%2Fsub.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalTitleFormat": null,
+  "open": {
+    "old": {
+      "journal": [
+        "journal",
+        "old"
+      ],
+      "page": [
+        "page",
+        "old"
+      ]
+    },
+    "old/sub": {
+      "journal": [
+        "journal",
+        "old/sub"
+      ],
+      "page": [
+        "page",
+        "old/sub"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  },
+  "spellings": {
+    "old": {
+      "backend": [
+        "page",
+        "old"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "old"
+      ]
+    },
+    "old/sub": {
+      "backend": [
+        "page",
+        "old/sub"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "old/sub"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    }
+  }
+}

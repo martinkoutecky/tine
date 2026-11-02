@@ -14,7 +14,7 @@
 //!
 //! Rename (rule 6) needs the page host and `tine-graph-features`; it lives in
 //! `crates/tine-graph-features/tests/cm_conformance_rename.rs`, sharing
-//! `cm_conformance_shared.rs` with this file.
+//! `cm_conformance_shared_tests.rs` with this file.
 //!
 //! Step 1 records differences; it changes no production code. Without
 //! `CM_BRIDGE` the test skips. `CM_REPORT` names a file for the full report;
@@ -38,7 +38,7 @@ mod store_crate {
     pub(crate) use crate::{Cancel, InventoryScope, IrAnswer, IrRequest, Resolved, WholeGraph};
 }
 
-#[path = "cm_conformance_shared.rs"]
+#[path = "cm_conformance_shared_tests.rs"]
 mod shared;
 
 use shared::{Ctx, Diff, GraphSpec, Section};
@@ -105,9 +105,16 @@ fn link_pairs(
 }
 
 type Droppers = std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>;
+/// Per fixture, the case the frontend check runs (`shared::frontend_case`).
+type Frontend = std::sync::Mutex<BTreeMap<String, Value>>;
 
 /// One graph through the store and the model; its differences.
-fn run_graph(bridge: &Path, spec: &GraphSpec, droppers: &Droppers) -> Vec<Diff> {
+fn run_graph(
+    bridge: &Path,
+    spec: &GraphSpec,
+    droppers: &Droppers,
+    frontend: &Frontend,
+) -> Vec<Diff> {
     let dir = tempfile::tempdir().unwrap();
     spec.write(dir.path());
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
@@ -139,8 +146,15 @@ fn run_graph(bridge: &Path, spec: &GraphSpec, droppers: &Droppers) -> Vec<Diff> 
             return diffs;
         }
     };
-    let ctx = Ctx::new(&view, &input, &model);
+    let ctx = Ctx::new(&view, spec.journal_format(), &input, &model);
     diffs.extend(shared::compare_meaning(&ctx, &spec.queries));
+    if !spec.name.starts_with("random-") {
+        diffs.extend(shared::compare_reference_days(&ctx));
+        frontend.lock().unwrap().insert(
+            spec.name.clone(),
+            shared::frontend_case(&ctx, spec.journal_title_format.as_deref()),
+        );
+    }
     let pairs = link_pairs(&view, &input, &mut diffs);
     diffs.extend(shared::compare_links(&ctx, &pairs));
     if spec.name.starts_with("random-") && shared::has_duplicate_claim(&ctx) {
@@ -180,6 +194,58 @@ fn fixture_specs() -> Vec<GraphSpec> {
         .collect()
 }
 
+/// The frontend check's inputs (`tests/fixtures/cm-conformance/frontend/`)
+/// are written by this harness and committed, so `npm test` runs the
+/// frontend's real link decision without the bridge. Stale or missing cases
+/// fail here; `CM_REFRESH=1` rewrites them.
+fn check_frontend_cases(cases: BTreeMap<String, Value>) {
+    let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR")).join("frontend");
+    let refresh = std::env::var_os("CM_REFRESH").is_some();
+    if refresh {
+        fs::create_dir_all(&dir).unwrap();
+        for e in fs::read_dir(&dir).unwrap() {
+            let p = e.unwrap().path();
+            let stem = p.file_stem().unwrap().to_string_lossy().into_owned();
+            if p.extension().is_some_and(|x| x == "json") && !cases.contains_key(&stem) {
+                fs::remove_file(&p).unwrap();
+            }
+        }
+    }
+    let mut stale = Vec::new();
+    for (name, case) in &cases {
+        let path = dir.join(format!("{name}.json"));
+        let text = serde_json::to_string_pretty(case).unwrap() + "\n";
+        if refresh {
+            fs::write(&path, text).unwrap();
+        } else if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+            stale.push(name.clone());
+        }
+    }
+    if !refresh {
+        let on_disk = fs::read_dir(&dir)
+            .map(|d| {
+                d.filter_map(|e| {
+                    let p = e.ok()?.path();
+                    Some(p.file_stem()?.to_string_lossy().into_owned())
+                })
+                .filter(|n| !cases.contains_key(n))
+                .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        stale.extend(
+            on_disk
+                .into_iter()
+                .map(|n| format!("{n} (no such fixture)")),
+        );
+    }
+    assert!(
+        stale.is_empty(),
+        "conceptual model conformance: frontend cases are stale: {stale:?}; refresh with \
+         CM_REFRESH=1 CM_BRIDGE=<cm-bridge> cargo test -p tine-store --lib cm_conformance, \
+         then CM_REFRESH=1 npx vitest run src/cmConformanceNavigate.test.ts"
+    );
+}
+
 #[test]
 fn conceptual_model_conformance() {
     let Ok(bridge) = std::env::var("CM_BRIDGE") else {
@@ -191,8 +257,9 @@ fn conceptual_model_conformance() {
     let mut section = Section::default();
     let mut report = BTreeMap::new();
     let droppers = Droppers::default();
+    let frontend = Frontend::default();
     for spec in fixture_specs() {
-        let diffs = run_graph(bridge, &spec, &droppers);
+        let diffs = run_graph(bridge, &spec, &droppers, &frontend);
         report.insert(
             spec.name.clone(),
             json!(diffs
@@ -220,7 +287,7 @@ fn conceptual_model_conformance() {
             scope.spawn(|| loop {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(spec) = specs.get(i) else { break };
-                let diffs = run_graph(bridge, spec, &droppers);
+                let diffs = run_graph(bridge, spec, &droppers, &frontend);
                 results.lock().unwrap().insert(i, diffs);
             });
         }
@@ -253,6 +320,7 @@ fn conceptual_model_conformance() {
         let full = json!({"fixtures": report, "store": section.to_json()});
         fs::write(dest, serde_json::to_string_pretty(&full).unwrap()).unwrap();
     }
+    check_frontend_cases(frontend.into_inner().unwrap());
     shared::check_expected(
         env!("CARGO_MANIFEST_DIR"),
         "store",

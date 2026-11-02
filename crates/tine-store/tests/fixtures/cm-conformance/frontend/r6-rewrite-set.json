@@ -1,0 +1,158 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ref",
+      "name": "ref",
+      "target": {
+        "id": "pages/ref.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "tasks",
+      "name": "Tasks",
+      "target": {
+        "id": "pages/Tasks.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalTitleFormat": null,
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "TODO": {
+      "journal": [
+        "journal",
+        "todo"
+      ],
+      "page": [
+        "page",
+        "todo"
+      ]
+    },
+    "Tasks": {
+      "journal": [
+        "journal",
+        "tasks"
+      ],
+      "page": [
+        "page",
+        "tasks"
+      ]
+    },
+    "ref": {
+      "journal": [
+        "journal",
+        "ref"
+      ],
+      "page": [
+        "page",
+        "ref"
+      ]
+    },
+    "rel": {
+      "journal": [
+        "journal",
+        "rel"
+      ],
+      "page": [
+        "page",
+        "rel"
+      ]
+    },
+    "tasks": {
+      "journal": [
+        "journal",
+        "tasks"
+      ],
+      "page": [
+        "page",
+        "tasks"
+      ]
+    }
+  },
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "TODO": {
+      "backend": [
+        "page",
+        "todo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "todo"
+      ]
+    },
+    "Tasks": {
+      "backend": [
+        "page",
+        "tasks"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "tasks"
+      ]
+    },
+    "ref": {
+      "backend": [
+        "page",
+        "ref"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ref"
+      ]
+    },
+    "rel": {
+      "backend": [
+        "page",
+        "rel"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "rel"
+      ]
+    },
+    "tasks": {
+      "backend": [
+        "page",
+        "tasks"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "tasks"
+      ]
+    }
+  }
+}
