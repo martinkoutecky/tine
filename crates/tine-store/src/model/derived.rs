@@ -933,6 +933,9 @@ impl Graph {
         // are marked here, unlocked, and dropped only after the checks, so a
         // raced install hands the build back whole.
         let mut owned: Vec<Owned> = Vec::new();
+        // A held page's own failures, added to the build's after the checks
+        // (a raced install drops them; the retry recomputes them).
+        let (mut owned_failures, mut owned_unreadable) = (Vec::new(), Vec::new());
         let (held, mut kept, mut memo) = (!self.held.is_empty(), Vec::new(), Memo::default());
         if held {
             let pages = built.pages.iter();
@@ -946,9 +949,9 @@ impl Graph {
                     let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
                         let rel = self.held.spellings().spelling(&key).to_string();
                         if contained::is_parser_panic(&error) {
-                            failures.push(rel.clone());
+                            owned_failures.push(rel.clone());
                         }
-                        unreadable.push((rel, error.to_string()));
+                        owned_unreadable.push((rel, error.to_string()));
                         None
                     });
                     Owned { row, key, bytes }
@@ -1005,6 +1008,8 @@ impl Graph {
             if let Some(discovery) = discovery.as_mut() {
                 discovery.retain(|(id, _)| disk(id.as_str()));
             }
+            built.failures.append(&mut owned_failures);
+            built.unreadable.append(&mut owned_unreadable);
         }
         let (failures, mut unreadable) = (built.failures, built.unreadable);
         let mut rows: Vec<Row> = (built.pages.into_iter())
