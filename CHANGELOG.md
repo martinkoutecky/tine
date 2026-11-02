@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - `tine add`, `edit`, `prop`, `move`, `delete` and the other write commands running at the same time on one page now all land, in some order, instead of most failing with "the page kept changing" (exit 6) when no `--rev` or handle had gone out of date. Commands take turns; `--rev` and block handles still refuse a page that moved, and text from the app, an editor or Syncthing is still never overwritten (#842).
+- On Android and iOS, switching to another app commits pending edits immediately and, with **Commit and sync automatically**, pushes them, even inside the commit interval. Switching apps without edits adds no commit; the timed cadence is unchanged (D-20261101-GB).
 - A Search tab that is still searching now says "Searching…" instead of "Pages 0 / Blocks 0 / No matching pages"; a finished empty search still says no results (#838).
 - A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).
 - Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with "no graph loaded for window capture". Drag-and-drop onto the capture window is not supported yet (#835).
