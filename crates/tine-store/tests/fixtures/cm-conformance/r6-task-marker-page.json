@@ -1,0 +1,12 @@
+{
+  "files": {
+    "pages/A.md": "- the A page\n",
+    "pages/p.md": "- TODO write [#A]\n- see [[A]]\n"
+  },
+  "renames": [
+    {
+      "old": "A",
+      "new": "Alpha"
+    }
+  ]
+}

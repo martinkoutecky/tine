@@ -63,6 +63,8 @@
 #![deny(missing_docs)]
 
 #[cfg(test)]
+mod cm_conformance_tests;
+#[cfg(test)]
 mod derived_cache_fuzz_tests;
 pub use tine_outline::edit_kind;
 pub mod file_kind;
