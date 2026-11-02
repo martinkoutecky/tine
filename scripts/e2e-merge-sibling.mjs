@@ -23,8 +23,8 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH,
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir));
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
 const file = (name) => path.join(GRAPH, "pages", `${name}.md`);
-const MERGE_SOURCE = "- alpha\n  - alpha child\n- beta\n- gamma\n- delta\n";
-const SIBLING_SOURCE = "- father 1\n  - son\n    - grandson\n  - son 2\n- father 2\n";
+const MERGE_SOURCE = "- alpha\n\t- alpha child\n- beta\n- gamma\n- delta\n";
+const SIBLING_SOURCE = "- father 1\n\t- son\n\t\t- grandson\n\t- son 2\n- father 2\n";
 fs.writeFileSync(file("Merge Demo"), MERGE_SOURCE);
 fs.writeFileSync(file("Sibling Demo"), SIBLING_SOURCE);
 
@@ -76,6 +76,7 @@ try {
   await clickBlock("alpha");
   await browser.keys("Escape");
   for (let i = 0; i < 3; i += 1) await browser.keys(["Shift", "ArrowDown"]);
+  await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".main-content .block-main.selected").length === 4), { timeout: 5000, timeoutMsg: "Shift+Down did not select four blocks" });
   await runPaletteCommand("Merge selected blocks");
   await waitForFileText(file("Merge Demo"), (body) => body === "- alpha\n  alpha child\n  beta\n  gamma\n- delta\n");
   proof.steps.push("merge: file is one block with the three lines, delta untouched");
@@ -89,13 +90,13 @@ try {
   await browser.keys(["Alt", "Enter"]);
   await browser.keys("new top");
   await browser.keys("Escape");
-  await waitForFileText(file("Sibling Demo"), (body) => body === "- father 1\n  - son\n    - grandson\n  - son 2\n- new top\n- father 2\n");
+  await waitForFileText(file("Sibling Demo"), (body) => body === "- father 1\n\t- son\n\t\t- grandson\n\t- son 2\n- new top\n- father 2\n");
   proof.steps.push("Alt+Enter on father 1: the new block follows its whole subtree, before father 2, father 1 unsplit");
   await clickBlock("son");
   await browser.keys(["Alt", "Enter"]);
   await browser.keys("after son");
   await browser.keys("Escape");
-  await waitForFileText(file("Sibling Demo"), (body) => body === "- father 1\n  - son\n    - grandson\n  - after son\n  - son 2\n- new top\n- father 2\n");
+  await waitForFileText(file("Sibling Demo"), (body) => body === "- father 1\n\t- son\n\t\t- grandson\n\t- after son\n\t- son 2\n- new top\n- father 2\n");
   proof.steps.push("Alt+Enter on the nested son: the new block follows its child, at its own level");
 
   console.log("PASS", JSON.stringify(proof));
