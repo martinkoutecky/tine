@@ -64,7 +64,7 @@ struct link_identity::LinkInspection
 field link_identity::LinkInspection.identity
 field link_identity::LinkInspection.target_possible
 
-## Freshness (ceiling: 33)
+## Freshness (ceiling: 34)
 # GX4 S2 explicitly requires mounted unlinked targets in the publication host.
 # Store::subscribe owns the one dispatch stream, not the changing set of views;
 # adding a subscribe parameter cannot register/release targets after dispatch
@@ -98,6 +98,13 @@ enum store::LoadError
 fn store::Store::refresh
 fn store::Store::subscribe
 fn store::Change::page
+# Cost-model audit 2026-11-02 row 1: a link edit's inventory signal carries the
+# entries that moved, so the window patches its names instead of rereading the
+# whole inventory per autosave. No existing Change item answers names
+# (`Change::page` is one page's parsed form), and `WholeGraph::inventory` cannot
+# take a parameter for it: a later view answers a later revision, not this
+# publication's. The answer reuses `Inventory`; no type is added.
+fn store::Change::inventory_delta
 fn store::Subscription::recv
 # test-oracle: tests drain the change feed without blocking; production waits with `recv`.
 fn store::Subscription::try_recv

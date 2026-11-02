@@ -183,6 +183,15 @@ export interface PageInventoryEntry {
   target: ResolvedPage;
 }
 
+/** What one publication changed in the `page_inventory` answer when no page
+ *  file claimed or released a name (cost-model audit 2026-11-02, row 1): drop
+ *  the alias and reference-only entries of `keys`, then add `entries` (only
+ *  alias and reference-only entries; `existing` ones never travel here). */
+export interface PageInventoryDelta {
+  keys: string[];
+  entries: PageInventoryEntry[];
+}
+
 /** `page_inventory` result; `rev` is the graph revision it was read at. */
 export interface PageInventory {
   rev: string;

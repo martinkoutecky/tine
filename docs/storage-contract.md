@@ -489,6 +489,13 @@ concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).
+`InventoryScope::JournalFiles` (cost audit 2026-11-02 row 8) lists the journal
+days files claim in the captured view, one entry per day, from the view's
+existing day index (O(J log J), no file reads, no new index). The Journals
+feed's scroll steps page through it on a loaded graph; its first page still
+lists the journals directory, which reports unreadable entries and shows files
+no publication has named yet. A journal file written outside the watcher reaches
+later steps by the ordinary rescan (focus return, poll, `refresh`).
 R5 adds prepared referrer text to the existing rewrite protocol, with no new persisted record.
 
 Clone setup (D-20261031-GCL) shares GS1's existing Unicode candidate rule through
@@ -1566,6 +1573,27 @@ including affected ancestors for subtree readers. `linksTo` conservatively
 includes old and new explicit reference targets, namespace ancestors, aliases
 and journal-day spellings. `props` maps source-page and alias keys to changed
 page-property keys. These are invalidation hints, not result patches.
+
+`inventoryChanged` is true exactly when the `All` page inventory answer moved:
+a page file claimed or released a name, an alias changed, or a name entered,
+left or changed its spelling in the graph-wide referenced-name set (another
+page's existing reference, or a page file of that name, makes a link edit
+silent). A session that has not yet answered an inventory or completion read
+has no name table, so there any change of a saved page's own alias or
+reference set signals, as before. When no file claim, unreadable file or configuration changed and the
+previous generation had already answered an inventory or completion read,
+the envelope also carries `inventoryDelta: {keys, entries}`: drop the alias
+and reference-only entries of `keys`, add `entries` (same shape as
+`page_inventory` entries), and the result equals a fresh `page_inventory`
+read at `rev`. This is the one result patch in the envelope. The frontend
+applies it only in order (`patchPageIndex`: an answer held, no read in flight
+or queued) and otherwise refetches. Without `inventoryDelta` it refetches as
+before. The graph-wide referenced-name table that answers this, the
+inventory's reference-only names and `[[` completion lives in memory only
+(`model/referenced_names.rs`): built on first read from the per-page index,
+inherited by later generations through per-page patches, never persisted or
+checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
+`crates/tine-store/tests/inventory_delta.rs`, `src/pageIndex.test.ts`).
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

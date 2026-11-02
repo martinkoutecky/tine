@@ -5,7 +5,7 @@ import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import { journalTitle, parseJournalTitle } from "./journal";
-import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
+import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
 // the backend's `refs::page_key`. It answers a name by looking up
@@ -18,12 +18,17 @@ import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPa
 //
 // Refresh economy: graph binding or native inventory-change signals cost one
 // IPC per tick, and a burst while one is in flight costs one more. Text-only
-// saves leave this answer alone (I-25).
+// saves leave this answer alone (I-25). A change that only moved alias or
+// reference-only names (typing inside `[[…]]`, an `alias::` edit) carries
+// those entries and is patched in place with no IPC (`patchPageIndex`).
 
 interface Held {
   generation: number;
   rev: bigint;
   entries: PageInventoryEntry[];
+  /** The `existing` entries: the file list, which a patch never changes, so
+   *  views of the files (All pages) keep their answer across patches. */
+  files: PageInventoryEntry[];
   /** Page-kind and journal-kind entries by `key`. */
   pages: Map<string, PageInventoryEntry>;
   journals: Map<string, PageInventoryEntry>;
@@ -55,7 +60,66 @@ function build(inventory: PageInventory, rev: bigint): Held {
       }
     }
   }
-  return { generation, rev, entries: inventory.entries, pages, journals, nameById };
+  const files = inventory.entries.filter((entry) => entry.target.kind === "existing");
+  return { generation, rev, entries: inventory.entries, files, pages, journals, nameById };
+}
+
+/** Rust's `str` order (UTF-8 bytes, i.e. code points), which the backend sorts
+ *  the inventory by; JS `<` compares UTF-16 units and differs above U+FFFF. */
+function compareCodePoints(left: string, right: string): number {
+  if (left === right) return 0;
+  const a = left[Symbol.iterator](), b = right[Symbol.iterator]();
+  for (;;) {
+    const x = a.next(), y = b.next();
+    if (x.done || y.done) return x.done ? (y.done ? 0 : -1) : 1;
+    if (x.value !== y.value) return x.value.codePointAt(0)! - y.value.codePointAt(0)!;
+  }
+}
+
+/** The backend's inventory order: by key, then by name. */
+function entryOrder(left: PageInventoryEntry, right: PageInventoryEntry): number {
+  return compareCodePoints(left.key, right.key) || compareCodePoints(left.name, right.name);
+}
+
+/** Apply one publication's inventory delta to the held answer, as the next
+ *  in-order change: the answer then equals a fresh `page_inventory` read at
+ *  `rev`. Returns `null` when it cannot (nothing held yet, a rebind, or a read
+ *  in flight or queued whose answer may predate or postdate this change): the
+ *  caller refetches, as before. `aliases`: an alias entry was dropped or added.
+ *  Cost O(entries) to copy the entry list, O(changed log entries) otherwise;
+ *  no IPC. */
+export function patchPageIndex(rev: bigint, delta: PageInventoryDelta): { aliases: boolean } | null {
+  const current = held();
+  if (!current || current.generation !== generation || inFlight !== null || queued) return null;
+  // A read at or after `rev` already holds this change.
+  if (rev <= current.rev) return { aliases: false };
+  const keys = new Set(delta.keys);
+  let aliases = delta.entries.some((entry) => entry.target.kind === "alias");
+  const entries: PageInventoryEntry[] = [];
+  for (const entry of current.entries) {
+    if (keys.has(entry.key) && entry.target.kind !== "existing") {
+      aliases ||= entry.target.kind === "alias";
+      const map = entry.is_journal ? current.journals : current.pages;
+      if (map.get(entry.key) === entry) map.delete(entry.key);
+    } else {
+      entries.push(entry);
+    }
+  }
+  for (const entry of delta.entries) {
+    let low = 0, high = entries.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (entryOrder(entries[middle], entry) <= 0) low = middle + 1;
+      else high = middle;
+    }
+    entries.splice(low, 0, entry);
+    // The full read keeps the last entry of a key in list order.
+    const map = entry.is_journal ? current.journals : current.pages;
+    const kept = map.get(entry.key);
+    if (!kept || entryOrder(kept, entry) <= 0) map.set(entry.key, entry);
+  }
+  setHeld({ ...current, rev, entries });
+  return { aliases };
 }
 
 /** Fetch the inventory now and keep it unless a newer one is already held or
@@ -125,11 +189,14 @@ function ensureInstalled() {
   if (installed) return installed;
   installed = createRoot(() => {
     createEffect(on([graphEpoch, pageInventoryRev], () => scheduleRefresh()));
+    // Keyed on the file list, which a patch leaves alone: All pages and the
+    // views built on it do not recompute while names are typed.
+    const files = createMemo(() => held()?.files);
     const allPages = createMemo(() => {
-      const current = held();
+      const current = files();
       if (!current) return undefined;
       const rows: PageEntry[] = [];
-      for (const entry of current.entries) {
+      for (const entry of current) {
         if (entry.target.kind !== "existing") continue;
         // A duplicate-day journal lists only its canonical file (v0.6.5).
         const ids = entry.is_journal ? [entry.target.id] : [entry.target.id, ...entry.target.others];

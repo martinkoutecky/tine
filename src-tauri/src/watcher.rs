@@ -451,7 +451,15 @@ fn publication_event_payloads(
     binding_generation: u64,
     change: &Change,
 ) -> Vec<(&'static str, serde_json::Value)> {
-    let answers = serde_json::to_value(change).expect("Change answer serialization");
+    let mut answers = serde_json::to_value(change).expect("Change answer serialization");
+    // A name-only inventory change carries its entries, so the window patches
+    // its name maps instead of refetching the inventory (cost-model audit
+    // 2026-11-02, row 1). Absent: the window refetches as before.
+    if let Some(delta) = change.inventory_delta() {
+        answers["inventoryDelta"] =
+            serde_json::to_value(crate::commands::discovery::inventory_delta_wire(delta))
+                .expect("inventory delta serialization");
+    }
     page_event_payloads(events, binding_generation, Some(answers))
 }
 
