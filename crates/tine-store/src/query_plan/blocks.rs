@@ -62,10 +62,7 @@ pub(super) fn execute_blocks(
                                 index: candidate_index,
                                 page: entry,
                                 block,
-                                breadcrumb: path
-                                    .iter()
-                                    .map(|ancestor| crate::query::crumb_line(ancestor))
-                                    .collect(),
+                                ancestors: path.to_vec(),
                             },
                         );
                     }
@@ -126,7 +123,11 @@ pub(super) fn execute_blocks(
                     // of their entire descendant trees. The source page owns the
                     // hierarchy and live consumers hydrate it once per page.
                     let mut dto = tine_core::projection::block_to_shallow_dto(winner.block);
-                    dto.breadcrumb = winner.breadcrumb;
+                    dto.breadcrumb = winner
+                        .ancestors
+                        .iter()
+                        .map(|ancestor| crate::query::crumb_line(ancestor))
+                        .collect();
                     QueryHit::Block {
                         page: winner.page.name.clone(),
                         kind: winner.page.kind,

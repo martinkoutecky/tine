@@ -550,8 +550,8 @@ domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
 test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
 oracle = false
-note = "Withdraw conflict copy uses ensure_write_target with the root witness and bounded durable parent creation. Outside oracle; full A-ROOT-BOUND/A-DIRSYNC environment proof remains pending."
-mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=2"
+note = "Withdraw conflict copy uses ensure_write_target with the root witness and bounded durable parent creation, and syncs the source and trash directories after the move (audit L9-13). Outside oracle; full A-ROOT-BOUND/A-DIRSYNC environment proof remains pending."
+mutations = "directory_durability::create_dir_all_durable=1, directory_durability::sync_directory_entry=1, move_file_noreplace=2"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
@@ -1845,13 +1845,13 @@ mutations = ".write_all=1"
 
 [[site]]
 file = "src-tauri/src/platform.rs"
-fn = "copy_with_tools"
+fn = "write_until_stalled"
 domain = "primitive"
 guard = ""
 test = ""
 oracle = false
 note = "Conservative Write match on clipboard subprocess stdin, terminal or IPC socket; no graph filesystem target."
-mutations = ".write_all=1"
+mutations = ".write=1"
 
 [[site]]
 file = "src-tauri/src/plugins.rs"

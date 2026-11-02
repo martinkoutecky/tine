@@ -7,7 +7,21 @@ import { canIndentBlock, childIds, pageRoots, nextVisible, clearSelection, inden
 import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
 import { touchGestures } from "../inputCapability";
+import type { Format } from "../render/ast";
+import { facetsOf } from "../render/facets";
 import { openContextMenu } from "../ui";
+
+/** A block's own refs for OG's `:mobile :gestures/disabled-in-block-with-tags`,
+ *  case-folded: OG's `with-page-refs` joins headline tags, references, the task
+ *  marker and the priority. The parse is the cached one (`facetsOf`) plus the
+ *  one reference walk. */
+export function swipeRefNames(raw: string, format: Format): string[] {
+  const { tags, marker, priority } = facetsOf(raw, format);
+  const refs = [...pageRefsInText(raw, format), ...tags];
+  if (marker) refs.push(marker);
+  if (priority) refs.push(priority);
+  return [...new Set(refs.map(pageIdentityKey))];
+}
 
 export interface BlockRowSwipeDeps {
   /** The block the row's position belongs to: a whole-block embed's root row
@@ -59,7 +73,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
         (blockId) => {
           const block = docNode(blockId);
           if (!block) return [];
-          return pageRefsInText(block.raw, pageByName(block.page)?.format ?? "md").map(pageIdentityKey);
+          return swipeRefNames(block.raw, pageByName(block.page)?.format ?? "md");
         },
       ),
     editing: deps.editing,

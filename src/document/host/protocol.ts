@@ -130,7 +130,9 @@ export interface PublishedNeed {
 
 /** The commands the client issues (P1 supplies them as Tauri commands). Every
  * mutating command carries the session and a request id above the host's
- * admitted watermark; a resolved `PageRefusal` means "not admitted". */
+ * admitted watermark; a resolved `PageRefusal` means "not admitted". A rejected
+ * `page_*` promise also means not admitted (no slot, no host), or the host
+ * panicked; a request id is never reused. */
 export interface HostPort {
   windowReloaded(): Promise<{ session: number; nextId: number }>;
   /** `path` is the file the window's text was installed from, or, for a page

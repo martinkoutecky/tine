@@ -80,8 +80,16 @@ export function rollRepeat(raw: string, workflow: Workflow, format: Format): str
       else date.setFullYear(date.getFullYear() + r.num);
     };
     const today = appNow(); today.setHours(0,0,0,0);
-    let guard = 0;
-    do { step(); } while (r.mode === "++" && date <= today && ++guard < 100000);
+    if (r.mode === "++" && date <= today && (r.unit === "d" || r.unit === "w")) {
+      // Days and weeks are a fixed calendar length, so a date of any age lands
+      // past today in one step (Math.round absorbs a DST hour in the difference).
+      const days = r.num * (r.unit === "w" ? 7 : 1);
+      const behind = Math.round((today.getTime() - date.getTime()) / 86_400_000);
+      date.setDate(date.getDate() + (Math.floor(behind / days) + 1) * days);
+    } else {
+      // Months and years step on the calendar (a month end overflows into the next month); there are few.
+      do { step(); } while (r.mode === "++" && date <= today);
+    }
     next = editBlock(next, format, {kind:"planning", which:p.kind, value:planningTimestamp({
       y:date.getFullYear(), m:date.getMonth(), d:date.getDate(), time:parts.time, repeater:parts.repeater,
     })});

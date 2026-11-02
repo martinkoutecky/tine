@@ -418,6 +418,9 @@ export class PluginManager {
     });
   }
 
+  /** Not called in production; the dynamic decoration client waits for the plugin
+   *  API design. It applies effects (notice, set-setting) before returning, and
+   *  checks a block-decoration by block id only, with no `expectedRaw`. */
   async decorateBlocks(pluginId: string, contributionId: string, owned: OwnedPluginBlockList): Promise<PluginEffect[]> {
     const plugin = this.active.get(pluginId);
     if (!plugin) return [];

@@ -221,6 +221,23 @@ function NsMacroNode(props: { node: NsNode; depth: number }): JSX.Element {
   );
 }
 
+/** The node of namespace `root` in the tree of `names`, with its segments
+ *  descended by identity, or null when nothing lies below it. Its `full` keeps
+ *  the spelling of the listed names. Cost O(names x depth). */
+function namespaceNode(names: string[], root: string): NsNode | null {
+  let level = buildNamespaceTree(names);
+  let node: NsNode | undefined;
+  let prefix = "";
+  for (const seg of root.split("/").filter(Boolean)) {
+    prefix = prefix ? `${prefix}/${seg}` : seg;
+    const key = pageIdentityKey(prefix);
+    node = level.find((candidate) => pageIdentityKey(candidate.full) === key);
+    if (!node) return null;
+    level = node.children;
+  }
+  return node ?? null;
+}
+
 /** `{{namespace X}}` — the full nested descendant tree of namespace `X`, each
  *  page showing its `icon::` (like OG's namespace macro). */
 export function NamespaceMacro(props: { root: string }): JSX.Element {
@@ -230,8 +247,8 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   const treeData = createMemo(() => {
     const prefix = `${pageIdentityKey(props.root)}/`;
     const names = allPageNames().filter((n) => pageIdentityKey(n).startsWith(prefix));
-    const tree = buildNamespaceTree(names);
-    return { tree };
+    const node = namespaceNode(names, props.root);
+    return { tree: node ? [node] : [] };
   });
   const iconOf = pageIcon;
   return (
@@ -253,7 +270,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
                 </span>
               </Show>
               <a class="page-ref" {...nsLink(root.full, undefined, true)}>
-                <EmojiText text={root.seg} />
+                <EmojiText text={root.full} />
               </a>
             </div>
             <div class="ns-macro-tree">

@@ -167,6 +167,21 @@ describe("published reads are parser-decided, visible on failure and bounded (OG
     expect(groups.flatMap((group) => group.blocks.map((block) => block.id))).toEqual(["real"]);
   });
 
+  // L3-10: rows carry the matched block, like the native shallow DTO; a matching chain costs N, not N^2/2.
+  it("returns matched blocks without copying their subtrees", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const s = structuredClone(snapshot);
+    const leaf = { id: "leaf", raw: `((${id}))`, collapsed: false, children: [] };
+    s.pages[0].blocks = [{ id: "top", raw: `((${id}))`, collapsed: false, children: [leaf] }];
+    const clone = vi.spyOn(globalThis, "structuredClone");
+    const groups = await publishedBackend(async () => s).getBlockReferrers(id);
+    const cloned = clone.mock.calls.filter(([value]) => (value as { children?: unknown[] })?.children?.length);
+    clone.mockRestore();
+    expect(groups[0].blocks.map((block) => [block.id, block.children])).toEqual([["top", []], ["leaf", []]]);
+    expect(groups[0].blocks[1].breadcrumb).toEqual([`((${id}))`]);
+    expect(cloned).toEqual([]);
+  });
+
   it("rejects a missing or refused asset instead of answering empty bytes", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
     const api = publishedBackend(async () => snapshot);

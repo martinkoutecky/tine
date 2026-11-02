@@ -132,9 +132,14 @@ function applyCompositionLocally(next: ThemeComposition): void {
   }
 }
 
+/** The saved or a chosen selection is known. Before that the signal holds the
+ *  empty start value, and a re-resolve would persist it over the saved one. */
+let selectionKnown = false;
+
 /** Apply a composition now and persist it through the device preference
  * path; a failed latest write rolls back and toasts. O(theme lookup + CSS). */
 function selectComposition(style: string, colors: string, typography: string): void {
+  selectionKnown = true;
   writePreference(composition, applyCompositionLocally, resolveComposition(style, colors, typography),
     (next) => backend().setAppString(COMPOSITION_KEY, encodeComposition(next)), "gallery theme");
 }
@@ -170,6 +175,8 @@ export function clearThemeSelection(id: string): void {
 
 /** Re-resolve the current selection after revocations or package changes. */
 export function reapplyThemeSelection(): void {
+  // Hydration resolves through the same revocation-aware path, so nothing is lost.
+  if (!selectionKnown) return;
   const { style, colors, typography } = composition();
   selectComposition(style, colors, typography);
 }
@@ -205,6 +212,7 @@ export async function initThemeGallery(): Promise<void> {
       if (legacy.kind === "stale") return;
       stored = { style: legacy.value, colors: legacy.value, typography: "" };
     }
+    selectionKnown = true;
   } catch {
     pushToast(msg("theme-gallery-could-not-load-gallery-theme"), "error");
   }

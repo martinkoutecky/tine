@@ -381,6 +381,7 @@ branch. A same-branch concurrent commit still uses compare-and-swap retries.
 
 | Refusal | In-scope threat | Recovery |
 | --- | --- | --- |
+| `refused:quitting` | quit or crash between a run write's save and its commit, which `tine run revert` would then miss | retry once Tine has restarted; nothing was saved |
 | `refused:git` naming a conversion attribute | repository content conversion, including git-crypt plaintext disclosure | use Git's own conversion workflow; no page, ref, index or raw object is changed by the refused run write |
 | `git.committed: false` naming a changed branch | concurrent honest terminal checkout between repository open and index locking | inspect the saved page and active branch before starting another write; neither branch nor the new branch's index is changed by the refused commit |
 | `git.committed: false`, "the index could not be written" | disk error or full disk while the index is installed, before the branch moves (s3.7 P1/P1b) | the file is saved and the branch is unmoved, so no stale index sits under a new `HEAD`; the index is the old one or already stages the write, and the next commit records it |
@@ -671,6 +672,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `revision-required` | `block.edit` supplies a parser-owned LOGBOOK drawer without the read's `--rev`; reread and pass that revision |
 | `git` | a run verb or `--run` write: the graph's git repository cannot take the run's commits (none, bare, a merge/rebase in progress, a detached HEAD, an ignored file, a libgit2 error) |
 | `git-busy` | a `--run` write while another git command holds the index (before any change), or inside a `git` object: the branch kept moving while a run write committed |
+| `quitting` | a `--run` write while Tine is exiting: nothing was saved; retry once it has restarted |
 | `merge` | `run.revert`: a page's Concord merge refused it (nothing changed); inside a page entry, the same for a page that changed between the check and its write |
 | `kernel` | the edit itself cannot apply to the block (message says why) |
 | `kernel:<reason>` | the outline refused the verb: `kernel:depth_cap`, `kernel:cycle`, `kernel:read_only`, `kernel:frozen`, `kernel:cross_page_merge`, `kernel:header_root`, `kernel:no_outline_step`, `kernel:incomplete`, `kernel:unparseable` |

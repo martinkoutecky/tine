@@ -11,6 +11,7 @@ import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
 import { hostFolded } from "./macroFold";
 import { resolveBlockBatched } from "../resolveBatch";
+import { embedBlockTarget, embedPageTarget } from "../embedTarget";
 import { changed, pageChangeKey } from "../changeKeys";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
@@ -40,8 +41,8 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
-  const pageTarget = () => /^\[\[([^\]]+)\]\]$/.exec(target())?.[1];
-  const blockTarget = () => /^\(\(([^)]+)\)\)$/.exec(target())?.[1];
+  const pageTarget = () => embedPageTarget(target()) ?? undefined;
+  const blockTarget = () => embedBlockTarget(target()) ?? undefined;
   const selfPageEmbed = () => {
     const sourcePage = props.blockId ? docNode(props.blockId)?.page : undefined;
     const targetPage = pageTarget();

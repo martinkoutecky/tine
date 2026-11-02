@@ -69,7 +69,7 @@ function rawMatrix(id: string): string[][] {
 function insertMatrixGridAfter(afterId: string, title: string, matrix: readonly (readonly string[])[]): string | null {
   const target = docNode(afterId);
   if (!target || blockPageReadOnly(afterId)) return null;
-  return withUndoUnit("file-drop", [target.page], () => insertOutlineAfter(afterId, [matrixGridNode(title, matrix)]));
+  return withUndoUnit("file-drop", [target.page], () => insertOutlineAfter(afterId, [matrixGridNode(title, matrix)])) ?? null;
 }
 
 function gridVisibleMatrix(id: string): string[][] {

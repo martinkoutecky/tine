@@ -39,6 +39,11 @@ describe("outlineToHtml (text/html clipboard flavor)", () => {
     expect(outlineToHtml(md)).toBe("<ul><li>a &lt;x&gt; &amp; b<br>more</li></ul>");
   });
 
+  // L3-08: the rich flavor keeps a continuation line's indentation (code pasted into mail or Docs).
+  it("keeps the indentation of continuation lines", () => {
+    expect(outlineToHtml("- def f():\n  \t  return 1")).toBe("<ul><li>def f():<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return 1</li></ul>");
+  });
+
   it("empty input → empty string", () => {
     expect(outlineToHtml("")).toBe("");
   });

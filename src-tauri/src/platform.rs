@@ -446,18 +446,60 @@ fn kill_and_reap(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// Write all of `bytes` without blocking, giving up once the reader has taken
+/// nothing for `stall`. The flag is on this end of the pipe only, so the tool's
+/// own reads are unaffected.
+#[cfg(target_os = "linux")]
+fn write_until_stalled(
+    stdin: &mut std::process::ChildStdin,
+    mut bytes: &[u8],
+    stall: std::time::Duration,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    let fd = stdin.as_raw_fd();
+    // SAFETY: `fd` is the open pipe `stdin` owns for this whole call.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut last_progress = std::time::Instant::now();
+    while !bytes.is_empty() {
+        match stdin.write(bytes) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(written) => {
+                bytes = &bytes[written..];
+                last_progress = std::time::Instant::now();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if last_progress.elapsed() >= stall {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "the tool stopped reading",
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// Feed `bytes` to each clipboard tool in turn. A tool counts as having taken
 /// the image only when it exits successfully, or is still serving it after
 /// `verdict`; a tool that fails to start, cannot be written to, or exits with a
 /// failure status falls through to the next one, and every child is reaped on
-/// every path. The error names the last tool's failure.
+/// every path. The error names the last tool's failure. A live tool that stops
+/// reading for `verdict` counts as a failure too (a hung display server, audit
+/// L7s5-03): the write never outlasts it, however large the image.
 #[cfg(target_os = "linux")]
 fn copy_with_tools(
     tools: &[(String, Vec<String>)],
     bytes: &[u8],
     verdict: std::time::Duration,
 ) -> Result<(), String> {
-    use std::io::Write;
     use std::process::{Command, Stdio};
     let mut last_err = String::from("no clipboard tool found (install wl-clipboard or xclip)");
     for (prog, args) in tools {
@@ -475,7 +517,7 @@ fn copy_with_tools(
             }
         };
         if let Some(mut stdin) = child.stdin.take() {
-            let written = stdin.write_all(bytes);
+            let written = write_until_stalled(&mut stdin, bytes, verdict);
             drop(stdin); // EOF: the tool now owns the whole image
             if let Err(e) = written {
                 kill_and_reap(&mut child);
@@ -1790,6 +1832,30 @@ mod clipboard_tool_tests {
             script(dir.path(), "good", "cat >/dev/null"),
         ];
         assert!(copy_with_tools(&tools, b"png", QUICK).is_ok());
+    }
+
+    // L7s5-03: alive and not reading, as under a hung display server. The copy
+    // must not wait on the pipe; the next tool gets its turn.
+    #[test]
+    fn a_live_tool_that_never_reads_cannot_hold_the_copy_past_its_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let tools = vec![
+            script(
+                dir.path(),
+                "hung",
+                &format!("echo $$ > {}; exec sleep 30", pidfile.display()),
+            ),
+            script(dir.path(), "good", "cat >/dev/null"),
+        ];
+        let image = vec![0u8; 4 << 20];
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(copy_with_tools(&tools, &image, QUICK)));
+        let result = finished
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the copy must not block on a tool that never reads");
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!lingers(pid_of(dir.path(), "pid")));
     }
 
     #[test]

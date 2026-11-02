@@ -1010,15 +1010,8 @@ pub(crate) fn warm_cache_async(
         {
             return; // the graph was switched while we slept — a newer warm owns it
         }
-        // Serialize these post-open readiness waits process-wide. Store::open
-        // may already have started a parse worker for each open slot. The lock
-        // guards no data, so a warm that panicked while holding it must not
-        // poison every later graph's warm.
-        static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _worker = WARM_WORK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Each graph's wait is its own: Store::open owns the parse, so one slow
+        // graph must not delay another's warm completion (audit L7s4-04).
         let cancelled = || {
             slot.background_cancelled.load(Ordering::Acquire)
                 || slot.warm_generation.load(Ordering::Acquire) != warm_generation

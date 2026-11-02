@@ -16,8 +16,10 @@ import type { RefGroup } from "./types";
 let cacheRev = -1;
 type Answer = RefGroup | null | undefined;
 interface Request {
-  promise: Promise<Answer>; resolve: (value: Answer) => void;
+  promise: Promise<Answer>; resolve: (value: Answer | PromiseLike<Answer>) => void;
   completed: boolean; invalidated: boolean; group?: RefGroup | null; bytes: number;
+  /** The block's key advanced before the answer: the caller is answered by a fresh ask. */
+  reask?: boolean;
 }
 const cache = new Map<string, Request>();
 let pending = new Map<string, Request>();
@@ -50,12 +52,15 @@ function clear(): void {
 clearOnBindingInvalidated(clear);
 onChangeKeyReleased(trim);
 onChangeKeysFlushed(affected => {
+  const superseded: [string, Request][] = [];
   for (const [id, entry] of cache) {
     if (affected && !affected.has(`block:${id}`)) continue;
     entry.invalidated = true;
+    entry.reask = true;
     cache.delete(id);
-    if (pending.get(id) === entry) { pending.delete(id); entry.resolve(null); }
+    if (pending.get(id) === entry) { pending.delete(id); superseded.push([id, entry]); }
   }
+  for (const [id, entry] of superseded) entry.resolve(resolveBlockBatched(id));
   trim();
 });
 // Eager epoch cleanup also covers a graph/display switch with no subsequent read.
@@ -87,7 +92,7 @@ function flush() {
       const results = result.value;
       batch.forEach((id, i) => {
         const request = resolvers.get(id)!;
-        if (request.invalidated) { request.resolve(null); return; }
+        if (request.invalidated) { request.resolve(request.reask ? resolveBlockBatched(id) : null); return; }
         // Backend miss → try the virtual in-app Guide (never on disk). No-op for
         // real graphs, so disk resolutions always win.
         const group = results[i] ?? resolveGuideBlockRef(id);
@@ -108,8 +113,11 @@ function flush() {
 }
 
 /** Resolve one visible block reference — coalesced and memoized for its landed
- *  block revision. `null` means absent; `undefined` means a failed read,
- *  reported through uiFailure and evicted so a later request can retry. */
+ *  block revision. `null` means absent, or that the graph was retired meanwhile
+ *  (its owner is stale); a block whose key advances during the lookup is asked
+ *  again, so a save of the target never reads as absent. `undefined` means a
+ *  failed read, reported through uiFailure and evicted so a later request can
+ *  retry. */
 export function resolveBlockBatched(id: string): Promise<RefGroup | null | undefined> {
   ensureCacheRev();
   const hit = cache.get(id);

@@ -11,6 +11,7 @@ import { exportNodesFor, formatForPage } from "../document";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
+import { embedBlockTarget, embedPageTarget } from "../embedTarget";
 import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { parseBlock, blockRegions, propertyValueInline } from "../render/parse";
 import { splitTrailingMap } from "../editor/edn";
@@ -147,14 +148,6 @@ function macroArg(args: string[]): string {
   return args.join(", ").trim();
 }
 
-function blockRefTarget(s: string): string | null {
-  return /^\(\(([^)]+)\)\)$/.exec(s.trim())?.[1] ?? null;
-}
-
-function pageRefTarget(s: string): string | null {
-  return /^\[\[([^\]]+)\]\]$/.exec(s.trim())?.[1] ?? null;
-}
-
 /** Project a bounded DTO subtree into the export serializer's read-only forest.
  * Cost is O(blocks and descendants); it does not read or write the graph. */
 export function blockDtosToExportNodes(blocks: BlockDto[], format: Format): ExportNode[] {
@@ -220,7 +213,7 @@ function collectInlineTargets(inlines: Inline[], targets: WarmTargets): void {
       case "macro": {
         targets.macros.set(macroKey(s.name, s.args), { name: s.name, args: s.args });
         if (s.name.toLowerCase() === "embed") {
-          const uuid = blockRefTarget(macroArg(s.args));
+          const uuid = embedBlockTarget(macroArg(s.args));
           if (uuid) targets.refs.add(uuid);
         }
         break;
@@ -289,7 +282,7 @@ async function warmMacro(
   const arg = macroArg(macro.args);
   try {
     if (name === "embed") {
-      const uuid = blockRefTarget(arg);
+      const uuid = embedBlockTarget(arg);
       if (uuid) {
         const result = await readOwned(owner, backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT));
         if (result.kind === "stale") return;
@@ -303,7 +296,7 @@ async function warmMacro(
         });
         return;
       }
-      const page = pageRefTarget(arg);
+      const page = embedPageTarget(arg);
       if (page) {
         const result = await readOwned(owner, cachedPage(pages, page, "page"));
         if (result.kind === "stale") return;

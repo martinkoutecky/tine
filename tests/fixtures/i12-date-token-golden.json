@@ -101,6 +101,10 @@
     {"today": 20260616, "token": "Jan 0st, 2022", "ordinal": null},
     {"today": 20260616, "token": "Jan 32nd, 2022", "ordinal": null},
     {"today": 20260616, "token": "Jan 1, 22022", "ordinal": null},
-    {"today": 20260616, "token": "Jan\t1st, 2022", "ordinal": null}
+    {"today": 20260616, "token": "Jan\t1st, 2022", "ordinal": null},
+    {"today": 20260616, "token": "+2026_01_05", "ordinal": null},
+    {"today": 20260616, "token": "2026_+1_+5", "ordinal": null},
+    {"today": 20260616, "token": "2026-+1-+5", "ordinal": null},
+    {"today": 20260616, "token": "-2026_01_05", "ordinal": null}
   ]
 }

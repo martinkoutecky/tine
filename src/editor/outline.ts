@@ -56,9 +56,16 @@ function leadingWs(line: string): number {
   return i;
 }
 
-function bullet(line: string): { col: number; contentStart: number; content: string } | null {
+function bullet(line: string, format: Format): { col: number; contentStart: number; content: string } | null {
   const col = leadingWs(line);
   const rest = line.slice(col);
+  // An Org headline's level is its stars, not its indentation (OG parses the
+  // paste with mldoc). Level 1 falls through to the shared marker below.
+  const stars = format === "org" ? /^\*{2,}(?:\s+|$)/.exec(rest) : null;
+  if (stars) {
+    const level = stars[0].trimEnd().length;
+    return { col: col + level - 1, contentStart: col + stars[0].length, content: rest.slice(stars[0].length) };
+  }
   const marker = /^(?:[-+*]|\d+[.)])(?:\s+|$)/.exec(rest);
   if (marker) return { col, contentStart: col + marker[0].length, content: rest.slice(marker[0].length) };
   return null;
@@ -154,7 +161,7 @@ export function parseOutline(text: string, format: Format = "md"): OutlineNode[]
       sawBlank = false;
       continue;
     }
-    const b = bullet(line);
+    const b = bullet(line, format);
     if (b) {
       const node: OutlineNode = { raw: b.content, children: [] };
       place(b.col, node);

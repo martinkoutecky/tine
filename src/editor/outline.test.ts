@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseOutline } from "./outline";
+import { parseOutline, pastedPlainBlocks } from "./outline";
 
 describe("parseOutline", () => {
   it("flat multiline text -> sibling blocks", () => {
@@ -124,4 +124,21 @@ it("uses parser byte ranges after Unicode text and normalizes CRLF once", () => 
   expect(parseOutline(`- ž😀\r\n${literal.replaceAll("\n", "\r\n")}\r\n2) second`)).toEqual([
     { raw: `ž😀\n${literal}`, children: [] }, { raw: "second", children: [] },
   ]);
+});
+
+// L3-08: OG nests an Org outline paste by its star levels.
+describe("Org outline paste", () => {
+  it("nests headlines by level", () => {
+    expect(pastedPlainBlocks("* Parent\n** Child\n*** Grand\n** Second\n* Next", "org")).toEqual([
+      { raw: "Parent", children: [
+        { raw: "Child", children: [{ raw: "Grand", children: [] }] },
+        { raw: "Second", children: [] },
+      ] },
+      { raw: "Next", children: [] },
+    ]);
+  });
+  it("leaves emphasis and Markdown alone", () => {
+    expect(parseOutline("* Parent\n**bold** text", "org").map((n) => n.raw)).toEqual(["Parent", "**bold** text"]);
+    expect(parseOutline("** Child", "md")).toEqual([{ raw: "** Child", children: [] }]);
+  });
 });

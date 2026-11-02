@@ -764,7 +764,10 @@ once the write succeeds. The order is memory only:
   applies. A window Move is an ordinary edit and keeps the debounce. A
   window Submit skips it: the window already waited for the end of the
   typing burst (`client.ts` `SEND_DEBOUNCE_MS`, `SEND_MAX_WAIT_MS`), so the
-  typing wait has one owner (PERF-FIXES D1). Proof
+  typing wait has one owner (PERF-FIXES D1). That wait is unacknowledged: a
+  renderer crash or an OS kill of a foreground window loses up to 1 s of input
+  the window has not sent, an accepted loss (`docs/storage-model/README.md`).
+  Proof
   `progress_tests.rs`
   `a_caller_operations_pages_skip_the_debounce_but_not_a_failed_saves_backoff`,
   `a_window_move_keeps_the_debounce_and_a_submit_does_not`,

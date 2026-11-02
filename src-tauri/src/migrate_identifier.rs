@@ -65,15 +65,35 @@ fn looks_like_tine_data(dir: &Path) -> bool {
 /// Counting any of those would wrongly block a backfill for exactly the user we need
 /// to rescue: someone who launched the renamed build, saw Welcome, and quit.
 fn has_real_user_data(dir: &Path) -> bool {
-    match std::fs::read_dir(dir.join("backups")) {
-        Ok(mut rd) => rd.next().is_some(),
-        // A missing backups/ is the ordinary "no graph was ever opened under
-        // this identifier" case. Any OTHER error — EACCES, EIO, a stale
-        // mount, ENOTDIR — means we cannot PROVE the directory is disposable,
-        // and the caller's next step is to replace its active location. Fail closed:
-        // claim user data and skip the migration (audit 4, D3).
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-    }
+    // A missing directory is the ordinary "no graph was ever opened under this
+    // identifier" case. Any OTHER error — EACCES, EIO, a stale mount, ENOTDIR —
+    // means we cannot PROVE the directory is disposable, and the caller's next
+    // step is to replace its active location. Fail closed: claim user data and
+    // skip the migration (audit 4, D3).
+    let listed = |path: &Path| match std::fs::read_dir(path) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    };
+    let backups = match listed(&dir.join("backups")) {
+        Ok(Some(mut entries)) => entries.next().is_some(),
+        Ok(None) => false,
+        Err(_) => true,
+    };
+    // Drafts count like backups: parked aside, launch recovery would not see
+    // them (audit L9-16). Every host start leaves an empty `drafts-v2/<graph
+    // id>/` skeleton, even `tine serve` before a first launch, so only what lies
+    // inside one counts.
+    backups
+        || match listed(&dir.join("drafts-v2")) {
+            Ok(Some(mut graphs)) => graphs.any(|graph| {
+                graph
+                    .and_then(|graph| crate::root_identity::census_empty(&graph.path()))
+                    .map_or(true, |empty| !empty)
+            }),
+            Ok(None) => false,
+            Err(_) => true,
+        }
 }
 
 /// Core migration, factored out of the platform dir lookup so it is unit-testable:
@@ -229,6 +249,54 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
         });
+    }
+
+    #[test]
+    fn a_current_directory_holding_only_drafts_is_not_parked_for_a_legacy_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let old = root.join(LEGACY_IDENTIFIERS[0]);
+        let new = root.join(crate::app_identity::RELEASE_IDENTIFIER);
+        write(&old.join("backups"), "old.zip", "old");
+        write(&new.join("drafts-v2").join("root"), "draft", "unsaved text");
+        assert!(!migrate_app_data_dir(&new));
+        assert_eq!(
+            std::fs::read_to_string(new.join("drafts-v2/root/draft")).unwrap(),
+            "unsaved text"
+        );
+        assert!(old.exists());
+    }
+
+    // Audit L9-16 review: every host start leaves `drafts-v2/<graph id>/`, so a
+    // `tine serve` before the first launch, or an opened empty graph (no backup
+    // yet), leaves only that skeleton. Those users must still be migrated.
+    #[test]
+    fn a_host_start_skeleton_without_drafts_does_not_stop_the_migration() {
+        for empty_backups in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path();
+            let old = root.join(LEGACY_IDENTIFIERS[0]);
+            let new = root.join(crate::app_identity::RELEASE_IDENTIFIER);
+            write(&old, "tine-settings.json", "{}");
+            std::fs::create_dir_all(new.join("drafts-v2/graph/trash-custody")).unwrap();
+            std::fs::create_dir_all(new.join("drafts-v2/graph/unreadable")).unwrap();
+            if empty_backups {
+                std::fs::create_dir_all(new.join("backups")).unwrap();
+            }
+            assert!(migrate_app_data_dir(&new), "empty_backups={empty_backups}");
+            assert!(new.join("tine-settings.json").exists());
+        }
+    }
+
+    #[test]
+    fn anything_inside_a_graphs_draft_directory_or_an_unreadable_listing_is_user_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("data");
+        write(&dir.join("drafts-v2/graph/trash-custody"), "marker", "x");
+        assert!(has_real_user_data(&dir));
+        let dir = temp.path().join("odd");
+        write(&dir, "drafts-v2", "not a directory");
+        assert!(has_real_user_data(&dir), "fails closed");
     }
 
     #[test]

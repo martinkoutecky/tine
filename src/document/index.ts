@@ -49,7 +49,9 @@
  * the `page_*` commands (I-1). Pages are sent as whole-page snapshots, never
  * as operations. `markDirty` requires an edit kind; the client sends the page
  * after a short debounce on the version its text was installed at, and the
- * host saves it, keeps a crash-recovery draft until it is saved, and answers.
+ * host saves it and answers. A crash-recovery draft exists only while the page
+ * is conflicted, its save failed, or a host operation holds it; an ordinary edit
+ * that a whole-app crash beats its save is not recovered (storage contract).
  * Input on a page whose file changed meanwhile becomes a conflict the host
  * reports; `resolveConflict` sends Keep mine on the disk state the conflict
  * showed, or takes the host's text for Use disk. A block entering editing
@@ -93,6 +95,7 @@ export { pendingDataRevision } from "./host/wiring";
 export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
+export { evictIfNeeded } from "./workingSet";
 export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";

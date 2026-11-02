@@ -45,6 +45,7 @@ function PdfViewer(props: {
   page?: number;
   navigation?: () => any;
   onViewState?: (state: { page: number; scale: number }) => void;
+  focused?: () => boolean;
 }) {
   return <OwnedPdfViewer {...props} owner={props.owner ?? testPdfOwner()} />;
 }
@@ -2031,6 +2032,27 @@ describe("PdfViewer OG state and reference behavior", () => {
     } finally {
       dispose();
     }
+  });
+
+  // L7s6-03: Mod+F belongs to the focused pane; the page's own Find answers it there.
+  it("leaves Mod+F to the focused pane when this PDF's pane is not focused", async () => {
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const [focused, setFocused] = createSignal(false);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" focused={focused} />, host);
+    try {
+      await flush();
+      const press = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true, cancelable: true }));
+      press();
+      expect(host.querySelector(".pdf-find-bar")).toBeNull();
+      setFocused(true);
+      press();
+      expect(host.querySelector(".pdf-find-bar")).not.toBeNull();
+    } finally { dispose(); }
   });
 
   it("caps PDF Find occurrences and labels the result as truncated", async () => {

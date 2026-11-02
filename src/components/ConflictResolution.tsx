@@ -314,18 +314,20 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           ? backend().resolveSyncConflict(pagePath, copy, decisions(), current.base_rev, current.conflict_rev, ["replace-page", "delete-page"], preChoice(), current.merge_base_rev)
           : null;
       if (!write) return;
-      const result = await writeOwned(owner, write);
-      if (result.kind === "stale" || !owner()) return;
+      // The write lands whatever this panel does meanwhile, so what follows it
+      // belongs to the graph binding; only the toast and `busy` are the panel's.
+      const result = await writeOwned(bindingOwner(), write);
+      if (result.kind === "stale") return;
       settleArtifactConflict(id);
+      void refreshSyncConflicts();
+      // A day with three files still has one to reconcile after this fold.
+      if (source === "duplicate-journal") void refreshJournalConflicts();
       // Own-origin writes raise no watcher event, so the open page reloads here
       // through the ordinary external-change rule: a clean page takes the merged
       // file; one edited meanwhile keeps the edit and is marked conflicted.
       await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
       if (!owner()) return;
       pushToast(msg("conflict-resolution-applied", { source, page: pageName }), "success");
-      void refreshSyncConflicts();
-      // A day with three files still has one to reconcile after this fold.
-      if (source === "duplicate-journal") void refreshJournalConflicts();
     } catch (e) {
       if (!owner()) return;
       if (source === "sync-copy" && errorFamily(e) === "conflict-copy-gone") {
@@ -366,12 +368,16 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   if (conflict().source === "duplicate-journal") void refreshJournalConflicts();
   const reconcileFile = async (op: () => Promise<Owned<void>>, ok: Msg) => {
     const owner = bindingOwner(() => mounted);
+    const bound = bindingOwner();
     try {
       const result = await op();
+      if (!bound()) return;
+      if (result.kind !== "stale" || !mounted) {
+        void refreshJournalConflicts();
+        void refreshSyncConflicts();
+      }
       if (result.kind === "stale" || !owner()) return;
       pushToast(ok, "success");
-      void refreshJournalConflicts();
-      void refreshSyncConflicts();
     } catch (e) {
       pushToast(msg("conflict-resolution-couldn-t-do-that", { error: String(errorDetail(e)) }), "error");
     }

@@ -102,3 +102,34 @@ it("uses bounded raw IPC and keeps native conversion off the UI thread", () => {
   expect(command).not.toContain("Image::from_bytes");
   expect(command).toContain("Image::new_owned(rgba.into_raw(), width, height)");
 });
+
+// L7s7-01: limits apply before the expensive step, like clipboardImageToPng.
+it("refuses a declared oversized response before reading its body", async () => {
+  const blob = vi.fn();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, headers: new Headers({ "content-length": String(64 * 1024 * 1024 + 1) }), blob }));
+  const write = vi.spyOn(backend(), "copyImageToClipboard").mockResolvedValue();
+  await expect(copyImageFromSrc("https://example.test/huge.webp")).rejects.toThrow("64 MiB");
+  expect(blob).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+});
+
+it("refuses an image with too many pixels before allocating its canvas", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => ({ type: "image/svg+xml", size: 3 }) }));
+  vi.stubGlobal("Image", class { src = ""; naturalWidth = 40_000; naturalHeight = 40_000; decode = async () => {}; });
+  const createElement = vi.fn();
+  vi.stubGlobal("document", { createElement });
+  const write = vi.spyOn(backend(), "copyImageToClipboard").mockResolvedValue();
+  await expect(copyImageFromSrc("blob:svg")).rejects.toThrow(/too large/);
+  expect(createElement).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+});
+
+it("refuses an oversized canvas encoding before materializing its bytes", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => ({ type: "image/webp", size: 3 }) }));
+  vi.stubGlobal("Image", class { src = ""; naturalWidth = 2; naturalHeight = 3; decode = async () => {}; });
+  const arrayBuffer = vi.fn();
+  const toBlob = (done: (blob: unknown) => void) => done({ size: 64 * 1024 * 1024 + 1, arrayBuffer });
+  vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }), toBlob }) });
+  await expect(copyImageFromSrc("blob:webp")).rejects.toThrow("64 MiB");
+  expect(arrayBuffer).not.toHaveBeenCalled();
+});

@@ -5,7 +5,7 @@ import { graphOwner, readOwned } from "./owned";
 import { graphEpoch } from "./graphSession";
 import { changed, iconChangeKey } from "./changeKeys";
 import { clearOnBindingInvalidated } from "./binding";
-import { pageByName, readPageProperty } from "./document";
+import { pageByName, pageHeaderProperties } from "./document";
 import { pushToast } from "./toasts";
 import { PAGE_ICON_PROPERTIES } from "./pageIconImage";
 import { pageNameForPath, resolvedTarget } from "./pageIndex";
@@ -99,7 +99,19 @@ export function pageIcon(name: string): string {
  *  (`tine.icon::`, then the OG-compatible `icon::`). */
 export function readPageIconProperty(name: string): string {
   const property = pageIconPropertyInUse(name);
-  return property ? readPageProperty(name, property)?.trim() ?? "" : "";
+  return property ? firstNonblank(name, property) : "";
+}
+
+/** The first nonblank value of `property`, as the native index picks it
+ *  (`page_icons.rs` `pre_block_icon`); repeats come only from outside edits. */
+function firstNonblank(name: string, property: string): string {
+  const page = pageByName(name);
+  if (!page) return "";
+  const key = property.toLowerCase();
+  for (const [candidate, value] of pageHeaderProperties(page)) {
+    if (candidate.toLowerCase() === key && value.trim()) return value.trim();
+  }
+  return "";
 }
 
 /** The property currently supplying a loaded page's icon (first nonblank in
@@ -107,7 +119,7 @@ export function readPageIconProperty(name: string): string {
  *  page written for OG (`icon:: 🏁`) keeps a single, OG-visible property. */
 export function pageIconPropertyInUse(name: string): string {
   for (const property of PAGE_ICON_PROPERTIES) {
-    if (readPageProperty(name, property)?.trim()) return property;
+    if (firstNonblank(name, property)) return property;
   }
   return "";
 }

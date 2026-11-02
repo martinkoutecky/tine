@@ -70,6 +70,8 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
     }
   }
   let order: (string | null)[];
+  // Order membership: `order.includes` per row would be rows x distinct values.
+  const listed = new Set<string | null>();
   const enumValues = enumValuesFor(schema, groupBy);
   if (isFormulaField(groupBy)) {
     const present = new Set(keys.filter((key): key is string => key !== null));
@@ -82,14 +84,15 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
     for (const key of keys) {
       if (key === null || key === "(error)") continue;
       if (booleanish && (key === "true" || key === "false")) continue;
-      if (!order.includes(key)) order.push(key);
+      if (!listed.has(key)) { listed.add(key); order.push(key); }
     }
   } else if (groupBy === "tags") {
     order = [];
     for (const key of allKeys) if (key !== null) order.push(key);
   } else if (enumValues) {
     order = [...enumValues];
-    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
+    for (const value of enumValues) listed.add(value);
+    for (const key of keys) if (key !== null && !listed.has(key)) { listed.add(key); order.push(key); }
     order.push(null);
   } else if (groupBy === "state") {
     const standard = opts.workflow === "todo" ? ["TODO", "DOING", "DONE"] : ["LATER", "NOW", "DONE"];
@@ -101,7 +104,7 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
     order = ["A", "B", "C"];
   } else {
     order = [];
-    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
+    for (const key of keys) if (key !== null && !listed.has(key)) { listed.add(key); order.push(key); }
   }
   if (hasNull && !order.includes(null)) order.push(null);
   if (isFormulaField(groupBy) && hasFormulaError && !order.includes("(error)")) {

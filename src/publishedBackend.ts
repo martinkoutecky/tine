@@ -312,6 +312,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       walk(block.children, visit, [...ancestors, block.raw.split("\n")[0] ?? ""]);
     }
   };
+  // A result row carries its own block, like the native shallow DTO
+  // (`block_to_shallow_dto`): its descendants are read from the source page.
+  const shallowCopy = (block: BlockDto): BlockDto => structuredClone({ ...block, children: [] });
   const collect = (snapshot: PublishedSnapshot, keep: (block: BlockDto, page: PublishedPage) => boolean, limit = Infinity): RefGroup[] => {
     const groups: RefGroup[] = [];
     let budget = limit;
@@ -320,7 +323,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const matched: BlockDto[] = [];
       walk(page.blocks, (block, ancestors) => {
         if (budget > 0 && keep(block, page)) {
-          matched.push({ ...structuredClone(block), breadcrumb: ancestors });
+          matched.push({ ...shallowCopy(block), breadcrumb: ancestors });
           budget--;
         }
       });
@@ -348,7 +351,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       page: found.page.name,
       kind: found.page.kind,
       path: found.page.path,
-      blocks: [{ ...structuredClone(found.block), children: [] }],
+      blocks: [shallowCopy(found.block)],
     };
   };
   const quickSwitch = async (query: string, limit: number): Promise<PageEntry[]> => {
@@ -658,7 +661,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
         walk(page.blocks, (block) => {
           const text = block.raw.split("\n")[0] ?? "";
           if (!includesFolded(block.raw, wanted.folded)) return;
-          blockHits.push({ entity: "block", page: page.name, kind: page.kind, path: page.path, block: { ...structuredClone(block), children: [] }, display_text: text, evidence: evidence("visible_content", text), score: 1, match_class: "substring" });
+          blockHits.push({ entity: "block", page: page.name, kind: page.kind, path: page.path, block: shallowCopy(block), display_text: text, evidence: evidence("visible_content", text), score: 1, match_class: "substring" });
         });
       }
       hits.push(...pageHits.slice(0, pageLimit), ...blockHits.slice(0, blockLimit));

@@ -226,6 +226,11 @@ thread_local! {
 }
 
 #[cfg(test)]
+thread_local! {
+    pub(crate) static CRUMB_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 pub(crate) fn result_dto_constructions() -> usize {
     RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
@@ -234,6 +239,8 @@ pub(crate) fn result_dto_constructions() -> usize {
 /// stops the entire depth-first walk, including the current deep page.
 /// A short, single-line label for a block in a breadcrumb trail.
 pub(crate) fn crumb_line(b: &DocBlock) -> String {
+    #[cfg(test)]
+    CRUMB_LINES.with(|count| count.set(count.get().saturating_add(1)));
     let line = b
         .visible_text()
         .lines()

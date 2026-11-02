@@ -215,9 +215,11 @@ pub(crate) struct PublishedNeed {
     witness: Option<String>,
 }
 
-/// The longest one `page_wait` holds the slot's host read lock (REVIEW-3b-P1
-/// F1): a restore or a retirement of this binding waits at most this long
-/// for it. The window asks again while its barrier still waits.
+/// The bound of each wait inside one `page_wait` (REVIEW-3b-P1 F1). The call
+/// holds the slot's host read lock for up to two of them, plus the witness
+/// parse and the driver's ask grace (`wait_published`), and a restore or a
+/// retirement of this binding waits that long. The window asks again while
+/// its barrier still waits.
 const PAGE_WAIT_BOUND: Duration = Duration::from_secs(5);
 
 /// For the window `session` (F1): true once every need is published; false
