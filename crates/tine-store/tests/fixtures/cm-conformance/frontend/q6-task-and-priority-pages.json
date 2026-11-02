@@ -47,6 +47,20 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": null
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "TODO": {
+      "journal": null,
+      "page": null
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

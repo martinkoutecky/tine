@@ -197,6 +197,48 @@
       ]
     }
   },
+  "owner": {
+    "2026-10-22": {
+      "journal": "journals/22-10-2026.md",
+      "page": null
+    },
+    "22-10-2026": {
+      "journal": "journals/22-10-2026.md",
+      "page": null
+    },
+    "23-10-2026": {
+      "journal": null,
+      "page": null
+    },
+    "24-10-2026": {
+      "journal": null,
+      "page": "pages/Plan.md"
+    },
+    "25-10-2026": {
+      "journal": null,
+      "page": null
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Oct 22nd, 2026": {
+      "journal": "journals/22-10-2026.md",
+      "page": null
+    },
+    "Oct 23rd, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "Oct 25th, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "Plan": {
+      "journal": null,
+      "page": "pages/Plan.md"
+    }
+  },
   "spellings": {
     "2026-10-22": {
       "backend": [

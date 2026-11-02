@@ -158,7 +158,12 @@ pub type AliasFn = fn(&Document) -> Vec<String>;
 /// The model's view of one file: Tine's extraction as the given functions.
 pub fn file_json(view: &WholeGraph, rel: &str, text: &str, aliases: AliasFn) -> Value {
     let journal_dir = rel.starts_with("journals/");
-    assert!(rel.ends_with(".md"), "fixtures are Markdown: {rel}");
+    // `.markdown` is Markdown too; the claimant order ranks `.md` first
+    // (owner fixtures o1-*).
+    assert!(
+        rel.ends_with(".md") || rel.ends_with(".markdown"),
+        "fixtures are Markdown: {rel}"
+    );
     let file_stem = Path::new(rel).file_stem().unwrap().to_str().unwrap();
     let stem = if journal_dir {
         // A journal's name is its day title (Tine ignores title:: there).

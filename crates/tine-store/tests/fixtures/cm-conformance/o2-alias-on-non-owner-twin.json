@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/a.md": "- the owner of a\n",
+  "pages/b.md": "title:: a\nalias:: zed\n\n- a twin of a\n",
+  "pages/Notes.md": "- [[zed]]\n"
+ }
+}

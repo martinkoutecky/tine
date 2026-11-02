@@ -95,6 +95,24 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "B": {
+      "journal": null,
+      "page": "pages/B.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "X": {
+      "journal": null,
+      "page": "pages/B.md"
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

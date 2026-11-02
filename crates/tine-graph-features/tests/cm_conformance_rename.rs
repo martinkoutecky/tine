@@ -540,6 +540,64 @@ fn finish(mut diffs: Vec<Diff>, duplicate: bool, coarse_random: bool) -> Vec<Dif
     diffs
 }
 
+/// Census Q4 item 4 (CM step 2, batch 2): the duplicate-day keeper. The
+/// journal conflict list (`journal_conflicts`) sorts a day's files and the
+/// merge (`conflicts.rs`) folds the strays into `files[0]`; the day itself
+/// opens the claimant order's winner (`WholeGraph::resolve`). One question,
+/// "which file owns this day", so the two must agree. Fixture graphs with a
+/// duplicate day only; `None` when the graph has none.
+fn duplicate_day_keepers(spec: &GraphSpec, droppers: &Droppers) -> Option<Vec<Diff>> {
+    let dir = tempfile::tempdir().unwrap();
+    spec.write(dir.path());
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().expect("graph loads");
+    let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    let mut diffs = Vec::new();
+    for day in &days {
+        let keeper = day.files.first().map(|f| f.path.clone());
+        let opens = match view.resolve(&day.title, true) {
+            Resolved::Existing { id, .. } => Some(id.as_str().to_owned()),
+            _ => None,
+        };
+        if keeper != opens {
+            diffs.push(Diff::new(
+                "owners: duplicate-day keeper (journal_conflicts) vs the file the day opens",
+                format!(
+                    "{}: keeper {keeper:?} (files {:?}), the day opens {opens:?}",
+                    day.title,
+                    day.files
+                        .iter()
+                        .map(|f| (f.path.as_str(), f.canonical))
+                        .collect::<Vec<_>>()
+                ),
+            ));
+        }
+    }
+    later_drop(droppers, (view, store, dir));
+    (!days.is_empty()).then_some(diffs)
+}
+
+fn all_fixtures() -> Vec<GraphSpec> {
+    let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR"));
+    let mut paths: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.extension().is_some_and(|x| x == "json")
+                && p.file_name()
+                    .is_some_and(|n| n != "expected-differences.json")
+        })
+        .collect();
+    paths.sort();
+    paths
+        .iter()
+        .map(|p| {
+            let v: Value = serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap();
+            GraphSpec::from_fixture(&p.file_stem().unwrap().to_string_lossy(), &v)
+        })
+        .collect()
+}
+
 fn rename_fixtures() -> Vec<GraphSpec> {
     let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR"));
     let mut paths: Vec<_> = fs::read_dir(&dir)
@@ -604,6 +662,14 @@ fn conceptual_model_rename_conformance() {
             section
                 .fixtures
                 .insert(name, diffs.into_iter().map(|d| d.detail).collect());
+        }
+    }
+    for spec in all_fixtures() {
+        if let Some(diffs) = duplicate_day_keepers(&spec, &droppers) {
+            section.fixtures.insert(
+                format!("{}: duplicate days", spec.name),
+                diffs.into_iter().map(|d| d.detail).collect(),
+            );
         }
     }
     let fixtures_done = started.elapsed();

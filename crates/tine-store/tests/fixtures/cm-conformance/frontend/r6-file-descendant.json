@@ -69,6 +69,20 @@
       ]
     }
   },
+  "owner": {
+    "old": {
+      "journal": null,
+      "page": "pages/old.md"
+    },
+    "old/sub": {
+      "journal": null,
+      "page": "pages/old%2Fsub.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
   "spellings": {
     "old": {
       "backend": [

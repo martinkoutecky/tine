@@ -88,6 +88,32 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": null
+    },
+    "TODO": {
+      "journal": null,
+      "page": null
+    },
+    "Tasks": {
+      "journal": null,
+      "page": "pages/Tasks.md"
+    },
+    "ref": {
+      "journal": null,
+      "page": "pages/ref.md"
+    },
+    "rel": {
+      "journal": null,
+      "page": null
+    },
+    "tasks": {
+      "journal": null,
+      "page": "pages/Tasks.md"
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

@@ -72,6 +72,20 @@
       ]
     }
   },
+  "owner": {
+    "25-10-2026": {
+      "journal": "pages/25-10-2026.md",
+      "page": "pages/25-10-2026.md"
+    },
+    "Oct 25th, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "x": {
+      "journal": null,
+      "page": "pages/x.md"
+    }
+  },
   "spellings": {
     "25-10-2026": {
       "backend": [
