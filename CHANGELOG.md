@@ -8,9 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.5] - 2026-11-02
+
 ### Changed
 
 - The first margin comment or reply you write in a graph that is under git, when you have not set **Your name**, now asks for a name once, so comments you share show who wrote them instead of reading "you" to everyone. The name is a Tine setting on this device, used in all graphs. Skipping is remembered for all graphs and is not asked again; the comment is written either way, and the setting stays under Settings > Editor (#841).
+
 ### Fixed
 
 - The gear on a query block now closes the query editor when you click it again; the second click used to leave it open (#850).
@@ -29,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - `tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).
 - Scrolling up a long page with block embeds no longer throws the page back down, which could leave it stuck in one place (#810). The earlier fix for this issue in 0.9.0-beta.2 made these jumps more frequent. Tine now prepares outline windows and block bodies before they reach the visible area of their pane and keeps the reading position when they replace a placeholder. Remounted query and reference groups also keep their measured height.
 - Android: when a line you tap to edit is moved out of view while the keyboard opens, Tine now brings it back just above the keyboard toolbar, where 0.7.4 put it, instead of at the top of the screen, where the pinned parent blocks could still cover it (#783). With an interface zoom other than 100%, a line just under the pinned parents is no longer taken as visible and left covered. Not yet confirmed on the reporter's phone.
+
 ### Added
 
 - The comment margin can be hidden, like Wide mode and Document mode: **Toggle comment margin** in the command palette, the shortcut **t** then **m** (rebindable under Settings → Keyboard shortcuts), or **Comment margin** in Settings → Appearance. Hidden, no comment is drawn anywhere (no margin column, no inline cards, no marked words, no counts) and the arrow keys skip them; the comments stay in the file and nothing is written. The choice is kept on this device. Writing a comment, or opening a link or search result that leads to one, shows the margin again (#845).

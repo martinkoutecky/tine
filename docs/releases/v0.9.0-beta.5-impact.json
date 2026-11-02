@@ -1,0 +1,577 @@
+{
+ "schemaVersion": 1,
+ "version": "0.9.0-beta.5",
+ "baseTag": "v0.9.0-beta.4",
+ "focusedAudit": {
+  "required": false,
+  "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+ },
+ "items": [
+  {
+   "section": "Changed",
+   "text": "The first margin comment or reply you write in a graph that is under git, when you have not set **Your name**, now asks for a name once, so comments you share show who wrote them instead of reading \"you\" to everyone. The name is a Tine setting on this device, used in all graphs. Skipping is remembered for all graphs and is not asked again; the comment is written either way, and the setting stays under Settings > Editor (#841).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH841-COMMENT-NAME-PROMPT"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH841-COMMENT-NAME-PROMPT. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/commentNamePrompt.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The gear on a query block now closes the query editor when you click it again; the second click used to leave it open (#850).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH850-QUERY-GEAR-TOGGLES"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH850-QUERY-GEAR-TOGGLES. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/QueryMacro.ir.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Editing a block shown under a query result, such as a child you expanded, no longer re-runs the query while you are still typing there: the results stay as they are until you leave the block, as they already did for the result block itself. Expanded and collapsed result rows keep their state through the rerun (#851).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH851-QUERY-EDIT-HOLDS-RESULTS"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH851-QUERY-EDIT-HOLDS-RESULTS. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/ResultMembership.test.tsx",
+     "src/components/QueryResults.editKeepsFolds.test.tsx",
+     "src/components/QueryResults.rerunKeepsFolds.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A page no longer goes missing from page links, quick switch and All Pages after you close it or Tine finishes saving it while another lookup was running. Until the next edit, a link to it could open a new empty page and a new file could take its name (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE).",
+   "userVisible": true,
+   "regressions": [
+    "REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "crates/tine-store/src/model/derived_tests.rs::a_name_walk_during_a_release_keeps_the_released_page",
+     "crates/tine-store/src/page_host/binding_fresh_tests.rs::a_store_retitle_moves_the_live_page_list"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A page with many linked references no longer keeps moving while you do nothing. With more than 80 source pages loaded, references kept reloading one another, so their text changed form and the scrollbar crept (#849).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH849-IDLE-REFERENCES-KEEP-RELOADING"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH849-IDLE-REFERENCES-KEEP-RELOADING. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/LiveRefGroup.workingSet.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Coming back to a tab or going back in history now returns to the row you were reading in Linked References, even when the references load slowly, instead of the top, the end of the scrollbar or a nearby reference (#848).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH848-TAB-RETURN-KEEPS-READING-POSITION"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH848-TAB-RETURN-KEEPS-READING-POSITION. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/router.restoreScroll.test.ts"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A block's reference count and margin comment count badges are now the same size and on the same line (#843).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH843-COUNT-BADGES-MATCH"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH843-COUNT-BADGES-MATCH. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/styles/badgeParity.test.ts"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Beta AppImages now ask GitHub's latest prerelease for updates through `appimageupdatetool`, as stable does with its latest release, instead of a file on tine.page. Whoever controls tine.page's hosting can no longer point that tool at other code. Tine's in-app updater was not affected: it checks signatures.",
+   "userVisible": true,
+   "regressions": [
+    "REG-D682-BETA-APPIMAGE-UPDATES-READ-GITHUB"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-D682-BETA-APPIMAGE-UPDATES-READ-GITHUB. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "scripts/test-beta-release.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "`tine add`, `edit`, `prop`, `move`, `delete` and the other write commands running at the same time on one page now all land, in some order, instead of most failing with \"the page kept changing\" (exit 6) when no `--rev` or handle had gone out of date. Commands take turns; `--rev` and block handles still refuse a page that moved, and text from the app, an editor or Syncthing is still never overwritten (#842).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH842-CLI-PARALLEL-WRITES-LAND"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH842-CLI-PARALLEL-WRITES-LAND. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src-tauri/src/owner/owner_tests/parallel_write_tests.rs::gh842_parallel_adds_to_one_page_all_land_once_in_some_order",
+     "src-tauri/src/owner/owner_tests/parallel_write_tests.rs::gh842_parallel_adds_to_an_absent_page_all_land",
+     "src-tauri/src/owner/owner_tests/parallel_write_tests.rs::gh842_block_verbs_under_parallel_writes_land",
+     "src-tauri/src/owner/owner_tests/parallel_write_tests.rs::gh842_a_write_past_its_wait_in_line_is_page_busy_and_writes_nothing",
+     "scripts/e2e-cli-writes.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "On Android and iOS, switching to another app commits pending edits immediately and, with **Commit and sync automatically**, pushes them, even inside the commit interval. Switching apps without edits adds no commit; the timed cadence is unchanged (D-20261101-GB).",
+   "userVisible": true,
+   "regressions": [],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "A behaviour change, not a regression fix (D-20261102-GBB): covered by the mobile lifecycle tests. Gated on develop and release/0.9.",
+    "refs": [
+     "src-tauri/src/owner/git_mobile_tests.rs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A Search tab that is still searching now says \"Searching…\" instead of \"Pages 0 / Blocks 0 / No matching pages\"; a finished empty search still says no results (#838).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH838-SEARCH-PENDING-NOT-EMPTY"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH838-SEARCH-PENDING-NOT-EMPTY. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/QueryWorkspace.pending.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH836-MISSING-IMAGE-ALT-VISIBLE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH836-MISSING-IMAGE-ALT-VISIBLE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/styles/inlineImageAlt.test.ts"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with \"no graph loaded for window capture\". Drag-and-drop onto the capture window is not supported yet (#835).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH835-QUICK-CAPTURE-IMAGE-PASTE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH835-QUICK-CAPTURE-IMAGE-PASTE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/Block.captureAssetPaste.test.tsx",
+     "src-tauri/src/commands.rs::capture_asset_import_lands_in_the_selected_capture_graph_only",
+     "src-tauri/src/commands.rs::capture_asset_import_refuses_non_capture_callers_and_stale_generations",
+     "src-tauri/src/commands.rs::capture_binding_never_grants_generic_graphcontext_mutation_access"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH834-JOURNAL-SECTIONS-NO-REMOUNT"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH834-JOURNAL-SECTIONS-NO-REMOUNT. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/TodaySections.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "`tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH840-CLI-EDIT-KEEPS-PROPERTIES"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH840-CLI-EDIT-KEEPS-PROPERTIES. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src-tauri/src/owner/owner_tests.rs::gh840_block_edit_keeps_properties_not_named_in_the_text",
+     "src-tauri/src/owner/owner_tests.rs::gh840_read_then_edit_keeps_one_copy_and_fences_stay_text",
+     "src-tauri/src/owner/owner_tests.rs::gh840_explicit_author_replaces_and_empty_refuses",
+     "src-tauri/src/cli.rs::tests::gh840_only_the_flag_sets_author_on_edit"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Scrolling up a long page with block embeds no longer throws the page back down, which could leave it stuck in one place (#810). The earlier fix for this issue in 0.9.0-beta.2 made these jumps more frequent. Tine now prepares outline windows and block bodies before they reach the visible area of their pane and keeps the reading position when they replace a placeholder. Remounted query and reference groups also keep their measured height.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH810-EMBED-SCROLL-NO-JUMP",
+    "UI-GH810-UNSEEN-WINDOW-ANCHOR",
+    "UI-GH810-RESULT-GROUP-HEIGHT",
+    "UI-GH810-SCROLLER-PREFETCH",
+    "UI-GH810-COLLAPSED-BODY-SCROLL"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH810-EMBED-SCROLL-NO-JUMP, UI-GH810-UNSEEN-WINDOW-ANCHOR, UI-GH810-RESULT-GROUP-HEIGHT, UI-GH810-SCROLLER-PREFETCH, UI-GH810-COLLAPSED-BODY-SCROLL. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "scripts/shot-gh810-wheel.mjs",
+     "scripts/e2e-gh810-embed-scroll.mjs",
+     "src/components/LiveRefGroup.reservedHeight.test.tsx",
+     "src/scrollContainer.test.tsx",
+     "src/windowRealm.test.tsx",
+     "src/components/QueryGroup.gate.test.tsx",
+     "src/components/LiveRefGroup.cost.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Android: when a line you tap to edit is moved out of view while the keyboard opens, Tine now brings it back just above the keyboard toolbar, where 0.7.4 put it, instead of at the top of the screen, where the pinned parent blocks could still cover it (#783). With an interface zoom other than 100%, a line just under the pinned parents is no longer taken as visible and left covered. Not yet confirmed on the reporter's phone.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH783-KEYBOARD-SETTLE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH783-KEYBOARD-SETTLE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/MobileKeyboardToolbar.caretAfterResize.test.tsx",
+     "src/editor/caretReveal.test.ts",
+     "scripts/check-mobile-caret-settle.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "The comment margin can be hidden, like Wide mode and Document mode: **Toggle comment margin** in the command palette, the shortcut **t** then **m** (rebindable under Settings → Keyboard shortcuts), or **Comment margin** in Settings → Appearance. Hidden, no comment is drawn anywhere (no margin column, no inline cards, no marked words, no counts) and the arrow keys skip them; the comments stay in the file and nothing is written. The choice is kept on this device. Writing a comment, or opening a link or search result that leads to one, shows the margin again (#845).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH845-MARGIN-TOGGLE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH845-MARGIN-TOGGLE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/commentMargin.test.tsx",
+     "src/components/MarginColumn.hidden.test.tsx",
+     "src/keybindings.marginToggle.test.tsx",
+     "scripts/e2e-margin-column.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  }
+ ]
+}
