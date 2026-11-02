@@ -664,15 +664,11 @@ impl Store {
             pages.clone(),
             &observations.entries,
         );
-        let answers = self
-            .changes
-            .snapshot
-            .read()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .answers
-            .clone();
+        // No snapshot: a publication during the load whose capture panicked.
+        // The write landed; only its answers are unknown.
+        let answers = (self.changes.snapshot.read().unwrap().as_ref())
+            .map(|snapshot| snapshot.answers.clone())
+            .unwrap_or_default();
         let change = Change {
             graph_rev: rev,
             origin,

@@ -1711,7 +1711,7 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
         for block in blocks {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::signature_block_probe();
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-faults"))]
             if block.raw().contains(TEST_INDEX_PANIC_SENTINEL) {
                 panic!("deterministic test sentinel for a graph index panic");
             }
@@ -4412,7 +4412,7 @@ impl Graph {
         // the guard is dropped before the reconcile path below re-locks the cache.
         // A missing/mismatched entry falls through to the exact comparison, so this
         // can only ever save work, never serve stale content.
-        if self.cached_rev(path).is_some_and(|r| r == disk_rev) {
+        if self.row_settled(path, &disk_rev) {
             return None;
         }
         #[cfg(test)]
@@ -4891,7 +4891,7 @@ pub(crate) static TEST_FULL_INDEX_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
 /// Test-only: a block containing this panics in a graph-wide index build
 /// (the reference-candidate signatures), after the page parse.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-faults"))]
 pub(crate) const TEST_INDEX_PANIC_SENTINEL: &str = "__TINE_TEST_INDEX_PANIC__";
 
 /// Collapse journal entries that resolve to the SAME date down to one (the

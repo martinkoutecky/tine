@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
-use tine_store::Store;
+use tine_store::{Depth, Store};
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -96,6 +96,107 @@ fn w2_rename_refuses_when_a_page_it_must_move_is_unreadable() {
                 );
             }
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// A block carrying this panics a reference-index stage (tine-store's
+/// `TEST_INDEX_PANIC_SENTINEL`, on under `test-faults`): the page parses, and
+/// its row is retired and listed unreadable.
+const INDEX_PANIC: &str = "__TINE_TEST_INDEX_PANIC__";
+
+/// `pages/Holder.md`, listed unreadable with `holder`'s bytes: from the load
+/// when `at_load`, else by an index-stage panic after it.
+fn listed_holder(label: &str, holder: &[u8], at_load: bool) -> (PathBuf, std::sync::Arc<Store>) {
+    let (root, store) = fixture(label, b"- child\n");
+    let holder_path = root.join("pages/Holder.md");
+    fs::write(&holder_path, holder).unwrap();
+    let store = if at_load {
+        store.close();
+        drop(store);
+        std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0)
+    } else {
+        store
+    };
+    store.refresh(Depth::Bytes).unwrap();
+    let view = store.whole_graph().unwrap();
+    assert!(
+        (view.unreadable_files().iter()).any(|(id, _)| id.as_str() == "pages/Holder.md"),
+        "{label}: {:?}",
+        view.unreadable_files()
+    );
+    (root, store)
+}
+
+/// The reference index has no row for a listed file, so `explicit_referrers`
+/// omits it. A rename then left `[[Target]]` dangling in it with no word, and
+/// repairing the page brought the broken link back. It refuses, naming the
+/// file, before anything is written: Tine never rewrites a page it could not
+/// index. A file too big or too deep for the rewriter refuses when it holds the
+/// name.
+#[test]
+fn a_rename_refuses_when_a_listed_page_may_hold_the_name() {
+    let _integration_guard = crate::integration_lock();
+    let retired = format!("- {INDEX_PANIC} [[Target]]\n");
+    let mut deep = deep_outline();
+    deep.extend_from_slice(b"- the deep page links [[Target]]\n");
+    let over_cap = |line: &[u8]| {
+        let mut bytes = vec![b' '; tine_store::PARSE_INPUT_MAX_BYTES as usize + 1024 * 1024];
+        // Across a chunk boundary of the search, which must still see it.
+        let at = 3 * 1024 * 1024 + 24 - 13;
+        bytes[at..at + line.len()].copy_from_slice(line);
+        bytes
+    };
+    for (label, holder, at_load) in [
+        ("retired", retired.as_bytes().to_vec(), false),
+        ("non-utf8", b"- links [[Target]] \xff\xfe\n".to_vec(), true),
+        ("too-deep", deep, true),
+        ("over-cap", over_cap(b"- links [[target]]\n"), true),
+    ] {
+        let (root, store) = listed_holder(label, &holder, at_load);
+        let before = snapshot(&root);
+        let result = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+        });
+        let error = result.expect_err(label);
+        assert!(
+            error.to_string().contains("Holder.md"),
+            "{label}: the refusal names the file: {error}"
+        );
+        assert_eq!(before, snapshot(&root), "{label}: a refusal writes nothing");
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// A listed file that does not mention the renamed name blocks nothing, and
+/// the rename leaves its bytes alone.
+#[test]
+fn a_rename_passes_a_listed_page_that_does_not_hold_the_name() {
+    let _integration_guard = crate::integration_lock();
+    let retired = format!("- {INDEX_PANIC} [[Elsewhere]]\n");
+    let mut deep = deep_outline();
+    deep.extend_from_slice(b"- the deep page says nothing of it\n");
+    let mut over_cap = vec![b' '; tine_store::PARSE_INPUT_MAX_BYTES as usize + 1024];
+    over_cap.extend_from_slice(b"- links [[Elsewhere]]\n");
+    for (label, holder, at_load) in [
+        ("too-deep-other", deep, true),
+        ("over-cap-other", over_cap, true),
+        ("retired-other", retired.as_bytes().to_vec(), false),
+        (
+            "non-utf8-other",
+            b"- links [[Elsewhere]] \xff\xfe\n".to_vec(),
+            true,
+        ),
+    ] {
+        let (root, store) = listed_holder(label, &holder, at_load);
+        let result = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+        });
+        assert!(result.is_ok(), "{label}: {result:?}");
+        assert_eq!(fs::read(root.join("pages/Holder.md")).unwrap(), holder);
+        assert!(fs::read_to_string(root.join("pages/Referrer.md"))
+            .unwrap()
+            .contains("[[Renamed]]"));
         let _ = fs::remove_dir_all(&root);
     }
 }

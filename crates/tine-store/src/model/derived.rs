@@ -152,6 +152,9 @@ pub(crate) struct Derived {
     /// because their parse panicked, so a parser gap never degrades search
     /// invisibly.
     page_index_failures: RwLock<Vec<String>>,
+    /// Each page whose row panicked an index stage, with those bytes' revision:
+    /// the row stays out until its bytes change or the cache is rebuilt.
+    index_retired: RwLock<HashMap<PathBuf, String>>,
     unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
     /// Retryable reads inside the racy window. Storage guards still need
     /// this uncertainty even though automatic notices wait for settling.
@@ -200,6 +203,7 @@ impl Default for Derived {
             cache_index: RwLock::new(None),
             observed_mtimes: RwLock::new(Arc::new(SharedMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
+            index_retired: RwLock::new(HashMap::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
             unsettled_reads: RwLock::new(Arc::new(HashMap::new())),
             discovery_errors: RwLock::new(Vec::new()),
@@ -841,7 +845,17 @@ impl Graph {
     /// owner's next publication installs it afresh.
     pub(crate) fn retire_index_stage_failure(&self, path: &Path) {
         let cache = self.derived.cache.write().unwrap();
+        if let Some(rev) = self.derived.disk_revs.read().unwrap().get(path).cloned() {
+            (self.derived.index_retired.write().unwrap()).insert(path.to_path_buf(), rev);
+        }
         self.retire_failed_row(cache, path);
+    }
+
+    /// Whether `path`'s row needs nothing for the bytes of revision `rev`:
+    /// it was derived from them, or they panicked an index stage.
+    pub(super) fn row_settled(&self, path: &Path, rev: &str) -> bool {
+        self.cached_rev(path).is_some_and(|r| r == rev)
+            || (self.derived.index_retired.read().unwrap().get(path)).is_some_and(|r| r == rev)
     }
 
     fn retire_failed_row(
@@ -1058,6 +1072,7 @@ impl Graph {
         *guard = Some(Arc::new(pages));
         *self.derived.observed_mtimes.write().unwrap() = Arc::new(mtimes);
         *self.derived.page_index_failures.write().unwrap() = failures;
+        self.derived.index_retired.write().unwrap().clear();
         *self.derived.unreadable_pages.write().unwrap() = Arc::new(
             unreadable
                 .into_iter()
@@ -1130,6 +1145,7 @@ impl Graph {
         *guard = Some(Arc::clone(pages));
         *self.derived.observed_mtimes.write().unwrap() = Arc::clone(observed_mtimes);
         *self.derived.page_index_failures.write().unwrap() = failures;
+        self.derived.index_retired.write().unwrap().clear();
         *self.derived.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
         *self.derived.cache_index.write().unwrap() = Some(index);
         *self.derived.disk_revs.write().unwrap() = disk_revs.into_iter().collect();
@@ -1193,6 +1209,7 @@ impl Graph {
         *guard = None;
         *self.derived.observed_mtimes.write().unwrap() = Arc::new(SharedMap::new());
         self.derived.page_index_failures.write().unwrap().clear();
+        self.derived.index_retired.write().unwrap().clear();
         *self.derived.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
         self.derived.discovery_errors.write().unwrap().clear();
         *self.derived.cache_index.write().unwrap() = None;
@@ -1258,6 +1275,13 @@ impl Graph {
     /// file time, all under the held cache lock.
     fn put_row(&self, pages: &mut Pages, (entry, doc, disk): Row) {
         let path = entry.path.clone();
+        {
+            let mut retired = self.derived.index_retired.write().unwrap();
+            if retired.get(&path) == Some(&disk.rev) {
+                return;
+            }
+            retired.remove(&path);
+        }
         self.derived.touched.lock().unwrap().insert(path.clone());
         let rel = entry.rel_path_str().to_owned();
         match self.cached_page_index_for_path(pages, &entry.path) {
@@ -1337,6 +1361,7 @@ impl Graph {
         let rel = self.rel_path(path);
         Arc::make_mut(&mut self.derived.observed_mtimes.write().unwrap()).remove(&rel);
         if errors {
+            self.derived.index_retired.write().unwrap().remove(path);
             Arc::make_mut(&mut self.derived.unreadable_pages.write().unwrap())
                 .retain(|(id, _)| id.as_str() != rel);
             self.derived

@@ -694,3 +694,49 @@ fn a_page_opened_and_closed_before_a_launch_checkpoint_loads_costs_no_decode() {
     assert_eq!(store.graph.warm_passes.load(Ordering::Relaxed), 1);
     store.close();
 }
+
+/// A config write during loading publishes at once. With no snapshot yet and
+/// a full index build that panics, the publication is contained and leaves no
+/// snapshot: the write's answer must not need one (it unwrapped, poisoning
+/// the writer).
+#[test]
+fn a_config_write_during_loading_whose_index_build_panics_keeps_the_writer() {
+    let root = graph();
+    let store = held_open(root.path());
+    let listed = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    go(root.path());
+    wait_hook(&listed);
+    let canonical = fs::canonicalize(root.path()).unwrap();
+    crate::model::TEST_FULL_INDEX_PANIC_ROOTS
+        .lock()
+        .unwrap()
+        .push(canonical.clone());
+    let config = FileId::from("logseq/config.edn".to_owned());
+    let (_, config_rev) = store.read(&config, None).unwrap();
+    let committed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut tx = store.page_plan(None);
+        tx.replace(
+            &config,
+            config_rev,
+            b"{:preferred-format :markdown :x 1}\n".to_vec(),
+        );
+        tx.commit_internal()
+    }));
+    (crate::model::TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap()).retain(|r| *r != canonical);
+    let poisoned = store.writer.is_poisoned();
+    release_hook(&listed);
+    if poisoned {
+        std::mem::forget(store); // Dropping a poisoned store aborts the run.
+        panic!("the panic poisoned the writer");
+    }
+    assert!(committed.is_ok(), "the write's answer must not unwind");
+    assert_eq!(
+        fs::read(root.path().join("logseq/config.edn")).unwrap(),
+        b"{:preferred-format :markdown :x 1}\n",
+        "the guarded write landed"
+    );
+    assert!(store.refresh(Depth::Stamps).is_ok(), "a retry recovers it");
+    assert!(store.whole_graph().is_ok());
+    store.close();
+}

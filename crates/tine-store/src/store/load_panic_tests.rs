@@ -18,7 +18,8 @@
 //!   backstop. The load ends `Failed` promptly (reported, `refresh()`
 //!   retries), pages still open, and the writer lock is not poisoned.
 //! - The same stage in a later publication's patch, which names its pages:
-//!   only the panicking page is lost, on every door that publishes.
+//!   only the panicking page is lost, a journal day's file included, and it
+//!   stays retired until its bytes change.
 use super::*;
 use std::time::{Duration, Instant};
 
@@ -368,13 +369,20 @@ fn a_title_read_panic_refuses_one_rename_and_keeps_the_writer() {
 /// unreadable: the patch names its page, unlike a cold load's full build.
 #[test]
 fn a_checkpoint_launch_contains_a_bad_page_created_while_closed() {
-    for (tag, bad) in [
+    for (tag, rel, bad) in [
         (
             "checkpoint-projection",
+            "pages/Bad.md",
             format!("- {TEST_PROJECTION_PANIC_SENTINEL} [[Target]]\n"),
         ),
         (
             "checkpoint-index",
+            "pages/Bad.md",
+            format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
+        ),
+        (
+            "checkpoint-journal",
+            JOURNAL,
             format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
         ),
     ] {
@@ -397,13 +405,13 @@ fn a_checkpoint_launch_contains_a_bad_page_created_while_closed() {
         );
         store.close();
         drop(store);
-        fs::write(root.join("pages/Bad.md"), &bad).unwrap();
+        fs::write(root.join(rel), &bad).unwrap();
         let store = Store::open(&root, options()).unwrap().0;
         let outcome = settled(&store);
         assert!(matches!(outcome, Ok(true)), "{tag}: {outcome:?}");
         let view = store.whole_graph().unwrap();
         assert!(
-            (view.unreadable_files().iter()).any(|(id, _)| id.as_str() == "pages/Bad.md"),
+            (view.unreadable_files().iter()).any(|(id, _)| id.as_str() == rel),
             "{tag}: {:?}",
             view.unreadable_files()
         );
@@ -417,6 +425,63 @@ fn a_checkpoint_launch_contains_a_bad_page_created_while_closed() {
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_file(&cp);
     }
+}
+
+/// The launch's own `Failed` path: a config file edited during the launch diff
+/// rebuilds the indexes in its publication, and that build names no page.
+#[test]
+fn a_checkpoint_launch_whose_diff_panics_with_no_page_to_blame_fails_and_recovers() {
+    let root = graph_with_bad_page("checkpoint-failed", "- fine for now\n", 2);
+    let cp = root.with_extension("checkpoint.bin");
+    let options = || OpenOptions {
+        watch: WatchMode::Poll,
+        launch_checkpoint: Some(cp.clone()),
+        ..Default::default()
+    };
+    let store = Store::open(&root, options()).unwrap().0;
+    store.whole_graph_reconciled().unwrap();
+    assert!(matches!(
+        store.write_checkpoint_now(),
+        Some(crate::CheckpointWrite::Written { .. })
+    ));
+    store.close();
+    drop(store);
+    let hold_diff = root.join(".tine-test-pause-launch-diff");
+    fs::write(&hold_diff, "").unwrap();
+    let store = Store::open(&root, options()).unwrap().0;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !store.load.serving.load(Ordering::Acquire) {
+        assert!(Instant::now() < deadline, "the checkpoint was not served");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    fs::create_dir_all(root.join("logseq")).unwrap();
+    fs::write(
+        root.join("logseq/config.edn"),
+        "{:ref/linked-references-collapsed-threshold 7}\n",
+    )
+    .unwrap();
+    let canonical = fs::canonicalize(&root).unwrap();
+    crate::model::TEST_FULL_INDEX_PANIC_ROOTS
+        .lock()
+        .unwrap()
+        .push(canonical.clone());
+    fs::remove_file(&hold_diff).unwrap();
+    let outcome = settled(&store);
+    let poisoned = store.writer.is_poisoned();
+    (crate::model::TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap()).retain(|r| *r != canonical);
+    assert!(!poisoned, "the failed launch keeps the writer");
+    assert!(
+        matches!(outcome, Err(LoadError::Failed { .. })),
+        "{outcome:?}"
+    );
+    let good = store.page(&PageId::from("pages/Good.md")).unwrap();
+    assert!(matches!(edit_good(&store, &good), SaveOutcome::Saved(_)));
+    assert!(store.refresh(Depth::Stamps).is_ok());
+    assert!(matches!(settled(&store), Ok(true)), "a retry recovers it");
+    assert_rest_of_graph_answers(&store, "checkpoint-failed", 3);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_file(&cp);
 }
 
 /// A Settings rescan (`Depth::Rebuild`) of a Ready graph rebuilds every
@@ -734,6 +799,20 @@ fn a_repaired_page_returns_after_an_index_stage_panic() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A held page's owner publishes `bytes`, as a window save does.
+fn publish_held(store: &Store, key: &str, bytes: String) {
+    let _writer = store.writer.lock().unwrap();
+    let bytes = Some(Arc::from(bytes.as_bytes()));
+    assert!(store.graph.publish_owned(key, bytes, None).is_ok());
+    let file = FileId::from(key.to_string());
+    store.changes.publish(
+        Origin::Own,
+        vec![(file, ChangeKind::Modified, None)],
+        false,
+        Vec::new(),
+    );
+}
+
 /// The window's saves publish a held page's row, which is its owner's: an
 /// index-stage panic retires it all the same, and the owner's next publication
 /// installs it again.
@@ -743,18 +822,7 @@ fn a_held_page_that_panics_an_index_stage_costs_that_page_only() {
     let others = others_cached(&store);
     let key = "pages/Filler 00.md";
     store.hold_page(&PageId::from(key)).unwrap();
-    let publish = |bytes: String| {
-        let _writer = store.writer.lock().unwrap();
-        let bytes = Some(Arc::from(bytes.as_bytes()));
-        assert!(store.graph.publish_owned(key, bytes, None).is_ok());
-        let file = FileId::from(key.to_string());
-        store.changes.publish(
-            Origin::Own,
-            vec![(file, ChangeKind::Modified, None)],
-            false,
-            Vec::new(),
-        );
-    };
+    let publish = |bytes: String| publish_held(&store, key, bytes);
     publish(format!("- {TEST_INDEX_PANIC_SENTINEL}\n"));
     let view = store.whole_graph().unwrap();
     assert_eq!(
@@ -807,6 +875,281 @@ fn a_panic_no_page_explains_fails_the_graph_and_keeps_the_writer() {
     assert!(failed, "the graph reports the failed publication");
     assert!(matches!(settled(&store), Ok(true)));
     assert_rest_of_graph_answers(&store, "config-index", 3);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+// ---- The same doors for a journal -------------------------------------
+//
+// A journal day stays in the name index after its row is retired, so the
+// publication's claimant pass finds a winner with no row and would load it
+// again. These pin that it stays contained like a page.
+
+const JOURNAL: &str = "journals/2026_01_05.md";
+
+fn ready_graph_with_journal(tag: &str) -> (PathBuf, Store) {
+    let root = graph_with_bad_page(tag, "- fine for now\n", 2);
+    fs::write(root.join(JOURNAL), "- journal fine\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(matches!(settled(&store), Ok(true)), "{tag}");
+    store.watch.stop_background_for_test();
+    (root, store)
+}
+
+fn assert_only_the_journal_lost(
+    store: &Store,
+    root: &Path,
+    tag: &str,
+    others: &[(&str, Arc<tine_core::doc::Document>)],
+) {
+    let view = store.whole_graph().unwrap_or_else(|error| {
+        panic!("{tag}: one bad journal must not fail the graph: {error:?}")
+    });
+    assert_eq!(
+        (view.unreadable_files().iter())
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>(),
+        vec![JOURNAL],
+        "{tag}: only the bad journal is unreadable"
+    );
+    for (rel, before) in others {
+        assert!(
+            Arc::ptr_eq(before, &cached_doc(store, rel)),
+            "{tag}: {rel} must not be re-read"
+        );
+    }
+    assert_rest_of_graph_answers(store, tag, 3);
+    assert!(
+        store.page(&PageId::from(JOURNAL)).is_ok(),
+        "{tag}: its parse is good, so the journal still opens"
+    );
+    let good = store.page_named("Good", PageKind::Page).unwrap().unwrap();
+    assert!(
+        matches!(edit_good(store, &good), SaveOutcome::Saved(_)),
+        "{tag}"
+    );
+    assert!(fs::read_to_string(root.join("pages/Good.md"))
+        .unwrap()
+        .contains("edited after the load"));
+}
+
+#[test]
+fn an_external_edit_that_panics_an_index_stage_costs_that_journal_only() {
+    let (root, store) = ready_graph_with_journal("journal-external");
+    let others = others_cached(&store);
+    fs::write(
+        root.join(JOURNAL),
+        format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
+    )
+    .unwrap();
+    assert!(store.refresh(Depth::Bytes).is_ok());
+    assert_only_the_journal_lost(&store, &root, "journal-external", &others);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_own_save_that_panics_an_index_stage_costs_that_journal_only() {
+    let (root, store) = ready_graph_with_journal("journal-save");
+    let others = others_cached(&store);
+    let journal = store.page(&PageId::from(JOURNAL)).unwrap();
+    let mut doc = journal.doc.clone();
+    doc.blocks[0].raw = TEST_INDEX_PANIC_SENTINEL.into();
+    let saved = store.save(
+        crate::EditKind::SaveBlock,
+        &journal.id,
+        SaveBase::Existing(journal.rev.clone()),
+        &doc,
+    );
+    assert!(matches!(saved, SaveOutcome::Saved(_)));
+    assert!(fs::read_to_string(root.join(JOURNAL))
+        .unwrap()
+        .contains(TEST_INDEX_PANIC_SENTINEL));
+    assert_only_the_journal_lost(&store, &root, "journal-save", &others);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn opening_a_journal_that_panics_an_index_stage_costs_that_journal_only() {
+    let (root, store) = ready_graph_with_journal("journal-open");
+    let others = others_cached(&store);
+    fs::write(
+        root.join(JOURNAL),
+        format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
+    )
+    .unwrap();
+    assert!(store.page(&PageId::from(JOURNAL)).is_ok());
+    assert_only_the_journal_lost(&store, &root, "journal-open", &others);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_watcher_survives_a_journal_edit_that_panics_an_index_stage() {
+    let root = graph_with_bad_page("journal-watcher", "- fine for now\n", 2);
+    fs::write(root.join(JOURNAL), "- journal fine\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(matches!(settled(&store), Ok(true)));
+    fs::write(
+        root.join(JOURNAL),
+        format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let view = store
+            .whole_graph()
+            .expect("one bad journal must not fail the graph");
+        if (view.unreadable_files().iter()).any(|(id, _)| id.as_str() == JOURNAL) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the watcher never reported the bad journal"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(store.watcher_drained_for_tests(Duration::from_secs(60)));
+    assert_rest_of_graph_answers(&store, "journal-watcher", 3);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_batch_with_one_journal_that_panics_an_index_stage_publishes_the_others() {
+    let (root, store) = ready_graph_with_journal("journal-batch");
+    fs::write(
+        root.join(JOURNAL),
+        format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("pages/Filler 01.md"),
+        "- filler 1 mentions [[Target]] and [[Fresh]]\n",
+    )
+    .unwrap();
+    store.refresh(Depth::Bytes).unwrap();
+    let view = store.whole_graph().unwrap();
+    assert_eq!(view.unreadable_files().len(), 1);
+    assert_eq!(view.backlinks("Fresh").unwrap().len(), 1);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_held_journal_that_panics_an_index_stage_costs_that_journal_only() {
+    let (root, store) = ready_graph_with_journal("journal-held");
+    let others = others_cached(&store);
+    store.hold_page(&PageId::from(JOURNAL)).unwrap();
+    let bad = format!("- {TEST_INDEX_PANIC_SENTINEL}\n");
+    publish_held(&store, JOURNAL, bad.clone());
+    // The owner publishing the same bytes again stays contained.
+    publish_held(&store, JOURNAL, bad);
+    let view = store
+        .whole_graph()
+        .expect("one bad held journal must not fail the graph");
+    assert_eq!(view.unreadable_files().len(), 1);
+    for (rel, before) in &others {
+        assert!(Arc::ptr_eq(before, &cached_doc(&store, rel)), "{rel}");
+    }
+    assert_rest_of_graph_answers(&store, "journal-held", 3);
+    publish_held(&store, JOURNAL, "- back, mentions [[Target]]\n".to_string());
+    let view = store.whole_graph().unwrap();
+    assert!(view.unreadable_files().is_empty(), "new bytes clear it");
+    assert_eq!(view.backlinks("Target").unwrap().len(), 4);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
+
+// ---- One publication per containment -----------------------------------
+
+/// Each read of a retired page used to install its row again, panic the
+/// capture, retire it and publish an External change, which a window showing
+/// a page no host holds answers with another read (`document/external.ts`).
+/// Reading the same bytes now publishes nothing; new bytes are looked at anew.
+#[test]
+fn reading_a_contained_page_again_publishes_nothing() {
+    for (tag, rel, name, kind, referrers) in [
+        (
+            "reread-page",
+            "pages/Filler 00.md",
+            "Filler 00",
+            PageKind::Page,
+            3,
+        ),
+        (
+            "reread-journal",
+            JOURNAL,
+            "Jan 5th, 2026",
+            PageKind::Journal,
+            4,
+        ),
+    ] {
+        let (root, store) = ready_graph_with_journal(tag);
+        let id = PageId::from(rel);
+        let bad = root.join(rel);
+        fs::write(&bad, format!("- {TEST_INDEX_PANIC_SENTINEL}\n")).unwrap();
+        let before = store.changes.rev();
+        assert!(store.page(&id).is_ok(), "{tag}");
+        let contained = store.changes.rev();
+        assert_ne!(before, contained, "{tag}: the containment itself is told");
+        for _ in 0..5 {
+            let read = store.page(&id).unwrap();
+            assert!(read.doc.blocks[0].raw.contains(TEST_INDEX_PANIC_SENTINEL));
+            assert!(store.page_named(name, kind).unwrap().is_some(), "{tag}");
+        }
+        assert_eq!(
+            contained,
+            store.changes.rev(),
+            "{tag}: reads publish nothing"
+        );
+        store.refresh(Depth::Bytes).unwrap();
+        assert_eq!(contained, store.changes.rev(), "{tag}: nor does a rescan");
+        let view = store.whole_graph().unwrap();
+        assert_eq!(view.unreadable_files().len(), 1, "{tag}: it stays listed");
+        // Other bad bytes are a new containment, told once more.
+        fs::write(&bad, format!("- {TEST_INDEX_PANIC_SENTINEL} again\n")).unwrap();
+        store.page(&id).unwrap();
+        let again = store.changes.rev();
+        assert_ne!(contained, again, "{tag}");
+        store.page(&id).unwrap();
+        assert_eq!(again, store.changes.rev(), "{tag}");
+        // Repaired bytes come back without a restart.
+        fs::write(&bad, "- repaired, mentions [[Target]]\n").unwrap();
+        store.page(&id).unwrap();
+        let view = store.whole_graph().unwrap();
+        assert!(view.unreadable_files().is_empty(), "{tag}");
+        assert_eq!(view.backlinks("Target").unwrap().len(), referrers, "{tag}");
+        drop(store);
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// A stale base on a retired page is still refused: retiring its row never
+/// relaxes the guard, and the outside edit survives.
+#[test]
+fn a_contained_page_keeps_its_save_guard() {
+    let (root, store) = ready_graph_with_journal("contained-guard");
+    let id = PageId::from("pages/Filler 00.md");
+    let bad = root.join("pages/Filler 00.md");
+    fs::write(&bad, format!("- {TEST_INDEX_PANIC_SENTINEL}\n")).unwrap();
+    let read = store.page(&id).unwrap();
+    let outside = format!("- {TEST_INDEX_PANIC_SENTINEL} changed outside\n");
+    fs::write(&bad, &outside).unwrap();
+    let mut doc = read.doc.clone();
+    doc.blocks[0].raw = "my stale edit".into();
+    let stale = store.save(
+        crate::EditKind::SaveBlock,
+        &id,
+        SaveBase::Existing(read.rev.clone()),
+        &doc,
+    );
+    assert!(
+        !matches!(stale, SaveOutcome::Saved(_)),
+        "stale base admitted"
+    );
+    assert_eq!(fs::read_to_string(&bad).unwrap(), outside);
     drop(store);
     let _ = fs::remove_dir_all(&root);
 }
