@@ -203,6 +203,12 @@
       "nonRequirements":["Exact pixels, timing, display scaling, and certification on the reporter's Windows 10/WebView2 153 device."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh849-idle.mjs": {
+      "contracts":[{"class":"core-operation","userOutcome":"On a page with Linked References from more source pages than the working set holds, nothing moves or changes while the reader does nothing, and switching to another tab and back shows the same first row (GH #849, #848).","blocking":false}],
+      "acceptableVariations":["How rows look, exact heights and how long the first settling takes; the first row may land a few pixels away."],
+      "nonRequirements":["The reporters' graphs, a slow reference read (the browser proof scripts/shot-gh848-tab-scroll.mjs covers it), the right sidebar and split panes."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh810-embed-scroll.mjs": {
       "contracts":[{"class":"core-operation","userOutcome":"On a long page, scrolling past expanded embeds or query results and upward through unseen windows keeps the reading position. The collapsed-embed variant also preserves it. Remounted query/reference groups retain measured geometry, and pane scrollers admit lazy content before visibility (GH #810).","blocking":true}],
       "acceptableVariations":["Small settling shifts of a few pixels while rows are first measured and the exact frame timing may vary; the jump measured is a visible block moving by 40 px or more between consecutive frames."],

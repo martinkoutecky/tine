@@ -21,7 +21,10 @@
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
-//! whole build decides at the held epoch it checks again under the lock.
+//! whole build decides at the held epoch it checks again under the lock,
+//! and so does a name memo (the page list, the claimant index): one walked
+//! outside it installs only if neither the generation nor the held epoch
+//! moved since the walk began ([`Graph::install_name_memo`]).
 //! Holds, releases and respellings are one ownership transition
 //! ([`Graph::transition`], REVIEW-3a4): under the cache lock it changes the
 //! held map, bumps the held epoch and settles every row and error whose
@@ -581,6 +584,8 @@ impl Graph {
         }
         let mut memo = Memo::default();
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.certify_pause);
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
                 if kind.is_none_or(|kind| kind == entry.kind) {
@@ -761,36 +766,32 @@ impl Graph {
     /// Install a whole-graph build atomically, with (G): rows a held or
     /// unknown identity names are left out, and every held key whose owner
     /// indexed bytes gets the row those bytes give. Declines when a cache
-    /// mutation, a publication or a hold raced the build, or (without
-    /// `replace`) when a cache exists. `discovery`, a full listing's name
-    /// failures, replaces the known ones when given.
+    /// mutation, a publication or a hold raced the build, handing the build
+    /// back unchanged, or (without `replace`) when a cache exists.
+    /// `discovery`, a full listing's name failures, replaces the known ones
+    /// when given.
     pub(super) fn install_built(
         &self,
-        built: PageCacheBuild,
+        mut built: PageCacheBuild,
         (expected_gen, held_epoch): (u64, u64),
         replace: bool,
         observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
-        discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
-    ) -> bool {
-        let PageCacheBuild {
-            pages: built,
-            mut failures,
-            mut unreadable,
-        } = built;
-        let mut built = built;
-        let mut discovery = discovery;
+        mut discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
+    ) -> Result<(), super::launch_patch::Declined> {
+        use super::launch_patch::Declined;
         // Identities are decided at the build's epoch (checked again under
-        // the lock), so a disk row a hold now owns is left out.
+        // the lock), so a disk row a hold now owns is left out. The pages
+        // are marked here, unlocked, and dropped only after the checks, so a
+        // raced install hands the build back whole.
         let mut owned: Vec<Owned> = Vec::new();
-        if !self.held.is_empty() {
-            let mut memo = Memo::default();
-            built.retain(|(entry, _, _)| self.disk_sourced_in(&mut memo, &entry.path));
-            let mut disk = |rel: &str| self.disk_sourced_in(&mut memo, &self.root.join(rel));
-            failures.retain(|rel| disk(rel));
-            unreadable.retain(|(rel, _)| disk(rel));
-            if let Some(discovery) = discovery.as_mut() {
-                discovery.retain(|(id, _)| disk(id.as_str()));
-            }
+        // A held page's own failures, added to the build's after the checks
+        // (a raced install drops them; the retry recomputes them).
+        let (mut owned_failures, mut owned_unreadable) = (Vec::new(), Vec::new());
+        let (held, mut kept, mut memo) = (!self.held.is_empty(), Vec::new(), Memo::default());
+        if held {
+            let pages = built.pages.iter();
+            kept =
+                (pages.map(|(entry, _, _)| self.disk_sourced_in(&mut memo, &entry.path))).collect();
             owned = self
                 .held
                 .published()
@@ -799,26 +800,23 @@ impl Graph {
                     let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
                         let rel = self.held.spellings().spelling(&key).to_string();
                         if contained::is_parser_panic(&error) {
-                            failures.push(rel.clone());
+                            owned_failures.push(rel.clone());
                         }
-                        unreadable.push((rel, error.to_string()));
+                        owned_unreadable.push((rel, error.to_string()));
                         None
                     });
                     Owned { row, key, bytes }
                 })
                 .collect();
         }
-        let mut rows: Vec<Row> = built
-            .into_iter()
-            .map(|(entry, doc, obs)| (entry, Arc::new(doc), obs))
-            .collect();
         // The launch pass observed every file's stamp before reading it; an
         // on-demand build did not, and stats each page here, as it does an
         // owner's row (E109).
         let stat = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
-        let mut mtimes: SharedMap<String, std::time::SystemTime> = rows
-            .iter()
-            .filter_map(|(entry, _, _)| {
+        let mut mtimes: SharedMap<String, std::time::SystemTime> = (built.pages.iter())
+            .enumerate()
+            .filter(|(at, _)| kept.get(*at) != Some(&false))
+            .filter_map(|(_, (entry, _, _))| {
                 let mtime = match observed {
                     Some(observed) => observed.get(&entry.path).and_then(|stamp| stamp.modified()),
                     None => stat(&entry.path),
@@ -833,26 +831,44 @@ impl Graph {
                 }
             }
         }
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.install_lock_pause);
         let mut guard = self.derived.cache.write().unwrap();
-        if (guard.is_some() && !replace)
-            || self.cache_gen.load(Ordering::Acquire) != expected_gen
-            || self.held.epoch() != held_epoch
-        {
-            return false;
+        if guard.is_some() && !replace {
+            return Err(Declined::CacheBuilt);
         }
         // R1: each owner's row was derived from the bytes it indexes now
         // (every publication also moves `cache_gen`; this is the
         // certificate, checked in the installing critical section).
-        for owned in owned {
-            let current = matches!(
-                self.held.indexed_of(&owned.key),
-                Some(Some(Some(bytes))) if Arc::ptr_eq(&bytes, &owned.bytes)
-            );
-            if !current {
-                return false;
-            }
-            rows.extend(owned.row);
+        let raced = self.cache_gen.load(Ordering::Acquire) != expected_gen
+            || self.held.epoch() != held_epoch
+            || !owned.iter().all(|owned| {
+                matches!(
+                    self.held.indexed_of(&owned.key),
+                    Some(Some(Some(bytes))) if Arc::ptr_eq(&bytes, &owned.bytes)
+                )
+            });
+        if raced {
+            return Err(Declined::Raced(built, discovery));
         }
+        if held {
+            // The few failed files, at the same epoch (the lock is held).
+            let mut disk = |rel: &str| self.disk_sourced_in(&mut memo, &self.root.join(rel));
+            built.failures.retain(|rel| disk(rel));
+            built.unreadable.retain(|(rel, _)| disk(rel));
+            if let Some(discovery) = discovery.as_mut() {
+                discovery.retain(|(id, _)| disk(id.as_str()));
+            }
+            built.failures.append(&mut owned_failures);
+            built.unreadable.append(&mut owned_unreadable);
+        }
+        let (failures, mut unreadable) = (built.failures, built.unreadable);
+        let mut rows: Vec<Row> = (built.pages.into_iter())
+            .enumerate()
+            .filter(|(at, _)| kept.get(*at) != Some(&false))
+            .map(|(_, (entry, doc, obs))| (entry, Arc::new(doc), obs))
+            .collect();
+        rows.extend(owned.into_iter().filter_map(|owned| owned.row));
         if let Some(discovery) = discovery {
             *self.derived.discovery_errors.write().unwrap() = discovery
                 .into_iter()
@@ -912,7 +928,7 @@ impl Graph {
             self.cache_gen.fetch_add(1, Ordering::Release);
         }
         drop(guard);
-        true
+        Ok(())
     }
 
     /// The launch build's listing, installed at generation `gen` (R2): the

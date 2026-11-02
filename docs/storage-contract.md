@@ -535,7 +535,11 @@ current revision and no `Change`. The launch pass takes the save in. Every
 cache-generation move made while no cache exists is recorded with the paths it
 moved (`model/derived_cold.rs`), and the pass re-derives exactly those paths,
 and the pages a hold withheld from it, from their files before it installs
-(`model/launch_patch.rs`). A move it cannot attribute to paths (a discarded
+(`model/launch_patch.rs`). A move, hold or release that lands while the install
+itself runs (a page host releasing an own create's hold) is patched in the same
+way: the install's race checks hand the build back unchanged and the pass
+re-derives again, within its bounded rounds, instead of building the graph a
+second time. A move it cannot attribute to paths (a discarded
 cache, a build-key config change, a duplicate journal day) declines the install,
 and the Ready publication builds on demand as before. The Ready publication comes
 first and its view holds each saved page once, with its last saved bytes; the
@@ -578,7 +582,34 @@ file and publishes the ones whose bytes differ as ordinary external changes
 (scenario: a sync client or restore tool rewrites a file and puts its stamp
 back; an export must not publish the stale document); `Depth::Rebuild` does
 that and then re-parses every file through the cold-launch build (Settings
-"Rescan graph").
+"Rescan graph"). `Depth::PageStamps` is `Depth::Stamps` over graph text and
+`config.edn` only, with no asset or `logseq/custom.css` walk: a planner of
+page writes reads neither.
+
+A page delete and a rename-file-to-page take exactly one `Depth::PageStamps`
+walk per operation, before their plan; a page rename takes one per attempt,
+inside its host operation's first plan call, after the flush: the attempt
+plans from the published view, reuses that plan only if the walk published
+nothing, and otherwise plans again (a refusal or an error is decided only
+after a walk, so such an attempt may walk twice; `pages::refreshed_view`).
+A replan inside the attempt after a `Changed` admission reads the published
+view without walking again: its window starts at the attempt's walk. The walk is the only proof that the plan sees an
+external edit or a sync delivery the watcher has not published yet (debounce,
+a Poll interval, a watch that installs but never fires). After the walk, an
+edit to a page the plan reads or writes is refused by the commit's byte check,
+a file appearing at a destination path by the no-replace rename and the
+host's destination recheck, and any change the watcher publishes before the
+host admits the operation by that admission (B2); each replans. Not seen: a
+page that becomes a referrer, twin or claimant after the walk (a new file, or
+an edit adding `[[Old]]` to a page the plan does not touch) and is not
+published by admission. The rename completes and that page keeps `[[Old]]`.
+That window runs from the walk through the rest of the plan call and the
+host's path-lock wait (at most `OPERATION_WAIT`) to admission, as it did
+before the walks were cut. Cost: O(P) stamps, no assets. Proof:
+`crates/tine-graph-features/tests/page_op_walks.rs`,
+`crates/tine-graph-features/src/pages_snapshot_tests.rs`
+`a_referrer_delivered_after_the_plan_replans_the_rename` and
+`delete_detects_an_external_twin_before_selecting_a_file`.
 
 A page open never waits for the whole graph (GH #623 BR3). `Store::page_named`
 is the one page-by-name door: while the graph is loading (initial parse
@@ -603,12 +634,19 @@ names what the page list names. A path read of a live file its name's
 claimants lack, before the watcher publishes it, adds it only when no other
 name can claim that file: a journal (its file name is its name) or a page
 path the current page list does not list. Any other such read drops the
-claimant memo, and the next lookup lists again. The first lookup of an absent
+claimant memo, and the next lookup lists again. A read of a file a host holds
+changes no memo: its owner's bytes name it, not the file ((G)). A lookup that
+lists, or a read that adds, outside the writer changes a memo only at the
+generation and held epoch it began at (a release or an open's hold moves the
+held map and no generation); the writer's own listings need no such check,
+since every hold and release takes the writer. The first lookup of an absent
 name of each kind after launch still lists once, because the launch index does
 not vouch for files that arrived after it. Proof:
 `crates/tine-store/tests/og_perf_publish.rs`,
 `crates/tine-store/src/model/derived_tests.rs`
-(`a_journal_only_the_capture_names_joins_the_day_index`),
+(`a_journal_only_the_capture_names_joins_the_day_index`,
+`a_name_walk_during_a_release_keeps_the_released_page`,
+`a_path_read_of_a_held_file_does_not_join_the_claimant_memo`),
 `crates/tine-store/src/store/panic_isolation_tests.rs`
 (`an_own_create_a_capture_missed_is_named_after_refresh`).
 
@@ -766,7 +804,8 @@ Single-page selection refuses unsaved input only where the rewrite changes
 it, and includes held referrers absent from the index. Admission checks that
 selection's held buffers, versions, saved status, spellings and membership.
 An unchanged flush permits plan reuse only with identical held input and
-unchanged refreshed graph revision/config; otherwise selection runs again.
+unchanged graph revision/config after the attempt's walk (above); otherwise
+selection runs again.
 Read-only host planning retains its writer and path locks, with the same
 `OPERATION_WAIT` bound on acquiring them. A timeout refuses before drafting.
 

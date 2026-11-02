@@ -5,7 +5,7 @@ import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBr
 import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
-import { revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
+import { revealCaretAboveKeyboard, revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
 import { isElementNode } from "../windowRealm";
 import { cssInterfaceZoom } from "../zoom";
 
@@ -200,9 +200,11 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       const editor = document.activeElement;
       if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) return;
       const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");
+      // A line that left the view goes back just above the toolbar, not to the
+      // top edge under the pinned parents (GH #783 beta.4 report; 0.7.4's place).
       if (scroller) settleCaret = revealCaretSettled(editor, scroller, 2, 40, Infinity, {
         scroll: true,
-        viewport: () => ({
+        reveal: () => revealCaretAboveKeyboard(editor, scroller, {
           top: window.visualViewport?.offsetTop ?? 0,
           bottom: toolbarRef ? toolbarRevealTop(toolbarRef.getBoundingClientRect().top) : viewportKeyboardTop(),
         }),

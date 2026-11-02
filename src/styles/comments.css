@@ -254,8 +254,10 @@
 .margin-marker {
   flex: 0 0 auto;
   align-self: flex-start;
-  margin: 3px 0 0;
+  /* Same pill and same line as .block-refs-count (GH #843), which sits inside the content's top padding. */
+  margin: calc(var(--ls-block-content-pad-y) + (var(--ls-block-line-height) - 18px) / 2) 0 0;
   margin-inline-start: 6px;
+  box-sizing: border-box;
   min-width: 20px;
   height: 18px;
   padding: 0 5px;

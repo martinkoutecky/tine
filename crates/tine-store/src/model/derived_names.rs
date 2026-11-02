@@ -2,6 +2,14 @@
 //! effective-name claimant index, their walks, and how a publication's name
 //! index becomes them (`adopt_name_index`). A child of `derived.rs`, so the
 //! derived state's fields stay private to the two.
+//!
+//! **Stamp rule** (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE). A release or
+//! an open's hold moves the held map and no generation, under the cache lock
+//! and the writer. A memo walked or patched without the writer changes only
+//! at the (generation, held epoch) it began at, checked under the cache lock
+//! ([`Graph::install_name_memo`]). The writer-only writers (the snapshot's
+//! roots, the journal scan, adopting a publication's index, retagging) run
+//! where no transition can.
 
 use super::*;
 
@@ -25,6 +33,23 @@ impl Graph {
         self.derived.find_entry_cache.read().unwrap().is_some()
     }
 
+    /// The cache generation and the held epoch a name memo is derived at.
+    fn name_stamp(&self) -> (u64, u64) {
+        (self.cache_gen.load(Ordering::Acquire), self.held.epoch())
+    }
+
+    /// Run `install` for a name memo derived since `stamp` only while
+    /// neither moved, checked under the cache lock: a transition moves the
+    /// held map and bumps the epoch inside it. A release or an open's hold
+    /// moves no generation, so a walk whose certify read the held map on both
+    /// sides of one (the page dropped, or listed twice) would otherwise stand
+    /// for the whole generation (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE).
+    /// None: the caller walks again.
+    fn install_name_memo<T>(&self, stamp: (u64, u64), install: impl FnOnce() -> T) -> Option<T> {
+        let _cache = self.derived.cache.read().unwrap();
+        (self.name_stamp() == stamp).then(install)
+    }
+
     /// Every page and journal in the graph, one per duplicate journal day.
     pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
         self.page_list().materialize()
@@ -33,31 +58,39 @@ impl Graph {
     /// The page list memo, listed afresh when it describes no current
     /// generation.
     fn page_list(&self) -> Arc<EntryList> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
-            if *g == gen {
-                return Arc::clone(entries);
+        loop {
+            let stamp = self.name_stamp();
+            if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
+                if *g == stamp.0 {
+                    return Arc::clone(entries);
+                }
+            }
+            let entries = self.certify(list_graph_pages(self), None);
+            // A duplicate-day journal (canonical + leftover title-named file)
+            // shows once in quick-switch and All Pages: both resolve to one page.
+            let entries = Arc::new(EntryList::from(
+                dedup_journal_days(
+                    entries.0,
+                    &self.current_journal_format(),
+                    self.current_config().file_name_format,
+                )
+                .as_slice(),
+            ));
+            let installed = self.install_name_memo(stamp, || {
+                *self.derived.page_list_cache.write().unwrap() =
+                    Some((stamp.0, Arc::clone(&entries)));
+            });
+            if installed.is_some() {
+                return entries;
             }
         }
-        let entries = self.certify(list_graph_pages(self), None);
-        // A duplicate-day journal (canonical + leftover title-named file)
-        // shows once in quick-switch and All Pages: both resolve to one page.
-        let entries = Arc::new(EntryList::from(
-            dedup_journal_days(
-                entries.0,
-                &self.current_journal_format(),
-                self.current_config().file_name_format,
-            )
-            .as_slice(),
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
-        entries
     }
 
     pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         let key = (kind, tine_core::refs::page_key(name));
         loop {
-            let gen = self.cache_gen.load(Ordering::Acquire);
+            let stamp = self.name_stamp();
+            let gen = stamp.0;
             if let Some(found) = self.cached_claimants(&key, gen) {
                 return found;
             }
@@ -66,7 +99,7 @@ impl Graph {
             built.entries = Arc::new(page_claimants(self, &listed.0));
             built.mark_kind_loaded(kind);
             let key = claimant_key(&key);
-            let found = {
+            let found = self.install_name_memo(stamp, || {
                 let mut guard = self.derived.find_entry_cache.write().unwrap();
                 match guard.as_mut() {
                     Some((g, index)) if *g == gen => {
@@ -93,8 +126,8 @@ impl Graph {
                         found
                     }
                 }
-            };
-            if self.cache_gen.load(Ordering::Acquire) == gen {
+            });
+            if let Some(found) = found {
                 return found;
             }
         }
@@ -109,42 +142,57 @@ impl Graph {
     /// the entry was named from the file's bytes, not from its file name
     /// alone (`trusted`). Otherwise the claimant memo drops (dropping a memo
     /// is always safe). A proposed destination that does not exist must not
-    /// become a claimant.
+    /// become a claimant. A file a host holds is no observation at all: its
+    /// owner's bytes, not the file, name it ((G)), so a withheld page or one
+    /// its owner deleted must not join from disk. Decided at one stamp under
+    /// the cache lock (module doc); a moved stamp drops the memo.
     pub(in crate::model) fn observe_name_entry(&self, entry: &PageEntry, trusted: bool) {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let unlisted = entry.kind == PageKind::Journal
-            || (self.derived.page_list_cache.read().unwrap().as_ref())
-                .is_some_and(|(g, list)| *g == gen && list.get_path(&entry.path).is_none());
-        let mut cache = self.derived.find_entry_cache.write().unwrap();
-        let Some((g, index)) = cache.as_mut() else {
-            return;
-        };
-        let key = claimant_key(&(entry.kind, tine_core::refs::page_key(&entry.name)));
-        let known = index
-            .entries
-            .get(&key)
-            .is_some_and(|entries| entries.iter().any(|candidate| candidate.path == entry.path));
-        if *g != gen || known || !fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
-        {
-            return;
+        let stamp = self.name_stamp();
+        let observed = self.install_name_memo(stamp, || {
+            if !self.disk_sourced(&entry.path) {
+                return;
+            }
+            let gen = stamp.0;
+            let unlisted = entry.kind == PageKind::Journal
+                || (self.derived.page_list_cache.read().unwrap().as_ref())
+                    .is_some_and(|(g, list)| *g == gen && list.get_path(&entry.path).is_none());
+            let mut cache = self.derived.find_entry_cache.write().unwrap();
+            let Some((g, index)) = cache.as_mut() else {
+                return;
+            };
+            let key = claimant_key(&(entry.kind, tine_core::refs::page_key(&entry.name)));
+            let known = (index.entries.get(&key)).is_some_and(|entries| {
+                entries.iter().any(|candidate| candidate.path == entry.path)
+            });
+            if *g != gen
+                || known
+                || !fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
+            {
+                return;
+            }
+            if !(trusted && unlisted && index.has_kind(entry.kind)) {
+                *cache = None;
+                return;
+            }
+            let (format, name_format) = (
+                self.current_journal_format(),
+                self.current_config().file_name_format,
+            );
+            let entries = Arc::make_mut(&mut index.entries);
+            let mut bucket = entries.get(&key).cloned().unwrap_or_default();
+            bucket.push(entry.clone());
+            bucket.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
+            entries.insert(key, bucket);
+        });
+        if observed.is_none() {
+            *self.derived.find_entry_cache.write().unwrap() = None;
         }
-        if !(trusted && unlisted && index.has_kind(entry.kind)) {
-            *cache = None;
-            return;
-        }
-        let (format, name_format) = (
-            self.current_journal_format(),
-            self.current_config().file_name_format,
-        );
-        let entries = Arc::make_mut(&mut index.entries);
-        let mut bucket = entries.get(&key).cloned().unwrap_or_default();
-        bucket.push(entry.clone());
-        bucket.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
-        entries.insert(key, bucket);
     }
 
     /// Cold journal inventory and its complete claimant index share one walk.
-    /// Only called at open, before the watcher and load worker start.
+    /// Called at open and, before the first view, under the writer (a
+    /// deferred publication, an owner's first journal): no transition can
+    /// move the held map during its walk (stamp rule, module doc).
     pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
         let gen = self.cache_gen.load(Ordering::Acquire);
         let entries = self.certify(
@@ -179,6 +227,7 @@ impl Graph {
 
     /// The page list and the effective-name claimants, from one certified
     /// inventory (R2): the snapshot's roots and the memos hold the same rows.
+    /// The capture calls it under the writer, so its walk needs no stamp.
     pub(crate) fn snapshot_name_roots(&self) -> (Arc<EntryList>, Arc<ClaimantMap>) {
         let gen = self.cache_gen.load(Ordering::Acquire);
         let format = self.current_journal_format();
