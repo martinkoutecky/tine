@@ -21,7 +21,10 @@
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
-//! whole build decides at the held epoch it checks again under the lock.
+//! whole build decides at the held epoch it checks again under the lock,
+//! and so does a name memo (the page list, the claimant index): one walked
+//! outside it installs only if neither the generation nor the held epoch
+//! moved since the walk began ([`Graph::install_name_memo`]).
 //! Holds, releases and respellings are one ownership transition
 //! ([`Graph::transition`], REVIEW-3a4): under the cache lock it changes the
 //! held map, bumps the held epoch and settles every row and error whose
@@ -598,6 +601,8 @@ impl Graph {
         }
         let mut memo = Memo::default();
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.certify_pause);
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
                 if kind.is_none_or(|kind| kind == entry.kind) {
@@ -608,30 +613,55 @@ impl Graph {
         Certified(entries)
     }
 
+    /// The cache generation and the held epoch a name memo is derived at.
+    fn name_stamp(&self) -> (u64, u64) {
+        (self.cache_gen.load(Ordering::Acquire), self.held.epoch())
+    }
+
+    /// Run `install` for a name memo derived since `stamp` only while
+    /// neither moved, checked under the cache lock: a transition moves the
+    /// held map and bumps the epoch inside it. A release or an open's hold
+    /// moves no generation, so a walk whose certify read the held map on both
+    /// sides of one (the page dropped, or listed twice) would otherwise stand
+    /// for the whole generation (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE).
+    /// None: the caller walks again.
+    fn install_name_memo<T>(&self, stamp: (u64, u64), install: impl FnOnce() -> T) -> Option<T> {
+        let _cache = self.derived.cache.read().unwrap();
+        (self.name_stamp() == stamp).then(install)
+    }
+
     /// Every page and journal in the graph, one per duplicate journal day.
     pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
-            if *g == gen {
-                return Arc::clone(entries);
+        loop {
+            let stamp = self.name_stamp();
+            if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
+                if *g == stamp.0 {
+                    return Arc::clone(entries);
+                }
+            }
+            let entries = self.certify(list_graph_pages(self), None);
+            // A duplicate-day journal (canonical + leftover title-named file)
+            // shows once in quick-switch and All Pages: both resolve to one page.
+            let entries = Arc::new(dedup_journal_days(
+                entries.0,
+                &self.current_journal_format(),
+                self.current_config().file_name_format,
+            ));
+            let installed = self.install_name_memo(stamp, || {
+                *self.derived.page_list_cache.write().unwrap() =
+                    Some((stamp.0, Arc::clone(&entries)));
+            });
+            if installed.is_some() {
+                return entries;
             }
         }
-        let entries = self.certify(list_graph_pages(self), None);
-        // A duplicate-day journal (canonical + leftover title-named file)
-        // shows once in quick-switch and All Pages: both resolve to one page.
-        let entries = Arc::new(dedup_journal_days(
-            entries.0,
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
-        entries
     }
 
     pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         let key = (kind, tine_core::refs::page_key(name));
         loop {
-            let gen = self.cache_gen.load(Ordering::Acquire);
+            let stamp = self.name_stamp();
+            let gen = stamp.0;
             if let Some(found) = self.cached_claimants(&key, gen) {
                 return found;
             }
@@ -639,7 +669,7 @@ impl Graph {
             let mut built = FindEntryIndex::new();
             built.entries = page_claimants(self, &listed.0);
             built.mark_kind_loaded(kind);
-            let found = {
+            let found = self.install_name_memo(stamp, || {
                 let mut guard = self.derived.find_entry_cache.write().unwrap();
                 match guard.as_mut() {
                     Some((g, index)) if *g == gen => {
@@ -658,8 +688,8 @@ impl Graph {
                         found
                     }
                 }
-            };
-            if self.cache_gen.load(Ordering::Acquire) == gen {
+            });
+            if let Some(found) = found {
                 return found;
             }
         }
