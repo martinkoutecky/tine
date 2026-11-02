@@ -26,6 +26,11 @@ for (const dir of ["data", "config", "cache", "home", "state"]) fs.mkdirSync(pat
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
 fs.writeFileSync(path.join(GRAPH, "pages", "Restart Demo.md"), "- alpha\n- beta\n- see [[Side Demo]]\n");
 fs.writeFileSync(path.join(GRAPH, "pages", "Side Demo.md"), "- side one\n- side two\n");
+// A second graph, shown in a second window later.
+const PEER = path.join(TMP, "peer");
+for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(PEER, dir), { recursive: true });
+fs.writeFileSync(path.join(PEER, "logseq/config.edn"), "{}\n");
+fs.writeFileSync(path.join(PEER, "pages", "Peer Demo.md"), "- peer one\n- peer two\n");
 
 const env = { ...process.env, HOME: path.join(TMP, "home"), TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: path.join(TMP, "data"), XDG_CONFIG_HOME: path.join(TMP, "config"), XDG_CACHE_HOME: path.join(TMP, "cache"),
@@ -33,7 +38,16 @@ const env = { ...process.env, HOME: path.join(TMP, "home"), TINE_GRAPH: GRAPH,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4897);
 const log = fs.openSync(path.join(TMP, "driver.log"), "w");
-const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
+const startDriver = () => spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
+let driver = startDriver();
+/** The app processes of this journey only: our binary, started with our scratch profile. */
+function myAppPids() {
+  const own = [];
+  for (const pid of fs.readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+    try { if (fs.readlinkSync(`/proc/${pid}/exe`) === fs.realpathSync(APP) && fs.readFileSync(`/proc/${pid}/environ`, "utf8").includes(TMP)) own.push(Number(pid)); } catch { /* gone or not ours */ }
+  }
+  return own;
+}
 let browser;
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), binarySha256: createHash("sha256").update(fs.readFileSync(APP)).digest("hex"), journey: "CodeMirror editor setting survives an app restart", expected: "after relaunch the first block edit mounts the CodeMirror editor", steps: [] };
 
@@ -85,10 +99,16 @@ try {
   if (!/experimental_cm6_editor"\s*:\s*true/.test(fs.readFileSync(settingsFile, "utf8"))) throw new Error(`setting not persisted in ${settingsFile}`);
   proof.steps.push("tine-settings.json holds experimental_cm6_editor=true");
 
-  // 2. Quit and relaunch with the same profile.
-  await browser.deleteSession();
+  // 2. The app dies uncleanly (kill -9, as after a crash) and is relaunched with the same profile;
+  //    Tine then reports "did not close cleanly".
+  for (const pid of myAppPids()) process.kill(pid, "SIGKILL");
+  try { await browser.deleteSession(); } catch { /* the app is gone */ }
+  try { process.kill(-driver.pid, "SIGTERM"); } catch { /* already gone */ }
+  await new Promise((r) => setTimeout(r, 1500));
+  driver = startDriver();
+  await new Promise((r) => setTimeout(r, 2000));
   browser = await launch();
-  proof.steps.push("relaunched");
+  proof.steps.push("killed with SIGKILL and relaunched");
 
   // Journal view straight after launch: whatever editor is open on its own, or opened by the first click.
   const early = await browser.execute(() => ({ cm6: !!document.querySelector('[data-block-editor="cm6"]'), textarea: !!document.querySelector("textarea.block-editor"), blocks: document.querySelectorAll("[data-block-id]").length, url: location.hash }));
@@ -150,6 +170,71 @@ try {
   const sidebar = await kindAfterClick(".right-sidebar", "side one");
   proof.steps.push(`right sidebar first edit: ${sidebar}`);
   proof.sidebar = sidebar;
+  // 4. A second window on another graph: a choice made in one window reaches the other,
+  //    without a restart, in both directions.
+  const known = await browser.getWindowHandles();
+  spawn(APP, [PEER], { env: { ...env, TINE_GRAPH: "" }, stdio: "ignore", detached: true }).unref();
+  await browser.waitUntil(async () => (await browser.getWindowHandles()).length === known.length + 1, { timeout: 30_000, timeoutMsg: "the second graph window did not open" });
+  const peer = (await browser.getWindowHandles()).find((handle) => !known.includes(handle));
+  const first = proof.mainHandle;
+  await browser.switchToWindow(peer);
+  await browser.$(".app-container").waitForExist({ timeout: 30_000 });
+  await openPageByName(browser, "Peer Demo");
+  const peerKind = await kindAfterClick(".main-content", "peer one");
+  proof.steps.push(`second window first edit: ${peerKind}`);
+  const settingSwitch = async () => {
+    await browser.$('button[title^="Settings"]').click();
+    await browser.$(".settings-modal").waitForDisplayed({ timeout: 10_000 });
+    const search = await browser.$(".settings-search-input");
+    await search.setValue("CodeMirror");
+    const hit = await browser.$(".settings-search-result");
+    await hit.waitForDisplayed({ timeout: 10_000 });
+    await hit.click();
+    const control = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
+    await control.waitForDisplayed({ timeout: 10_000 });
+    return control;
+  };
+  const flip = async (want) => {
+    const control = await settingSwitch();
+    if ((await control.getAttribute("aria-checked")) !== String(!want)) throw new Error(`Settings did not show the setting ${want ? "off" : "on"} before the change`);
+    await control.click();
+    await browser.waitUntil(async () => (await control.getAttribute("aria-checked")) === String(want), { timeout: 5000 });
+    await browser.keys(["Escape"]);
+  };
+  const settleKind = async (scope, text, want, where) => {
+    let seen = "";
+    try {
+      await browser.waitUntil(async () => (seen = await kindAfterClick(scope, text)) === want, { timeout: 10_000, interval: 300 });
+    } catch { throw new Error(`${where}: first edit mounts ${seen}, wanted ${want}, after the choice was changed in the other window`); }
+    proof.steps.push(`${where}: ${want}`);
+  };
+  await flip(false); // in the second window
+  await browser.switchToWindow(first);
+  await settleKind(".main-content", "beta", "textarea", "first window after the second window switched CodeMirror off");
+  await flip(true); // in the first window
+  await browser.switchToWindow(peer);
+  await settleKind(".main-content", "peer one", "cm6", "second window after the first window switched CodeMirror on");
+  // 5. A slow read. The second window's reply to the stored-choice read is held back (the backend is busy
+  //    on a big graph); the first block opened meanwhile must still get the engine the setting names.
+  const hook = await browser.execute(() => {
+    // The internals object is frozen, so hold back the IPC request itself.
+    window.__slowHits = 0;
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = String(input?.url ?? input);
+      if (!/get_app_bool/.test(url)) return realFetch(input, init);
+      window.__slowHits++;
+      return new Promise((resolve, reject) => setTimeout(() => realFetch(input, init).then(resolve, reject), 3000));
+    };
+    return "fetch wrapped";
+  });
+  proof.steps.push(`slow-read hook: ${hook}`);
+  await browser.switchToWindow(first);
+  await flip(false);
+  await browser.switchToWindow(peer);
+  const slow = await kindAfterClick(".main-content", "peer one");
+  proof.steps.push(`second window first edit while the read is still in flight: ${slow} (delayed reads: ${await browser.execute(() => window.__slowHits)})`);
+  if (slow !== "textarea") throw new Error(`a block opened while the stored choice was still being read got ${slow}, wanted textarea`);
   if (routed !== "cm6" || sidebar !== "cm6" || !proof.capture?.cm6) throw new Error(`stored CodeMirror choice ignored after restart: routed=${routed} sidebar=${sidebar} capture=${JSON.stringify(proof.capture)}`);
   if (!proof.capture.focusedInEditor) throw new Error(`Quick Capture opened with CodeMirror but the caret is not in it: ${JSON.stringify(proof.capture)}`);
   console.log("PASS", JSON.stringify(proof));
@@ -165,6 +250,7 @@ try {
 } finally {
   fs.writeFileSync(path.join(TMP, "proof.json"), `${JSON.stringify(proof, null, 2)}\n`);
   try { await browser?.deleteSession(); } catch {}
+  for (const pid of myAppPids()) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
   try { process.kill(-driver.pid, "SIGTERM"); } catch {}
   fs.closeSync(log);
 }
