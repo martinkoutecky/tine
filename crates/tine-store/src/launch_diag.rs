@@ -174,7 +174,8 @@ pub(crate) const OUTCOME_CANCELLED: &str = "cancelled";
 /// Why a full stat diff ran.
 #[derive(Clone, Copy)]
 pub(crate) enum DiffTrigger {
-    /// `refresh(Depth::Stamps)` on a ready graph: the rescan on return to the window.
+    /// `refresh(Depth::Stamps)` on a ready graph: the rescan on return to the
+    /// window; also `Depth::PageStamps`, a page planner's walk.
     Rescan,
     /// `refresh` retrying a failed load.
     Recovery,

@@ -470,6 +470,34 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     disk::remove_dir_all(root).unwrap();
 }
 
+/// The plan-reuse check compares the published view, no second walk
+/// (og-perf-rename-walks): a referrer a sync client delivers after the plan
+/// read its view, published by the watcher before the commit, still
+/// replans the rename and is rewritten.
+#[test]
+fn a_referrer_delivered_after_the_plan_replans_the_rename() {
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/Old.md", "- source\n"),
+        ("pages/r.md", "- [[Old]]\n"),
+    ]);
+    let delivered = AtomicBool::new(false);
+    hosted(&store, |host| {
+        rename_page_after_inventory(&store, host, "Old", "New", None, None, &[], || {
+            if delivered.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            disk::write(root.join("pages/late.md"), "- late [[Old]]\n").unwrap();
+            // The watcher's delivery, published now.
+            store.refresh(tine_store::Depth::Stamps).unwrap();
+        })
+    })
+    .unwrap();
+    assert!(delivered.load(Ordering::Acquire));
+    assert_eq!(text_at(&root, "pages/r.md"), "- [[New]]\n");
+    assert_eq!(text_at(&root, "pages/late.md"), "- late [[New]]\n");
+    assert!(!root.join("pages/Old.md").exists());
+}
+
 #[test]
 fn delete_detects_an_external_twin_before_selecting_a_file() {
     let root = std::env::temp_dir().join(format!(
