@@ -182,20 +182,24 @@ fn may_hold_reference(
     if !tine_store::parse_input_depth_within_limit(&text)
         || (org && !tine_core::org::headline_levels_within_limit(&text, 128))
     {
-        return text_mentions_a_name(&text.to_lowercase(), map);
+        return text_mentions_a_name(&text, map);
     }
     std::panic::catch_unwind(|| refs::rename_rewrite(&text, org, &map.0, format) != text)
-        .unwrap_or_else(|_| text_mentions_a_name(&text.to_lowercase(), map))
+        .unwrap_or_else(|_| text_mentions_a_name(&text, map))
 }
 
-fn text_mentions_a_name(lowercase: &str, map: &RenameMap) -> bool {
+/// Compared under page identity's own folding (case and Unicode normal form),
+/// so a link in any spelling that names the page is seen.
+fn text_mentions_a_name(text: &str, map: &RenameMap) -> bool {
+    let text = refs::page_key(text);
     map.0
         .iter()
-        .any(|(old, _)| lowercase.contains(&old.to_lowercase()))
+        .any(|(old, _)| text.contains(&refs::page_key(old)))
 }
 
 /// The same search for a file too big to hold in memory: chunks overlap by more
-/// than the longest name, so a name across two chunks is still seen.
+/// than the longest name in any spelling (decomposing grows UTF-8 at most
+/// threefold), so a name across two chunks is still seen.
 fn file_mentions_a_name(path: &std::path::Path, map: &RenameMap) -> io::Result<bool> {
     const CHUNK: usize = 1024 * 1024;
     let overlap = map.0.iter().map(|(old, _)| old.len()).max().unwrap_or(0) * 4;
@@ -209,7 +213,7 @@ fn file_mentions_a_name(path: &std::path::Path, map: &RenameMap) -> io::Result<b
         }
         let filled = kept + read;
         let text = String::from_utf8_lossy(&window[..filled]);
-        if text_mentions_a_name(&text.to_lowercase(), map) {
+        if text_mentions_a_name(&text, map) {
             return Ok(true);
         }
         kept = overlap.min(filled);

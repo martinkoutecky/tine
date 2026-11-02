@@ -71,8 +71,8 @@ impl WatchHandle {
             .graph
             .replace_unreadable_walk_errors(&HashMap::new(), &walk_errors);
         // Rebuilt indexes from the whole cache: contained as the first
-        // publication is (an index-stage panic fails the graph, never
-        // poisons the writer).
+        // publication is (an index-stage panic costs its rows; one no row
+        // explains fails the graph, and never poisons the writer).
         let published =
             crate::store::contain_index_publication(&self.core.graph, &self.core.load, || {
                 self.core

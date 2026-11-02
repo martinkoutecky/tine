@@ -376,6 +376,8 @@ mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
+#[cfg(test)]
+mod panic_isolation_tests;
 mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
@@ -1398,11 +1400,19 @@ impl Store {
     /// are published: a subscriber that has received it has received them all.
     pub fn refresh(&self, depth: Depth) -> Result<GraphRev, LoadError> {
         match depth {
-            Depth::Stamps => self.watch.scan_refresh()?,
-            Depth::PageStamps => self.watch.scan_refresh_pages()?,
-            Depth::Bytes => self
-                .watch
-                .scan_refresh_with(crate::launch_diag::DiffTrigger::Bytes)?,
+            Depth::Stamps => {
+                self.watch.scan_refresh()?;
+                self.retry_contained_rows();
+            }
+            Depth::PageStamps => {
+                self.watch.scan_refresh_pages()?;
+                self.retry_contained_rows();
+            }
+            Depth::Bytes => {
+                self.watch
+                    .scan_refresh_with(crate::launch_diag::DiffTrigger::Bytes)?;
+                self.retry_contained_rows();
+            }
             Depth::Rebuild => {
                 self.watch.rebuild_all()?;
                 self.changes

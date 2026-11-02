@@ -153,8 +153,9 @@ pub(crate) struct Derived {
     /// invisibly.
     page_index_failures: RwLock<Vec<String>>,
     /// Each page whose row panicked an index stage, with those bytes' revision:
-    /// the row stays out until its bytes change or the cache is rebuilt.
-    index_retired: RwLock<HashMap<PathBuf, String>>,
+    /// the row stays out until its bytes change, the cache is rebuilt, or a
+    /// bounded retry passes (`derived_contained.rs`).
+    index_retired: RwLock<HashMap<PathBuf, contained::Retired>>,
     unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
     /// Retryable reads inside the racy window. Storage guards still need
     /// this uncertainty even though automatic notices wait for settling.
@@ -304,13 +305,25 @@ impl Graph {
     /// spelling; None when that path is no cacheable page or the bytes are
     /// not a page's.
     pub(super) fn owned_entry(&self, key: &str, bytes: &[u8]) -> Option<PageEntry> {
+        let mut entry = self.owned_listing(key)?;
+        validate_parse_bytes_for_path(bytes, &entry.path).ok()?;
+        let content = std::str::from_utf8(bytes).ok()?;
+        if let Ok(name) = self.name_from(&entry, content) {
+            entry.name = name;
+        }
+        Some(entry)
+    }
+
+    /// `key`'s listing entry before its owner's bytes name it; None when that
+    /// path is no cacheable page.
+    fn owned_listing(&self, key: &str) -> Option<PageEntry> {
         let path = self.root.join(self.held.spellings().spelling(key));
         let config = self.current_config();
         if path_is_sync_conflict(&path) || !graph_text_eligible(&self.root, &path, &config) {
             return None;
         }
         let (format, journals) = (self.current_journal_format(), self.journals_path());
-        let mut entry = listed_entry(self, (&format, &journals, config.file_name_format), path)?;
+        let entry = listed_entry(self, (&format, &journals, config.file_name_format), path)?;
         if let Some(date) = entry
             .date_key
             .map(tine_core::date::JournalDate::from_ordinal)
@@ -318,11 +331,6 @@ impl Graph {
             if entry.kind == PageKind::Journal && self.is_shadow_journal(&entry.path, date) {
                 return None;
             }
-        }
-        validate_parse_bytes_for_path(bytes, &entry.path).ok()?;
-        let content = std::str::from_utf8(bytes).ok()?;
-        if let Ok(name) = self.name_from(&entry, content) {
-            entry.name = name;
         }
         Some(entry)
     }
@@ -332,23 +340,31 @@ impl Graph {
     /// given, is the owner's Document for them (R8): only its runtime
     /// identities are kept, and only when its content is exactly what
     /// `bytes` parse to; its content never reaches the row (REVIEW-3a4 #5,
-    /// E126).
+    /// E126). `Ok(None)` when the path is no cacheable page; `Err` when it is
+    /// one and these bytes give no row, which the caller lists unreadable.
     pub(super) fn owned_row(
         &self,
         key: &str,
         bytes: &[u8],
         saved: Option<&Document>,
-    ) -> Option<Row> {
-        let entry = self.owned_entry(key, bytes)?;
-        let content = std::str::from_utf8(bytes).ok()?;
+    ) -> io::Result<Option<Row>> {
+        let Some(mut entry) = self.owned_listing(key) else {
+            return Ok(None);
+        };
+        validate_parse_bytes_for_path(bytes, &entry.path)?;
+        let content = std::str::from_utf8(bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if let Ok(name) = self.name_from(&entry, content) {
+            entry.name = name;
+        }
         let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             parse_page_content(&entry, content)
         }))
-        .ok()?;
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
         if let Some(saved) = saved.filter(|saved| **saved == doc) {
             keep_runtime_ids(&mut doc.roots, &saved.roots);
         }
-        Some((entry, Arc::new(doc), disk))
+        Ok(Some((entry, Arc::new(doc), disk)))
     }
 
     // ---- reads ----------------------------------------------------------
@@ -410,15 +426,16 @@ impl Graph {
                 }
             }
             Source::Held(bytes) => {
-                if let Some(row) = self
-                    .held_key(&winner.path)
-                    .and_then(|key| self.owned_row(&key, &bytes, None))
-                {
-                    let mut cache = self.derived.cache.write().unwrap();
-                    if let Some(pages) = cache.as_mut() {
+                let row =
+                    (self.held_key(&winner.path)).map(|key| self.owned_row(&key, &bytes, None));
+                let mut cache = self.derived.cache.write().unwrap();
+                match (row, cache.as_mut()) {
+                    (Some(Ok(Some(row))), Some(pages)) => {
                         self.put_row(Arc::make_mut(pages), row);
                         self.move_generation(false, &[&winner.path]);
                     }
+                    (Some(Err(error)), _) => self.list_held_row_failure(&winner.path, &error),
+                    _ => {}
                 }
             }
             Source::HeldAbsent | Source::HeldUnindexed => {}
@@ -837,51 +854,6 @@ impl Graph {
         }
     }
 
-    /// A publication's index stage panicked on `path`'s row: the same
-    /// isolation, for a held page's row too. A held row cannot be left in
-    /// place, since every later capture would patch it and panic again; its
-    /// owner's next publication installs it afresh.
-    pub(crate) fn retire_index_stage_failure(&self, path: &Path) {
-        let cache = self.derived.cache.write().unwrap();
-        if let Some(rev) = self.derived.disk_revs.read().unwrap().get(path).cloned() {
-            (self.derived.index_retired.write().unwrap()).insert(path.to_path_buf(), rev);
-        }
-        self.retire_failed_row(cache, path);
-    }
-
-    /// Whether `path`'s row needs nothing for the bytes of revision `rev`:
-    /// it was derived from them, or they panicked an index stage.
-    pub(super) fn row_settled(&self, path: &Path, rev: &str) -> bool {
-        self.cached_rev(path).is_some_and(|r| r == rev)
-            || (self.derived.index_retired.read().unwrap().get(path)).is_some_and(|r| r == rev)
-    }
-
-    fn retire_failed_row(
-        &self,
-        mut cache: std::sync::RwLockWriteGuard<'_, Option<Arc<Pages>>>,
-        path: &Path,
-    ) {
-        // A quiet retry must not erase an already reported launch error.
-        self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
-        let rel = self.rel_path(path);
-        let mut failures = self.derived.page_index_failures.write().unwrap();
-        if !failures.contains(&rel) {
-            failures.push(rel.clone());
-        }
-        drop(failures);
-        // A checkpoint launch also reconciles through this boundary.
-        // Replacing a whole-cache rebuild must retain its per-page error
-        // reporting, including when the watcher defers its own notice.
-        let mut unreadable = self.derived.unreadable_pages.write().unwrap();
-        let id = crate::FileId::from(rel);
-        if !unreadable.iter().any(|(known, _)| *known == id) {
-            tine_core::diag_line::diagnostic_line("Tine unreadable file producer=index-panic");
-            Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
-        }
-        drop(unreadable);
-        self.move_generation(cache.is_none(), &[path]);
-    }
-
     /// A publication that could not capture: the next capture patches these.
     pub(crate) fn touch_rows(&self, paths: impl IntoIterator<Item = PathBuf>) {
         self.derived.touched.lock().unwrap().extend(paths);
@@ -977,10 +949,16 @@ impl Graph {
                 .held
                 .published()
                 .into_iter()
-                .map(|(key, bytes)| Owned {
-                    row: self.owned_row(&key, &bytes, None),
-                    key,
-                    bytes,
+                .map(|(key, bytes)| {
+                    let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
+                        let rel = self.held.spellings().spelling(&key).to_string();
+                        if contained::is_parser_panic(&error) {
+                            failures.push(rel.clone());
+                        }
+                        unreadable.push((rel, error.to_string()));
+                        None
+                    });
+                    Owned { row, key, bytes }
                 })
                 .collect();
         }
@@ -1273,12 +1251,8 @@ impl Graph {
     /// file time, all under the held cache lock.
     fn put_row(&self, pages: &mut Pages, (entry, doc, disk): Row) {
         let path = entry.path.clone();
-        {
-            let mut retired = self.derived.index_retired.write().unwrap();
-            if retired.get(&path) == Some(&disk.rev) {
-                return;
-            }
-            retired.remove(&path);
+        if !self.admits_row(&path, &disk.rev) {
+            return;
         }
         self.derived.touched.lock().unwrap().insert(path.clone());
         let rel = entry.rel_path_str().to_owned();
@@ -1486,6 +1460,9 @@ mod owners;
 
 #[path = "derived_cold.rs"]
 mod cold;
+
+#[path = "derived_contained.rs"]
+mod contained;
 
 #[cfg(test)]
 #[path = "derived_tests.rs"]
