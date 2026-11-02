@@ -1119,9 +1119,15 @@ fn change_summary_bulk_rebuild_and_config_fallbacks() {
     let rebuilt = serde_json::to_value(sub.try_recv().unwrap().unwrap()).unwrap();
     assert_eq!(rebuilt["summary"]["full"], true);
     fs::create_dir_all(dir.path().join("logseq")).unwrap();
+    // A setting no index reads (outside `checkpoint::config_key`) rebuilds
+    // nothing, so it invalidates no answer; a build-relevant one is `full`.
+    fs::write(dir.path().join("logseq/config.edn"), "{:start-of-week 0}\n").unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
+    let settings = serde_json::to_value(sub.try_recv().unwrap().unwrap()).unwrap();
+    assert_eq!(settings["summary"]["full"], false);
     fs::write(
         dir.path().join("logseq/config.edn"),
-        "{:preferred-format :markdown}\n",
+        "{:start-of-week 0 :property-pages/excludelist #{:unused}}\n",
     )
     .unwrap();
     store.refresh(crate::Depth::Stamps).unwrap();

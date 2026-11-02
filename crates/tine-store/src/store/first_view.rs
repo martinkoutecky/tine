@@ -223,9 +223,9 @@ impl ChangeFeed {
     }
 }
 
-pub(crate) fn journal_ids_from_entries(
+pub(crate) fn journal_ids_from_entries<'a>(
     graph: &Graph,
-    entries: &[PageEntry],
+    entries: impl IntoIterator<Item = &'a PageEntry>,
 ) -> HashMap<Day, PageId> {
     let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
     for entry in entries {

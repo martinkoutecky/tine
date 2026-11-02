@@ -42,14 +42,19 @@ unknown. A real change reloads the live configuration and journal format,
 and publishes an External change naming `logseq/config.edn`. The desktop
 shell turns that into `graph-config-changed` with the fresh `GraphMeta`.
 
-Own and outside config writes retain parsed pages and their observations
-when `checkpoint::config_key` is unchanged. That key covers the fields read
-by the page build and indexes (including file eligibility, names, journal
-formats and search folding), enforced by its scanning test. A changed key
-still discards parsed pages and rebuilds them before publication. Favorites,
-journal templates and display settings therefore cause no full-page reads or
-document parses; publication can still enumerate names (reading page
-preambles) and rebuild in-memory indexes.
+Own and outside config writes retain parsed pages, their observations, the
+name index and every in-memory index when `checkpoint::config_key` is
+unchanged. That key covers the fields read by the page build and indexes
+(including file eligibility, names, journal formats and search folding),
+enforced by its scanning test. A changed key still discards parsed pages,
+rescans the graph files and rebuilds names and indexes before publication.
+Favorites, journal templates and display settings therefore cause no file
+listing, page read or parse, and their publication names no reader key: the
+frontend's settings readers read `graphMeta` reactively, and
+`graph-config-changed` refreshes no data (a build-key change publishes a
+`full` summary instead). The comparison is with the configuration the
+previous publication used, so a reload in between that moved the key is
+never missed.
 Config publications and frontend updates do not depend on cache invalidation.
 
 ## 3. Writing it
@@ -115,6 +120,8 @@ risk.
 - crates/tine-store/tests/config_live_reload.rs::settings_only_writes_keep_parsed_pages
 - crates/tine-store/tests/config_live_reload.rs::outside_settings_keep_parsed_pages_but_build_config_reparses
 - crates/tine-store/tests/config_live_reload.rs::own_build_config_change_still_reparses_pages
+- crates/tine-store/tests/og_perf_publish.rs::creates_and_a_favourite_toggle_list_and_open_no_other_page
+- crates/tine-store/tests/og_perf_publish.rs::an_outside_favourite_edit_rescans_nothing_but_a_hidden_edit_does
 - crates/tine-store/tests/config_live_reload.rs::an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed
 - crates/tine-store/tests/config_live_reload.rs::a_removed_config_keeps_its_settings_until_it_returns
 - crates/tine-store/tests/config_live_reload.rs::an_undownloaded_icloud_config_opens_the_graph_read_only

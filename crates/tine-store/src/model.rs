@@ -2685,8 +2685,17 @@ fn prune_result_cache<T>(
     }
 }
 
+/// Effective-name claimants keyed `(is journal, page key)`, each bucket in
+/// claimant order: the published snapshot's index and the claimant memo
+/// share one persistent map.
+pub(crate) type ClaimantMap = SharedMap<(bool, String), Vec<PageEntry>>;
+
+pub(crate) fn claimant_key((kind, key): &(PageKind, String)) -> (bool, String) {
+    (*kind == PageKind::Journal, key.clone())
+}
+
 struct FindEntryIndex {
-    entries: std::collections::HashMap<(PageKind, String), Vec<PageEntry>>,
+    entries: Arc<ClaimantMap>,
     pages_loaded: bool,
     journals_loaded: bool,
 }
@@ -2694,7 +2703,7 @@ struct FindEntryIndex {
 impl FindEntryIndex {
     fn new() -> Self {
         Self {
-            entries: std::collections::HashMap::new(),
+            entries: Arc::default(),
             pages_loaded: false,
             journals_loaded: false,
         }
@@ -4232,9 +4241,11 @@ impl Graph {
 
     /// [`Self::entry_for_path`] whose page preamble comes from `text`, the
     /// file's bytes already in hand, instead of a fresh open (GH #623).
+    /// `Some("")` is how callers name a path from its file name alone, so
+    /// that entry never joins a claimant memo.
     pub(crate) fn entry_for_path_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
         let entry = self.page_entry_in(path, text)?;
-        self.observe_name_entry(&entry);
+        self.observe_name_entry(&entry, text != Some(""));
         Some(entry)
     }
 

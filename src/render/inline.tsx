@@ -108,12 +108,21 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
     if (root) return <NamespaceMacro root={root} />;
   }
   const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
-  const userMacros = graphMeta()?.macros;
-  if (um && userMacros && Object.prototype.hasOwnProperty.call(userMacros, um[1])) {
-    const args = userArgs ?? (um[2].trim() ? um[2].split(",").map((a) => a.trim()) : []);
-    return <UserMacroView name={um[1]} template={userMacros[um[1]]} args={args} blockId={blockId} />;
-  }
-  return <span class="macro">{`{{${raw}}}`}</span>;
+  const unknown = <span class="macro">{`{{${raw}}}`}</span>;
+  if (!um) return unknown;
+  const name = um[1];
+  const args = userArgs ?? (um[2].trim() ? um[2].split(",").map((a) => a.trim()) : []);
+  // Tracked: a `:macros` edit in config.edn re-renders the blocks on screen
+  // (a config change refreshes graphMeta, not the page data).
+  const template = createMemo(() => {
+    const macros = graphMeta()?.macros;
+    return macros && Object.prototype.hasOwnProperty.call(macros, name) ? macros[name] : undefined;
+  });
+  return (
+    <Show when={template() !== undefined ? { text: template()! } : undefined} keyed fallback={unknown}>
+      {(macro) => <UserMacroView name={name} template={macro.text} args={args} blockId={blockId} />}
+    </Show>
+  );
 }
 
 // OG @ 6e7afa8eb: `show-link?` accepts Org local assets (`^[./]*assets`) or a

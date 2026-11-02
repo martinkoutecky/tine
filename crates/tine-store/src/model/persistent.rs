@@ -462,6 +462,10 @@ impl EntryList {
     pub(crate) fn get_path(&self, path: &std::path::Path) -> Option<&PageEntry> {
         self.paths.get(path).and_then(|slot| self.rows.get(slot))
     }
+    /// The journal listed for `day`: one per day, the claimant order's first.
+    pub(crate) fn get_day(&self, day: i64) -> Option<&PageEntry> {
+        self.days.get(&day).and_then(|slot| self.rows.get(slot))
+    }
     pub(crate) fn iter(&self) -> impl Iterator<Item = &PageEntry> {
         self.rows.values()
     }

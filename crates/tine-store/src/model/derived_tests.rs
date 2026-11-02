@@ -551,6 +551,34 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
     store.close();
 }
 
+/// Review N1 of og-perf-publish: a journal the publication's raw file list
+/// does not name (here an owner's bytes, no file yet, taken in from the
+/// retired rows) joins the day index with the page list, so the day's id is
+/// that journal, not a proposed path.
+#[test]
+fn a_journal_only_the_capture_names_joins_the_day_index() {
+    let (_temp, store) = graph(&[("pages/a.md", b"- a\n")]);
+    let key = "journals/Jun 1st, 2031.md";
+    hold(&store, key);
+    publish(&store, key, Some("- the day\n"));
+    {
+        let _writer = store.writer.lock().unwrap();
+        store
+            .changes
+            .publish(crate::Origin::External, Vec::new(), false, Vec::new());
+    }
+    let view = store.whole_graph().unwrap();
+    let listed = (view.list.iter()).find(|entry| entry.date_key == Some(20310601));
+    assert_eq!(
+        listed.and_then(|entry| entry.rel_path.clone()),
+        Some(PageId::from(key)),
+        "the page list names the day"
+    );
+    assert_eq!(store.journal_id(crate::Day(20310601)).as_str(), key);
+    drop(view);
+    store.close();
+}
+
 /// REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE: a host's release (and an
 /// open's hold) moves the held map and no generation. A listing walk whose
 /// certify read the map on both sides of a release dropped the page (its
@@ -627,6 +655,49 @@ fn a_name_walk_during_a_release_keeps_the_released_page() {
         if !matches!(tx.plan(), Err(Why::Refused(Refusal::Twin { .. }))) {
             wrong.push(format!("{reader}: a twin of the page was planned"));
         }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    store.close();
+}
+
+/// REG-NAME-MEMO-SKIPS-HELD-FILE-READ: a path read of a file a host holds is
+/// no name observation ((G)): its owner's bytes name it, not the file. A page
+/// held and not yet published by its owner (withheld), and a journal whose
+/// owner published its deletion while the file is still on disk, must not
+/// join the claimant memo from the file; a walk at the same generation lists
+/// neither.
+#[test]
+fn a_path_read_of_a_held_file_does_not_join_the_claimant_memo() {
+    let (_temp, store) = graph(&[
+        ("pages/a.md", b"title:: Disk\n- a\n"),
+        ("journals/2031_06_01.md", b"- the day\n"),
+    ]);
+    let (page, journal) = ("pages/a.md", "journals/2031_06_01.md");
+    hold(&store, page);
+    hold(&store, journal);
+    publish(&store, journal, None);
+    let mut wrong = Vec::new();
+    for key in [page, journal] {
+        let path = store.graph.root.join(key);
+        // Both kinds walked completely at this generation.
+        store.graph.forget_name_memos();
+        store.graph.list_pages_shared();
+        store.graph.find_claimants("Disk", PageKind::Page);
+        store
+            .graph
+            .find_claimants("Jun 1st, 2031", PageKind::Journal);
+        // An open's read of the file, named from its bytes.
+        let entry = store.graph.entry_for_path(&path).unwrap();
+        let paths = |entries: Vec<crate::model::PageEntry>| -> Vec<_> {
+            entries.into_iter().map(|entry| entry.path).collect()
+        };
+        let memo = paths(store.graph.find_claimants(&entry.name, entry.kind));
+        store.graph.forget_name_memos();
+        let walked = paths(store.graph.find_claimants(&entry.name, entry.kind));
+        if memo != walked {
+            wrong.push(format!("{key}: memo {memo:?}, walk {walked:?}"));
+        }
+        assert!(walked.is_empty(), "{key}: the walk lists the held file");
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
     store.close();

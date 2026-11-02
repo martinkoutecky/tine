@@ -677,6 +677,23 @@ describe("user macro helpers", () => {
     expect(h).not.toContain("[:div.direct-block");
   });
 
+  it("re-renders a shown macro when :macros changes, with no data refresh", () => {
+    // A config.edn edit refreshes graphMeta only (og-perf-publish review F2).
+    setGraphMeta({ macros: { greet: '[:span.greet-one "Hello"]' } } as never);
+    const div = document.createElement("div");
+    const dispose = render(() => <AstBody raw="before {{greet}} {{later}}" />, div);
+    expect(div.innerHTML).toContain('class="greet-one"');
+    expect(div.innerHTML).toContain("{{later}}");
+    setGraphMeta({ macros: { greet: '[:span.greet-two "Hi"]', later: '[:span.later "Now"]' } } as never);
+    expect(div.innerHTML).toContain('class="greet-two"');
+    expect(div.innerHTML).not.toContain('class="greet-one"');
+    expect(div.innerHTML).toContain('class="later"');
+    setGraphMeta({ macros: {} } as never);
+    expect(div.innerHTML).toContain("{{greet}}");
+    expect(div.innerHTML).not.toContain('class="greet-two"');
+    dispose();
+  });
+
   it("keeps raw-HTML macro output sanitized", () => {
     setGraphMeta({
       macros: { raw: '<span class="raw-rich" onclick="alert(1)">Raw macro</span><script>bad()</script>' },

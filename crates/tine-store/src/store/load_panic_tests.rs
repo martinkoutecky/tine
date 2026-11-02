@@ -438,8 +438,9 @@ fn a_checkpoint_launch_contains_a_bad_page_created_while_closed() {
     }
 }
 
-/// The launch's own `Failed` path: a config file edited during the launch diff
-/// rebuilds the indexes in its publication, and that build names no page.
+/// The launch's own `Failed` path: a build-relevant config edit during the
+/// launch diff rebuilds the indexes in its publication, and that build names
+/// no page.
 #[test]
 fn a_checkpoint_launch_whose_diff_panics_with_no_page_to_blame_fails_and_recovers() {
     let root = graph_with_bad_page("checkpoint-failed", "- fine for now\n", 2);
@@ -468,7 +469,7 @@ fn a_checkpoint_launch_whose_diff_panics_with_no_page_to_blame_fails_and_recover
     fs::create_dir_all(root.join("logseq")).unwrap();
     fs::write(
         root.join("logseq/config.edn"),
-        "{:ref/linked-references-collapsed-threshold 7}\n",
+        "{:property-pages/excludelist #{:unused}}\n",
     )
     .unwrap();
     let canonical = fs::canonicalize(&root).unwrap();
@@ -670,7 +671,11 @@ fn a_raced_delivery_on_a_contained_page_stays_about_that_page() {
             let canonical = fs::canonicalize(&root).unwrap();
             if failed {
                 fs::create_dir_all(root.join("logseq")).unwrap();
-                fs::write(root.join("logseq/config.edn"), "{:x 1}\n").unwrap();
+                fs::write(
+                    root.join("logseq/config.edn"),
+                    "{:property-pages/excludelist #{:unused}}\n",
+                )
+                .unwrap();
                 (crate::model::TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap()).push(canonical.clone());
                 let refreshed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     store.refresh(Depth::Bytes)
@@ -1066,7 +1071,8 @@ fn a_held_page_that_panics_an_index_stage_costs_that_page_only() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// No page to blame: a config edit rebuilds the indexes and that build panics.
+/// No page to blame: a build-relevant config edit rebuilds the indexes and
+/// that build panics.
 /// The graph fails and keeps the writer, and a retry recovers it.
 #[test]
 fn a_panic_no_page_explains_fails_the_graph_and_keeps_the_writer() {
@@ -1075,7 +1081,7 @@ fn a_panic_no_page_explains_fails_the_graph_and_keeps_the_writer() {
     fs::create_dir_all(root.join("logseq")).unwrap();
     fs::write(
         root.join("logseq/config.edn"),
-        "{:ref/linked-references-collapsed-threshold 7}\n",
+        "{:property-pages/excludelist #{:unused}}\n",
     )
     .unwrap();
     crate::model::TEST_FULL_INDEX_PANIC_ROOTS
