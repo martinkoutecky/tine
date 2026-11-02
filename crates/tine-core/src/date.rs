@@ -345,7 +345,8 @@ impl Format {
     }
 
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let cs: Vec<char> = s.chars().collect();
+        let mut cs = Vec::with_capacity(s.len());
+        cs.extend(s.chars());
         self.parse_chars(&cs)
     }
 
@@ -616,7 +617,11 @@ impl JournalFormat {
     /// configured file and title formats, then `MMM do, yyyy`, `yyyy-MM-dd`,
     /// and `yyyy_MM_dd` in that order. `None` means no format matched.
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let cs: Vec<char> = s.trim().chars().collect();
+        let s = s.trim();
+        // One pre-sized buffer for every format tried (I-25,
+        // tests/og_p10_journal_date_cost.rs).
+        let mut cs = Vec::with_capacity(s.len());
+        cs.extend(s.chars());
         self.parse_list.iter().find_map(|f| f.parse_chars(&cs))
     }
 
@@ -634,9 +639,6 @@ impl JournalFormat {
         out
     }
 
-    /// The kind of a link target no file, alias or reference claims: a
-    /// journal iff the name is a date in this format. The one rule; the
-    /// store's `link_target` and the frontend (through wasm) both call it.
     /// A cheap necessary condition for `self.parse(name) == Some(day)`: every
     /// accepted spelling reads the day of month and the year as contiguous
     /// ASCII digit runs (`Format::parse`: `d`/`dd`/`do` and `yy`/`yyyy`), so
@@ -654,6 +656,9 @@ impl JournalFormat {
         move |name| name.contains(dom.as_str()) && name.contains(year.as_str())
     }
 
+    /// The kind of a link target no file, alias or reference claims: a
+    /// journal iff the name is a date in this format. The one rule; the
+    /// store's `link_target` and the frontend (through wasm) both call it.
     pub fn absent_link_is_journal(&self, name: &str) -> bool {
         self.parse(name).is_some()
     }
