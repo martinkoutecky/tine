@@ -31,32 +31,35 @@ impl Graph {
         let mut named = None;
         match bytes {
             Some(bytes) => {
-                if validate_parse_bytes_for_path(bytes, path).is_err() {
-                    self.invalidate_cache();
-                    return None;
-                }
-                let Ok(content) = std::str::from_utf8(bytes) else {
-                    self.invalidate_cache();
-                    return None;
-                };
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if let Some(saved) = saved {
-                        #[cfg(test)]
-                        if !self.cache_built() {
-                            crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                let content = validate_parse_bytes_for_path(bytes, path).and_then(|()| {
+                    std::str::from_utf8(bytes)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+                });
+                match content {
+                    Err(error) => self.record_unindexable_bytes(path, error),
+                    Ok(content) => {
+                        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if let Some(saved) = saved {
+                                #[cfg(test)]
+                                if !self.cache_built() {
+                                    crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                                }
+                                if let Some(entry) =
+                                    self.cacheable_page_entry_in(path, Some(content))
+                                {
+                                    named = Some(entry.clone());
+                                    self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
+                                }
+                            } else {
+                                self.reconcile_page_content(path, content, false);
+                            }
+                        }))
+                        .is_err()
+                        {
+                            named = None;
+                            self.record_index_failure(path);
                         }
-                        if let Some(entry) = self.cacheable_page_entry_in(path, Some(content)) {
-                            named = Some(entry.clone());
-                            self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
-                        }
-                    } else {
-                        self.reconcile_page_content(path, content, false);
                     }
-                }))
-                .is_err()
-                {
-                    named = None;
-                    self.record_index_failure(path);
                 }
             }
             None => {
