@@ -1,345 +1,183 @@
 //! Conceptual model conformance, step 1 (private queue card "Conceptual model:
-//! conformance harness + divergence map"). Each fixture graph goes through this
-//! store and through the Lean model's executable bridge (`cm-bridge`, path in
-//! `CM_BRIDGE`); the test reports every place where they answer differently.
+//! conformance harness + divergence map"). Each fixture graph, and a few
+//! hundred seeded random graphs, go through this store and through the Lean
+//! model's executable bridge (`cm-bridge`, path in `CM_BRIDGE`); the test
+//! lists every place where they answer differently and compares that list
+//! with `tests/fixtures/cm-conformance/expected-differences.json`.
 //!
 //! The model's given functions come from Tine: names, titles, aliases, the
-//! outline and each block's occurrences are extracted here with Tine's parser
-//! and handed to the bridge, so a difference is in the meaning layer (pages,
-//! owners, navigation, ...), never in parsing. The identity fold handed to the
-//! model is Tine's: `page_key`, with a date-shaped spelling folded to its day.
+//! outline and each block's occurrences are extracted with Tine's parser and
+//! handed to the bridge, so a difference is in the meaning layer (pages,
+//! owners, navigation, Linked References, counts, alias groups, the link
+//! table, queries), never in parsing. The identity fold handed to the model is
+//! Tine's: `page_key`, with a date-shaped spelling folded to its day.
+//!
+//! Rename (rule 6) needs the page host and `tine-graph-features`; it lives in
+//! `crates/tine-graph-features/tests/cm_conformance_rename.rs`, sharing
+//! `cm_conformance_shared.rs` with this file.
 //!
 //! Step 1 records differences; it changes no production code. Without
-//! `CM_BRIDGE` the test skips. `CM_REPORT` names a file for the full report.
+//! `CM_BRIDGE` the test skips. `CM_REPORT` names a file for the full report;
+//! `CM_REFRESH=1` rewrites the expected differences; `CM_RANDOM=<n>` changes
+//! the number of random graphs (default 300).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::time::Instant;
 
 use serde_json::{json, Value};
-use tine_core::config::FileNameFormat;
-use tine_core::date::JournalFormat;
-use tine_core::doc::{self, DocBlock};
-use tine_core::model::{decode_page_name, page_title_from_preamble, Format, PageId};
+use tine_core::doc;
 use tine_core::refs::page_key;
 
 use crate::query::document_alias_spellings;
-use crate::{InventoryScope, Resolved, Store, WholeGraph};
+use crate::Store;
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/cm-conformance");
-
-/// Tine's identity fold, as the model's `key`.
-fn fold(journal: &JournalFormat, s: &str) -> String {
-    match journal.parse(s.trim()) {
-        Some(day) => page_key(&journal.title(day)),
-        None => page_key(s),
-    }
+/// The store names the shared code uses (`super::store_crate` there).
+mod store_crate {
+    pub(crate) use crate::{Cancel, InventoryScope, IrAnswer, IrRequest, Resolved, WholeGraph};
 }
 
-fn occ_kind(rule: &str) -> &'static str {
-    match rule {
-        "explicit_link" | "explicit_nested_link" => "link",
-        "explicit_tag" => "tag",
-        "explicit_embed" => "pageEmbed",
-        "explicit_property_key" => "propertyKey",
-        "explicit_task_marker" => "taskMarker",
-        "explicit_priority" => "priority",
-        "implicit_linkable_property" => "linkableValue",
-        other => panic!("reference rule {other} has no model occurrence kind"),
-    }
-}
+#[path = "cm_conformance_shared.rs"]
+mod shared;
 
-fn block_json(raw: &str, level: usize, block: &DocBlock) -> Value {
-    let occ: Vec<Value> = block
-        .projection()
-        .reference_source()
-        .explicit
-        .iter()
-        .map(|r| json!([occ_kind(r.rule), r.name]))
-        .collect();
-    json!({"text": raw, "level": level, "occ": occ})
-}
+use shared::{Ctx, Diff, GraphSpec, Section};
 
-fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>) {
-    for block in blocks {
-        out.push(block_json(block.raw(), level, block));
-        walk(&block.children, level + 1, out);
-    }
-}
+const RANDOM_DEFAULT: usize = 300;
+const WORKERS: usize = 4;
 
-/// The model's view of one file: Tine's extraction as the given functions.
-fn file_json(view: &WholeGraph, rel: &str, text: &str) -> Value {
-    let journal_dir = rel.starts_with("journals/");
-    assert!(rel.ends_with(".md"), "step 1 fixtures are Markdown: {rel}");
-    let file_stem = Path::new(rel).file_stem().unwrap().to_str().unwrap();
-    let stem = if journal_dir {
-        // A journal's name is its day title (Tine ignores title:: there).
-        let entries = view.inventory(InventoryScope::File(&PageId::from(rel)));
-        entries
-            .0
-            .first()
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| file_stem.to_owned())
-    } else {
-        decode_page_name(file_stem, FileNameFormat::Legacy)
+/// The Linked References link table (Q9's third owner, crate private) as
+/// pairs of model keys.
+fn link_pairs(
+    view: &crate::WholeGraph,
+    input: &Value,
+    diffs: &mut Vec<Diff>,
+) -> BTreeSet<(String, String)> {
+    let snapshot = view.test_read_snapshot();
+    let Some(table) = snapshot.link_graph(&|| false) else {
+        diffs.push(Diff::new("harness: link table not built", "link table"));
+        return BTreeSet::new();
     };
-    let parsed = doc::parse(text);
-    let mut blocks = Vec::new();
-    if let Some(pre) = &parsed.pre_block {
-        let header = tine_core::page_properties::property_projection_with_config(
-            pre,
-            false,
-            &Default::default(),
-        );
-        blocks.push(block_json(pre, 1, &header));
+    // The table keys nodes by `page_key` of the page name; the model by the
+    // date-folding key. Map through every spelling in play.
+    let mut model_key: BTreeMap<String, String> = BTreeMap::new();
+    for (s, k) in input["keys"].as_object().unwrap() {
+        model_key
+            .entry(page_key(s))
+            .or_insert_with(|| k.as_str().unwrap().to_owned());
     }
-    walk(&parsed.roots, 1, &mut blocks);
-    json!({
-        "path": rel,
-        "dir": if journal_dir { "journals" } else { "pages" },
-        "format": "md",
-        "text": text,
-        "stem": stem,
-        "title": page_title_from_preamble(text, Format::Md),
-        "aliases": document_alias_spellings(&parsed),
-        "preBlock": parsed.pre_block.is_some(),
-        "blocks": blocks,
-    })
-}
-
-/// Every spelling the model may key: names, aliases, occurrences and their
-/// namespace prefixes, probes and rename arguments.
-fn spellings(input: &Value, extra: &[String]) -> BTreeSet<String> {
-    let mut out: BTreeSet<String> = extra.iter().cloned().collect();
-    for file in input["files"].as_array().unwrap() {
-        for key in ["stem", "title"] {
-            if let Some(s) = file[key].as_str() {
-                out.insert(s.to_owned());
-            }
-        }
-        for a in file["aliases"].as_array().unwrap() {
-            out.insert(a.as_str().unwrap().to_owned());
-        }
-        for b in file["blocks"].as_array().unwrap() {
-            for o in b["occ"].as_array().unwrap() {
-                out.insert(o[1].as_str().unwrap().to_owned());
+    let mut node_key: BTreeMap<u32, String> = BTreeMap::new();
+    for (pk, mk) in &model_key {
+        if let Some(n) = table.node(pk) {
+            if (n as usize) < table.physical() {
+                node_key.entry(n).or_insert_with(|| mk.clone());
             }
         }
     }
-    let mut closed = BTreeSet::new();
-    for s in out {
-        let parts: Vec<&str> = s.split('/').collect();
-        for i in 1..parts.len() {
-            closed.insert(parts[..i].join("/"));
-        }
-        closed.insert(s);
+    for (i, v) in table.virtuals().iter().enumerate() {
+        let pk = page_key(&v.name);
+        let mk = model_key.get(&pk).cloned().unwrap_or(pk);
+        node_key.insert((table.physical() + i) as u32, mk);
     }
-    closed
-}
-
-/// Tine's page for a resolution, as the model's (kind, key).
-fn tine_page(
-    view: &WholeGraph,
-    journal: &JournalFormat,
-    r: &Resolved,
-    name: &str,
-    journal_kind: bool,
-) -> (String, String) {
-    let entry_of = |id: &PageId| {
-        let inv = view.inventory(InventoryScope::File(id));
-        let e = inv.0.first().expect("a claimant has an inventory entry");
-        (
-            if e.is_journal { "journal" } else { "page" }.to_owned(),
-            fold(journal, &e.name),
-        )
-    };
-    match r {
-        Resolved::Existing { id, .. } => entry_of(id),
-        Resolved::Alias { owners } => entry_of(&owners[0]),
-        Resolved::Absent { .. } => (
-            if journal_kind { "journal" } else { "page" }.to_owned(),
-            fold(journal, name),
-        ),
-    }
-}
-
-/// What a link `[[name]]` opens: the frontend's link kind (`linkPageKind`:
-/// a journal file for the day, else an ordinary file, else the day) over
-/// `WholeGraph::resolve`.
-fn navigate(view: &WholeGraph, journal: &JournalFormat, name: &str) -> (String, String) {
-    if journal.parse(name.trim()).is_some() {
-        let as_journal = view.resolve(name, true);
-        if matches!(as_journal, Resolved::Existing { .. }) {
-            return tine_page(view, journal, &as_journal, name, true);
-        }
-        let as_page = view.resolve(name, false);
-        if matches!(as_page, Resolved::Existing { .. }) {
-            return tine_page(view, journal, &as_page, name, false);
-        }
-        return tine_page(view, journal, &as_journal, name, true);
-    }
-    tine_page(view, journal, &view.resolve(name, false), name, false)
-}
-
-fn page_pair(v: &Value) -> (String, String) {
-    (
-        v[0].as_str().unwrap().to_owned(),
-        v[1].as_str().unwrap().to_owned(),
-    )
-}
-
-struct Outcome {
-    name: String,
-    diffs: Vec<String>,
-}
-
-fn run_fixture(bridge: &Path, path: &Path) -> Outcome {
-    let fixture: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-    let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir(dir.path().join("pages")).unwrap();
-    fs::create_dir(dir.path().join("journals")).unwrap();
-    let files: BTreeMap<String, String> = fixture["files"]
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
-        .collect();
-    for (rel, text) in &files {
-        let p = dir.path().join(rel);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, text).unwrap();
-    }
-    let store = Store::open(dir.path(), Default::default()).unwrap().0;
-    let view = store.whole_graph().expect("fixture graph loads");
-    let journal = JournalFormat::default();
-
-    let probes: Vec<String> = fixture["navigate"]
-        .as_array()
-        .map(|a| a.iter().map(|v| v.as_str().unwrap().to_owned()).collect())
-        .unwrap_or_default();
-    let mut input = json!({
-        "files": files.iter().map(|(rel, text)| file_json(&view, rel, text)).collect::<Vec<_>>(),
-        "navigate": probes,
-    });
-    let keyed = spellings(&input, &probes);
-    input["keys"] = json!(keyed
-        .iter()
-        .map(|s| (s.clone(), fold(&journal, s)))
-        .collect::<BTreeMap<_, _>>());
-    input["dateKeys"] = json!(keyed
-        .iter()
-        .filter(|s| journal.parse(s.trim()).is_some())
-        .map(|s| fold(&journal, s))
-        .collect::<BTreeSet<_>>());
-
-    let out = Command::new(bridge)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(input.to_string().as_bytes())?;
-            child.wait_with_output()
-        })
-        .expect("cm-bridge runs");
-    assert!(
-        out.status.success(),
-        "cm-bridge failed on {name}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let model: Value = serde_json::from_slice(&out.stdout).unwrap();
-
-    let mut diffs = Vec::new();
-    for field in ["missingKeys", "nonLocal"] {
-        for s in model[field].as_array().unwrap() {
-            diffs.push(format!("harness: {field} {s}"));
-        }
-    }
-
-    // Pages: real pages and reference-only pages; alias-only names are not pages.
-    let model_pages: BTreeSet<_> = model["pages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(page_pair)
-        .collect();
-    let inventory = view.inventory(InventoryScope::All);
-    let mut tine_pages = BTreeSet::new();
-    let mut tine_conflicts = BTreeSet::new();
-    let mut tine_owner = BTreeMap::new();
-    for entry in &inventory.0 {
-        let kind = if entry.is_journal { "journal" } else { "page" }.to_owned();
-        let key = fold(&journal, &entry.name);
-        match &entry.target {
-            Resolved::Existing { id, others } => {
-                if !others.is_empty() {
-                    tine_conflicts.insert(key.clone());
-                }
-                tine_owner.insert((kind.clone(), key.clone()), id.to_string());
-                tine_pages.insert((kind, key));
-            }
-            Resolved::Alias { .. } => {}
-            Resolved::Absent { .. } => {
-                tine_pages.insert((kind, key));
-            }
-        }
-    }
-    for p in model_pages.difference(&tine_pages) {
-        diffs.push(format!("pages: model has {p:?}, Tine does not"));
-    }
-    for p in tine_pages.difference(&model_pages) {
-        diffs.push(format!("pages: Tine has {p:?}, model does not"));
-    }
-
-    // Conflicts: keys claimed by several files. Owners are compared only off them (O1).
-    let model_conflicts: BTreeSet<String> = model["conflicts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap().to_owned())
-        .collect();
-    if model_conflicts != tine_conflicts {
-        diffs.push(format!(
-            "conflicts: model {model_conflicts:?}, Tine {tine_conflicts:?}"
-        ));
-    }
-    for o in model["owners"].as_array().unwrap() {
-        let page = page_pair(&o["page"]);
-        let Some(model_path) = o["path"].as_str() else {
+    let total = table.physical() + table.virtuals().len();
+    let mut pairs = BTreeSet::new();
+    for n in 0..total as u32 {
+        let Some(s) = node_key.get(&n) else {
+            diffs.push(Diff::new(
+                "harness: link table node without a known key",
+                format!("link table node {n}"),
+            ));
             continue;
         };
-        if model_conflicts.contains(&page.1) {
-            continue;
-        }
-        match tine_owner.get(&page) {
-            Some(path) if path == model_path => {}
-            other => diffs.push(format!(
-                "owner of {page:?}: model {model_path}, Tine {other:?}"
-            )),
+        for t in table.links(n) {
+            match node_key.get(t) {
+                Some(t) => {
+                    pairs.insert((s.clone(), t.clone()));
+                }
+                None => diffs.push(Diff::new(
+                    "harness: link table node without a known key",
+                    format!("link table node {t}"),
+                )),
+            }
         }
     }
+    pairs
+}
 
-    // Navigation: what [[s]] opens, for every name in play. A conflicted key's
-    // target is the model's totalisation of an invalid state (kindPref, O1).
-    for (s, page) in model["navigate"].as_object().unwrap() {
-        let model_page = page_pair(page);
-        if model_conflicts.contains(&model_page.1) {
-            continue;
-        }
-        let tine = navigate(&view, &journal, s);
-        if tine != model_page {
-            diffs.push(format!(
-                "navigate [[{s}]]: model {model_page:?}, Tine {tine:?}"
+type Droppers = std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>;
+
+/// One graph through the store and the model; its differences.
+fn run_graph(bridge: &Path, spec: &GraphSpec, droppers: &Droppers) -> Vec<Diff> {
+    let dir = tempfile::tempdir().unwrap();
+    spec.write(dir.path());
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().expect("graph loads");
+    let mut diffs = Vec::new();
+    // The rename harness uses the test-side copy of the alias extractor:
+    // hold it to the original here, on every file of every graph.
+    for (rel, text) in &spec.files {
+        let parsed = doc::parse(text);
+        let original = document_alias_spellings(&parsed);
+        let copy = shared::alias_spellings(&parsed);
+        if original != copy {
+            diffs.push(Diff::new(
+                "harness: alias extractor copy differs",
+                format!("{rel}: store {original:?}, copy {copy:?}"),
             ));
         }
     }
-    Outcome { name, diffs }
+    let input = shared::model_input(&view, spec, document_alias_spellings, &[]);
+    let model = match shared::run_bridge(bridge, &input) {
+        Ok(m) => m,
+        Err(e) => {
+            diffs.push(Diff::new("harness: bridge failed", e));
+            drop(view);
+            droppers
+                .lock()
+                .unwrap()
+                .push(std::thread::spawn(move || drop((store, dir))));
+            return diffs;
+        }
+    };
+    let ctx = Ctx::new(&view, &input, &model);
+    diffs.extend(shared::compare_meaning(&ctx, &spec.queries));
+    let pairs = link_pairs(&view, &input, &mut diffs);
+    diffs.extend(shared::compare_links(&ctx, &pairs));
+    if spec.name.starts_with("random-") && shared::has_duplicate_claim(&ctx) {
+        diffs = shared::coarse(diffs);
+    }
+    // Closing a store joins its watcher (about 150 ms of waiting); do it off
+    // the critical path, joined at the end of the test.
+    drop(ctx);
+    drop(view);
+    droppers
+        .lock()
+        .unwrap()
+        .push(std::thread::spawn(move || drop((store, dir))));
+    diffs.sort();
+    diffs.dedup();
+    diffs
+}
+
+fn fixture_specs() -> Vec<GraphSpec> {
+    let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR"));
+    let mut paths: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.extension().is_some_and(|x| x == "json")
+                && p.file_name()
+                    .is_some_and(|n| n != "expected-differences.json")
+        })
+        .collect();
+    paths.sort();
+    paths
+        .iter()
+        .map(|p| {
+            let v: Value = serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap();
+            GraphSpec::from_fixture(&p.file_stem().unwrap().to_string_lossy(), &v)
+        })
+        .collect()
 }
 
 #[test]
@@ -348,23 +186,77 @@ fn conceptual_model_conformance() {
         eprintln!("CM_BRIDGE unset: conceptual model conformance skipped");
         return;
     };
-    let mut paths: Vec<_> = fs::read_dir(FIXTURES)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .collect();
-    paths.sort();
-    let outcomes: Vec<Outcome> = paths
-        .iter()
-        .map(|p| run_fixture(Path::new(&bridge), p))
-        .collect();
-    let report: BTreeMap<_, _> = outcomes
-        .iter()
-        .map(|o| (o.name.clone(), o.diffs.clone()))
-        .collect();
-    let text = serde_json::to_string_pretty(&report).unwrap();
-    if let Ok(dest) = std::env::var("CM_REPORT") {
-        fs::write(dest, &text).unwrap();
+    let bridge = Path::new(&bridge);
+    let started = Instant::now();
+    let mut section = Section::default();
+    let mut report = BTreeMap::new();
+    let droppers = Droppers::default();
+    for spec in fixture_specs() {
+        let diffs = run_graph(bridge, &spec, &droppers);
+        report.insert(
+            spec.name.clone(),
+            json!(diffs
+                .iter()
+                .map(|d| json!({"class": d.class, "detail": d.detail}))
+                .collect::<Vec<_>>()),
+        );
+        section.fixtures.insert(
+            spec.name.clone(),
+            diffs.into_iter().map(|d| d.detail).collect(),
+        );
     }
-    eprintln!("{text}");
+    let fixtures_done = started.elapsed();
+    let n = std::env::var("CM_RANDOM")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(RANDOM_DEFAULT);
+    // Four workers (the machine is shared); results are folded in seed order,
+    // so the classes and their smallest examples do not depend on scheduling.
+    let specs: Vec<GraphSpec> = (0..n as u64).map(shared::random_graph).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: std::sync::Mutex<BTreeMap<usize, Vec<Diff>>> = Default::default();
+    std::thread::scope(|scope| {
+        for _ in 0..WORKERS {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(spec) = specs.get(i) else { break };
+                let diffs = run_graph(bridge, spec, &droppers);
+                results.lock().unwrap().insert(i, diffs);
+            });
+        }
+    });
+    let results = results.into_inner().unwrap();
+    for (i, diffs) in results {
+        let spec = &specs[i];
+        // A graph the harness cannot read is a harness gap, never a class.
+        if diffs.iter().any(Diff::is_harness) {
+            section.harness_skipped.push(spec.name.clone());
+            report.insert(
+                spec.name.clone(),
+                json!({"graph": spec.to_json(), "harness": diffs.iter().filter(|d| d.is_harness()).map(|d| &d.detail).collect::<Vec<_>>()}),
+            );
+            section.random_graphs += 1;
+            continue;
+        }
+        section.add_random(spec, &diffs);
+    }
+    for h in droppers.into_inner().unwrap() {
+        h.join().unwrap();
+    }
+    eprintln!(
+        "cm conformance: fixtures {:?}, {n} random graphs {:?}, {} random classes",
+        fixtures_done,
+        started.elapsed() - fixtures_done,
+        section.random.len()
+    );
+    if let Ok(dest) = std::env::var("CM_REPORT") {
+        let full = json!({"fixtures": report, "store": section.to_json()});
+        fs::write(dest, serde_json::to_string_pretty(&full).unwrap()).unwrap();
+    }
+    shared::check_expected(
+        env!("CARGO_MANIFEST_DIR"),
+        "store",
+        &section,
+        "CM_REFRESH=1 CM_BRIDGE=<cm-bridge> cargo test -p tine-store --lib cm_conformance",
+    );
 }
