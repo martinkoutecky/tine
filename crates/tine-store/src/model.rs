@@ -473,6 +473,10 @@ pub(crate) struct Graph {
     /// Between a name discovery's authority decision and its record.
     #[cfg(test)]
     pub(crate) discovery_record_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// In a listing's certify, between its disk rows' authority and its
+    /// owners' rows.
+    #[cfg(test)]
+    pub(crate) certify_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -2915,6 +2919,8 @@ impl Graph {
             cache_publish_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             discovery_record_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            certify_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
