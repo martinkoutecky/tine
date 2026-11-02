@@ -25,6 +25,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A page with many linked references no longer keeps moving while you do nothing. With more than 80 source pages loaded, references kept reloading one another, so their text changed form and the scrollbar crept (#849).
+- Coming back to a tab or going back in history now returns to the row you were reading in Linked References, even when the references load slowly, instead of the top, the end of the scrollbar or a nearby reference (#848).
+- A block's reference count and margin comment count badges are now the same size and on the same line (#843).
 - A file a sync tool delivered with its original modification time, while Tine was saving or rereading that page, no longer leaves search, backlinks and queries on the old text until the page next changes. This could happen while the graph loaded, or after a failed load once its retry succeeded (REG-FAILED-LOAD-RACED-OBSERVATION-KEPT, REG-LOADING-ECHO-KEEPS-RACED).
 - After a graph fails to load, opening a page or observing a changed file no longer publishes a partial graph before the retry succeeds (REG-FAILED-LOAD-RETIRED-ROWS-PUBLISH, REG-FAILED-LOAD-WATCH-DIFF-PUBLISHES).
 - While a graph loads, a page's change is announced once and with its true kind: an own save is no longer reported as an outside edit, and rereading it no longer reports a change (REG-LOADING-HOST-PUBLICATION-LABEL).

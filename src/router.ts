@@ -23,7 +23,8 @@ import { installRouterBridge } from "./routerBridge";
 import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { applyQueryRoutePatch, type QueryRoutePatch } from "./queryRoutePatch";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
-import { mainWindow, requestFrame } from "./windowRealm";
+import { mainWindow } from "./windowRealm";
+import { captureScrollAnchor, pursueScroll, type ScrollAnchor } from "./routeScrollAnchor";
 import {
   moveTabOutOfGroup as treeMoveOutOfGroup, moveTabSubtree, removeTabPromoting,
   rootSlot, setTabCollapsed as treeSetCollapsed, settleTabTree,
@@ -394,6 +395,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   // starts at the top, and only a return to a previously-seen entry restores its
   // scroll.
   const scrollByRoute = new WeakMap<Route, number>();
+  const anchorByRoute = new WeakMap<Route, ScrollAnchor>();
   let scrollerElement: HTMLElement | null = null;
 
   let mobileHistoryDepth = 0;
@@ -441,7 +443,12 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  Called right before any navigation that leaves the current entry. */
   function rememberScroll() {
     const el = mainScroller();
-    if (el) scrollByRoute.set(tabRoute(activeTab()), el.scrollTop);
+    if (!el) return;
+    const route = tabRoute(activeTab());
+    scrollByRoute.set(route, el.scrollTop);
+    const anchor = captureScrollAnchor(el);
+    if (anchor) anchorByRoute.set(route, anchor);
+    else anchorByRoute.delete(route);
   }
 
   function applyRouterBack() {
@@ -502,13 +509,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   /** Restore the saved scroll for a route once its content has rendered. A route
-   *  with no saved offset (a new page) goes to the top. Retries for ~1s while the
-   *  page is still growing toward a deep offset (blocks / linked refs render and
-   *  measure asynchronously, so the target height isn't there on the first frame).
-   *  If the saved offset is DEEPER than the loaded content - a journal-feed position
-   *  in days that haven't been lazy-loaded yet - it pulls in more feed days until the
-   *  target is reachable (or the feed is exhausted), so re-opening lands where you
-   *  left off instead of at the bottom of the default window. */
+   *  with no saved offset (a new page) goes to the top; a deep one is pursued while
+   *  the page grows (`pursueScroll`). */
   function restoreScrollFor(r: Route) {
     if (typeof requestAnimationFrame === "undefined") return; // no-DOM (unit tests)
     const binding = captureBinding();
@@ -517,34 +519,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const current = () => stillBound(binding) && activeId() === tabId
       && intentRevision === intent && sameRoute(route(), r);
     const target = scrollByRoute.get(r) ?? 0;
-    let tries = 0;
-    let extending = false;
-    // Defer to a frame so the new page's content is laid out first - otherwise a
-    // synchronous reset races the content swap (a new page wouldn't actually land
-    // at the top). Then for a deep offset keep nudging while the page grows.
-    const tick = () => {
-      if (!current()) return;
-      const el = mainScroller();
-      if (!el) return;
-      const max = Math.max(0, el.scrollHeight - el.clientHeight);
-      el.scrollTop = Math.min(target, max);
-      if (target <= 0 || el.scrollTop >= target - 1) return; // top, or reached
-      // Target still out of reach. If the content is genuinely too SHORT (the feed's
-      // deeper days aren't loaded), grow it and keep going; otherwise it's just async
-      // layout catching up, so wait a frame. A deep offset can need several day-loads
-      // (each async), so allow more tries while the feed is still growing.
-      if (max < target - 1 && !extending) {
-        extending = true;
-        void extendFeedForScroll().then((grew) => {
-          extending = false;
-          if (!current()) return;
-          if (grew ? tries++ < 400 : tries++ < 60) requestFrame(mainScroller(), tick);
-        });
-        return;
-      }
-      if (tries++ < 60) requestFrame(mainScroller(), tick);
-    };
-    requestFrame(mainScroller(), tick);
+    const anchor = anchorByRoute.get(r);
+    pursueScroll({ target, anchor, scroller: mainScroller, current, extend: extendFeedForScroll });
   }
 
   // Navigate the active tab to a new route, pushing it onto the history stack
