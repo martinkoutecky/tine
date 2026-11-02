@@ -87,10 +87,7 @@ impl Graph {
 }
 
 /// The same claimant ordering for cold direct reads, journal open and snapshots.
-pub(super) fn page_claimants(
-    graph: &Graph,
-    entries: &[PageEntry],
-) -> HashMap<(PageKind, String), Vec<PageEntry>> {
+pub(super) fn page_claimants(graph: &Graph, entries: &[PageEntry]) -> ClaimantMap {
     let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
     for entry in entries {
         claimants
@@ -103,7 +100,9 @@ pub(super) fn page_claimants(
     for entries in claimants.values_mut() {
         entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
     }
-    claimants
+    (claimants.into_iter())
+        .map(|(key, entries)| (claimant_key(&key), entries))
+        .collect()
 }
 
 #[cfg(test)]

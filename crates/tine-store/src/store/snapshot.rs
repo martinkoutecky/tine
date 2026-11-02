@@ -220,7 +220,7 @@ impl Snapshot {
             .map(|old| Arc::clone(&old.name_by_path))
             .unwrap_or_default();
         let (list, claimants) = if config_changed || rebuild || old.is_none() {
-            let (list, claimants) = graph.snapshot_name_index();
+            let (list, claimants) = graph.snapshot_name_roots();
             name_by_path = Arc::new(
                 claimants
                     .values()
@@ -228,15 +228,7 @@ impl Snapshot {
                     .map(|entry| (entry.path.clone(), (entry.kind, entry.name.clone())))
                     .collect(),
             );
-            (
-                Arc::new(EntryList::from(list.as_slice())),
-                Arc::new(
-                    claimants
-                        .into_iter()
-                        .map(|((kind, name), rows)| ((kind == PageKind::Journal, name), rows))
-                        .collect(),
-                ),
-            )
+            (list, claimants)
         } else if !changed_names.is_empty() {
             let previous = old.expect("name index from old generation");
             let mut list = Arc::clone(&previous.list);
@@ -446,18 +438,27 @@ impl ChangeFeed {
         published: &HashMap<FileId, PageEntry>,
     ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
-        let journals_dir = self.graph.current_config().journals_dir.clone();
-        if old.is_none()
-            || config_changed
-            || rebuild
-            || files.iter().any(|(id, kind, _)| {
-                id.as_str().starts_with(&format!("{journals_dir}/"))
-                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
-            })
-        {
-            *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
-        }
+        // Only the settings the page build and indexes read
+        // (`checkpoint::config_key`) rebuild names and indexes; the others
+        // install with the config state and publish no index change (the
+        // config contract). Compared with the previous publication's config,
+        // so a reload since then that moved the key is never missed.
+        let config_changed = config_changed
+            && old.as_ref().is_none_or(|old| {
+                super::checkpoint::config_key(&old.config.config)
+                    != super::checkpoint::config_key(&self.config.read().unwrap().config)
+            });
+        // Every journal file the capture may name, whatever its raw kind: the
+        // capture adds a file no publication named yet (a retired or touched
+        // row, a Modified file with no previous name), so the day index
+        // patches what the page list and claimants patch.
+        let journals_dir = format!("{}/", self.graph.current_config().journals_dir);
+        let journal_files = |pending: &PendingFiles| -> Vec<PathBuf> {
+            (pending.files().iter())
+                .filter(|(id, _, _)| id.as_str().starts_with(&journals_dir))
+                .map(|(id, _, _)| self.graph.root.join(id.as_str()))
+                .collect()
+        };
         let rev = GraphRev(self.rev().0 + 1);
         let targets = self.registered_targets();
         let capture = |pending: &PendingFiles, config_changed: bool| {
@@ -517,6 +518,14 @@ impl ChangeFeed {
             without
         });
         let Some(mut snapshot) = captured else {
+            let journal_set_changed = files.iter().any(|(id, kind, _)| {
+                id.as_str().starts_with(&journals_dir)
+                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            });
+            if old.is_none() || config_changed || rebuild || journal_set_changed {
+                *self.journal_ids.lock().unwrap() =
+                    journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+            }
             // Under the writer, so a panic that reached it would poison every
             // later save: the graph fails instead, `refresh()` retries, and
             // the retry patches these files.
@@ -526,6 +535,22 @@ impl ChangeFeed {
             self.load.fail_publication(&self.graph);
             return self.rev();
         };
+        // The day index and the name memos follow the names this capture
+        // patched: no listing walk (GH #623 R2).
+        match old.as_deref() {
+            Some(old) if !config_changed && !rebuild => {
+                self.patch_journal_ids(old, &snapshot, &journal_files(&pending))
+            }
+            _ => {
+                *self.journal_ids.lock().unwrap() =
+                    journal_ids_from_entries(&self.graph, snapshot.list.iter())
+            }
+        }
+        self.graph.adopt_name_index(
+            old.as_ref().map(|old| old.cache_generation),
+            snapshot.cache_generation,
+            (&snapshot.list, &snapshot.claimants),
+        );
         // A fold leaves the launch checkpoint's derived state true; its file
         // stamp is stale, so the next launch diff rereads that one file
         // (ADR 0070) instead of the whole checkpoint being rewritten for it.
@@ -560,6 +585,36 @@ impl ChangeFeed {
             self.ready.notify_all();
         }
         rev
+    }
+
+    /// Patch the day index for the journal files a capture took: each named
+    /// one's day takes the journal `snapshot` lists for it (one per day, the
+    /// claimant order's first), or none. A file whose name did not change
+    /// rewrites its day to the same id.
+    fn patch_journal_ids(&self, old: &Snapshot, snapshot: &Snapshot, paths: &[PathBuf]) {
+        if paths.is_empty() {
+            return;
+        }
+        let mut ids = self.journal_ids.lock().unwrap();
+        for path in paths {
+            let Some(named) = (snapshot.name_by_path.get(path))
+                .or_else(|| old.name_by_path.get(path))
+                .filter(|(kind, _)| *kind == PageKind::Journal)
+            else {
+                continue;
+            };
+            let Some(day) = self.graph.tombstone(path, named).date_key else {
+                continue;
+            };
+            match snapshot
+                .list
+                .get_day(day)
+                .and_then(|entry| entry.rel_path.clone())
+            {
+                Some(id) => ids.insert(Day(day), id),
+                None => ids.remove(&Day(day)),
+            };
+        }
     }
 }
 

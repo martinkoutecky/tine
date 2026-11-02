@@ -550,3 +550,31 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
     );
     store.close();
 }
+
+/// Review N1 of og-perf-publish: a journal the publication's raw file list
+/// does not name (here an owner's bytes, no file yet, taken in from the
+/// retired rows) joins the day index with the page list, so the day's id is
+/// that journal, not a proposed path.
+#[test]
+fn a_journal_only_the_capture_names_joins_the_day_index() {
+    let (_temp, store) = graph(&[("pages/a.md", b"- a\n")]);
+    let key = "journals/Jun 1st, 2031.md";
+    hold(&store, key);
+    publish(&store, key, Some("- the day\n"));
+    {
+        let _writer = store.writer.lock().unwrap();
+        store
+            .changes
+            .publish(crate::Origin::External, Vec::new(), false, Vec::new());
+    }
+    let view = store.whole_graph().unwrap();
+    let listed = (view.list.iter()).find(|entry| entry.date_key == Some(20310601));
+    assert_eq!(
+        listed.and_then(|entry| entry.rel_path.clone()),
+        Some(PageId::from(key)),
+        "the page list names the day"
+    );
+    assert_eq!(store.journal_id(crate::Day(20310601)).as_str(), key);
+    drop(view);
+    store.close();
+}

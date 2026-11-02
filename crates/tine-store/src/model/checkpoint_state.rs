@@ -274,7 +274,7 @@ impl Graph {
             &state.observed_mtimes,
             state.failures,
             (state.disk_revs, state.vcs_anchored),
-            (state.cache_generation, list.materialize()),
+            (state.cache_generation, Arc::clone(&list)),
         )?;
         // The alias list names its owners by relative path; the owner map is
         // the same rows keyed the other way and is not read back. A row naming

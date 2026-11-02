@@ -6,7 +6,7 @@ import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
-import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
+import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
@@ -49,14 +49,14 @@ const GRAPH_KEY = "tine.graphPath";
  * observers use the new format and in-flight results dated under the old one
  * are dropped (master: same ordering rule as graph bind). Cost: O(favorites),
  * plus one arrangement page read only when membership changes. No write or
- * observable error here. */
+ * observable error here, and no data refresh: readers of settings read
+ * `graphMeta` reactively, and the store's publication of the same change
+ * carries the change summary (full when a build-relevant setting moved). */
 export function applyGraphConfigChange(change: GraphConfigChange): void {
   const previous = graphMeta();
   if (!previous || previous.root !== change.meta.root
       || captureBinding().backendGeneration !== change.binding_generation) return;
-  const meta = change.meta;
-  applyConfigDerivedState(meta, previous);
-  bumpDataRev();
+  applyConfigDerivedState(change.meta, previous);
 }
 
 /** `logseq/custom.css` changed on disk (an editor, Syncthing, another window):

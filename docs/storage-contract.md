@@ -593,6 +593,25 @@ never from rereading every page's preamble. Proof:
 `crates/tine-store/src/store/page_open_tests.rs`,
 `crates/tine-graph-features/tests/br3_page_open_before_ready.rs`.
 
+A page create, delete or rename, the first save of a day's journal included,
+patches the published name index with the names it changed, and the live name
+lookups (claimants for twin checks, the page list, the journal day index) adopt
+that index: the next lookup or listing opens no other page file and lists no
+directory (cost-model audit 2026-11-02 row 3). The day index patches every
+journal file the capture took, whatever kind the publication gave it, so it
+names what the page list names. A path read of a live file its name's
+claimants lack, before the watcher publishes it, adds it only when no other
+name can claim that file: a journal (its file name is its name) or a page
+path the current page list does not list. Any other such read drops the
+claimant memo, and the next lookup lists again. The first lookup of an absent
+name of each kind after launch still lists once, because the launch index does
+not vouch for files that arrived after it. Proof:
+`crates/tine-store/tests/og_perf_publish.rs`,
+`crates/tine-store/src/model/derived_tests.rs`
+(`a_journal_only_the_capture_names_joins_the_day_index`),
+`crates/tine-store/src/store/panic_isolation_tests.rs`
+(`an_own_create_a_capture_missed_is_named_after_refresh`).
+
 While a page host holds a page (STEP3 §5, amendment A-V4), its publication
 consumer is the page's only index writer
 (R13). Invariant (G) (A-H2): every installed row about a held page (its
@@ -1555,9 +1574,13 @@ displayed breadcrumbs therefore also subscribes to its contributing source
 page; this can over-invalidate an unrelated edit within that source, but keeps
 ancestor edits live without a graph walk or a second Markdown parser.
 
-Initial publication, rebuild/config change, alias change, create/rename/delete,
+Initial publication, rebuild, a change of a build-relevant config setting
+(`checkpoint::config_key`), alias change, create/rename/delete,
 unavailable old/new pages, unreadable-inventory changes, more than 32 edited
-pages, or a day change since the previous publication set `full`. An own
+pages, or a day change since the previous publication set `full`. Any other
+config change (favorites, templates, display settings) rebuilds no name or
+index and publishes no reader key: settings readers follow `graphMeta`
+(`docs/contracts/config-live-reload.md`). An own
 publication has no external page-reload entries: its answers arrive in an
 empty `graph-changed-bulk` envelope. External publications attach the answers
 once, on their first `graph-changed` entry or their bulk envelope. The frontend
@@ -1595,7 +1618,8 @@ Full runtime graph-text scans with unchanged configuration enumerate metadata ou
 They validate the cache generation and publication revision after acquiring the
 writer, retrying an observation crossed by an own edit or another publication.
 Only changed or racy paths are sorted for reconciliation; unchanged files retain
-their known revisions. Config changes enumerate and reparse under the writer.
+their known revisions. A change of a build-relevant config setting enumerates
+and reparses under the writer; any other config change enumerates nothing.
 Failed-load recovery retains its synchronous full parse followed by writer-ordered
 reconciliation. Applying detected changes remains writer-ordered, including
 racy rehashes, unreadable subtree retention and ordinary external publication.
@@ -1911,7 +1935,7 @@ rewrite has no separate stage-2 read: the final pre-rename guard compares the
 same file with the same baseline and refuses a mismatch as the same conflict
 (external-editor or sync race), after writing only a temporary file.
 Publication names the page from the bytes it read, and the name index reuses
-that entry unless the transaction changed `config.edn`. The own-write stamp
+that entry unless the transaction changed a build-relevant `config.edn` setting. The own-write stamp
 takes its metadata from the publication read's handle; the watcher re-hashes
 the file only when a later `symlink_metadata` differs from it, and a racy
 stamp is reread on the next poll as for every other file.

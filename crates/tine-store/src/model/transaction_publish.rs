@@ -73,14 +73,16 @@ impl Graph {
             .flatten();
         // As for publish_owned, retag only when an installed row proves
         // that this publication kept the old name, including its spelling.
+        // A moved generation already retires the memos; they stay for the
+        // publication to adopt its patched index over (`adopt_name_index`).
         let renamed = before_name.is_none() || after_name != before_name;
-        if file_set_changed || renamed {
-            self.forget_name_memos();
-        } else {
-            let after_gen = self.cache_generation();
+        let after_gen = self.cache_generation();
+        if !(file_set_changed || renamed) {
             if after_gen == before_gen || after_gen == before_gen + 1 {
                 self.retag_name_memos(before_gen, after_gen);
             }
+        } else if after_gen == before_gen {
+            self.forget_name_memos();
         }
         self.recent_writes.lock().unwrap().remove(path);
         named

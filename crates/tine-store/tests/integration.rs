@@ -83,6 +83,9 @@ mod cold_search_cost;
 #[path = "config_live_reload.rs"]
 mod config_live_reload;
 
+#[path = "og_perf_publish.rs"]
+mod og_perf_publish;
+
 #[path = "conformance_f3.rs"]
 mod conformance_f3;
 
