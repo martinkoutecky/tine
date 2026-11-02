@@ -727,7 +727,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
   const [noticeFocused, setNoticeFocused] = createSignal(false);
   const [sheetOpen, setSheetOpen] = createSignal(false);
-  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
+  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text"; close?: boolean } | null>(null);
   const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
   const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
   let queryEl: HTMLDivElement | undefined;
@@ -752,6 +752,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       else setAnswerShell(true);
     });
   });
+  /** GH #850: the gear closes the builder's inline editor when it is already open. */
+  const closeEdit = () => setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab: editRequest()?.tab ?? "filter", close: true });
   const closeDisplay = () => {
     setEditRequest(null);
     queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
@@ -1033,7 +1035,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
                 <QueryMacroActions current={runnable} hostBlockId={props.blockId} groups={groups} pages={() => pageRows() ?? []}
                   editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
-                  edit={requestEdit} both={bothKinds}
+                  edit={requestEdit} editOpen={() => sheetOpen() && showBuilder()} closeEdit={closeEdit} both={bothKinds}
                   fold={blockFace() === "list" ? (collapsed) => {
                     void collapseQueryResults(groups(), collapsed).then(epochs => {
                       if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
