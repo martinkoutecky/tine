@@ -1,9 +1,9 @@
 //! Read-only rename planning, shared by the single-page and namespace paths.
 use super::*;
 
-/// What one rename attempt writes, planned from one refreshed view and the
-/// config captured with it; commit and the host admit it only while both are
-/// current (A-W1, B2).
+/// What one rename attempt writes, planned from one published view (the
+/// attempt's walk, `refreshed_view`, decides reuse) and the config captured with it;
+/// commit and the host admit it only while both are current (A-W1, B2).
 pub(super) struct RenamePlan {
     pub(super) graph: tine_store::WholeGraph,
     pub(super) config: tine_store::ConfigState,
@@ -225,7 +225,9 @@ pub(super) fn plan_rename(
     merge_into: Option<&str>,
     #[cfg(test)] after_inventory: &dyn Fn(),
 ) -> io::Result<RenamePlan> {
-    let graph = refreshed_view(store)?;
+    // The published view: the caller walks once per attempt
+    // (`refreshed_view`, in `multi_rename`'s reuse check).
+    let graph = view(store)?;
     // The planning context: every format decision below uses this config,
     // and commit checks it is still the view's (B2).
     let config = store.config();
