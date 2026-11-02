@@ -535,7 +535,11 @@ current revision and no `Change`. The launch pass takes the save in. Every
 cache-generation move made while no cache exists is recorded with the paths it
 moved (`model/derived_cold.rs`), and the pass re-derives exactly those paths,
 and the pages a hold withheld from it, from their files before it installs
-(`model/launch_patch.rs`). A move it cannot attribute to paths (a discarded
+(`model/launch_patch.rs`). A move, hold or release that lands while the install
+itself runs (a page host releasing an own create's hold) is patched in the same
+way: the install's race checks hand the build back unchanged and the pass
+re-derives again, within its bounded rounds, instead of building the graph a
+second time. A move it cannot attribute to paths (a discarded
 cache, a build-key config change, a duplicate journal day) declines the install,
 and the Ready publication builds on demand as before. The Ready publication comes
 first and its view holds each saved page once, with its last saved bytes; the
