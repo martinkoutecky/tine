@@ -401,7 +401,8 @@ impl Snapshot {
             old.filter(|_| !config_changed && !rebuild),
             &changed_paths,
         );
-        let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let (inventory, delta, counts) =
+            snapshot.answer_changes(old, &changed_paths, name_set_changed);
         let summary = snapshot.change_summary(
             old,
             &changed_paths,
@@ -411,7 +412,7 @@ impl Snapshot {
             &targets.unlinked,
             &targets.queries,
         );
-        snapshot.answers = (inventory, counts, summary);
+        snapshot.answers = (inventory, counts, summary, delta);
         snapshot
     }
 }

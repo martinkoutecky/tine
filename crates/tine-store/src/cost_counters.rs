@@ -26,6 +26,8 @@ static QUERY_REGISTRY_PAGES_READ: AtomicU64 = AtomicU64::new(0);
 static HASH_READS: AtomicU64 = AtomicU64::new(0);
 static STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static ASSET_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
+static LISTING_STAMPS: AtomicU64 = AtomicU64::new(0);
+static ASSET_LISTING_STAMPS: AtomicU64 = AtomicU64::new(0);
 static STORE_READS: AtomicU64 = AtomicU64::new(0);
 static NAME_INVENTORY_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
@@ -151,6 +153,12 @@ pub struct Counts {
     /// Non-graph-text (asset) files stamped by path (`watch::stamp_metadata`),
     /// which opens the file on Windows; the asset full walk uses the listing.
     pub asset_stamps_by_path: u64,
+    /// Graph-text files a full stat walk stamped from its directory listing
+    /// off the watcher thread (a `refresh`): a graph-sized term an
+    /// operation pays itself. The watcher's own cycles are not counted.
+    pub listing_stamps: u64,
+    /// Asset files a full asset walk stamped off the watcher thread.
+    pub asset_listing_stamps: u64,
     /// Whole-file reads made through `Store::read` (the feature crates' bounded
     /// file read: conflict markers, sync copies), which the load pass's own
     /// `full_reads` does not include.
@@ -234,6 +242,8 @@ pub fn reset() {
         &HASH_READS,
         &STAMPS_BY_PATH,
         &ASSET_STAMPS_BY_PATH,
+        &LISTING_STAMPS,
+        &ASSET_LISTING_STAMPS,
         &STORE_READS,
         &NAME_INVENTORY_ENTRIES,
         &TRANSACTION_REWRITES,
@@ -283,6 +293,8 @@ pub fn snapshot() -> Counts {
         hash_reads: HASH_READS.load(Ordering::Relaxed),
         stamps_by_path: STAMPS_BY_PATH.load(Ordering::Relaxed),
         asset_stamps_by_path: ASSET_STAMPS_BY_PATH.load(Ordering::Relaxed),
+        listing_stamps: LISTING_STAMPS.load(Ordering::Relaxed),
+        asset_listing_stamps: ASSET_LISTING_STAMPS.load(Ordering::Relaxed),
         store_reads: STORE_READS.load(Ordering::Relaxed),
         name_inventory_entries: NAME_INVENTORY_ENTRIES.load(Ordering::Relaxed),
         transaction_rewrites: TRANSACTION_REWRITES.load(Ordering::Relaxed),
@@ -333,6 +345,16 @@ pub(crate) fn store_read() {
 }
 pub(crate) fn asset_stamp_by_path() {
     ASSET_STAMPS_BY_PATH.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn listing_stamp() {
+    if !on_watcher() {
+        LISTING_STAMPS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+pub(crate) fn asset_listing_stamp() {
+    if !on_watcher() {
+        ASSET_LISTING_STAMPS.fetch_add(1, Ordering::Relaxed);
+    }
 }
 pub(crate) fn stamp_by_path() {
     if on_watcher() {

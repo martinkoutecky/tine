@@ -616,3 +616,115 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
          aliases; exemplar model.rs alias_relation_after (Arc, not clone)"
     );
 }
+
+/// og-perf-names review item 4: the cost of the referenced-name table's first
+/// (lazy) build, which decides whether it belongs in the launch checkpoint.
+/// Not a gate. `TINE_NAMES_PROBE=<scratch copy of a generated graph> cargo
+/// test --release -p tine-store --test integration names_table_first_build_probe
+/// -- --ignored --nocapture`. The table is crate-private, so its build is read
+/// two ways through public reads on fresh stores: the first inventory read
+/// (build + listing) minus an inventory read after `[[` completion built it,
+/// and the first `[[` completion (build + rank) minus the second. Bytes are
+/// this thread's allocations; peak is its additional live heap.
+#[test]
+#[ignore = "og-perf-names measurement: TINE_NAMES_PROBE=<graph copy>"]
+fn names_table_first_build_probe() {
+    let Ok(dir) = std::env::var("TINE_NAMES_PROBE") else {
+        return;
+    };
+    let _integration_guard = crate::integration_lock();
+    let root = std::path::Path::new(&dir);
+    fn run<T>(f: impl FnOnce() -> T) -> (std::time::Duration, u64, i64) {
+        OWN.store(0, Ordering::Relaxed);
+        COUNTING.store(true, Ordering::Relaxed);
+        MEASURER.with(|m| m.set(true));
+        let start = std::time::Instant::now();
+        let (out, peak) = peak_heap_of(f);
+        let elapsed = start.elapsed();
+        MEASURER.with(|m| m.set(false));
+        COUNTING.store(false, Ordering::Relaxed);
+        drop(out);
+        (elapsed, OWN.load(Ordering::Relaxed), peak)
+    }
+    let complete = |view: &WholeGraph| view.complete_page_names("Area", 20, None, false, None);
+    let inventory = |view: &WholeGraph| view.inventory(tine_store::InventoryScope::All);
+    let checkpoint = root.with_extension("launch.bin");
+    let options = |warm: bool| tine_store::OpenOptions {
+        launch_checkpoint: warm.then(|| checkpoint.clone()),
+        ..Default::default()
+    };
+    let open = |warm: bool| {
+        let store = Store::open(root, options(warm)).unwrap().0;
+        store.whole_graph_reconciled().unwrap();
+        if warm {
+            assert_eq!(
+                store.diagnostics()["checkpoint"]["load"]["outcome"],
+                "loaded"
+            );
+        }
+        store
+    };
+    {
+        let _ = fs::remove_file(&checkpoint);
+        let store = open(false);
+        let store = {
+            store.close();
+            drop(store);
+            Store::open(root, options(true)).unwrap().0
+        };
+        // As in a session: the window's inventory read precedes the
+        // checkpoint, so the per-page name index it reads is checkpointed.
+        inventory(&store.whole_graph_reconciled().unwrap());
+        assert!(matches!(
+            store.write_checkpoint_now(),
+            Some(tine_store::CheckpointWrite::Written { .. })
+        ));
+        store.close();
+    }
+    for (label, warm) in [("cold launch", false), ("warm launch (checkpoint)", true)] {
+        let mut rows = Vec::new();
+        for round in 0..5 {
+            let a = open(warm);
+            let first_inventory = run(|| inventory(&a.whole_graph().unwrap()));
+            a.close();
+            drop(a);
+            let b = open(warm);
+            let view = b.whole_graph().unwrap();
+            let first_completion = run(|| complete(&view));
+            let second_completion = run(|| complete(&view));
+            let later_inventory = run(|| inventory(&view));
+            drop(view);
+            b.close();
+            println!(
+                "{label} round {round}: inventory first {:?} {} B peak {} B | inventory with \
+                 table {:?} {} B | completion first {:?} {} B peak {} B | completion second \
+                 {:?} {} B",
+                first_inventory.0,
+                first_inventory.1,
+                first_inventory.2,
+                later_inventory.0,
+                later_inventory.1,
+                first_completion.0,
+                first_completion.1,
+                first_completion.2,
+                second_completion.0,
+                second_completion.1,
+            );
+            rows.push((
+                first_inventory.0.saturating_sub(later_inventory.0),
+                first_inventory.1 as i64 - later_inventory.1 as i64,
+                first_completion.0.saturating_sub(second_completion.0),
+                first_completion.1 as i64 - second_completion.1 as i64,
+                first_inventory.2 - later_inventory.2.max(0),
+            ));
+        }
+        rows.sort_by_key(|row| row.0);
+        let mid = rows[rows.len() / 2];
+        println!(
+            "{label}: names table first build (median of 5): via inventory {:?} and {} B \
+             allocated; via completion {:?} and {} B allocated",
+            mid.0, mid.1, mid.2, mid.3
+        );
+    }
+    let _ = fs::remove_file(&checkpoint);
+}

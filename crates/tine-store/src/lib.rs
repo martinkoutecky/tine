@@ -162,6 +162,8 @@ pub use transaction::{
     TitleRebind, Transaction, TrashIf, TxOutcome, Why,
 };
 #[cfg(test)]
+mod block_pages_work_tests;
+#[cfg(test)]
 mod resolve_blocks_work_tests;
 
 #[cfg(test)]

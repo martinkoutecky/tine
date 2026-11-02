@@ -40,13 +40,15 @@ it("GH #398: copy precedes filter; unlinked filtering has independent text and f
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <><LinkedReferences name="Target" /><UnlinkedReferences name="Target" /></>, host);
   try {
-    await vi.waitFor(() => expect(host.querySelectorAll(".references-count")).toHaveLength(2));
+    await vi.waitFor(() => expect(host.querySelectorAll(".references-count")).toHaveLength(1));
     const linked = host.querySelector(".linked-references")!;
     const unlinked = host.querySelector(".unlinked-references")!;
     const actions = linked.querySelectorAll(".references-header button");
     expect(actions[0].getAttribute("aria-label")).toBe("Copy / export linked references");
     expect(actions[1].getAttribute("aria-label")).toBe("Filter linked references");
+    // Cost audit 6a: unlinked loads (and shows its count) only once expanded.
     unlinked.querySelector<HTMLElement>(".references-header")!.click();
+    await vi.waitFor(() => expect(host.querySelectorAll(".references-count")).toHaveLength(2));
     unlinked.querySelector<HTMLButtonElement>('[aria-label="Filter unlinked references"]')!.click();
     await vi.waitFor(() => expect(unlinked.querySelectorAll(".ref-filter-chip")).toHaveLength(2));
     unlinked.querySelector<HTMLButtonElement>(".ref-filter-chip")!.click();

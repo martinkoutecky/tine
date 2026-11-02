@@ -12,6 +12,7 @@ import type { BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { TaggedPages } from "./TaggedPages";
+import { setSectionOverride } from "../referenceSectionState";
 import { BlockReferences } from "./BlockReferences";
 import { TagTableToggle, TagPageTable } from "./Page";
 
@@ -67,8 +68,9 @@ it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s sk
     : reader === "tagged" ? <TaggedPages name="Target" />
     : reader === "table" ? <TagPageTable pageName="Target" />
     : <TagTableToggle page={{ name: "Target", kind: "page", roots: [] } as never} />, root);
-  await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick(); await tick();
+  // Cost audit 6a: an unlinked section reads nothing until it is expanded.
   if (reader === "unlinked") root.querySelector<HTMLElement>(".references-header")!.click();
+  await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick(); await tick();
   read.mockClear();
   publish({ pages: ["unrelated"], blocks: ["unrelated"], linksTo: ["unrelated"] }); await tick();
   expect(read).not.toHaveBeenCalled();
@@ -105,7 +107,7 @@ it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s sk
   }
 });
 
-it("unlinked registration precedes the first read, retargets, and releases even if disposed while pending", async () => {
+it("unlinked registration waits for expansion, precedes the first read, retargets, and releases even if disposed while pending", async () => {
   const host = backend();
   const original = host.registerUnlinkedReference;
   const pending: (() => void)[] = [];
@@ -114,11 +116,18 @@ it("unlinked registration precedes the first read, retargets, and releases even 
   host.registerUnlinkedReference = registration;
   const read = vi.spyOn(host, "getUnlinkedRefs").mockResolvedValue([group("answer")]);
   const [name, setName] = createSignal("Target");
+  // "Other" was left expanded earlier this session: retargeting to it registers at once.
+  setSectionOverride("unlinked", "Other", true);
   const root = document.createElement("div"); document.body.append(root);
   try {
     dispose = render(() => <UnlinkedReferences name={name()} />, root);
+    await tick();
+    // Cost audit 6a: a collapsed section registers no live matcher and reads nothing.
+    expect(registration.mock.calls.filter(call => call[1] !== null)).toHaveLength(0);
+    root.querySelector<HTMLElement>(".references-header")!.click();
     await tick(); expect(read).not.toHaveBeenCalled();
     const first = registration.mock.calls[0];
+    expect(first[1]).toBe("Target");
     setName("Other"); await tick();
     expect(registration.mock.calls.some(call => call[1] === "Other")).toBe(true);
     pending[0](); await tick();
@@ -144,8 +153,8 @@ it.each(["linked", "unlinked", "referrers", "table"])("%s keeps displayed ancest
   dispose = render(() => reader === "linked" ? <LinkedReferences name="Target" />
     : reader === "unlinked" ? <UnlinkedReferences name="Target" />
     : reader === "referrers" ? <BlockReferences id="target-id" /> : <TagPageTable pageName="Target" />, root);
-  await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick(); read.mockClear();
   if (reader === "unlinked") root.querySelector<HTMLElement>(".references-header")!.click();
+  await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick(); read.mockClear();
   publish({ pages: ["unrelated"] }); await tick(); expect(read).not.toHaveBeenCalled();
   text = "Ancestor changed";
   publish({ pages: ["source"], blocks: ["ancestor-not-in-the-shallow-answer"] });
@@ -162,8 +171,8 @@ it.each(["linked", "unlinked", "referrers", "table"])("%s adopts membership remo
   dispose = render(() => reader === "linked" ? <LinkedReferences name="Target" />
     : reader === "unlinked" ? <UnlinkedReferences name="Target" />
     : reader === "referrers" ? <BlockReferences id="target-id" /> : <TagPageTable pageName="Target" />, root);
-  await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick();
   if (reader === "unlinked") root.querySelector<HTMLElement>(".references-header")?.click();
+  await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick();
   await vi.waitFor(() => expect(root.textContent).toContain("Present answer"));
   groups = [group("Edited answer")]; publish({ blocks: ["shown"] });
   await vi.waitFor(() => expect(root.textContent).toContain("Edited answer"));

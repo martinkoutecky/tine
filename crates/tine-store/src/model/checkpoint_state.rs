@@ -302,6 +302,7 @@ impl Graph {
             alias_index: cell(state.alias_index),
             referenced_name_index: cell(derived.referenced_name_index),
             asset_refs: std::sync::OnceLock::new(),
+            referenced_name_table: std::sync::OnceLock::new(),
             real_page_names: state.real_page_names,
             alias_relation: cell(alias_relation),
             link_graph: std::sync::OnceLock::new(),

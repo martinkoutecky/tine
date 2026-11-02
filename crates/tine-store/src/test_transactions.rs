@@ -36,6 +36,8 @@ mod change_summary;
 pub(crate) mod conformance_f3;
 #[path = "../tests/f8_vcs_markers.rs"]
 mod f8_vcs_markers;
+#[path = "../tests/inventory_delta.rs"]
+mod inventory_delta;
 #[path = "../tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "../tests/linkable_page_property_refs.rs"]

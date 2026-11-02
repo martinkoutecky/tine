@@ -213,8 +213,11 @@ fn lazy_lines(
     for (rel, entry, doc) in pages.iter().step_by(stride) {
         if let Some(block) = doc.roots.first() {
             let original = format!("[[GJ5 Baseline]] [[孤独基线]] {}", block.raw());
-            let mut names =
-                snapshot.referenced_page_names_for_editor(&entry.name, &block.uuid, &original);
+            let mut names: Vec<String> = snapshot
+                .referenced_names_for_completion(Some((&entry.name, &block.uuid, &original)))
+                .into_iter()
+                .map(|name| name.into_owned())
+                .collect();
             names.sort();
             out.push_str(&format!("lazy editor {rel:?} {names:?}\n"));
         }

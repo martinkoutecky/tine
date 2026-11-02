@@ -16,7 +16,7 @@ use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 mod device_reads;
-mod discovery;
+pub(crate) mod discovery;
 mod templates;
 use discovery::{
     alias_group_wire, page_inventory_wire, page_modified_wire, resolve_name, AliasGroupWire,
@@ -743,15 +743,35 @@ pub(crate) async fn run_graph_search(
     .map_err(|error| error.to_string())?
 }
 
+/// What a property-completion facet request asks for: every key (with no
+/// values), or one key's values. Absent: every key with its values.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct AutocompleteFacetScope {
+    keys: Option<bool>,
+    key: Option<String>,
+}
+
 #[tauri::command]
 pub(crate) async fn query_facets(
     state: GraphContext<'_>,
     autocomplete: Option<bool>,
+    scope: Option<AutocompleteFacetScope>,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
-    let policy = if autocomplete.unwrap_or(false) {
-        FacetPolicy::Truncated
-    } else {
-        FacetPolicy::Budgeted
+    // Property completion asks for the keys once per trigger session and
+    // then one key's values (cost-model audit 2026-11-02, row 2b), never
+    // every key's values per keystroke.
+    let policy = match (autocomplete.unwrap_or(false), scope) {
+        (false, _) => FacetPolicy::Budgeted,
+        (true, Some(AutocompleteFacetScope { key: Some(key), .. })) => {
+            FacetPolicy::CompletionValues(key)
+        }
+        (
+            true,
+            Some(AutocompleteFacetScope {
+                keys: Some(true), ..
+            }),
+        ) => FacetPolicy::CompletionKeys,
+        (true, _) => FacetPolicy::Truncated,
     };
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {

@@ -384,12 +384,14 @@ pub(super) fn execute_pages(
             .flatten()
             .map(|alias| identity_fold(alias)),
     );
+    // The resident referenced-name table answers; only the editing block's
+    // page is re-read for its baseline (cost-model audit 2026-11-02, row 2a).
     for name in if include_names {
-        if let Some((owner, id, original)) = &plan.editor_reference_baseline {
-            graph.referenced_page_names_for_editor(owner, id, original)
-        } else {
-            graph.referenced_page_names()
-        }
+        graph.referenced_names_for_completion(
+            plan.editor_reference_baseline
+                .as_ref()
+                .map(|(owner, id, original)| (owner.as_str(), id.as_str(), original.as_str())),
+        )
     } else {
         Vec::new()
     } {
@@ -416,7 +418,7 @@ pub(super) fn execute_pages(
                     matched_alias,
                     tie_key: tine_core::refs::page_key(&name),
                     candidate: PageCandidate::Referenced(PageEntry {
-                        name,
+                        name: name.into_owned(),
                         kind: PageKind::Page,
                         date_key: None,
                         rel_path: None,

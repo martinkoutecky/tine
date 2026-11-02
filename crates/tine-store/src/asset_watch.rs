@@ -211,6 +211,8 @@ fn collect(root: &Path) -> (HashMap<PathBuf, Stamp>, bool) {
             if kind.is_dir() {
                 stack.push(path);
             } else if kind.is_file() {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::asset_listing_stamp();
                 // The listing's own metadata (no-follow; on Windows from
                 // FindNextFileW), so a walk opens no file: a per-file
                 // `symlink_metadata` here cost one open per asset, under the

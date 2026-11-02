@@ -505,6 +505,13 @@ concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).
+`InventoryScope::JournalFiles` (cost audit 2026-11-02 row 8) lists the journal
+days files claim in the captured view, one entry per day, from the view's
+existing day index (O(J log J), no file reads, no new index). The Journals
+feed's scroll steps page through it on a loaded graph; its first page still
+lists the journals directory, which reports unreadable entries and shows files
+no publication has named yet. A journal file written outside the watcher reaches
+later steps by the ordinary rescan (focus return, poll, `refresh`).
 R5 adds prepared referrer text to the existing rewrite protocol, with no new persisted record.
 
 Clone setup (D-20261031-GCL) shares GS1's existing Unicode candidate rule through
@@ -551,7 +558,11 @@ current revision and no `Change`. The launch pass takes the save in. Every
 cache-generation move made while no cache exists is recorded with the paths it
 moved (`model/derived_cold.rs`), and the pass re-derives exactly those paths,
 and the pages a hold withheld from it, from their files before it installs
-(`model/launch_patch.rs`). A move it cannot attribute to paths (a discarded
+(`model/launch_patch.rs`). A move, hold or release that lands while the install
+itself runs (a page host releasing an own create's hold) is patched in the same
+way: the install's race checks hand the build back unchanged and the pass
+re-derives again, within its bounded rounds, instead of building the graph a
+second time. A move it cannot attribute to paths (a discarded
 cache, a build-key config change, a duplicate journal day) declines the install,
 and the Ready publication builds on demand as before. The Ready publication comes
 first and its view holds each saved page once, with its last saved bytes; the
@@ -594,7 +605,34 @@ file and publishes the ones whose bytes differ as ordinary external changes
 (scenario: a sync client or restore tool rewrites a file and puts its stamp
 back; an export must not publish the stale document); `Depth::Rebuild` does
 that and then re-parses every file through the cold-launch build (Settings
-"Rescan graph").
+"Rescan graph"). `Depth::PageStamps` is `Depth::Stamps` over graph text and
+`config.edn` only, with no asset or `logseq/custom.css` walk: a planner of
+page writes reads neither.
+
+A page delete and a rename-file-to-page take exactly one `Depth::PageStamps`
+walk per operation, before their plan; a page rename takes one per attempt,
+inside its host operation's first plan call, after the flush: the attempt
+plans from the published view, reuses that plan only if the walk published
+nothing, and otherwise plans again (a refusal or an error is decided only
+after a walk, so such an attempt may walk twice; `pages::refreshed_view`).
+A replan inside the attempt after a `Changed` admission reads the published
+view without walking again: its window starts at the attempt's walk. The walk is the only proof that the plan sees an
+external edit or a sync delivery the watcher has not published yet (debounce,
+a Poll interval, a watch that installs but never fires). After the walk, an
+edit to a page the plan reads or writes is refused by the commit's byte check,
+a file appearing at a destination path by the no-replace rename and the
+host's destination recheck, and any change the watcher publishes before the
+host admits the operation by that admission (B2); each replans. Not seen: a
+page that becomes a referrer, twin or claimant after the walk (a new file, or
+an edit adding `[[Old]]` to a page the plan does not touch) and is not
+published by admission. The rename completes and that page keeps `[[Old]]`.
+That window runs from the walk through the rest of the plan call and the
+host's path-lock wait (at most `OPERATION_WAIT`) to admission, as it did
+before the walks were cut. Cost: O(P) stamps, no assets. Proof:
+`crates/tine-graph-features/tests/page_op_walks.rs`,
+`crates/tine-graph-features/src/pages_snapshot_tests.rs`
+`a_referrer_delivered_after_the_plan_replans_the_rename` and
+`delete_detects_an_external_twin_before_selecting_a_file`.
 
 A page open never waits for the whole graph (GH #623 BR3). `Store::page_named`
 is the one page-by-name door: while the graph is loading (initial parse
@@ -763,7 +801,8 @@ Single-page selection refuses unsaved input only where the rewrite changes
 it, and includes held referrers absent from the index. Admission checks that
 selection's held buffers, versions, saved status, spellings and membership.
 An unchanged flush permits plan reuse only with identical held input and
-unchanged refreshed graph revision/config; otherwise selection runs again.
+unchanged graph revision/config after the attempt's walk (above); otherwise
+selection runs again.
 Read-only host planning retains its writer and path locks, with the same
 `OPERATION_WAIT` bound on acquiring them. A timeout refuses before drafting.
 
@@ -1524,6 +1563,27 @@ including affected ancestors for subtree readers. `linksTo` conservatively
 includes old and new explicit reference targets, namespace ancestors, aliases
 and journal-day spellings. `props` maps source-page and alias keys to changed
 page-property keys. These are invalidation hints, not result patches.
+
+`inventoryChanged` is true exactly when the `All` page inventory answer moved:
+a page file claimed or released a name, an alias changed, or a name entered,
+left or changed its spelling in the graph-wide referenced-name set (another
+page's existing reference, or a page file of that name, makes a link edit
+silent). A session that has not yet answered an inventory or completion read
+has no name table, so there any change of a saved page's own alias or
+reference set signals, as before. When no file claim, unreadable file or configuration changed and the
+previous generation had already answered an inventory or completion read,
+the envelope also carries `inventoryDelta: {keys, entries}`: drop the alias
+and reference-only entries of `keys`, add `entries` (same shape as
+`page_inventory` entries), and the result equals a fresh `page_inventory`
+read at `rev`. This is the one result patch in the envelope. The frontend
+applies it only in order (`patchPageIndex`: an answer held, no read in flight
+or queued) and otherwise refetches. Without `inventoryDelta` it refetches as
+before. The graph-wide referenced-name table that answers this, the
+inventory's reference-only names and `[[` completion lives in memory only
+(`model/referenced_names.rs`): built on first read from the per-page index,
+inherited by later generations through per-page patches, never persisted or
+checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
+`crates/tine-store/tests/inventory_delta.rs`, `src/pageIndex.test.ts`).
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

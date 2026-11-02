@@ -16,6 +16,15 @@ use std::sync::atomic::Ordering;
 /// every round): each round reads only the moved paths.
 const PATCH_ROUNDS: usize = 8;
 
+/// Why [`Graph::install_built`] installed nothing.
+pub(super) enum Declined {
+    /// A cache is installed already (and the build does not replace it).
+    CacheBuilt,
+    /// A cache move, a publication or a hold raced the build: the build and
+    /// its discovery failures, unchanged, for a caller that can patch them.
+    Raced(PageCacheBuild, Option<Vec<(crate::FileId, crate::IoError)>>),
+}
+
 /// What a launch pass built and observed, up to its install.
 pub(super) struct LaunchPass {
     pub(super) built: PageCacheBuild,
@@ -47,21 +56,27 @@ impl Graph {
         for _ in 0..PATCH_ROUNDS {
             let now = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
             if replace || now == at {
-                let LaunchPass {
-                    built,
-                    stamps,
-                    racy,
-                    named,
-                    discovery,
-                    ..
-                } = pass;
-                let installed =
-                    self.install_built(built, at, replace, Some(&stamps), Some(discovery));
-                return installed.then_some(Installed {
-                    named,
-                    stamps,
-                    racy,
-                });
+                let discovery = Some(std::mem::take(&mut pass.discovery));
+                let built = std::mem::take(&mut pass.built);
+                match self.install_built(built, at, replace, Some(&pass.stamps), discovery) {
+                    Ok(()) => {
+                        return Some(Installed {
+                            named: pass.named,
+                            stamps: pass.stamps,
+                            racy: pass.racy,
+                        })
+                    }
+                    // A hold, release or save landed while the install ran
+                    // unlocked (a page host releasing an own create's hold):
+                    // the next round patches it in, as for one during the
+                    // parse, instead of a second whole-graph build.
+                    Err(Declined::Raced(built, discovery)) if !replace => {
+                        pass.built = built;
+                        pass.discovery = discovery.unwrap_or_default();
+                        continue;
+                    }
+                    Err(_) => return None,
+                }
             }
             // Identities are decided at this epoch; a later hold, release or
             // respelling moves it again and the next round re-derives.
