@@ -1673,6 +1673,8 @@ fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
     set_mtime(&root.path().join("pages/C.org"), old());
     let cp = root.path().join("launch.bin");
     let store = open_cp(root.path(), &cp);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     store.whole_graph_reconciled().unwrap();
     let id = PageId::from("pages/A.md".to_owned());
     let mut read = store.page(&id).unwrap();
@@ -1684,15 +1686,14 @@ fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
     child.raw = "nested typed child\nid:: nested-persisted-id".into();
     typed.children.push(child);
     read.doc.blocks.insert(0, typed);
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &read.doc,
+        )
+        .unwrap();
     warm(&store);
     assert!(matches!(
         store.write_checkpoint_now(),

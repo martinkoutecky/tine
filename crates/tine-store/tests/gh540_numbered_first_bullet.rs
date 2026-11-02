@@ -9,7 +9,7 @@
 
 use std::fs;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, SaveBase, Store};
 
 fn block(id: &str, raw: &str, children: Vec<BlockDto>) -> BlockDto {
     BlockDto {
@@ -53,8 +53,10 @@ fn an_empty_numbered_first_bullet_stays_a_list_item_and_the_page_keeps_saving() 
     let _integration_guard = crate::integration_lock();
     let root = scratch("numbered");
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/Dosa.md");
-    let first = store.save(
+    let first = host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::CreateNew,
@@ -63,10 +65,7 @@ fn an_empty_numbered_first_bullet_stays_a_list_item_and_the_page_keeps_saving() 
             vec![block("b1", "logseq.order-list-type:: number", vec![])],
         ),
     );
-    assert!(
-        matches!(first, SaveOutcome::Saved(_)),
-        "first save: {first:?}"
-    );
+    assert!(matches!(first, Ok(_)), "first save: {first:?}");
     let read = store.page(&id).unwrap();
     assert_eq!(
         read.doc.pre_block,
@@ -82,14 +81,14 @@ fn an_empty_numbered_first_bullet_stays_a_list_item_and_the_page_keeps_saving() 
         "Dosa\nlogseq.order-list-type:: number",
         vec![block("c1", "crispy", vec![])],
     )];
-    let second = store.save(
+    let second = host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &next,
     );
     assert!(
-        matches!(second, SaveOutcome::Saved(_)),
+        matches!(second, Ok(_)),
         "typing into the numbered item must keep saving: {second:?}"
     );
     let reread = store.page(&id).unwrap().doc;

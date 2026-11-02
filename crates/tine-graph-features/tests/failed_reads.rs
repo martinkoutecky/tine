@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 use tine_graph_features::assets;
-use tine_store::{Area, Content, EditKind, Store, TxOutcome};
+use tine_store::{Area, Content, EditKind, Store};
 fn graph(tag: &str) -> (PathBuf, Store) {
     let root = std::env::temp_dir().join(format!("tine-fail2-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);

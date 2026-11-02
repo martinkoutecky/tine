@@ -3,15 +3,13 @@
 //! page, never rebuilt by walking the graph. Counts the pages the alias
 //! relation examines to serve the first alias-reading query after one edit,
 //! on a small and on a 10k-page graph; the bound is the same for both.
-use crate::{
-    cost_counters, Area, EditKind, PageId, SaveBase, SaveOutcome, Store, TrashIf, TxOutcome,
-};
+use crate::{cost_counters, Area, EditKind, PageId, SaveBase, Store, TrashIf};
 use std::fs;
 use std::time::Instant;
 
 /// Every 20th page declares an alias, so the relation is neither empty nor
 /// a rounding error of the graph.
-fn graph(pages: usize) -> (std::path::PathBuf, Store) {
+fn graph(pages: usize) -> (std::path::PathBuf, std::sync::Arc<Store>) {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-alias-edit-cost-{}-{}",
@@ -37,7 +35,7 @@ fn graph(pages: usize) -> (std::path::PathBuf, Store) {
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -52,20 +50,24 @@ fn read_aliases(store: &Store, alias: &str) -> usize {
     }
 }
 
-fn set_alias(store: &Store, rel: &str, pre_block: Option<&str>) {
+fn set_alias(
+    store: &Store,
+    host_writer: &crate::test_host_writer::HostWriter,
+    rel: &str,
+    pre_block: Option<&str>,
+) {
     let id = PageId::from(rel.to_string());
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.pre_block = pre_block.map(str::to_owned);
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
 }
 
 /// Probes for one step: the edit and the first alias reads after it.
@@ -86,6 +88,7 @@ fn step(label: &str, edit: impl FnOnce(), alias_read: impl FnOnce() -> usize) ->
 
 fn run(pages: usize) -> Vec<(&'static str, u64)> {
     let (root, store) = graph(pages);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     // The session's warm state: the relation is built once, as a first
     // backlinks or resolve builds it.
     assert_eq!(read_aliases(&store, "al00020"), 1);
@@ -101,6 +104,7 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
             || {
                 set_alias(
                     &store,
+                    &host_writer,
                     "pages/Page00041.md",
                     Some("alias:: Fresh41, Other41"),
                 )
@@ -116,6 +120,7 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
             || {
                 set_alias(
                     &store,
+                    &host_writer,
                     "pages/Page00041.md",
                     Some("alias:: FRESH41, Other41"),
                 )
@@ -128,7 +133,7 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
         "remove the alias",
         step(
             "remove the alias",
-            || set_alias(&store, "pages/Page00041.md", None),
+            || set_alias(&store, &host_writer, "pages/Page00041.md", None),
             || read_aliases(&store, "fresh41"),
         ),
         0,
@@ -143,7 +148,7 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
                 let rev = store.read(&src, None).unwrap().1;
                 let mut tx = store.page_plan(Some(EditKind::RenamePage));
                 tx.move_file(&src, rev, &dst, None);
-                assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
+                host_writer.apply(tx.plan().unwrap()).unwrap();
             },
             || read_aliases(&store, "al00060"),
         ),
@@ -156,9 +161,9 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
             || {
                 let id = store.file_id(Area::Pages, "Page00080.md").unwrap();
                 let rev = store.read(&id, None).unwrap().1;
-                let mut tx = store.page_plan(Some(EditKind::ReplacePage));
+                let mut tx = store.page_plan(Some(EditKind::DeletePage));
                 tx.trash(&id, rev, TrashIf::Any);
-                assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
+                host_writer.apply(tx.plan().unwrap()).unwrap();
             },
             || read_aliases(&store, "al00080"),
         ),

@@ -7,8 +7,9 @@
 //! undo or a failed apply reconciles them
 //! against the final disk file.
 //! Transactions are not crash atomic and cannot exclude external processes.
-//! Steps may mix page, journal, asset, and metadata files; changed final
-//! files share one publication after a successful initial load. A failed final
+//! Commit takes non-page files; the page host writes pages, from a plan built
+//! here. Changed final files share one publication after a successful initial
+//! load. A failed final
 //! read or revision check returns the affected file locations and makes the
 //! publication incomplete; callers inspect disk and refresh before retrying.
 
@@ -43,8 +44,8 @@ use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use validation::{
-    refuse_read_only_org, rewrite, rewrite_move, valid_utf8_file, validate_config_bytes,
-    validate_config_content, validate_page_content, validate_stream,
+    refuse_read_only_org, rewrite, rewrite_move, validate_config_bytes, validate_config_content,
+    validate_page_content, validate_stream,
 };
 
 use tine_core::doc::Document;
@@ -377,12 +378,14 @@ enum Step {
     },
 }
 
+/// `Transaction` has no door to these steps: only `PagePlan::plan` takes them.
+const PLAN_ONLY: &str = "a page step reached the non-page commit";
+
 struct Prepared {
     src: FileId,
     dst: Option<FileId>,
     old: Option<Vec<u8>>,
     new: Option<Vec<u8>>,
-    saved_page: Option<Document>,
     opaque_rev: Option<FileRev>,
 }
 
@@ -408,13 +411,14 @@ struct Undo {
     old: Option<Vec<u8>>,
     new: Option<Expected>,
     new_rev: Option<FileRev>,
-    opaque_rev: Option<FileRev>,
     created: bool,
     moved: bool,
 }
 
 /// Read-only builder for page changes admitted by [`crate::PageHost`].
-/// Its only public consuming operation is [`Self::plan`].
+/// Its only public consuming operation is [`Self::plan`]. "Commit" in its
+/// step docs means where the step runs: [`Transaction::commit`] for a non-page
+/// file, the page host for a page, which does not undo across pages.
 ///
 /// A feature crate can plan a page change, but cannot commit it:
 /// ```compile_fail,E0599
@@ -444,9 +448,9 @@ pub struct PagePlan<'a> {
     for_host: bool,
     steps: Vec<Step>,
     /// Declared intent for page-file steps other than `save_page` (which
-    /// carries its own). Debug builds assert at commit that a page-file step
-    /// has one; release builds do not refuse, because the kind is request
-    /// metadata and refusing would strand the user's write.
+    /// carries its own). [`Self::plan`] hands it to the host operation.
+    /// Nothing checks that a raw page-file step has one: the kind is request
+    /// metadata, and refusing would strand the user's write.
     kinds: Vec<crate::EditKind>,
     // Exact names sampled once per directory per commit phase.
     spelling_entries:
@@ -528,7 +532,7 @@ impl Transaction<'_> {
 
     /// Apply the non-page steps through the guarded save and undo path.
     pub fn commit(self) -> TxOutcome {
-        self.inner.commit_internal()
+        self.inner.commit_non_page()
     }
 
     /// Run commit's read-only preflight without writing or reserving paths.
@@ -594,12 +598,13 @@ impl<'a> PagePlan<'a> {
     /// compares the current raw-byte revision. A Guide DTO is refused as
     /// ephemeral before disk access. `CreateNew` checks both the exact target
     /// and an alternate extension, and refuses an indexed name or day twin.
-    /// No disk I/O until commit. `ResolvingMarkers` is the one save allowed to
-    /// replace a file carrying VCS conflict markers (R-VCS-MARKERS): commit
-    /// first stages a byte-exact copy of the old file under
-    /// `logseq/.tine-trash/conflicts/<stamp>__markers__<name>` and withdraws it
-    /// if undo restores the original (one extra write + fsync of the old bytes).
-    /// Commit cost includes page bytes and O(P) graph metadata on publication.
+    /// No disk I/O until the page host runs the plan. `ResolvingMarkers` is the
+    /// one save allowed to replace a file carrying VCS conflict markers
+    /// (R-VCS-MARKERS): the host first stages a byte-exact copy of the old file
+    /// under `logseq/.tine-trash/conflicts/<stamp>__markers__<name>` (one extra
+    /// write + fsync of the old bytes). A refused operation leaves that copy.
+    /// The host's cost includes page bytes and O(P) graph metadata on
+    /// publication.
     pub fn save_page(
         &mut self,
         kinds: &[crate::EditKind],
@@ -1258,19 +1263,6 @@ impl<'a> PagePlan<'a> {
         }
     }
 
-    fn fault_twin(&self, file: &FileId) {
-        if !self.page(file) || !fault(self.store, FaultPoint::TwinAfterPublish) {
-            return;
-        }
-        let path = self.store.graph.root.join(file.as_str());
-        let other = if path.extension().and_then(|s| s.to_str()) == Some("org") {
-            path.with_extension("md")
-        } else {
-            path.with_extension("org")
-        };
-        let _ = crate::atomic_file::atomic_write_new(&other, b"external twin");
-    }
-
     fn apply(
         &self,
         index: usize,
@@ -1295,14 +1287,11 @@ impl<'a> PagePlan<'a> {
                     rev: FileRev::from_bytes(plan.old.as_deref().expect("guard baseline")),
                 })
             }
-            Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } => {
+            Step::Save { .. } | Step::Rewrite { .. } => unreachable!("{PLAN_ONLY}"),
+            Step::Replace { .. } => {
                 let new = plan.new.as_ref().expect("prepared write");
                 let old = plan.old.as_deref();
-                if Self::final_guard_covers(step, old, new) {
-                    self.stage2_faults(&plan.src, old, index)?;
-                } else {
-                    self.verify(&plan.src, old, index)?;
-                }
+                self.verify(&plan.src, old, index)?;
                 if old == Some(new.as_slice()) {
                     // Equal bytes are reported as a success, so make them durable
                     // first: they may be another program's unsynced write.
@@ -1320,23 +1309,9 @@ impl<'a> PagePlan<'a> {
                     )
                     .map_err(failed)?;
                 }
-                if self.page(&plan.src) {
-                    self.store.graph.transaction_note_page(&src, new);
-                }
                 undo.new = Some(Expected::Bytes(new.clone()));
                 if old.is_none() {
                     self.fault_collision(&src);
-                }
-                if let (
-                    Step::Save {
-                        markers: Markers::Resolve,
-                        ..
-                    },
-                    Some(old),
-                ) = (&*step, old)
-                {
-                    undo.trash = Some(self.stage_marker_file(&plan.src, old)?);
-                    self.check_write_target(&src).map_err(failed)?;
                 }
                 self.arm_directory_sync_fault();
                 let result = if let Some(old) = old {
@@ -1344,11 +1319,7 @@ impl<'a> PagePlan<'a> {
                         if fault(self.store, FaultPoint::AfterTempSync) {
                             atomic_write(&src, b"external after temp sync")?;
                         }
-                        let unchanged = match if self.page(&plan.src) {
-                            crate::model::read_parse_bytes(&src)
-                        } else {
-                            fs::read(&src)
-                        } {
+                        let unchanged = match fs::read(&src) {
                             Ok(current) => current == old,
                             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
                             Err(error) => return Err(error),
@@ -1372,15 +1343,6 @@ impl<'a> PagePlan<'a> {
                 }
                 undo.created = true;
                 self.fault_mid_step(index)?;
-                if old.is_none() {
-                    self.fault_twin(&plan.src);
-                    if let Some(twin) = self.disk_twin(&plan.src)? {
-                        return Err(Why::Conflict {
-                            file: twin.clone(),
-                            disk: disk_rev(&self.path(&twin)?),
-                        });
-                    }
-                }
                 Ok(StepResult::Written {
                     file: plan.src.clone(),
                     rev: FileRev::from_bytes(new),
@@ -1419,15 +1381,7 @@ impl<'a> PagePlan<'a> {
                         .map_err(failed)?;
                     }
                     let expected = match content {
-                        Content::Bytes(bytes) => {
-                            if self.page(&file) && std::str::from_utf8(bytes).is_err() {
-                                return Err(Why::Refused(Refusal::Undecodable));
-                            }
-                            if self.page(&file) {
-                                self.store.graph.transaction_note_page(&path, bytes);
-                            }
-                            Expected::Bytes(bytes.clone())
-                        }
+                        Content::Bytes(bytes) => Expected::Bytes(bytes.clone()),
                         Content::Stream { source, max_bytes } => {
                             source.seek(SeekFrom::Start(0)).map_err(failed)?;
                             let stage =
@@ -1438,10 +1392,6 @@ impl<'a> PagePlan<'a> {
                                     let _ = fs::remove_file(&stage);
                                 }
                                 return Err(failed(error));
-                            }
-                            if self.page(&file) && !valid_utf8_file(&stage).map_err(failed)? {
-                                let _ = fs::remove_file(&stage);
-                                return Err(Why::Refused(Refusal::Undecodable));
                             }
                             temps.push(stage.clone());
                             self.check_write_target(&path).map_err(failed)?;
@@ -1460,13 +1410,6 @@ impl<'a> PagePlan<'a> {
                         Ok(()) => {
                             undo.created = true;
                             self.fault_mid_step(index)?;
-                            self.fault_twin(&file);
-                            if let Some(twin) = self.disk_twin(&file)? {
-                                return Err(Why::Conflict {
-                                    file: twin.clone(),
-                                    disk: disk_rev(&self.path(&twin)?),
-                                });
-                            }
                             let rev = match undo.new.as_ref().unwrap() {
                                 Expected::Bytes(bytes) => FileRev::from_bytes(bytes),
                                 Expected::File(stage) => {
@@ -1496,32 +1439,6 @@ impl<'a> PagePlan<'a> {
             }
             Step::Move { .. } => self.apply_move(plan, undo, index),
             Step::Trash { .. } => {
-                if let Some(rev) = &plan.opaque_rev {
-                    self.verify_opaque(&plan.src, rev)?;
-                    let trash_id = self.trash_id(&plan.src);
-                    let trash = self.path(&trash_id)?;
-                    if let Some(parent) = trash.parent() {
-                        crate::directory_durability::create_dir_all_durable(
-                            parent,
-                            self.store.graph.creation_bound(parent),
-                            &self.store.graph.root_binding,
-                        )
-                        .map_err(|error| failed_trash_dir(error, parent))?;
-                    }
-                    undo.trash = Some(trash_id.clone());
-                    undo.opaque_rev = Some(rev.clone());
-                    self.store.graph.transaction_note_delete(&src);
-                    move_file_noreplace(&src, &trash)
-                        .map_err(|error| collision(&plan.src, error, &src))?;
-                    undo.moved = true;
-                    sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
-                    self.fault_mid_step(index)?;
-                    self.verify_opaque(&trash_id, rev)?;
-                    return Ok(StepResult::Trashed {
-                        file: plan.src.clone(),
-                        trashed: trash_id,
-                    });
-                }
                 let old = plan.old.as_deref().expect("trash baseline");
                 self.verify(&plan.src, Some(old), index)?;
                 let trash_id = self.trash_id(&plan.src);
@@ -1535,9 +1452,6 @@ impl<'a> PagePlan<'a> {
                     .map_err(|error| failed_trash_dir(error, parent))?;
                 }
                 undo.trash = Some(trash_id.clone());
-                if self.page(&plan.src) {
-                    self.store.graph.transaction_note_delete(&src);
-                }
                 move_file_noreplace(&src, &trash).map_err(|e| collision(&plan.src, e, &src))?;
                 undo.moved = true;
                 sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
@@ -1582,31 +1496,6 @@ impl<'a> PagePlan<'a> {
                 return;
             }
         };
-        if record.created && matches!(record.kind, UndoKind::Rename) {
-            if let (Some(dst_id), Some(expected)) = (&record.dst, &record.opaque_rev) {
-                let result = (|| -> io::Result<()> {
-                    let dst = self.path(dst_id).map_err(|error| {
-                        io::Error::new(io::ErrorKind::InvalidInput, format!("{error:?}"))
-                    })?;
-                    let current = FileRev::from_file(&dst)?;
-                    if current != *expected {
-                        return Err(io::Error::new(
-                            io::ErrorKind::AlreadyExists,
-                            "destination changed during undo",
-                        ));
-                    }
-                    self.undo_opaque_move(record, dst_id, &dst, &live)?;
-                    Ok(())
-                })();
-                match result {
-                    Ok(_) => {}
-                    Err(error) => rollback
-                        .undo_failed
-                        .push((record.src.clone(), error.into())),
-                }
-                return;
-            }
-        }
         if record.created {
             let (id, path) = match &record.dst {
                 Some(dst) => match self.path(dst) {
@@ -1794,10 +1683,11 @@ impl<'a> PagePlan<'a> {
     /// Undo stages live bytes in recoverable conflict trash and uses no-replace
     /// moves. Racing external bytes may remain live, enter recovery, or be
     /// overwritten by a later external write: inspect disk state and `rollback`.
-    /// Prior page bytes stay in memory through commit, so undo can require
+    /// Prior file bytes stay in memory through commit, so undo can require
     /// O(changed bytes) memory and extra file reads/writes. A clean undo publishes
     /// no change and leaves the graph revision unchanged.
-    pub(crate) fn commit_internal(self) -> TxOutcome {
+    fn commit_non_page(mut self) -> TxOutcome {
+        self.non_page = true;
         let store = self.store;
         let mut timing = crate::launch_diag::SaveTiming::start(self.steps.len());
         let outcome = self.commit_timed(&mut timing);
@@ -1811,30 +1701,6 @@ impl<'a> PagePlan<'a> {
     /// The body of `commit`; `timing` splits the wait for reference
     /// publication and for the writer lock from the work itself.
     fn commit_timed(mut self, timing: &mut crate::launch_diag::SaveTiming) -> TxOutcome {
-        // OG-RULES Rule 8: a raw step that touches a page file runs in a
-        // transaction that declared its edit kind (`save_page` asserts its own).
-        // A missing kind is a caller bug, not an in-scope storage threat, so it
-        // is a debug assertion, never a production refusal.
-        #[cfg(debug_assertions)]
-        if !self.non_page && self.kinds.is_empty() {
-            for step in &self.steps {
-                let touches_page = match step {
-                    Step::Save { .. } => false,
-                    Step::Expect { .. } => false,
-                    Step::Rewrite { .. } => true,
-                    Step::Create { file, .. }
-                    | Step::Replace { file, .. }
-                    | Step::Trash { file, .. } => self.store.as_page(file).is_some(),
-                    Step::Move { file, to, .. } => {
-                        self.store.as_page(file).is_some() || self.store.as_page(to).is_some()
-                    }
-                    Step::Unique { area, .. } => {
-                        matches!(area, crate::Area::Pages | crate::Area::Journals)
-                    }
-                };
-                assert!(!touches_page, "OG-RULES Rule 8: a page-file write needs an edit kind; exemplar crates/tine-graph-features/src/pages.rs");
-            }
-        }
         self.await_reference_publication();
         timing.publication_waited();
         let _writer = self.store.writer.lock().unwrap();
@@ -1894,9 +1760,8 @@ impl<'a> PagePlan<'a> {
         for index in 0..steps.len() {
             let plan = &plans[index];
             let kind = match &steps[index] {
-                Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } => {
-                    UndoKind::Replace
-                }
+                Step::Save { .. } | Step::Rewrite { .. } => unreachable!("{PLAN_ONLY}"),
+                Step::Replace { .. } => UndoKind::Replace,
                 Step::Expect { .. } => UndoKind::Expect,
                 Step::Create { .. } | Step::Unique { .. } => UndoKind::Create,
                 Step::Move { .. } => UndoKind::Move,
@@ -1910,7 +1775,6 @@ impl<'a> PagePlan<'a> {
                 old: plan.old.clone(),
                 new: None,
                 new_rev: None,
-                opaque_rev: plan.opaque_rev.clone(),
                 created: false,
                 moved: false,
             };
@@ -2023,7 +1887,6 @@ impl<'a> PagePlan<'a> {
             failure.is_some(),
             &mut rollback,
             &kept_old,
-            &steps,
         );
         if changed_any && self.store.graph.cache_generation() == starting_rev {
             let root = &self.store.graph.root;

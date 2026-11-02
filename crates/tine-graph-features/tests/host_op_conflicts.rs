@@ -657,6 +657,130 @@ fn a_marker_resolution_with_a_host_writes_the_resolved_page() {
     let _ = fs::remove_dir_all(hosted);
 }
 
+/// After a failed or killed resolution the resolved input reaches the page at
+/// relaunch; the marker bytes stay in conflict trash either way.
+fn resolution_survives_relaunch(root: &Path, app_data: &Path) {
+    const RESOLVED: &[u8] = b"- before\n- mine\n- theirs\n";
+    let store = open(root);
+    let host = PageHost::start_for_tests(&store, app_data).unwrap();
+    let page = PageId::from(MARKED);
+    let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+        .as_u64()
+        .unwrap();
+    host.open(session, 1, &page, "recovered").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while host.read(&page).unwrap().bytes.as_deref() != Some(RESOLVED) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the resolved input was lost"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        trashed(&root.join("logseq/.tine-trash/conflicts")),
+        vec![MARKED_TEXT.to_owned()],
+        "the marker bytes are not recoverable in conflict trash"
+    );
+    drop(host);
+    store.close();
+}
+
+/// A host operation promises no rollback: where a resolution's publication
+/// fails, the marker bytes stay live and in conflict trash, the resolved input
+/// is retained, and it reaches the page at relaunch.
+#[test]
+fn a_resolution_whose_write_fails_keeps_both_the_markers_and_the_resolved_input() {
+    let _integration_guard = crate::integration_lock();
+    use tine_store::host_faults::{fail, Phase};
+    let root = graph("markers-failed");
+    fs::write(root.join(MARKED), MARKED_TEXT).unwrap();
+    let app_data = tempfile::tempdir().unwrap();
+    let store = open(&root);
+    fail(Phase::PageRename, std::io::ErrorKind::Other, 10_000);
+    let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let review = marker_review(&store);
+    assert!(resolve_markers(&store, &host, &review).is_err());
+    assert_eq!(fs::read_to_string(root.join(MARKED)).unwrap(), MARKED_TEXT);
+    assert_eq!(
+        trashed(&root.join("logseq/.tine-trash/conflicts")),
+        vec![MARKED_TEXT.to_owned()],
+    );
+    drop(host);
+    store.close();
+    resolution_survives_relaunch(&root, app_data.path());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn crash_marker_resolution_worker() {
+    let _integration_guard = crate::integration_lock();
+    let (Ok(root), Ok(app_data), Ok(boundary)) = (
+        std::env::var("TINE_MARKER_CRASH_ROOT"),
+        std::env::var("TINE_MARKER_CRASH_APP_DATA"),
+        std::env::var("TINE_MARKER_CRASH_BOUNDARY"),
+    ) else {
+        return;
+    };
+    use tine_store::host_faults::{abort_before, Phase};
+    let store = open(Path::new(&root));
+    let review = marker_review(&store);
+    match boundary.as_str() {
+        "stage" => store.inject_fault(FaultPoint::AbortAfterMarkerStage),
+        "before-rename" => abort_before(Phase::PageRename, 0),
+        _ => abort_before(Phase::PageSync, 0),
+    }
+    let host = PageHost::start_for_tests(&store, Path::new(&app_data)).unwrap();
+    let result = resolve_markers(&store, &host, &review);
+    panic!("the marker resolution did not abort at {boundary}: {result:?}");
+}
+
+/// A kill once the marker copy is durable, before the page's replacement and
+/// after it: the page is the old or the new state, the pre-resolution bytes
+/// are in trash either way, and an admitted resolution completes at relaunch.
+#[test]
+fn a_crash_during_resolution_never_loses_a_side() {
+    let _integration_guard = crate::integration_lock();
+    for (boundary, live) in [
+        ("stage", MARKED_TEXT),
+        ("before-rename", MARKED_TEXT),
+        ("after-rename", "- before\n- mine\n- theirs\n"),
+    ] {
+        let root = graph("markers-crash");
+        fs::write(root.join(MARKED), MARKED_TEXT).unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "host_op_conflicts::crash_marker_resolution_worker",
+                "--nocapture",
+            ])
+            .env("TINE_MARKER_CRASH_ROOT", &root)
+            .env("TINE_MARKER_CRASH_APP_DATA", app_data.path())
+            .env("TINE_MARKER_CRASH_BOUNDARY", boundary)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !output.status.success() && !stdout.contains("did not abort"),
+            "the child must be killed at {boundary}: {stdout}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(MARKED)).unwrap(),
+            live,
+            "{boundary}"
+        );
+        assert_eq!(
+            trashed(&root.join("logseq/.tine-trash/conflicts")),
+            vec![MARKED_TEXT.to_owned()],
+            "{boundary}: the pre-resolution bytes are recoverable"
+        );
+        if boundary != "stage" {
+            resolution_survives_relaunch(&root, app_data.path());
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
 /// W8: a marker page edited after the resolution planned is never
 /// overwritten. The operation is refused as changed on disk; the staged copy
 /// of the reviewed bytes stays in trash (DESIGN §3.4: harmless).

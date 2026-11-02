@@ -10,7 +10,7 @@ use crate::{
 
 struct Fixture {
     root: PathBuf,
-    store: Store,
+    store: std::sync::Arc<Store>,
     subscription: Subscription,
 }
 
@@ -43,6 +43,7 @@ impl Fixture {
         )
         .unwrap()
         .0;
+        let store = std::sync::Arc::new(store);
         store.whole_graph().unwrap();
         let subscription = store.subscribe();
         Self {
@@ -355,11 +356,17 @@ fn own_commit_publishes_once_without_external_echo() {
     let id = graph.store.file_id(Area::Pages, "Own.md").unwrap();
     let mut tx = graph.store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(&id, crate::Content::Bytes(b"- own\n".to_vec()));
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::Committed { .. }
-    ));
-    let first = graph.subscription.recv().unwrap();
+    let op = tx.plan().unwrap();
+    crate::test_host_writer::HostWriter::start(&graph.store)
+        .apply(op)
+        .unwrap();
+    // A new hold's retired rows publish first and name no file.
+    let first = loop {
+        let change = graph.subscription.recv().unwrap();
+        if !change.files.is_empty() {
+            break change;
+        }
+    };
     assert_eq!(first.origin, Origin::Own);
     assert_eq!(first.files.len(), 1);
     assert_eq!(first.files[0].1, ChangeKind::Created);
@@ -374,15 +381,12 @@ fn own_config_commit_reloads_format_and_sets_config_changed() {
     let graph = Fixture::new("own-config", &[]);
     std::fs::create_dir_all(graph.path("logseq")).unwrap();
     let id = graph.store.file_id(Area::Meta, "config.edn").unwrap();
-    let mut tx = graph.store.page_plan(Some(crate::EditKind::ReplacePage));
+    let mut tx = graph.store.transaction(None);
     tx.create(
         &id,
         crate::Content::Bytes(b"{:preferred-format :org}\n".to_vec()),
     );
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::Committed { .. }
-    ));
+    assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
     let change = graph.subscription.recv().unwrap();
     assert_eq!(change.origin, Origin::Own);
     assert!(change

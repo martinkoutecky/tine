@@ -1,6 +1,6 @@
 //! Neighbors of prepared-parse publication: physical ownership and parser shape.
 use std::fs;
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 #[test]
 fn a_saved_shadow_journal_does_not_replace_the_canonical_published_day() {
@@ -20,20 +20,21 @@ fn a_saved_shadow_journal_does_not_replace_the_canonical_published_day() {
     )
     .unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     store.whole_graph().unwrap();
     let id = PageId::from("journals/Friday, 26-06-2026.md");
     let read = store.page(&id).unwrap();
     let mut page = read.doc;
     page.blocks[0].raw = "shadow edit".into();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     let corpus = store.whole_graph().unwrap().corpus();
     assert_eq!(corpus.pages.len(), 1);
     assert_eq!(corpus.pages[0].id.as_str(), "journals/2026_06_26.md");
@@ -52,21 +53,22 @@ fn published_tree_matches_written_bytes_when_the_dto_does_not_round_trip() {
     fs::create_dir(dir.path().join("pages")).unwrap();
     fs::write(dir.path().join("pages/A.md"), "- before\n").unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     store.whole_graph().unwrap();
     let id = PageId::from("pages/A.md");
     let read = store.page(&id).unwrap();
     let mut page = read.doc;
     page.blocks[0].raw = "after\n- nested".into();
     let live_id = page.blocks[0].id.clone();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     let bytes = fs::read_to_string(dir.path().join(id.as_str())).unwrap();
     let parsed = tine_core::doc::parse(&bytes);
     let view = store.whole_graph().unwrap().corpus();

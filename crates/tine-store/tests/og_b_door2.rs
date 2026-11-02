@@ -1,5 +1,5 @@
 //! Public entry-point regressions for parser-owned page metadata and literals.
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 #[test]
 fn org_page_drawers_and_directives_contribute_backlinks_but_prose_does_not() {
@@ -168,6 +168,8 @@ fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit
         let file = dir.path().join("pages/Examples.org");
         std::fs::write(&file, format!("{literal}* body{newline}")).unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from("pages/Examples.org");
         assert!(tine_graph_features::conflicts::conflict_inventory(&store)
             .unwrap()
@@ -181,14 +183,14 @@ fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit
         let read = store.page(&id).unwrap();
         let mut edited = read.doc;
         edited.blocks[0].raw = "edited".into();
-        let result = store.save(
+        let result = host_writer.save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &edited,
         );
         assert!(
-            matches!(result, SaveOutcome::Saved { .. }),
+            result.is_ok(),
             "Org literal examples must remain editable: {result:?}"
         );
         let after = std::fs::read_to_string(&file).unwrap();

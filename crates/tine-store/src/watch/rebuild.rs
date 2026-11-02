@@ -99,7 +99,7 @@ mod tests {
 
     use crate::launch_diag::DiffTrigger;
     use crate::store::{OpenOptions, Store, WatchMode};
-    use crate::{ChangeKind, Origin, PageId, SaveBase, TxOutcome, Why};
+    use crate::{ChangeKind, Origin, PageId, SaveBase, Why};
 
     fn temp_root(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -303,21 +303,19 @@ mod tests {
 
         let mut doc = open_editor.doc.clone();
         doc.blocks[0].raw = "editor text".into();
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-        tx.save_page(
-            &[crate::EditKind::ReplacePage],
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
+        match host_writer.save(
+            crate::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(open_editor.rev),
             &doc,
-        );
-        match tx.commit_internal() {
-            TxOutcome::NotCommitted {
-                why: Why::Conflict { .. },
-                ..
-            } => {}
+        ) {
+            Err(crate::test_host_writer::SaveRefused::Planned(Why::Conflict { .. })) => {}
             other => panic!("a stale save over the rebuilt file was not refused: {other:?}"),
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "- new one\n");
+        drop(host_writer);
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

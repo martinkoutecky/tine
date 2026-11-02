@@ -12,7 +12,7 @@
 //! `Origin::Own`; file observation and explicit refresh use
 //! `Origin::External`. `Origin::Own` does not identify a window or operation.
 //!
-//! `Store::save` and `Transaction::commit` guard against bytes already on
+//! The page host and `Transaction::commit` guard against bytes already on
 //! disk when they check. They serialize writers through the same Store, but
 //! cannot exclude another process replacing a file between check and rename.
 //! Changed writes publish before returning. A changed page write or read can
@@ -33,8 +33,6 @@
 
 use crate::path_identity::canonical_existing_path;
 mod page_identity;
-#[cfg(any(test, feature = "test-faults"))]
-mod save_failure;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Read;
@@ -584,8 +582,6 @@ impl ChangeFeed {
         let mut current = self.snapshot.write().unwrap();
         self.fire_registered_since(&targets, &mut snapshot);
         let snapshot = Arc::new(snapshot);
-        #[cfg(test)]
-        self.publish_hooks.published(&snapshot);
         let answers = snapshot.answers.clone();
         *current = Some(snapshot);
         drop(current);
@@ -1281,7 +1277,7 @@ impl Store {
                             },
                         );
                         if published {
-                            worker_changes.end_deferral(Some(&worker_watch));
+                            worker_changes.end_deferral(&worker_watch, true);
                             worker_graph.diag.ready(publish_began);
                             let _ = worker_watch_wake.send(());
                         }
@@ -1293,7 +1289,7 @@ impl Store {
                         *status = LoadStatus::Failed("background graph load stopped".into());
                     }
                 }
-                worker_changes.end_deferral(None);
+                worker_changes.end_deferral(&worker_watch, false);
                 worker_load.ready.notify_all();
             })
             .expect("spawn graph load worker");
@@ -2320,94 +2316,6 @@ pub enum SaveBase {
     /// As `Existing`, for the one save that resolves VCS merge conflict markers the
     /// file carries (R-VCS-MARKERS); commit first stages the old bytes in conflict trash.
     ResolvingMarkers(FileRev),
-}
-
-/// Result of one guarded page save. A refusal never authorizes dropping edits.
-#[derive(Debug)]
-pub enum SaveOutcome {
-    /// New page bytes were written; contains their revision.
-    Saved(FileRev),
-    /// New bytes equal current disk bytes with a matching base; no write or
-    /// publication occurred.
-    Unchanged(FileRev),
-    /// The base no longer authorizes this write; read the current file before
-    /// resolving. The proposed bytes can equal those already on disk.
-    Conflict {
-        /// Revision of the current disk bytes.
-        disk: FileRev,
-    },
-    /// Existing base was requested, but the file disappeared. Retrying as `CreateNew` would
-    /// recreate a page another device may have deleted. Keep the unsaved buffer; for a separate
-    /// copy, choose a new name and use guarded `CreateNew` after checking its proposed id.
-    Deleted,
-    /// Existing page cannot be safely rewritten: the Org round-trip editability refusal, or
-    /// unresolved VCS conflict markers (R-VCS-MARKERS). The reason is for display.
-    ReadOnly(String),
-    /// Another file claims the page name or journal day. Creation and moves check this; an
-    /// ordinary guarded save to either existing claimant is allowed when its own revision guard
-    /// and safety checks pass. If a twin appears after a `CreateNew` write, commit withdraws its
-    /// newly written bytes during undo before returning this result; the caller must retain its DTO.
-    Twin {
-        /// Existing claimant.
-        existing: PageId,
-    },
-    /// The same file was named twice in one page-save request.
-    Repeated,
-    /// A new page was refused because a graph-text file Tine cannot read
-    /// could already be that page (R-CREATE-UNREADABLE-OWNER). Keep the
-    /// buffer; the user repairs or moves `file`, then saves again.
-    UnreadableOwner {
-        /// The unreadable file or directory, graph-relative.
-        file: crate::FileId,
-    },
-    /// Invalid or unsafe target or page content; reason is for display.
-    InvalidTarget(String),
-    /// Filesystem operation failed.
-    Io(crate::IoError),
-    /// Store was closed before the save.
-    Closed,
-    /// A `PageDto` with `guide: true` is refused before disk access, regardless
-    /// of the supplied page id.
-    GuideEphemeral,
-}
-
-impl SaveOutcome {
-    #[cfg(any(test, feature = "test-faults"))]
-    fn from_failed_step(why: crate::Why, id: &PageId) -> Self {
-        match why {
-            crate::Why::Conflict {
-                file,
-                disk: Some(_),
-            } if file != id.file() => SaveOutcome::Twin {
-                existing: PageId::from(file.as_str()),
-            },
-            crate::Why::Conflict {
-                disk: Some(disk), ..
-            } => SaveOutcome::Conflict { disk },
-            crate::Why::Conflict { disk: None, .. } => SaveOutcome::Deleted,
-            crate::Why::Refused(crate::Refusal::ReadOnly(reason)) => SaveOutcome::ReadOnly(reason),
-            crate::Why::Refused(crate::Refusal::Twin { existing }) => {
-                SaveOutcome::Twin { existing }
-            }
-            crate::Why::Refused(crate::Refusal::InvalidTarget(reason)) => {
-                SaveOutcome::InvalidTarget(reason)
-            }
-            crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
-            crate::Why::Refused(crate::Refusal::UnreadableOwner { file }) => {
-                SaveOutcome::UnreadableOwner { file }
-            }
-            crate::Why::Refused(crate::Refusal::RepeatedFile(_)) => SaveOutcome::Repeated,
-            // Only an orphan-only asset trash raises this; a page save never
-            // does, so it reports as an I/O refusal rather than a page family.
-            crate::Why::Refused(crate::Refusal::AssetReferenced) => SaveOutcome::Io(
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "asset is referenced").into(),
-            ),
-            crate::Why::Refused(crate::Refusal::Undecodable) => {
-                SaveOutcome::InvalidTarget("undecodable page".into())
-            }
-            crate::Why::Failed(error) => SaveOutcome::Io(error),
-        }
-    }
 }
 
 /// Parsed page and the raw-byte revision used for a guarded save.
@@ -3615,30 +3523,29 @@ mod rev5_tests {
     }
 
     #[test]
-    fn save_detects_external_write_after_temp_sync() {
+    fn replace_detects_external_write_after_temp_sync() {
         let unique = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!("tine-final-guard-{unique}"));
+        fs::create_dir_all(root.join("assets")).unwrap();
         fs::create_dir_all(root.join("pages")).unwrap();
-        let path = root.join("pages/A.md");
-        fs::write(&path, "- before\n").unwrap();
+        let path = root.join("assets/a.edn");
+        fs::write(&path, "before").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         store.whole_graph().unwrap();
-        let id = PageId::from("pages/A.md");
-        let read = store.page(&id).unwrap();
-        let mut doc = read.doc;
-        doc.blocks[0].raw = "mine".into();
+        let id = store.file_id(Area::Assets, "a.edn").unwrap();
+        let rev = FileRev::from_file(&path).unwrap();
         store.inject_fault(crate::FaultPoint::AfterTempSync);
+        let mut tx = store.transaction(None);
+        tx.replace(&id, rev, b"mine".to_vec());
         assert!(matches!(
-            store.save(
-                crate::EditKind::ReplacePage,
-                &id,
-                SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Conflict { .. }
+            tx.commit(),
+            crate::TxOutcome::NotCommitted {
+                why: crate::Why::Conflict { disk: Some(_), .. },
+                ..
+            }
         ));
         assert_eq!(fs::read(&path).unwrap(), b"external after temp sync");
         drop(store);
@@ -3661,16 +3568,16 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "committed while failed".into();
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected".into());
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-        tx.save_page(
-            &[crate::EditKind::ReplacePage],
-            &id,
-            SaveBase::Existing(read.rev),
-            &doc,
-        );
-        assert!(
-            matches!(tx.commit_internal(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
-        );
+        let store = Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
+        host_writer
+            .save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+            .unwrap();
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
         store.refresh(crate::Depth::Stamps).unwrap();
         let recovered = store.whole_graph().unwrap();
@@ -3710,6 +3617,8 @@ mod rev5_tests {
         let pause = root.join(".tine-test-pause-load");
         fs::write(&pause, "").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let changes = store.subscribe();
         assert!(matches!(store.is_graph_ready(), Ok(false)));
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected failure".into());
@@ -3727,15 +3636,14 @@ mod rev5_tests {
 
         let mut doc = read.doc;
         doc.blocks[0].raw = "changed here".into();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 crate::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         assert!(changes.try_recv().unwrap().is_none());
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
 
@@ -3756,6 +3664,45 @@ mod rev5_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// REG-FAILED-LOAD-WATCH-DIFF-PUBLISHES: an owner's raced observation diffs
+    /// outside a refresh; after a failed load it stays unpublished too.
+    #[test]
+    fn a_diff_after_a_failed_load_publishes_nothing_until_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("pages")).unwrap();
+        fs::write(root.path().join(".tine-test-pause-load"), "").unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        // Only the diff below may observe the file.
+        store.watch.stop_background_for_test();
+        let changes = store.subscribe();
+        *store.load.status.lock().unwrap() = LoadStatus::Failed("injected failure".into());
+        store.load.ready.notify_all();
+        let path = store.graph.root.join("pages/A.md");
+        fs::write(&path, "- arrived\n").unwrap();
+        store
+            .watch
+            .reconcile_raced(&std::collections::HashSet::from([path]));
+        assert!(changes.try_recv().unwrap().is_none());
+        assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+
+        store.refresh(crate::Depth::Stamps).unwrap();
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| { page.name == "A" && page.document.roots[0].raw().contains("arrived") }));
+        // The recovery's diff finds it: the deferred observation lost nothing.
+        let change = changes.try_recv().unwrap().unwrap();
+        assert!(change
+            .files
+            .iter()
+            .any(|(id, ..)| id.as_str() == "pages/A.md"));
+        fs::remove_file(root.path().join(".tine-test-pause-load")).unwrap();
+        store.close();
+    }
+
     #[test]
     fn recovery_publishes_save_attempted_after_reconcile() {
         let unique = SystemTime::now()
@@ -3766,6 +3713,7 @@ mod rev5_tests {
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- before\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let old = store.whole_graph().unwrap();
         let id = PageId::from("pages/A.md");
         let read = store.page(&id).unwrap();
@@ -3783,7 +3731,7 @@ mod rev5_tests {
         let recovery =
             std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps).unwrap());
         wait_hook(&pause);
-        let save_store = Arc::clone(&store);
+        let save_store = host_writer.clone();
         let (attempting, attempted) = mpsc::channel();
         let save = std::thread::spawn(move || {
             attempting.send(()).unwrap();
@@ -3800,7 +3748,7 @@ mod rev5_tests {
         std::thread::sleep(Duration::from_millis(100));
         release_hook(&pause);
         recovery.join().unwrap();
-        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        assert!(matches!(save.join().unwrap(), Ok(_)));
         let view = store.whole_graph().unwrap();
         assert!(view.rev() > old.rev());
         assert!(view.corpus().pages.iter().any(|page| {
@@ -3893,6 +3841,8 @@ mod rev5_tests {
         let hold_load = root.join(".tine-test-pause-load");
         fs::write(&hold_load, "").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&pause));
         fs::remove_file(hold_load).unwrap();
@@ -3902,15 +3852,14 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "new A".into();
         fs::write(root.join("pages/B.md"), "- external B\n").unwrap();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 crate::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         release_hook(&pause);
         let view = store.whole_graph().unwrap();
         assert!(view
@@ -3943,6 +3892,7 @@ mod rev5_tests {
         let hold_load = root.join(".tine-test-pause-load");
         fs::write(&hold_load, "").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let warm_pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&warm_pause));
         let installed_pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
@@ -3952,7 +3902,7 @@ mod rev5_tests {
         fs::remove_file(hold_load).unwrap();
         wait_hook(&warm_pause);
 
-        let saving = Arc::clone(&store);
+        let saving = host_writer.clone();
         let save = std::thread::spawn(move || {
             saving.save(
                 crate::EditKind::ReplacePage,
@@ -3979,7 +3929,7 @@ mod rev5_tests {
         wait_hook(&installed_pause);
         release_hook(&save_pause);
         release_hook(&installed_pause);
-        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        assert!(matches!(save.join().unwrap(), Ok(_)));
         let view = store.whole_graph().unwrap();
         assert!(view.corpus().pages.iter().any(|page| page.name == "Meta"));
         assert!(matches!(
@@ -4039,15 +3989,14 @@ mod rev5_tests {
             store.whole_graph().unwrap();
 
             let a = PageId::from("pages/A.md");
+            let store = Arc::new(store);
+            let host_writer = crate::test_host_writer::HostWriter::start(&store);
             let mut create = store.page_plan(Some(crate::EditKind::ReplacePage));
             create.create(
                 &a.file(),
                 crate::Content::Bytes(b"- initial word\n".to_vec()),
             );
-            assert!(matches!(
-                create.commit_internal(),
-                crate::TxOutcome::Committed { .. }
-            ));
+            host_writer.apply(create.plan().unwrap()).unwrap();
             assert!(matches!(
                 store.whole_graph().unwrap().resolve("A", false),
                 Resolved::Existing { .. }
@@ -4056,15 +4005,14 @@ mod rev5_tests {
             let read = store.page(&a).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = "saved word".into();
-            assert!(matches!(
-                store.save(
+            host_writer
+                .save(
                     crate::EditKind::ReplacePage,
                     &a,
                     SaveBase::Existing(read.rev),
-                    &doc
-                ),
-                SaveOutcome::Saved(_)
-            ));
+                    &doc,
+                )
+                .unwrap();
             assert!(store
                 .whole_graph()
                 .unwrap()
@@ -4083,10 +4031,7 @@ mod rev5_tests {
                 &b.file(),
                 None,
             );
-            assert!(matches!(
-                moving.commit_internal(),
-                crate::TxOutcome::Committed { .. }
-            ));
+            host_writer.apply(moving.plan().unwrap()).unwrap();
             let moved = store.whole_graph().unwrap();
             assert!(matches!(
                 moved.resolve("B", false),
@@ -4097,6 +4042,8 @@ mod rev5_tests {
                 Resolved::Existing { .. }
             ));
 
+            // A restore runs with the host stopped (`binding.rs`, §7 step 4).
+            drop(host_writer);
             let source = root.join("restore-source.md");
             fs::write(&source, "- restored word\n").unwrap();
             store
@@ -4228,27 +4175,29 @@ mod rev5_tests {
             .unwrap()
             .0,
         );
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         store.whole_graph().unwrap();
         let id = PageId::from("pages/A.md");
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "own save".into();
-        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
-        *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
-        let save_store = Arc::clone(&store);
-        let save = std::thread::spawn(move || {
-            save_store.save(
-                crate::EditKind::ReplacePage,
-                &id,
-                SaveBase::Existing(read.rev),
-                &doc,
-            )
-        });
-        wait_hook(&pause);
+        let save_store = host_writer.clone();
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc,
+        );
+        let op = tx.plan().unwrap();
+        let save = std::thread::spawn(move || save_store.apply(op));
+        let pause = pause_own_publication(&store, &path, "own save");
+        *store.watch.core_for_load().note_own_pause.lock().unwrap() = None;
         fs::write(&path, "- external winner\n").unwrap();
         release_hook(&pause);
-        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        assert!(matches!(save.join().unwrap(), Ok(_)));
         store.refresh(crate::Depth::Stamps).unwrap();
+        assert!(host_writer.quiesce_for_tests(Duration::from_secs(20)));
         assert!(store
             .whole_graph()
             .unwrap()
@@ -4284,27 +4233,29 @@ mod rev5_tests {
             .unwrap()
             .0,
         );
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         let id = PageId::from("pages/A.md");
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "own save".into();
-        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
-        *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
-        let saving = Arc::clone(&store);
-        let save = std::thread::spawn(move || {
-            saving.save(
-                crate::EditKind::ReplacePage,
-                &id,
-                SaveBase::Existing(read.rev),
-                &doc,
-            )
-        });
-        wait_hook(&pause);
+        let saving = host_writer.clone();
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc,
+        );
+        let op = tx.plan().unwrap();
+        let save = std::thread::spawn(move || saving.apply(op));
+        let pause = pause_own_publication(&store, &path, "own save");
+        *store.watch.core_for_load().note_own_pause.lock().unwrap() = None;
         fs::write(&path, "- before\n").unwrap();
         release_hook(&pause);
-        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        assert!(matches!(save.join().unwrap(), Ok(_)));
+        assert!(host_writer.quiesce_for_tests(Duration::from_secs(20)));
         let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
         assert!(observed
             .iter()
@@ -4324,21 +4275,22 @@ mod rev5_tests {
         let read = store.page(&PageId::from("pages/A.md")).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "second own save".into();
-        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
-        *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
-        let saving = Arc::clone(&store);
-        let save = std::thread::spawn(move || {
-            saving.save(
-                crate::EditKind::ReplacePage,
-                &PageId::from("pages/A.md"),
-                SaveBase::Existing(read.rev),
-                &doc,
-            )
-        });
-        wait_hook(&pause);
+        let saving = host_writer.clone();
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &PageId::from("pages/A.md"),
+            SaveBase::Existing(read.rev),
+            &doc,
+        );
+        let op = tx.plan().unwrap();
+        let save = std::thread::spawn(move || saving.apply(op));
+        let pause = pause_own_publication(&store, &path, "second own save");
+        *store.watch.core_for_load().note_own_pause.lock().unwrap() = None;
         fs::remove_file(&path).unwrap();
         release_hook(&pause);
-        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        assert!(matches!(save.join().unwrap(), Ok(_)));
+        assert!(host_writer.quiesce_for_tests(Duration::from_secs(20)));
         let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
         assert!(observed
             .iter()
@@ -4379,6 +4331,8 @@ mod rev5_tests {
         )
         .unwrap()
         .0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         fs::remove_dir_all(root.join("pages")).unwrap();
@@ -4411,15 +4365,14 @@ mod rev5_tests {
         let read = store.page(&b).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "saved after rewatch".into();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 crate::EditKind::ReplacePage,
                 &b,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -4445,6 +4398,8 @@ mod rev5_tests {
         fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
         fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         let a = PageId::from("pages/A.md");
@@ -4453,20 +4408,30 @@ mod rev5_tests {
         let read_b = store.page(&b).unwrap();
         let mut doc = read_a.doc;
         doc.blocks[0].raw = "new A".into();
-        store.inject_fault(crate::FaultPoint::Stage2ExternalDelete);
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &a,
+            SaveBase::Existing(read_a.rev),
+            &doc,
+        );
+        let op = tx.plan().unwrap();
+        // The outside delete lands after planning; the host's guard finds it.
+        fs::remove_file(root.join("pages/A.md")).unwrap();
         assert!(matches!(
-            store.save(
-                crate::EditKind::ReplacePage,
-                &a,
-                SaveBase::Existing(read_a.rev),
-                &doc
-            ),
-            SaveOutcome::Deleted
+            host_writer.apply(op),
+            Err(crate::ApplyRefusal::Changed)
         ));
-        let deleted = changes
-            .try_recv()
-            .unwrap()
-            .expect("external deletion change");
+        assert!(host_writer.quiesce_for_tests(Duration::from_secs(20)));
+        store.refresh(crate::Depth::Stamps).unwrap();
+        // A hold's retired rows publish a change that names no file.
+        let named = || loop {
+            let change = changes.try_recv().unwrap().expect("a published change");
+            if !change.files.is_empty() {
+                break change;
+            }
+        };
+        let deleted = named();
         assert_eq!(deleted.origin, Origin::External);
         assert!(deleted
             .files
@@ -4474,11 +4439,8 @@ mod rev5_tests {
             .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
         let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.trash(&b.file(), read_b.rev, crate::TrashIf::Any);
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
-        let trashed = changes.try_recv().unwrap().expect("own trash change");
+        host_writer.apply(tx.plan().unwrap()).unwrap();
+        let trashed = named();
         assert_eq!(trashed.origin, Origin::Own);
         assert!(trashed
             .files
@@ -4506,7 +4468,7 @@ mod rev5_tests {
         let stream_id = store.file_id(Area::Assets, "stream.bin").unwrap();
         let bytes_id = store.file_id(Area::Assets, "bytes.bin").unwrap();
         store.inject_fault(crate::FaultPoint::RemoveStreamStageAfterWrite);
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(
             &stream_id,
             crate::Content::Stream {
@@ -4514,10 +4476,7 @@ mod rev5_tests {
                 max_bytes: 1024,
             },
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         let stream_change = changes.try_recv().unwrap().unwrap();
         assert_eq!(stream_change.origin, Origin::Own);
         assert!(stream_change
@@ -4530,28 +4489,22 @@ mod rev5_tests {
             "present streamed asset was removed by a full watcher scan"
         );
         store.set_watch_mode(WatchMode::Poll);
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present byte asset was removed by a full watcher scan"
         );
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
             b"replaced content".to_vec(),
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4559,33 +4512,27 @@ mod rev5_tests {
             "present replaced asset was removed by a full watcher scan"
         );
         let moved_id = store.file_id(Area::Assets, "moved.bin").unwrap();
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.move_file(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
             &moved_id,
             None,
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present moved asset was removed by a full watcher scan"
         );
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.trash(
             &moved_id,
             FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
             crate::TrashIf::Any,
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4680,16 +4627,13 @@ mod rev5_tests {
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         let id = store.file_id(Area::Meta, "config.edn").unwrap();
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &id,
             FileRev::from_file(&path).unwrap(),
             b"{:foo 2}\n".to_vec(),
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4733,9 +4677,9 @@ mod rev5_tests {
         let id = store.file_id(Area::Assets, "raced.bin").unwrap();
         let writing = Arc::clone(&store);
         let tx = std::thread::spawn(move || {
-            let mut tx = writing.page_plan(Some(crate::EditKind::ReplacePage));
+            let mut tx = writing.transaction(Some(crate::EditKind::ReplacePage));
             tx.create(&id, crate::Content::Bytes(b"own".to_vec()));
-            tx.commit_internal()
+            tx.commit()
         });
         wait_hook(&pause);
         fs::write(outside.join("raced.bin"), b"external").unwrap();
@@ -4764,42 +4708,7 @@ mod rev5_tests {
     }
 
     #[test]
-    fn create_new_twin_after_write_withdraws_own_bytes() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-create-twin-{unique}"));
-        fs::create_dir_all(root.join("pages")).unwrap();
-        fs::write(root.join("pages/Small.md"), "- edit stays in caller\n").unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
-        store.whole_graph().unwrap();
-        let mut doc = store.page(&PageId::from("pages/Small.md")).unwrap().doc;
-        doc.name = "New".into();
-        doc.title = "New".into();
-        store.inject_fault(crate::FaultPoint::TwinAfterPublish);
-        assert!(matches!(
-            store.save(
-                crate::EditKind::ReplacePage,
-                &PageId::from("pages/New.md"),
-                SaveBase::CreateNew,
-                &doc
-            ),
-            SaveOutcome::Twin { .. }
-        ));
-        assert!(!root.join("pages/New.md").exists());
-        assert_eq!(
-            fs::read(root.join("pages/New.org")).unwrap(),
-            b"external twin"
-        );
-        assert!(doc.blocks[0].raw.contains("edit stays in caller"));
-        store.close();
-        drop(store);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn oversized_page_refuses_save_but_moves_and_trashes_as_opaque_file() {
+    fn oversized_page_refuses_save_and_every_host_plan_writes_nothing() {
         let unique = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -4807,84 +4716,46 @@ mod rev5_tests {
         let root = std::env::temp_dir().join(format!("tine-opaque-page-{unique}"));
         fs::create_dir_all(root.join("pages")).unwrap();
         let a_path = root.join("pages/A.md");
-        let b_path = root.join("pages/B.md");
-        for path in [&a_path, &b_path] {
-            let file = File::create(path).unwrap();
-            file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
-        }
+        let file = File::create(&a_path).unwrap();
+        file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
         fs::write(root.join("pages/Small.md"), "- small\n").unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         store.whole_graph().unwrap();
-        let changes = store.subscribe();
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let a = PageId::from("pages/A.md");
         let a_rev = FileRev::from_file(&a_path).unwrap();
-        let b_rev = FileRev::from_file(&b_path).unwrap();
         let doc = store.page(&PageId::from("pages/Small.md")).unwrap().doc;
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &a,
                 SaveBase::Existing(a_rev.clone()),
                 &doc
             ),
-            SaveOutcome::InvalidTarget(_)
+            Err(crate::test_host_writer::SaveRefused::Planned(
+                crate::Why::Refused(crate::Refusal::InvalidTarget(_))
+            ))
         ));
-        let mut move_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        // A host operation carries staged bytes, and these bytes cannot be staged.
         let moved = FileId::from("pages/Moved.md".to_string());
-        move_tx.move_file(&a.file(), a_rev, &moved, None);
+        let mut plan = store.page_plan(Some(crate::EditKind::ReplacePage));
+        plan.move_file(&a.file(), a_rev.clone(), &moved, None);
         assert!(matches!(
-            move_tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
+            plan.plan().unwrap_err(),
+            crate::Why::Refused(crate::Refusal::InvalidTarget(_))
+        ));
+        let mut plan = store.page_plan(Some(crate::EditKind::ReplacePage));
+        plan.trash(&a.file(), a_rev, crate::TrashIf::Any);
+        assert!(matches!(
+            plan.plan().unwrap_err(),
+            crate::Why::Refused(crate::Refusal::InvalidTarget(_))
         ));
         assert_eq!(
-            fs::metadata(root.join("pages/Moved.md")).unwrap().len(),
+            fs::metadata(&a_path).unwrap().len(),
             crate::PARSE_INPUT_MAX_BYTES + 1
         );
-        let change = changes.try_recv().unwrap().unwrap();
-        assert_eq!(change.origin, Origin::Own);
-        assert!(change
-            .files
-            .iter()
-            .any(|(id, kind, _)| id == &moved && *kind == ChangeKind::Created));
-        let view = store.whole_graph().unwrap();
-        assert!(view.unreadable_files().iter().any(|(id, _)| id == &moved));
-        assert!(!view
-            .unreadable_files()
-            .iter()
-            .any(|(id, _)| id == &a.file()));
-        let mut trash_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-        let b = PageId::from("pages/B.md");
-        trash_tx.trash(&b.file(), b_rev, crate::TrashIf::Any);
-        assert!(matches!(
-            trash_tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
-        assert!(!b_path.exists());
-        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        assert!(!store
-            .whole_graph()
-            .unwrap()
-            .unreadable_files()
-            .iter()
-            .any(|(id, _)| id == &b.file()));
-        let d_path = root.join("pages/D.md");
-        let file = File::create(&d_path).unwrap();
-        file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
-        let d_rev = FileRev::from_file(&d_path).unwrap();
-        store.inject_fault(crate::FaultPoint::MidStepIo);
-        let mut rollback_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-        rollback_tx.move_file(
-            &FileId::from("pages/D.md".to_string()),
-            d_rev,
-            &FileId::from("pages/E.md".to_string()),
-            None,
-        );
-        assert!(matches!(
-            rollback_tx.commit_internal(),
-            crate::TxOutcome::NotCommitted { .. }
-        ));
-        assert!(d_path.exists());
-        assert!(!root.join("pages/E.md").exists());
+        assert!(!root.join("pages/Moved.md").exists());
+        drop(host_writer);
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
@@ -4898,55 +4769,41 @@ mod rev5_tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("tine-rollback-origin-{unique}"));
         fs::create_dir_all(root.join("pages")).unwrap();
-        fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
-        fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("assets/a.edn"), "old A").unwrap();
+        fs::write(root.join("assets/b.edn"), "old B").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         store.whole_graph().unwrap();
         let changes = store.subscribe();
-        let a = PageId::from("pages/A.md");
-        let b = PageId::from("pages/B.md");
-        let read_a = store.page(&a).unwrap();
-        let read_b = store.page(&b).unwrap();
-        let mut doc_a = read_a.doc;
-        let mut doc_b = read_b.doc;
-        doc_a.blocks[0].raw = "new A".into();
-        doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-        tx.save_page(
-            &[crate::EditKind::ReplacePage],
-            &a,
-            SaveBase::Existing(read_a.rev),
-            &doc_a,
-        );
-        tx.save_page(
-            &[crate::EditKind::ReplacePage],
-            &b,
-            SaveBase::Existing(read_b.rev),
-            &doc_b,
-        );
+        let a = store.file_id(Area::Assets, "a.edn").unwrap();
+        let b = store.file_id(Area::Assets, "b.edn").unwrap();
+        let mut tx = store.transaction(None);
+        tx.replace(&a, store.read(&a, Some(1024)).unwrap().1, b"new A".to_vec());
+        tx.replace(&b, store.read(&b, Some(1024)).unwrap().1, b"new B".to_vec());
         store.inject_fault(crate::FaultPoint::MidStepIoAt(1));
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::NotCommitted { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
         let found: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
-        assert!(
+        let external = |file: &FileId| {
             found.iter().any(|change| {
                 change.origin == Origin::External
-                    && change.files.iter().any(|(id, _, _)| id == &b.file())
-            }),
-            "{found:?}"
-        );
-        let view = store.whole_graph().unwrap();
-        assert!(view.corpus().pages.iter().any(|page| {
-            page.name == "B"
-                && page
-                    .document
-                    .pre_block
-                    .as_ref()
-                    .is_some_and(|block| block.contains("external during undo"))
-        }));
+                    && change.files.iter().any(|(id, _, _)| id == file)
+            })
+        };
+        assert!(external(&a) || external(&b), "{found:?}");
+        let live: Vec<_> = [&a, &b]
+            .into_iter()
+            .filter(|file| {
+                store
+                    .read(file, Some(1024))
+                    .unwrap()
+                    .0
+                    .windows(8)
+                    .any(|w| w == b"external")
+            })
+            .collect();
+        assert!(!live.is_empty(), "the outside bytes stay live");
+        assert!(live.iter().all(|file| external(file)), "{found:?}");
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }
@@ -4977,6 +4834,27 @@ mod rev5_tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Stop the host's publication of the save that writes `written`, past
+    /// the note of the reading before it. Release the returned pause.
+    fn pause_own_publication(store: &Store, path: &Path, written: &str) -> TestPause {
+        let hook = &store.watch.core_for_load().note_own_pause;
+        let arm = || {
+            let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+            *hook.lock().unwrap() = Some(Arc::clone(&pause));
+            pause
+        };
+        let mut pause = arm();
+        loop {
+            wait_hook(&pause);
+            if String::from_utf8_lossy(&fs::read(path).unwrap()).contains(written) {
+                return pause;
+            }
+            let next = arm();
+            release_hook(&pause);
+            pause = next;
+        }
+    }
+
     fn wait_hook(pause: &TestPause) {
         let (state, ready) = &**pause;
         let mut state = state.lock().unwrap();
@@ -5004,6 +4882,7 @@ mod rev5_tests {
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Source.md"), "- [[Target]] before\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let old = store.whole_graph().unwrap();
         let id = PageId::from("pages/Source.md");
         for during_cache_write in [true, false] {
@@ -5017,7 +4896,7 @@ mod rev5_tests {
                 &store.changes.publish_hooks.pause
             };
             *hook.lock().unwrap() = Some(Arc::clone(&pause));
-            let writer_store = Arc::clone(&store);
+            let writer_store = host_writer.clone();
             let writer_id = id.clone();
             let writer = std::thread::spawn(move || {
                 writer_store.save(
@@ -5042,7 +4921,7 @@ mod rev5_tests {
             let result = receive.recv_timeout(Duration::from_secs(2));
             release_hook(&pause);
             *hook.lock().unwrap() = None;
-            assert!(matches!(writer.join().unwrap(), SaveOutcome::Saved(_)));
+            assert!(matches!(writer.join().unwrap(), Ok(_)));
             reader.join().unwrap();
             let (count, resolved) = result.expect("reader blocked behind writer publication");
             assert_eq!(count, 1);
@@ -5063,6 +4942,7 @@ mod rev5_tests {
         fs::write(root.join("pages/Source.md"), "- before\n").unwrap();
         fs::write(root.join("pages/Target.md"), "- target\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         store.whole_graph().unwrap();
         let id = PageId::from("pages/Source.md");
         let read = store.page(&id).unwrap();
@@ -5071,7 +4951,7 @@ mod rev5_tests {
         doc.blocks[0].raw.push_str(" edited");
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.changes.publish_hooks.pause.lock().unwrap() = Some(Arc::clone(&pause));
-        let writer_store = Arc::clone(&store);
+        let writer_store = host_writer.clone();
         let writer = std::thread::spawn(move || {
             writer_store.save(
                 crate::EditKind::ReplacePage,
@@ -5109,7 +4989,7 @@ mod rev5_tests {
         let registered = receive.recv_timeout(Duration::from_secs(2));
         release_hook(&pause);
         *store.changes.publish_hooks.pause.lock().unwrap() = None;
-        assert!(matches!(writer.join().unwrap(), SaveOutcome::Saved(_)));
+        assert!(matches!(writer.join().unwrap(), Ok(_)));
         register.join().unwrap();
         registered.expect("registration waited behind the writer");
         let published = store.changes.snapshot.read().unwrap().clone().unwrap();
@@ -5130,6 +5010,8 @@ mod rev5_tests {
         fs::write(root.join("pages/A.md"), "- [[Alpha]] original\n").unwrap();
         fs::write(root.join("pages/B.md"), "- [[Beta]] original\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let old = store.whole_graph().unwrap();
         assert_eq!(old.backlinks("Alpha").unwrap().len(), 1);
         assert_eq!(old.backlinks("Beta").unwrap().len(), 1);
@@ -5137,15 +5019,14 @@ mod rev5_tests {
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "[[Alpha]] edited".into();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 crate::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let fresh = store.whole_graph().unwrap();
         let before = crate::query::result_dto_constructions();
         assert_eq!(fresh.backlinks("Beta").unwrap().len(), 1);
@@ -5175,6 +5056,7 @@ mod rev5_tests {
         fs::write(root.join("pages/External.md"), "- outside initial\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         store.whole_graph().unwrap();
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let stop = Arc::new(AtomicBool::new(false));
         let reads = Arc::new(AtomicUsize::new(0));
         let mut threads = Vec::new();
@@ -5197,24 +5079,24 @@ mod rev5_tests {
                 }
             }));
         }
-        let writer_store = Arc::clone(&store);
+        let writer_store = host_writer.clone();
+        let reading = Arc::clone(&store);
         let writer_stop = Arc::clone(&stop);
         threads.push(std::thread::spawn(move || {
             let id = PageId::from("pages/Writer.md");
             let mut n = 0;
             while !writer_stop.load(Ordering::Acquire) {
-                let read = writer_store.page(&id).unwrap();
+                let read = reading.page(&id).unwrap();
                 let mut doc = read.doc;
                 doc.blocks[0].raw = format!("[[Target]] edit {n}");
-                assert!(matches!(
-                    writer_store.save(
+                writer_store
+                    .save(
                         crate::EditKind::ReplacePage,
                         &id,
                         SaveBase::Existing(read.rev),
-                        &doc
-                    ),
-                    SaveOutcome::Saved(_)
-                ));
+                        &doc,
+                    )
+                    .unwrap();
                 n += 1;
             }
         }));
@@ -5391,6 +5273,8 @@ mod rev5_tests {
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Source.md"), "- [[Target]] before\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let old = store.whole_graph().unwrap();
         let original_answers = view_answers(&old);
         let old_corpus = old.corpus().pages.len();
@@ -5405,26 +5289,25 @@ mod rev5_tests {
         let read = store.page(&source).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "[[Target]] after save".into();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 crate::EditKind::ReplacePage,
                 &source,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         assert_eq!(view_answers(&old), original_answers);
         let fresh_after_save = store.whole_graph().unwrap();
         assert_ne!(view_answers(&fresh_after_save), original_answers);
 
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(
             &FileId::from("logseq/config.edn".to_owned()),
             crate::transaction::Content::Bytes(b"{:file/name-format :triple-lowbar}\n".to_vec()),
         );
         assert!(matches!(
-            tx.commit_internal(),
+            tx.commit(),
             crate::transaction::TxOutcome::Committed { .. }
         ));
         assert_eq!(view_answers(&old), original_answers);
@@ -5444,15 +5327,14 @@ mod rev5_tests {
             read_only: false,
             guide: false,
         };
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 crate::EditKind::ReplacePage,
                 &PageId::from("pages/AliasOwner.md"),
                 SaveBase::CreateNew,
-                &alias_page
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &alias_page,
+            )
+            .unwrap();
         assert_eq!(view_answers(&old), original_answers);
 
         fs::write(root.join("pages/Added.md"), "- [[Target]] after\n").unwrap();

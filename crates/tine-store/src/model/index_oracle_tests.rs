@@ -289,42 +289,53 @@ fn rev(root: &Path, rel: &str) -> crate::FileRev {
     crate::FileRev::from_file(&root.join(rel)).unwrap()
 }
 
-fn commit(tx: crate::PagePlan<'_>, what: &str) {
-    match tx.commit_internal() {
-        crate::TxOutcome::Committed { .. } => {}
-        _ => panic!("{what}: transaction not committed"),
-    }
+fn commit(store: &std::sync::Arc<crate::store::Store>, tx: crate::PagePlan<'_>, what: &str) {
+    let op = tx
+        .plan()
+        .unwrap_or_else(|why| panic!("{what}: not planned: {why:?}"));
+    (crate::test_host_writer::HostWriter::start(store).apply(op))
+        .unwrap_or_else(|refusal| panic!("{what}: not applied: {refusal:?}"));
 }
 
-fn save(store: &crate::store::Store, rel: &str, edit: impl FnOnce(&mut tine_core::PageDto)) {
+fn save(
+    store: &std::sync::Arc<crate::store::Store>,
+    rel: &str,
+    edit: impl FnOnce(&mut tine_core::PageDto),
+) {
+    let host_writer = crate::test_host_writer::HostWriter::start(store);
     let id = crate::PageId::from(rel.to_owned());
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     edit(&mut doc);
-    match store.save(
+    match host_writer.save(
         crate::EditKind::ReplacePage,
         &id,
         crate::SaveBase::Existing(read.rev),
         &doc,
     ) {
-        crate::SaveOutcome::Saved(_) => {}
+        Ok(_) => {}
         other => panic!("save {rel}: {other:?}"),
     }
 }
 
 /// [`save`] for an edit that may change nothing.
-fn save_any(store: &crate::store::Store, rel: &str, edit: impl FnOnce(&mut tine_core::PageDto)) {
+fn save_any(
+    store: &std::sync::Arc<crate::store::Store>,
+    rel: &str,
+    edit: impl FnOnce(&mut tine_core::PageDto),
+) {
+    let host_writer = crate::test_host_writer::HostWriter::start(store);
     let id = crate::PageId::from(rel.to_owned());
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     edit(&mut doc);
-    match store.save(
+    match host_writer.save(
         crate::EditKind::ReplacePage,
         &id,
         crate::SaveBase::Existing(read.rev),
         &doc,
     ) {
-        crate::SaveOutcome::Saved(_) | crate::SaveOutcome::Unchanged(_) => {}
+        Ok(_) => {}
         other => panic!("save {rel}: {other:?}"),
     }
 }
@@ -390,6 +401,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     let store = crate::store::Store::open(root, Default::default())
         .unwrap()
         .0;
+    let store = std::sync::Arc::new(store);
     let (target, editor) = pick_pages(&store.whole_graph().unwrap().graph);
     let renamed = format!("{target} GJ5");
     let probe_rel = "pages/GJ5 Probe.md";
@@ -415,7 +427,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
             .into_bytes(),
         ),
     );
-    commit(tx, "create probe");
+    commit(&store, tx, "create probe");
     step("create probe page");
 
     save(&store, &editor, |doc| {
@@ -457,7 +469,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
             );
         }
     }
-    commit(tx, "rename");
+    commit(&store, tx, "rename");
     step("rename with referrer rewrites");
 
     save(&store, probe_rel, |doc| {
@@ -472,7 +484,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
         rev(root, &to),
         crate::TrashIf::Any,
     );
-    commit(tx, "delete renamed page");
+    commit(&store, tx, "delete renamed page");
     step("delete the renamed page");
 
     let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
@@ -481,7 +493,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
         rev(root, probe_rel),
         crate::TrashIf::Any,
     );
-    commit(tx, "delete probe");
+    commit(&store, tx, "delete probe");
     step("delete the last owner of a Han alias");
     drop(step);
     store.close();
@@ -579,6 +591,7 @@ fn random_alias_edits_equal_a_fresh_build() {
         let store = crate::store::Store::open(root, Default::default())
             .unwrap()
             .0;
+        let store = std::sync::Arc::new(store);
         let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
         let mut next = move |bound: usize| {
             rng ^= rng << 13;
@@ -643,7 +656,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                                 .into_bytes(),
                         ),
                     );
-                    commit(tx, "create twin");
+                    commit(&store, tx, "create twin");
                     live.push(rel.clone());
                     format!("create {rel} claiming {claimed} and declaring {alias}")
                 }
@@ -686,7 +699,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                             format!("aliases:: {alias}\n\n- created\n").into_bytes(),
                         ),
                     );
-                    commit(tx, "create");
+                    commit(&store, tx, "create");
                     live.push(rel.clone());
                     format!("create {rel} declaring {alias}")
                 }
@@ -700,7 +713,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                         &crate::PageId::from(to.clone()).file(),
                         None,
                     );
-                    commit(tx, "rename");
+                    commit(&store, tx, "rename");
                     live.retain(|rel| *rel != target);
                     live.push(to.clone());
                     format!("rename {target} to {to}")
@@ -712,7 +725,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                         rev(root, &target),
                         crate::TrashIf::Any,
                     );
-                    commit(tx, "delete");
+                    commit(&store, tx, "delete");
                     live.retain(|rel| *rel != target);
                     format!("delete {target}")
                 }
@@ -746,104 +759,4 @@ fn random_alias_edits_equal_a_fresh_build() {
             "not vacuous: a file that only claims another page's name by title:: declares aliases"
         );
     }
-}
-
-/// B1 of the alias-delta review. A transaction fails at step 1 because an
-/// outside writer replaced B, and the undo of its own create of A fails too:
-/// `publish_final_files` caches A (own) and B (external) together, then the
-/// store publishes twice (Own for A, External for B). Every generation
-/// published must equal a parent-free capture of the cache it was captured
-/// from, so B's old alias row, its reference to `Target` and its candidate
-/// signatures are gone from both, and a view held from before keeps them.
-#[test]
-fn split_own_external_publication_equals_a_fresh_build() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    for sub in ["pages", "journals", "logseq"] {
-        fs::create_dir_all(root.join(sub)).unwrap();
-    }
-    fs::write(
-        root.join("pages/B.md"),
-        "alias:: oldb\n\n- B sees [[Target]]\n",
-    )
-    .unwrap();
-    fs::write(root.join("pages/Target.md"), "- target\n").unwrap();
-    let store = crate::store::Store::open(
-        root,
-        crate::OpenOptions {
-            watch: crate::WatchMode::Poll,
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .0;
-    let held = store.whole_graph().unwrap();
-    assert!(matches!(
-        held.resolve("oldb", false),
-        crate::Resolved::Alias { .. }
-    ));
-    assert_eq!(held.backlinks("Target").unwrap().len(), 1);
-    let published_before = store.changes.published_count();
-
-    let read = store.page(&crate::PageId::from("pages/B.md")).unwrap();
-    let mut doc = read.doc;
-    doc.pre_block = Some("alias:: intendedb".into());
-    store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
-    store.inject_fault(crate::FaultPoint::UndoWithdrawalIo);
-    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-    tx.create(
-        &crate::PageId::from("pages/A.md").file(),
-        crate::Content::Bytes(b"alias:: newa\n\n- A\n".to_vec()),
-    );
-    tx.save_page(
-        &[crate::EditKind::ReplacePage],
-        &crate::PageId::from("pages/B.md"),
-        crate::SaveBase::Existing(read.rev),
-        &doc,
-    );
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::NotCommitted { step: 1, .. }
-    ));
-    assert_eq!(
-        fs::read_to_string(root.join("pages/B.md")).unwrap(),
-        "external stage-2"
-    );
-
-    let probes = ["Target", "oldb", "newa", "intendedb"];
-    let published = store
-        .changes
-        .published_images(published_before, &|snapshot| {
-            snapshot_image(snapshot, &probes)
-        });
-    assert!(
-        published.len() >= 2,
-        "the failed transaction publishes its own file and the external one separately"
-    );
-    let current = store.graph.cache_generation();
-    for (index, (generation, live, fresh)) in published.iter().enumerate() {
-        // The cache is not touched after the last publication, so every
-        // generation published at the current cache generation is comparable
-        // with a capture from it.
-        assert_eq!(
-            *generation, current,
-            "publication {index} was captured from another cache generation"
-        );
-        if let Some(difference) = first_difference(live, fresh) {
-            panic!("publication {index}: incremental vs parent-free capture: {difference}");
-        }
-    }
-    let after = store.whole_graph().unwrap();
-    assert!(!matches!(
-        after.resolve("oldb", false),
-        crate::Resolved::Alias { .. }
-    ));
-    assert_eq!(after.backlinks("Target").unwrap().len(), 0);
-    // A view acquired before the transaction keeps what it saw.
-    assert!(matches!(
-        held.resolve("oldb", false),
-        crate::Resolved::Alias { .. }
-    ));
-    assert_eq!(held.backlinks("Target").unwrap().len(), 1);
-    store.close();
 }

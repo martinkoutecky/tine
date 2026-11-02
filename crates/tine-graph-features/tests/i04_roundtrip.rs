@@ -1,8 +1,9 @@
+use crate::test_host_writer::HostWriter;
 use std::fs;
 use std::path::Path;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_graph_features::pages;
-use tine_store::{Area, PageId, RestoreFile, SaveBase, SaveOutcome, Store};
+use tine_store::{Area, PageId, RestoreFile, SaveBase, Store};
 
 #[test]
 fn merge_source_preamble_survives_in_lsdoc_tree() {
@@ -71,7 +72,7 @@ fn save_and_restore_emit_parseable_page_trees() {
     for area in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(area)).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let id = PageId::from("pages/Saved.md");
     let page = PageDto {
         name: "Saved".into(),
@@ -87,15 +88,14 @@ fn save_and_restore_emit_parseable_page_trees() {
         read_only: false,
         guide: false,
     };
-    assert!(matches!(
-        store.save(
+    HostWriter::for_store(&store)
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     let saved = fs::read_to_string(root.join("pages/Saved.md")).unwrap();
     let parsed = lsdoc::parse_format(&saved, "md");
     assert!(!parsed.blocks.is_empty() && parsed.refs.page.contains(&"Target".into()),

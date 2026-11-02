@@ -183,10 +183,8 @@ pub(crate) struct Derived {
     /// Every path whose cached row [`Graph::put_row`] or
     /// [`Graph::retire_row`] changed since the last snapshot capture took
     /// them ([`Graph::take_touched`]). A publication names the files it
-    /// publishes, but the cache can hold more than that: a failed
-    /// transaction caches its own files and an outside writer's together and
-    /// publishes them separately. The capture patches every per-page index
-    /// by these paths too, so no generation misses a mutation its pages root
+    /// publishes, but the cache can hold more than that. The capture patches
+    /// every per-page index by these paths too, so no generation misses a mutation its pages root
     /// contains. A leaf lock; a superset only costs a redundant patch.
     touched: Mutex<BTreeSet<PathBuf>>,
     /// Moves made while no cache is installed (`derived_cold.rs`).
@@ -1351,8 +1349,6 @@ impl Graph {
         assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
         let path = entry.path.clone();
         let mut guard = self.derived.cache.write().unwrap();
-        #[cfg(test)]
-        crate::store::pause_at_hook(&self.cache_publish_pause);
         if let Some(pages) = guard.as_mut().map(Arc::make_mut) {
             match self.authority(&path) {
                 Authority::Disk => self.put_row(pages, (entry, Arc::new(doc), disk)),

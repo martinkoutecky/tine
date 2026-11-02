@@ -82,6 +82,137 @@ fn bytes(text: &str) -> Arc<[u8]> {
     Arc::from(text.as_bytes())
 }
 
+/// R6: page failures use the actual host, whose guarantee is retained input
+/// and recoverable deletion, rather than transaction-wide rollback. Keep the
+/// independent live/fresh oracle before and after retry and a cold relaunch.
+#[test]
+fn page_operation_failures_retain_input_and_fresh_indexes_through_relaunch() {
+    use crate::test_transactions::conformance_f3::fresh;
+    for (action, phase) in [
+        ("create", Phase::PageTemp),
+        ("create", Phase::PageRename),
+        ("replace", Phase::PageTemp),
+        ("replace", Phase::PageRename),
+        ("move", Phase::PageTemp),
+        ("move", Phase::PageRename),
+        ("move", Phase::TrashMove),
+        ("delete", Phase::TrashMove),
+    ] {
+        let live = Live::new(&[("pages/A.md", "- original [[Shared]]\n")]);
+        let source = PageId::from("pages/A.md");
+        let destination = PageId::from("pages/B.md");
+        let rev = live.store.read(&source.file(), None).unwrap().1;
+        let mut plan = live.store.page_plan(Some(EditKind::ReplacePage));
+        match action {
+            "create" => {
+                plan.create(
+                    &destination.file(),
+                    crate::Content::Bytes(b"- created [[Shared]]\n".to_vec()),
+                );
+            }
+            "replace" => {
+                plan.replace_page_bytes(&source, rev, b"- replacement [[Shared]]\n".to_vec());
+            }
+            "move" => {
+                plan.move_file(&source.file(), rev, &destination.file(), None);
+            }
+            "delete" => {
+                plan.trash(&source.file(), rev, crate::TrashIf::Any);
+            }
+            _ => unreachable!(),
+        }
+        let planned = plan.plan().unwrap();
+        let effects = planned.pages.clone();
+        let at = format!("{action}/{phase:?}");
+        fresh(&live.store, &live.root, &["Shared"], &at);
+        live.faults(phase, 10_000);
+        let outcome = live.host.apply(planned);
+        assert!(
+            matches!(
+                outcome,
+                Err(ApplyRefusal::Unwritten(_) | ApplyRefusal::Uncertain)
+            ),
+            "{at}: {outcome:?}"
+        );
+        // Failed creates and replaces leave the original untouched. The move
+        // may already have published its receiver before source trash fails.
+        assert_eq!(
+            live.disk(source.as_str()),
+            "- original [[Shared]]\n",
+            "{at}"
+        );
+        if action != "move" || phase != Phase::TrashMove {
+            assert!(!live.root.join(destination.as_str()).exists(), "{at}");
+        } else {
+            assert_eq!(live.disk(destination.as_str()), "- original [[Shared]]\n");
+        }
+        for (page, effect, _) in &effects {
+            let expected = match effect {
+                Effect::Write(bytes) => Some(bytes.clone()),
+                Effect::Delete => None,
+            };
+            assert_eq!(
+                live.host.read(page).unwrap().bytes,
+                expected,
+                "{at}: {page:?}"
+            );
+        }
+        fresh(&live.store, &live.root, &["Shared"], &at);
+        let app = live.app();
+        let Live {
+            host,
+            store,
+            root,
+            _dir,
+            ..
+        } = live;
+        drop(host);
+        store.close();
+        let cold = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        fresh(&cold, &root, &["Shared"], &format!("cold {at}"));
+        let host = PageHost::start_for_tests(&cold, &app).unwrap();
+        for (index, (page, _, _)) in effects.iter().enumerate() {
+            host.open(host.session(), index as u64 + 1, page, "recovered")
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let complete = effects.iter().all(|(page, effect, _)| match effect {
+                Effect::Write(bytes) => {
+                    host.read(page).unwrap().bytes.as_deref() == Some(bytes.as_ref())
+                }
+                Effect::Delete => host.read(page).unwrap().bytes.is_none(),
+            });
+            let indexed = host.driver.shared.with_state_for_tests(|state| {
+                effects
+                    .iter()
+                    .all(|(page, _, _)| state.book.index.contains_key(page.as_str()))
+            });
+            if complete && indexed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "lost admitted input after relaunch: {at}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        fresh(&cold, &root, &["Shared"], &format!("relaunched {at}"));
+        if matches!(action, "move" | "delete") && !root.join(source.as_str()).exists() {
+            let trash = root.join("logseq/.tine-trash/pages");
+            assert!(
+                crate::test_transactions::conformance_f3::collect(&trash)
+                    .values()
+                    .any(|bytes| bytes == b"- original [[Shared]]\n"),
+                "{at}"
+            );
+        }
+        drop(host);
+        cold.close();
+        drop(_dir);
+    }
+}
+
 #[test]
 fn an_uncertain_admitted_apply_records_its_later_publication() {
     let live = Live::new(&[("pages/a.md", "- old\n")]);

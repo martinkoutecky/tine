@@ -1,6 +1,6 @@
 use std::fs;
 use tine_graph_features::pages;
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -34,21 +34,18 @@ fn hard_linked_pages_save_and_rename_with_master_bytes() {
         let referrer_alias = outside.path().join("Referrer.md");
         fs::hard_link(root.path().join("pages/Referrer.md"), &referrer_alias).unwrap();
         let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from("pages/Old.md");
         let mut read = store.page(&id).unwrap();
         read.doc.blocks[0].raw = "after".into();
-        assert!(
-            matches!(
-                store.save(
-                    EditKind::SaveBlock,
-                    &id,
-                    SaveBase::Existing(read.rev),
-                    &read.doc
-                ),
-                SaveOutcome::Saved(_)
-            ),
-            "{placement}"
-        );
+        host_writer
+            .save(
+                EditKind::SaveBlock,
+                &id,
+                SaveBase::Existing(read.rev),
+                &read.doc,
+            )
+            .unwrap();
         // Master fb69f9fcc + 35d51742e: atomic replacement leaves the other
         // link's original bytes; moving the page and rewriting refs both work.
         assert_eq!(fs::read(&target).unwrap(), b"- after\n");
@@ -102,10 +99,16 @@ fn a_missing_journal_baseline_cannot_overwrite_sync_delivered_bytes() {
     template.name = "Jul 10th, 2026".into();
     template.title = template.name.clone();
     template.blocks[0].raw = "Template body".into();
-    let outcome =
-        pages::save_page(&store, EditKind::CreatePage, &id, &template, None, false).unwrap();
+    let store = std::sync::Arc::new(store);
+    let writer = crate::test_host_writer::HostWriter::start(&store);
+    let outcome = writer.save(
+        EditKind::CreatePage,
+        &id,
+        tine_store::SaveBase::CreateNew,
+        &template,
+    );
     assert!(
-        !matches!(outcome, SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)),
+        outcome.is_err(),
         "the claimed overwrite must be refused: {outcome:?}"
     );
     assert_eq!(

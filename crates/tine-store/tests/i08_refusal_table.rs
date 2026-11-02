@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-fn constructions(file: &str, source: &str) -> BTreeMap<String, usize> {
+fn constructions(source: &str) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     let mut function = String::new();
     for line in source.lines() {
@@ -18,40 +18,15 @@ fn constructions(file: &str, source: &str) -> BTreeMap<String, usize> {
         if trimmed.starts_with("//") || trimmed.starts_with('*') {
             continue;
         }
-        let family = if file == "transaction.rs" {
-            trimmed.split("Refusal::").nth(1).map(|rest| {
-                rest.chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric())
-                    .collect::<String>()
-            })
-        } else {
-            trimmed
-                .split("SaveOutcome::")
-                .nth(1)
-                .map(|rest| {
-                    rest.chars()
-                        .take_while(|ch| ch.is_ascii_alphanumeric())
-                        .collect::<String>()
-                })
-                .filter(|family| {
-                    matches!(
-                        family.as_str(),
-                        "Closed"
-                            | "Conflict"
-                            | "Deleted"
-                            | "ReadOnly"
-                            | "Twin"
-                            | "Repeated"
-                            | "InvalidTarget"
-                            | "GuideEphemeral"
-                            | "UnreadableOwner"
-                    )
-                })
-        };
+        let family = trimmed.split("Refusal::").nth(1).map(|rest| {
+            rest.chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric())
+                .collect::<String>()
+        });
         if let Some(family) = family {
             if !family.is_empty() {
                 *counts
-                    .entry(format!("{file}::{function}::{family}"))
+                    .entry(format!("transaction.rs::{function}::{family}"))
                     .or_insert(0) += 1;
             }
         }
@@ -100,20 +75,7 @@ fn all_production_refusals_have_scenarios() {
         transaction.push('\n');
         transaction.push_str(&fs::read_to_string(child).unwrap());
     }
-    // `store/save_failure.rs` (`Store::save`) is a test oracle since step 3b
-    // (`#[cfg(any(test, feature = "test-faults"))]`): production saves are
-    // the page host's (STEP3 §12).
-    let mut actual = constructions("transaction.rs", &transaction);
-    let mapping = fs::read_to_string(root.join("crates/tine-store/src/store.rs")).unwrap();
-    // The end marker must exist: a missing one would sweep the rest of the
-    // file, tests included, into the production table.
-    let (mapping, _) = mapping
-        .split("impl SaveOutcome {")
-        .nth(1)
-        .unwrap()
-        .split_once("/// Parsed page and the raw-byte revision used for a guarded save.")
-        .expect("the item after `impl SaveOutcome` ends the mapping");
-    actual.extend(constructions("store.rs", mapping));
+    let actual = constructions(&transaction);
     let contract = fs::read_to_string(root.join("docs/storage-contract.md")).unwrap();
     assert_table(&actual, &contract_rows(&contract));
 }

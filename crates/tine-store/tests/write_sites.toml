@@ -538,7 +538,7 @@ file = "crates/tine-store/src/model.rs"
 fn = "Graph::transaction_withdraw_exact"
 domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
-test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
+test = "crates/tine-store/tests/transaction.rs#third_party_write_during_undo_keeps_both_versions"
 oracle = false
 note = "Withdraw conflict copy uses the shared root witness and bounded durable parent creation. Outside oracle; full root/parent identity fault evidence remains pending."
 mutations = ".withdraw_file_to_conflict_if=1"
@@ -548,7 +548,7 @@ file = "crates/tine-store/src/model.rs"
 fn = "Graph::withdraw_file_to_conflict_if"
 domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
-test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
+test = "crates/tine-store/tests/transaction.rs#third_party_write_during_undo_keeps_both_versions"
 oracle = false
 note = "Withdraw conflict copy uses ensure_write_target with the root witness and bounded durable parent creation. Outside oracle; full A-ROOT-BOUND/A-DIRSYNC environment proof remains pending."
 mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=2"
@@ -558,7 +558,7 @@ file = "crates/tine-store/src/model.rs"
 fn = "Graph::withdraw_file_to_conflict_if_matching_file"
 domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
-test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
+test = "crates/tine-store/tests/transaction.rs#third_party_write_during_a_stream_create_undo_stays_live"
 oracle = false
 note = "Withdraw conflict copy uses the shared root witness and bounded durable parent creation. Outside oracle; full root/parent identity fault evidence remains pending."
 mutations = ".withdraw_file_to_conflict_if=1"
@@ -1031,7 +1031,7 @@ guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/src/transaction_environment_tests.rs#m3_transaction_apply_and_apply_move_c2_c3_escape_only"
 oracle = false
 note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
-mutations = "atomic_copy_file_new=1, atomic_copy_new=1, atomic_file::sync_existing=1, atomic_write=1, atomic_write_new=2, atomic_write_with_check=1, directory_durability::create_dir_all_durable=4, fs::remove_file=3, move_file_noreplace=2, sync_move_dirs=2"
+mutations = "atomic_copy_file_new=1, atomic_copy_new=1, atomic_file::sync_existing=1, atomic_write=1, atomic_write_new=2, atomic_write_with_check=1, directory_durability::create_dir_all_durable=3, fs::remove_file=2, move_file_noreplace=1, sync_move_dirs=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
@@ -1046,16 +1046,6 @@ mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=2, mo
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
 fn = "PagePlan::fault_collision"
-domain = "graph"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
-oracle = false
-note = "Syntactically shipped fault helper has no containment check of its own; fault() is false outside test-faults. It simulates an external writer; recorded conservatively, not a reachable user write claim."
-mutations = "atomic_file::atomic_write_new=1"
-
-[[site]]
-file = "crates/tine-store/src/transaction.rs"
-fn = "PagePlan::fault_twin"
 domain = "graph"
 guard = "unguarded:A-MUTATION-CONTAINMENT"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
@@ -1111,7 +1101,7 @@ guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/src/transaction_environment_tests.rs#m3_transaction_apply_and_apply_move_c2_c3_escape_only"
 oracle = false
 note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
-mutations = "atomic_write_with_check=1, directory_durability::create_dir_all_durable=2"
+mutations = "atomic_write_with_check=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction/move_file.rs"

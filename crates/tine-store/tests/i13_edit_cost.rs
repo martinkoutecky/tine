@@ -3,7 +3,7 @@ use std::fs;
 use std::sync::Mutex;
 
 use tine_store::cost_counters::{self, Counts};
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, SaveBase, Store};
 
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -43,28 +43,28 @@ fn graph_with_target(
     )
 }
 
-fn edit(pages: usize, blocks: usize) -> (Counts, usize) {
+/// The cost of one host save, with the part spent planning it on the caller's
+/// thread and the whole save through the host's publication.
+fn edit(pages: usize, blocks: usize) -> (Counts, Counts, usize) {
     let (_dir, store, id) = graph(pages, blocks);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.blocks[0].raw = "after".into();
     cost_counters::reset();
-    let outcome = store.save(
-        tine_store::EditKind::ReplacePage,
-        &id,
-        SaveBase::Existing(read.rev),
-        &doc,
-    );
+    let kind = tine_store::EditKind::ReplacePage;
+    let mut plan = store.page_plan(Some(kind));
+    plan.save_page(&[kind], &id, SaveBase::Existing(read.rev), &doc);
+    let op = plan.plan().unwrap();
+    let planned = cost_counters::snapshot();
+    host_writer.apply(op).unwrap();
     let counts = cost_counters::snapshot();
-    assert!(
-        matches!(outcome, SaveOutcome::Saved(_)),
-        "I-13 exemplar transaction.rs:349 Step::Save: {outcome:?}"
-    );
     let len = fs::metadata(store.path_for_os_handoff(&id.file(), false).unwrap())
         .unwrap()
         .len() as usize;
     store.close();
-    (counts, len)
+    (planned, counts, len)
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn edit_cost_is_page_bounded() {
     let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     for blocks in [1, 60] {
-        let (small, small_len) = edit(20, blocks);
-        let (large, large_len) = edit(2000, blocks);
+        let (small_planned, small, small_len) = edit(20, blocks);
+        let (large_planned, large, large_len) = edit(2000, blocks);
         eprintln!("I-25 unit cost: blocks={blocks}, 20 pages={small:?}, 2000 pages={large:?}, page bytes={small_len}/{large_len}");
         if std::env::var_os("TINE_I13_OBSERVE").is_some() {
             continue;
@@ -88,11 +88,22 @@ fn edit_cost_is_page_bounded() {
         );
         // The counter counts every document/outline parse since OG-B-COST (it
         // counted only the publication parse before, and read 1 while a save
-        // really parsed 11 times). Ratchet: 2 (one authoritative old-source
-        // parse, one retained-layout reparse); I-15's target is 1. It may only fall.
+        // really parsed 11 times). Planning ratchet: 2 (one authoritative
+        // old-source parse, one retained-layout reparse); I-15's target is 1.
+        // The host then reparses the bytes it publishes, so a whole save is 3.
+        // Both may only fall.
         assert!(
-            small.parses <= 2,
-            "I-15: parses per save may only fall (ratchet 2, target 1): {}; exemplar transaction.rs:349 Step::Save",
+            small_planned.parses <= 2,
+            "I-15: parses per planned save may only fall (ratchet 2, target 1): {}; exemplar transaction.rs:349 Step::Save",
+            small_planned.parses
+        );
+        assert_eq!(
+            large_planned.parses, small_planned.parses,
+            "I-13/I-15: planning parses must not grow with graph pages"
+        );
+        assert!(
+            small.parses <= 3,
+            "I-15: parses per host save may only fall (plan 2 + publication 1): {}",
             small.parses
         );
         assert_eq!(large.parses, small.parses, "I-13/I-15: parse count must not grow with graph pages; exemplar transaction.rs:349 Step::Save");
@@ -107,9 +118,14 @@ fn edit_cost_is_page_bounded() {
         );
         assert_eq!(small.snapshot_rebuilds, 0, "I-13: a content edit must not rebuild the P-entry snapshot index; exemplar store.rs:259 Snapshot::capture");
         assert_eq!(large.snapshot_rebuilds, 0, "I-13: a content edit must not rebuild the P-entry snapshot index; exemplar store.rs:259 Snapshot::capture");
-        assert!(
-            small.bytes_written <= small_len as u64 + 16,
-            "I-25: bytes written must be about page bytes; exemplar transaction.rs:349 Step::Save"
+        // An applied HostOp also drafts (contract: "only a conflict, a failed
+        // save or a host operation drafts"). The exact one-file, page-bytes
+        // proof of an ordinary edit is
+        // host_edit_cost::an_ordinary_edit_is_one_guarded_save_with_no_draft.
+        assert_eq!(
+            (small_planned.files_written, small_planned.bytes_written),
+            (0, 0),
+            "I-25: planning a save writes nothing"
         );
     }
 }
@@ -122,19 +138,21 @@ fn memo_carry_checks_only_the_changed_page() {
     for blocks in [1, 60] {
         for pages in [1, 1000] {
             let (_dir, store, id) = graph_with_target(pages, blocks, pages - 1);
+            let store = std::sync::Arc::new(store);
+            let host_writer = crate::test_host_writer::HostWriter::start(&store);
             let old = store.whole_graph().unwrap();
             let _ = old.backlinks("Target").unwrap();
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = "after".into();
             cost_counters::reset();
-            let outcome = store.save(
+            let outcome = host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
                 &doc,
             );
-            assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            assert!(matches!(outcome, Ok(_)), "{outcome:?}");
             let counts = cost_counters::snapshot();
             eprintln!(
                 "memo carry: blocks={blocks} pages={pages} probes={} bytes_written={}",
@@ -154,6 +172,8 @@ fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
     for blocks in [1, 60] {
         for pages in [1, 1000] {
             let (_dir, store, id) = graph(pages, blocks);
+            let store = std::sync::Arc::new(store);
+            let host_writer = crate::test_host_writer::HostWriter::start(&store);
             let old = store.whole_graph().unwrap();
             cost_counters::reset();
             let _icons = old.page_icons(&["Page0000".into()]);
@@ -162,13 +182,13 @@ fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
             let mut doc = read.doc;
             doc.blocks[0].raw = "after".into();
             cost_counters::reset();
-            let outcome = store.save(
+            let outcome = host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
                 &doc,
             );
-            assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            assert!(matches!(outcome, Ok(_)), "{outcome:?}");
             let edit = cost_counters::snapshot();
             eprintln!("remaining I-13/I-25: blocks={blocks} pages={pages} icon_probes={} cache_copies={} signature_blocks={} bytes_written={} files_written={}", icon.icon_page_probes, edit.cache_page_copies, edit.signature_block_probes, edit.bytes_written, edit.files_written);
             if std::env::var_os("TINE_I13_OBSERVE").is_none() {

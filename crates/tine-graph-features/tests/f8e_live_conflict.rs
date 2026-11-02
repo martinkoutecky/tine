@@ -9,10 +9,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::test_host_writer::{HostWriter, SaveRefused};
+use std::sync::Arc;
 use tine_core::model::PageDto;
 use tine_core::sync_diff::{DiffRow, RowKind};
 use tine_graph_features::live_conflict::{live_conflict_diff, merge_live_conflict, ABSENT};
-use tine_store::{EditKind, FileRev, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{ApplyRefusal, EditKind, FileRev, PageId, SaveBase, Store, Why};
 
 const PAGE: &str = "pages/Desk.md";
 const BASE: &str = "- the shared intro line\n- the plan for today\n";
@@ -30,8 +32,8 @@ fn scratch(label: &str) -> PathBuf {
     root
 }
 
-fn open(root: &Path) -> Store {
-    Store::open(root, Default::default()).unwrap().0
+fn open(root: &Path) -> Arc<Store> {
+    Arc::new(Store::open(root, Default::default()).unwrap().0)
 }
 
 /// The editor's draft: the page as loaded, with block `index` retyped.
@@ -51,7 +53,7 @@ fn draft(store: &Store, index: usize, text: &str) -> (PageDto, String) {
 /// new revision.
 #[allow(clippy::too_many_arguments)]
 fn apply(
-    store: &Store,
+    store: &Arc<Store>,
     path: &str,
     draft: &PageDto,
     conflict_rev: &str,
@@ -78,16 +80,17 @@ fn apply(
             SaveBase::Existing(FileRev::from(conflict_rev.to_owned())),
         )
     };
-    match store.save(kind, &PageId::from(path), base, &merged) {
-        SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => {
+    match HostWriter::for_store(store).save(kind, &PageId::from(path), base, &merged) {
+        Ok(rev) => {
             merged.rev = Some(rev.into());
             Ok(merged)
         }
-        SaveOutcome::Conflict { .. } | SaveOutcome::Deleted => Err(std::io::Error::new(
+        Err(SaveRefused::Planned(Why::Conflict { .. }))
+        | Err(SaveRefused::Host(ApplyRefusal::Changed)) => Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             "live conflict changed on disk",
         )),
-        other => Err(std::io::Error::other(format!("{other:?}"))),
+        Err(other) => Err(std::io::Error::other(format!("{other:?}"))),
     }
 }
 

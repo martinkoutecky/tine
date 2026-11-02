@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, SaveBase, Store};
 
 fn scratch() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -58,18 +58,20 @@ fn w1_page_with_a_near_limit_file_name_saves_and_creates() {
         assert!(rel.len() - "pages/".len() <= 255);
         fs::write(root.join(&rel), "- before\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from(rel.as_str());
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "after".into();
-        let outcome = store.save(
+        let outcome = host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &doc,
         );
         assert!(
-            matches!(outcome, SaveOutcome::Saved(_)),
+            matches!(outcome, Ok(_)),
             "{chars}-char page save: {outcome:?}"
         );
         assert_eq!(fs::read_to_string(root.join(&rel)).unwrap(), "- after\n");
@@ -80,14 +82,14 @@ fn w1_page_with_a_near_limit_file_name_saves_and_creates() {
         }
         let new_title = "字".repeat(chars);
         let new_rel = format!("pages/{new_title}.md");
-        let created = store.save(
+        let created = host_writer.save(
             tine_store::EditKind::CreatePage,
             &PageId::from(new_rel.as_str()),
             SaveBase::CreateNew,
             &dto(&new_title, "fresh"),
         );
         assert!(
-            matches!(created, SaveOutcome::Saved(_)),
+            matches!(created, Ok(_)),
             "{chars}-char page create: {created:?}"
         );
         assert!(fs::read_to_string(root.join(&new_rel))

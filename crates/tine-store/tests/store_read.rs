@@ -2,8 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::{
-    Area, ChangeKind, Content, OpenOptions, PageId, Refusal, Resolved, Store, StoreError,
-    TxOutcome, Why,
+    Area, ChangeKind, Content, OpenOptions, PageId, Refusal, Resolved, Store, StoreError, Why,
 };
 use tine_core::model::{PageDto, PageKind};
 
@@ -340,15 +339,16 @@ fn many_unmatched_openers_on_separate_lines_round_trip() {
         .any(|(id, _)| id.as_str() == "pages/Note.md"));
     let id = PageId::from("pages/Note.md");
     let read = store.page(&id).unwrap();
-    assert!(matches!(
-        store.save(
+    let store = std::sync::Arc::new(store);
+    let saved = crate::test_host_writer::HostWriter::start(&store)
+        .save(
             crate::EditKind::ReplacePage,
             &id,
-            crate::SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        crate::SaveOutcome::Unchanged(_)
-    ));
+            crate::SaveBase::Existing(read.rev.clone()),
+            &read.doc,
+        )
+        .unwrap();
+    assert_eq!(saved, read.rev, "an unchanged document writes nothing");
     assert_eq!(
         std::fs::read_to_string(f.0.join("pages/Note.md")).unwrap(),
         source
@@ -392,13 +392,7 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
         &store.file_id(Area::Pages, "arrived.org").unwrap(),
         Content::Bytes(b"* duplicate\n".to_vec()),
     );
-    assert!(matches!(
-        tx.commit_internal(),
-        TxOutcome::NotCommitted {
-            why: Why::Refused(Refusal::Twin { .. }),
-            ..
-        }
-    ));
+    assert!(matches!(tx.plan(), Err(Why::Refused(Refusal::Twin { .. }))));
 }
 
 #[test]

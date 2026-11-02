@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::{Area, LoadError, OpenOptions, Refusal, Store, TxOutcome, Why};
+use crate::{Area, LoadError, OpenOptions, Refusal, Store, Why};
 
 struct Fixture(PathBuf);
 
@@ -197,13 +197,7 @@ fn close_releases_load_waiter_and_refuses_commit() {
     let id = store.file_id(Area::Pages, "AfterClose.md").unwrap();
     let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(&id, crate::Content::Bytes(b"- forbidden\n".to_vec()));
-    assert!(matches!(
-        tx.commit_internal(),
-        TxOutcome::NotCommitted {
-            why: Why::Refused(Refusal::Closed),
-            ..
-        }
-    ));
+    assert!(matches!(tx.plan(), Err(Why::Refused(Refusal::Closed))));
     assert!(!fixture.root().join("pages/AfterClose.md").exists());
 }
 
@@ -232,9 +226,16 @@ fn same_root_scan_keeps_old_commands_open() {
     store.refresh(crate::Depth::Stamps).unwrap();
     assert!(store.whole_graph().is_ok());
     let id = store.file_id(Area::Pages, "AfterCancel.md").unwrap();
+    let store = Arc::new(store);
     let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(&id, crate::Content::Bytes(b"- after\n".to_vec()));
-    assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
+    crate::test_host_writer::HostWriter::start(&store)
+        .apply(tx.plan().unwrap())
+        .unwrap();
+    assert_eq!(
+        std::fs::read(fixture.root().join("pages/AfterCancel.md")).unwrap(),
+        b"- after\n"
+    );
     store.close();
 }
 
@@ -245,9 +246,12 @@ fn journal_identity_stays_available_after_close_without_disk() {
     std::fs::write(fixture.root().join("journals/2026_09_25.md"), "- one\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let added = store.file_id(Area::Journals, "2026_09_26.md").unwrap();
+    let store = Arc::new(store);
     let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(&added, crate::Content::Bytes(b"- two\n".to_vec()));
-    assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
+    crate::test_host_writer::HostWriter::start(&store)
+        .apply(tx.plan().unwrap())
+        .unwrap();
     store.close();
     std::fs::remove_dir_all(fixture.root().join("journals")).unwrap();
     assert_eq!(

@@ -1,7 +1,7 @@
 //! I-25: saving one page while readers retain old views cannot copy the graph.
 use std::{fs, sync::Mutex};
 static CASE: Mutex<()> = Mutex::new(());
-use tine_store::{cost_counters, EditKind, OpenOptions, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{cost_counters, EditKind, OpenOptions, PageId, SaveBase, Store};
 
 #[test]
 fn retained_views_bound_content_and_structural_publication_work() {
@@ -18,21 +18,22 @@ fn retained_views_bound_content_and_structural_publication_work() {
             .unwrap();
         }
         let store = Store::open(dir.path(), OpenOptions::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let held = store.whole_graph().unwrap();
         let id = PageId::from("pages/P0.md");
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "edited ((00000000-0000-0000-0000-999999999999))".into();
         cost_counters::reset();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let cost = cost_counters::snapshot();
         assert!(cost.cache_page_copies <= 1, "I-25: clone only the changed page, never graph slots; exemplar model/persistent.rs: {cost:?}");
         assert_eq!(
@@ -54,10 +55,9 @@ fn retained_views_bound_content_and_structural_publication_work() {
         let created = PageId::from("pages/Added.md");
         doc.name = "Added".into();
         cost_counters::reset();
-        assert!(matches!(
-            store.save(EditKind::ReplacePage, &created, SaveBase::CreateNew, &doc),
-            SaveOutcome::Saved(_)
-        ));
+        host_writer
+            .save(EditKind::ReplacePage, &created, SaveBase::CreateNew, &doc)
+            .unwrap();
         let cost = cost_counters::snapshot();
         assert!(
             cost.shared_tree_node_copies <= 256,
@@ -97,21 +97,22 @@ fn actual_save_old_source_parse_count() {
     fs::create_dir(dir.path().join("pages")).unwrap();
     fs::write(dir.path().join("pages/Page.md"), "- before\n").unwrap();
     let store = Store::open(dir.path(), OpenOptions::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let held = store.whole_graph().unwrap();
     let id = PageId::from("pages/Page.md");
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.blocks[0].raw = "after".into();
     cost_counters::reset();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
     let counts = cost_counters::snapshot();
     assert_eq!(counts.old_source_parses, 1, "I-25/I-12: all save validators borrow one old Document; exemplar model/layout_retention.rs: {counts:?}");
     assert!(

@@ -1,4 +1,4 @@
-use crate::{Depth, EditKind, PageId, QueryDialect, QueryResult, SaveBase, Store, TxOutcome};
+use crate::{Depth, EditKind, PageId, QueryDialect, QueryResult, SaveBase, Store};
 
 #[test]
 fn linkable_page_headers_match_queries_and_linked_references() {
@@ -83,14 +83,15 @@ fn property_references_refresh_after_guarded_saves_and_config_changes() {
     let id = PageId::from("pages/Source.md");
     let mut read = store.page(&id).unwrap();
     read.doc.pre_block = Some("related:: Delta".into());
-    let mut tx = store.page_plan(Some(EditKind::SaveBlock));
-    tx.save_page(
-        &[EditKind::SaveBlock],
-        &id,
-        SaveBase::Existing(read.rev),
-        &read.doc,
-    );
-    assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
+    let store = std::sync::Arc::new(store);
+    crate::test_host_writer::HostWriter::start(&store)
+        .save(
+            EditKind::SaveBlock,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc,
+        )
+        .unwrap();
     let graph = store.whole_graph().unwrap();
     assert!(graph.backlinks("Beta").unwrap().is_empty());
     assert_eq!(graph.backlinks("Delta").unwrap().len(), 1);

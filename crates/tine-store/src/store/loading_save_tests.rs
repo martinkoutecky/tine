@@ -5,6 +5,7 @@
 //! earlier version; a page hold or an edit during the parse keeps the
 //! launch's own install.
 use super::*;
+use crate::test_host_writer::HostWriter;
 use std::time::Duration;
 use tine_core::model::{BlockDto, PageDto};
 
@@ -94,30 +95,28 @@ fn doc(name: &str, text: &str) -> PageDto {
     }
 }
 
-fn create(store: &Store, name: &str, text: &str) -> FileRev {
+fn create(writer: &HostWriter, name: &str, text: &str) -> FileRev {
     let id = PageId::from(format!("pages/{name}.md").as_str());
-    match store.save(
-        crate::EditKind::ReplacePage,
-        &id,
-        SaveBase::CreateNew,
-        &doc(name, text),
-    ) {
-        SaveOutcome::Saved(rev) => rev,
-        other => panic!("create refused: {other:?}"),
-    }
+    writer
+        .save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &doc(name, text),
+        )
+        .unwrap_or_else(|refused| panic!("create refused: {refused:?}"))
 }
 
-fn edit(store: &Store, name: &str, base: FileRev, text: &str) -> FileRev {
+fn edit(writer: &HostWriter, name: &str, base: FileRev, text: &str) -> FileRev {
     let id = PageId::from(format!("pages/{name}.md").as_str());
-    match store.save(
-        crate::EditKind::ReplacePage,
-        &id,
-        SaveBase::Existing(base),
-        &doc(name, text),
-    ) {
-        SaveOutcome::Saved(rev) => rev,
-        other => panic!("edit refused: {other:?}"),
-    }
+    writer
+        .save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(base),
+            &doc(name, text),
+        )
+        .unwrap_or_else(|refused| panic!("edit refused: {refused:?}"))
 }
 
 /// No whole-graph build ran outside the launch pass.
@@ -164,8 +163,9 @@ fn assert_once(store: &Store, name: &str, text: &str) {
 fn a_page_created_while_loading_saves_without_building_the_graph() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let feed = store.subscribe();
-    let rev = create(&store, "New", "fresh text");
+    let rev = create(&writer, "New", "fresh text");
     assert!(
         !store.graph.cache_built() && on_demand_builds(&store) == 0,
         "BqbeQ: a create during loading built the whole graph cache on the saving thread \
@@ -174,6 +174,8 @@ fn a_page_created_while_loading_saves_without_building_the_graph() {
     // The page reads at once, before the graph is ready.
     let read = store.page(&PageId::from("pages/New.md")).unwrap();
     assert_eq!(read.rev, rev);
+    // The host's release moves the held epoch: settled before the install.
+    writer.settle();
     go(root.path());
     assert_once(&store, "New", "fresh text");
     assert_eq!(declined_passes(&store), Vec::<String>::new());
@@ -200,12 +202,15 @@ fn a_page_created_while_loading_saves_without_building_the_graph() {
 fn a_page_created_after_the_parse_listed_the_files_is_in_the_first_view() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
     go(root.path());
     wait_hook(&listed);
-    create(&store, "New", "made mid-parse");
+    create(&writer, "New", "made mid-parse");
     assert_eq!(on_demand_builds(&store), 0, "the save built the graph");
+    // The host's release moves the held epoch: settled before the install.
+    writer.settle();
     release_hook(&listed);
     assert_once(&store, "New", "made mid-parse");
     assert_eq!(
@@ -221,6 +226,7 @@ fn a_page_created_after_the_parse_listed_the_files_is_in_the_first_view() {
 fn a_page_saved_after_the_parse_read_it_holds_the_last_save() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
     go(root.path());
@@ -230,9 +236,11 @@ fn a_page_saved_after_the_parse_read_it_holds_the_last_save() {
         let read = store
             .page(&PageId::from(format!("pages/{name}.md").as_str()))
             .unwrap();
-        edit(&store, name, read.rev, &format!("new {name}"));
+        edit(&writer, name, read.rev, &format!("new {name}"));
     }
     assert_eq!(on_demand_builds(&store), 0, "the save built the graph");
+    // The host's release moves the held epoch: settled before the install.
+    writer.settle();
     release_hook(&listed);
     for name in ["A", "B", "C", "D", "E"] {
         assert_once(&store, name, &format!("new {name}"));
@@ -246,10 +254,13 @@ fn a_page_saved_after_the_parse_read_it_holds_the_last_save() {
 fn a_page_created_then_edited_before_loading_ends_holds_the_edit() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let feed = store.subscribe();
-    let first = create(&store, "New", "first");
-    let second = edit(&store, "New", first, "second");
+    let first = create(&writer, "New", "first");
+    let second = edit(&writer, "New", first, "second");
     assert_eq!(on_demand_builds(&store), 0, "the saves built the graph");
+    // The host's release moves the held epoch: settled before the install.
+    writer.settle();
     go(root.path());
     assert_once(&store, "New", "second");
     assert_eq!(on_demand_builds(&store), 0);
@@ -271,20 +282,7 @@ fn a_page_created_then_edited_before_loading_ends_holds_the_edit() {
         "each deferred save is its own change, in save order"
     );
     // After loading, an edit publishes as for any page.
-    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-    tx.save_page(
-        &[crate::EditKind::ReplacePage],
-        &PageId::from("pages/New.md"),
-        SaveBase::Existing(second),
-        &doc("New", "third"),
-    );
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::Committed {
-            change: Some(_),
-            ..
-        }
-    ));
+    edit(&writer, "New", second, "third");
     assert_once(&store, "New", "third");
     store.close();
 }
@@ -318,11 +316,12 @@ fn a_page_hold_during_the_parse_keeps_the_launch_install() {
 fn an_unexplained_cache_move_during_the_parse_still_rebuilds_correctly() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
     go(root.path());
     wait_hook(&listed);
-    create(&store, "New", "kept");
+    create(&writer, "New", "kept");
     // A move the pass cannot account for path by path (a discarded cache).
     store.graph.invalidate_cache();
     release_hook(&listed);
@@ -350,8 +349,9 @@ fn a_save_deferred_before_a_launch_checkpoint_loads_declines_the_checkpoint() {
     store.close();
     drop(store);
     fs::write(root.path().join(".tine-test-pause-load"), "").unwrap();
-    let store = Store::open(root.path(), options()).unwrap().0;
-    create(&store, "New", "before the checkpoint");
+    let store = Arc::new(Store::open(root.path(), options()).unwrap().0);
+    let writer = HostWriter::start(&store);
+    create(&writer, "New", "before the checkpoint");
     go(root.path());
     // The checkpoint lacks the page and the watcher's baseline carries the
     // save's own stamp, so serving it would hide the page until restart.
@@ -435,26 +435,24 @@ fn names_c(changes: &[(Origin, Vec<(String, ChangeKind)>)]) -> Vec<Origin> {
 fn a_config_write_during_loading_keeps_own_changes_in_save_order() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let feed = store.subscribe();
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
     go(root.path());
     wait_hook(&listed);
     let read = store.page(&PageId::from("pages/C.md")).unwrap();
-    let first = edit(&store, "C", read.rev, "own C");
+    let first = edit(&writer, "C", read.rev, "own C");
     let cfg = FileId::from("logseq/config.edn".to_owned());
     let (_, config_rev) = store.read(&cfg, None).unwrap();
-    let mut tx = store.page_plan(None);
+    let mut tx = store.transaction(None);
     tx.replace(
         &cfg,
         config_rev,
         b"{:preferred-format :markdown :x 1}\n".to_vec(),
     );
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::Committed { .. }
-    ));
-    let second = edit(&store, "C", first.clone(), "own C two");
+    assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    let second = edit(&writer, "C", first.clone(), "own C two");
     release_hook(&listed);
     assert_once(&store, "C", "own C two");
     std::thread::sleep(Duration::from_millis(200));
@@ -480,6 +478,7 @@ fn a_config_write_during_loading_keeps_own_changes_in_save_order() {
 fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let feed = store.subscribe();
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
@@ -495,10 +494,7 @@ fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
             read.rev,
             crate::TrashIf::Any,
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        writer.apply(tx.plan().unwrap()).unwrap();
     }
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
@@ -525,6 +521,7 @@ fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
 fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
     go(root.path());
@@ -540,10 +537,7 @@ fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
             &FileId::from(format!("pages/{name}2.md")),
             None,
         );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::Committed { .. }
-        ));
+        writer.apply(tx.plan().unwrap()).unwrap();
     }
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
@@ -573,13 +567,14 @@ fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
 fn an_outside_write_after_a_deferred_save_is_kept_and_announced() {
     let root = graph();
     let store = held_open(root.path());
+    let writer = HostWriter::start(&store);
     let feed = store.subscribe();
     let listed = pause();
     *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
     go(root.path());
     wait_hook(&listed);
     let read = store.page(&PageId::from("pages/C.md")).unwrap();
-    edit(&store, "C", read.rev, "own C");
+    edit(&writer, "C", read.rev, "own C");
     std::thread::sleep(Duration::from_millis(30));
     fs::write(root.path().join("pages/C.md"), "- outside C longer bytes\n").unwrap();
     release_hook(&listed);
@@ -599,7 +594,8 @@ fn an_outside_write_after_a_deferred_save_is_kept_and_announced() {
 fn closing_with_deferred_saves_then_reopening_keeps_them() {
     let root = graph();
     let store = held_open(root.path());
-    create(&store, "New", "durable");
+    let writer = HostWriter::start(&store);
+    create(&writer, "New", "durable");
     store.close();
     drop(store);
     let _ = fs::remove_file(root.path().join(".tine-test-pause-load"));

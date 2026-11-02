@@ -1,12 +1,12 @@
 //! G6 (og 13a): a save rewrites only the physical lines of blocks it changed.
-//! Every case goes through the real `Store::save` entry point and asserts the
+//! Every case goes through the page plan and the page host and asserts the
 //! exact bytes on disk.
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, PageDto};
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 /// Layout the DTO cannot express: every root under a base tab, a depth jump
 /// (a child three tabs deep), a whitespace-only continuation line, trailing
@@ -15,7 +15,8 @@ const SOURCE: &str = "title:: Fix\ntags:: a\n\n\t- one\n\t  cont  \n\t  \n\t\t\t
 
 struct Page {
     root: PathBuf,
-    store: Store,
+    writer: crate::test_host_writer::HostWriter,
+    store: std::sync::Arc<Store>,
     id: PageId,
 }
 
@@ -30,8 +31,9 @@ impl Page {
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::write(root.join("pages/p.md"), source).unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
         Page {
+            writer: crate::test_host_writer::HostWriter::start(&store),
             root,
             store,
             id: PageId::from("pages/p.md"),
@@ -44,12 +46,9 @@ impl Page {
         let mut doc = read.doc;
         edit(&mut doc);
         let outcome = self
-            .store
+            .writer
             .save(kind, &self.id, SaveBase::Existing(read.rev), &doc);
-        assert!(
-            matches!(outcome, SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)),
-            "{outcome:?}"
-        );
+        assert!(matches!(outcome, Ok(_)), "{outcome:?}");
         fs::read_to_string(self.root.join("pages/p.md")).unwrap()
     }
 }

@@ -22,19 +22,18 @@ fn bounded_outline_round_trips_unchanged() {
     }
     let path = root.join("pages/Outline.md");
     fs::write(&path, &source).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let id = PageId::from("pages/Outline.md");
     let read = store.page(&id).unwrap();
-    assert!(matches!(
-        store.save(
+    crate::test_host_writer::HostWriter::for_store(&store)
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        tine_store::SaveOutcome::Unchanged(_)
-    ));
+            &read.doc,
+        )
+        .unwrap();
     assert_eq!(
         fs::read_to_string(path).unwrap(),
         source,
@@ -71,7 +70,7 @@ fn anonymized_graph_depth_probe_when_requested() {
             }
         }
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let unreadable = store.whole_graph().unwrap().unreadable_files().len();
     assert_eq!(unreadable, 0, "anonymized graph has unreadable pages");
     store.close();
@@ -99,7 +98,7 @@ fn renderer_flattens_tail_without_losing_text() {
         });
     }
     fs::write(root.join("pages/Outline.md"), source).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let html = tine_graph_features::print::page_print_html(&store, "Outline", Default::default())
         .unwrap()
@@ -304,7 +303,7 @@ fn hostile_child() {
         "- conflicting\n",
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let view = store.whole_graph().unwrap();
     if case != "deep_edn" && !case.starts_with("wide_") {
         assert!(
@@ -329,14 +328,14 @@ fn hostile_child() {
         );
     }
     if let Ok(read) = page_result {
-        let _ = store.save(
+        let _ = crate::test_host_writer::HostWriter::for_store(&store).save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &read.doc,
         );
     } else {
-        let _ = store.save(
+        let _ = crate::test_host_writer::HostWriter::for_store(&store).save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(FileRev::from("missing".to_string())),
@@ -421,7 +420,7 @@ fn over_cap_page_is_visible_as_unreadable_with_named_reason() {
         source.push_str(&format!("{}- level {depth}\n", "  ".repeat(depth)));
     }
     fs::write(root.join("pages/TooDeep.md"), source).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     assert!(store.page(&PageId::from("pages/TooDeep.md")).is_err());
     let reason = format!("{:?}", store.whole_graph().unwrap().unreadable_files());
     assert!(
@@ -449,7 +448,7 @@ fn benign_page_at_depth_cap() {
         at_cap_outline("LEAF other"),
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
     let id = PageId::from("pages/Deep.md");
     let read = store.page(&id).unwrap();
@@ -462,15 +461,14 @@ fn benign_page_at_depth_cap() {
     }
     assert_eq!(depth, 128, "the page opens with all 128 levels");
     leaf.raw = leaf.raw.replace("LEAF needle", "LEAF edited");
-    assert!(matches!(
-        store.save(
+    crate::test_host_writer::HostWriter::for_store(&store)
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &doc
-        ),
-        tine_store::SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         at_cap_outline("LEAF edited"),
@@ -539,7 +537,7 @@ fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
             fs::create_dir_all(root.join("journals")).unwrap();
             let path = root.join("pages/DeepOrg.org");
             fs::write(&path, at_cap_org("LEAF needle")).unwrap();
-            let store = Store::open(&root, Default::default()).unwrap().0;
+            let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
             assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
             let id = PageId::from("pages/DeepOrg.org");
             let read = store.page(&id).unwrap();
@@ -552,15 +550,14 @@ fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
             }
             assert_eq!(depth, 128, "all 128 Org headline levels open");
             leaf.raw = leaf.raw.replace("LEAF needle", "LEAF edited");
-            assert!(matches!(
-                store.save(
+            crate::test_host_writer::HostWriter::for_store(&store)
+                .save(
                     tine_store::EditKind::ReplacePage,
                     &id,
                     SaveBase::Existing(read.rev),
-                    &doc
-                ),
-                tine_store::SaveOutcome::Saved(_)
-            ));
+                    &doc,
+                )
+                .unwrap();
             assert_eq!(
                 fs::read_to_string(&path).unwrap(),
                 at_cap_org("LEAF edited")

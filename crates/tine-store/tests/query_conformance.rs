@@ -789,6 +789,8 @@ fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
         "- a block on an unrelated page\n",
     );
     let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).expect("open");
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let names = |store: &Store| {
         let (query, view) =
             parse_query_text("(all-page-tags)", QueryDialect::Og, JournalDate::today());
@@ -812,13 +814,13 @@ fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
     let mut doc = read.doc;
     doc.pre_block = Some("tags:: Other".to_string());
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     assert_eq!(
         names(&store),
@@ -1092,6 +1094,8 @@ fn advanced_page_property_refreshes_after_save_and_reopen() {
         "type:: Program\n\n- alpha body\n",
     );
     let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let query = advanced_query("[:find (pull ?p [*]) :where (page-property ?p :type \"Program\")]");
     let answer = |store: &Store| {
         run_ir(
@@ -1107,13 +1111,13 @@ fn advanced_page_property_refreshes_after_save_and_reopen() {
     let mut doc = read.doc;
     doc.pre_block = Some("type:: Book".into());
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::SaveBlock,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     assert!(page_names(&answer(&store)).is_empty());
     drop(store);
@@ -1223,6 +1227,8 @@ fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
     write(dir.path(), "pages/A.md", "- TODO first\n");
     write(dir.path(), "pages/B.md", "- unrelated\n");
     let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).expect("open");
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let (query, view) = parse_query_text("(task TODO)", QueryDialect::Og, JournalDate::today());
     let answer = |store: &Store| {
         block_lines(&run_ir(
@@ -1240,13 +1246,13 @@ fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
         let mut doc = read.doc;
         doc.blocks[0].raw = raw.to_string();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 tine_store::EditKind::SaveBlock,
                 &id,
                 tine_store::SaveBase::Existing(read.rev),
                 &doc
             ),
-            tine_store::SaveOutcome::Saved(_)
+            Ok(_)
         ));
     };
     save("pages/B.md", "still unrelated");
@@ -1418,6 +1424,8 @@ fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
         "title:: Outline\n- project [[Top]]\n\t- middle [[Middle]]\n\t\t- needle\n",
     );
     let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let source = "content match 'needle' and any(parent, [[Middle]] and [[Top]]) and none(ancestors, [[Middle]] and content match 'project')";
     assert_eq!(
         block_lines(&run_text(
@@ -1441,13 +1449,13 @@ fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
     let mut doc = read.doc;
     doc.blocks[0].children[0].raw = "changed [[Middle]]".into();
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::SaveBlock,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     assert_eq!(
         block_lines(&run_text(

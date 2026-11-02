@@ -580,11 +580,12 @@ pub(crate) struct ReadSnapshot {
 
 pub(crate) type NameKeyMap = SharedMap<String, Arc<crate::transliteration::NameKeys>>;
 
+/// Names the page whose publication arms the graph-wide ownership rebuild
+/// mutant in `build_name_keys`. A page name, not a thread-local: the host
+/// publishes off the saving thread, and other tests in this binary must not
+/// see the mutant.
 #[cfg(test)]
-thread_local! {
-    /// Arms the graph-wide ownership rebuild mutant in `build_name_keys`.
-    pub(crate) static REWALK_NAME_OWNERS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+pub(crate) const REWALK_NAME_OWNERS_PAGE: &str = "rewalk-owners-mutant";
 
 impl ReadSnapshot {
     fn build_name_keys(&mut self, old: Option<&Self>, changed_paths: &[String]) -> Arc<NameKeyMap> {
@@ -620,7 +621,10 @@ impl ReadSnapshot {
         let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
         if let Some(old) = old {
             #[cfg(test)]
-            if REWALK_NAME_OWNERS.with(std::cell::Cell::get) {
+            if changed_paths
+                .iter()
+                .any(|path| path.contains(REWALK_NAME_OWNERS_PAGE))
+            {
                 // Mutant for the cost guard's own test: recompute prior
                 // ownership from every old page. Same keys and results,
                 // O(pages) work the guard must report.
@@ -5934,6 +5938,7 @@ mod tests {
         )
         .unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         save_model_page(&store, "books", |page| {
             page.blocks[0].raw = "alias:: book".into()
         });
@@ -5967,6 +5972,7 @@ mod tests {
         let dir = scratch("gh675-case-save");
         fs::write(dir.join("pages/Owner.md"), "alias:: SSE\n- body\n").unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let before = published_snapshot(&store);
         before.page_aliases_with_owners();
         assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
@@ -6152,10 +6158,11 @@ mod tests {
     }
 
     fn save_on_store(
-        store: &tine_store::Store,
+        store: &std::sync::Arc<tine_store::Store>,
         page: &PageDto,
         base: Option<&str>,
-    ) -> tine_store::SaveOutcome {
+    ) -> Result<tine_store::FileRev, crate::test_host_writer_ext::SaveRefused> {
+        let host_writer = crate::test_host_writer_ext::HostWriter::start(store);
         let target = store
             .whole_graph()
             .unwrap()
@@ -6167,19 +6174,24 @@ mod tests {
         let base = base
             .map(|rev| tine_store::SaveBase::Existing(rev.to_owned().into()))
             .unwrap_or(tine_store::SaveBase::CreateNew);
-        store.save(tine_store::EditKind::ReplacePage, &id, base, page)
+        host_writer.save(tine_store::EditKind::ReplacePage, &id, base, page)
     }
 
-    fn saved_rev(outcome: tine_store::SaveOutcome) -> String {
+    fn saved_rev(
+        outcome: Result<tine_store::FileRev, crate::test_host_writer_ext::SaveRefused>,
+    ) -> String {
         match outcome {
-            tine_store::SaveOutcome::Saved(rev) | tine_store::SaveOutcome::Unchanged(rev) => {
-                rev.into()
-            }
+            Ok(rev) => rev.into(),
             other => panic!("page was not saved: {other:?}"),
         }
     }
 
-    fn save_model_page(store: &crate::store::Store, name: &str, edit: impl FnOnce(&mut PageDto)) {
+    fn save_model_page(
+        store: &std::sync::Arc<crate::store::Store>,
+        name: &str,
+        edit: impl FnOnce(&mut PageDto),
+    ) {
+        let host_writer = crate::test_host_writer::HostWriter::start(store);
         let id = match store.whole_graph().unwrap().resolve(name, false) {
             crate::store::Resolved::Existing { id, .. } => id,
             _ => panic!("missing page {name}"),
@@ -6187,13 +6199,13 @@ mod tests {
         let mut read = store.page(&id).unwrap();
         edit(&mut read.doc);
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &id,
                 crate::store::SaveBase::Existing(read.rev),
                 &read.doc
             ),
-            crate::store::SaveOutcome::Saved(_)
+            Ok(_)
         ));
     }
 
@@ -6207,6 +6219,7 @@ mod tests {
             fs::write(dir.join(format!("pages/Notes.{extension}")), before).unwrap();
             fs::write(dir.join("pages/Fuzzy Existing.md"), "- body\n").unwrap();
             let store = model_store(&dir);
+            let store = std::sync::Arc::new(store);
             let before = published_snapshot(&store);
             // Warm both indexes so save must refresh carried facts correctly.
             before.referenced_page_names();
@@ -6314,6 +6327,8 @@ mod tests {
         fs::write(dir.join("pages/Irrelevant.md"), "- unrelated\n").unwrap();
         let (store, _, _) =
             crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let mut snapshot = published_snapshot(&store);
 
         let names = vec![
@@ -6362,13 +6377,13 @@ mod tests {
         let mut source = store.page(&source_id).unwrap();
         source.doc.blocks[0].raw = "nothing here".into();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &source_id,
                 crate::store::SaveBase::Existing(source.rev),
                 &source.doc,
             ),
-            crate::store::SaveOutcome::Saved(_)
+            Ok(_)
         ));
         snapshot = published_snapshot(&store);
         assert!(!candidate_paths(
@@ -6396,6 +6411,7 @@ mod tests {
         // Watcher-equivalent physical replace is an upsert at the same seam.
         fs::write(&source_path, "- [[Target]] plus Target\n").unwrap();
         store.refresh(crate::Depth::Stamps).unwrap();
+        assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(20)));
         snapshot = published_snapshot(&store);
         assert!(candidate_paths(
             &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
@@ -7083,6 +7099,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("pages").join("Refs.md"), "- see [[Target]]\n").unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let before = published_snapshot(&store);
         assert!(before.block_index.get().is_some());
         assert!(before.referenced_name_index.get().is_none());
@@ -7352,6 +7369,7 @@ mod tests {
         .unwrap();
 
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let before = published_snapshot(&store).block_ref_counts();
         save_model_page(&store, "Target", |target| {
             target.blocks[0].raw = "target edited without changing references".into();
@@ -7693,6 +7711,7 @@ mod tests {
     fn warmed_save_cache_upsert_keeps_future_and_duplicate_days_out_of_feed() {
         let dir = scratch("future-feed-warm-save");
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let _ = store.whole_graph().unwrap();
 
         let mut past = jdto("Jul 14th, 2030");
@@ -7814,30 +7833,28 @@ mod tests {
     }
 
     #[test]
-    fn rename_rolls_back_destination_when_source_remove_fails() {
+    fn asset_move_rolls_back_destination_when_source_remove_fails() {
         let dir = scratch("rename-remove-failure");
-        let original = "- alpha body\n";
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let original = "alpha body\n";
         let ref_original = "- see [[Alpha]] here\n";
-        fs::write(dir.join("pages/Alpha.md"), original).unwrap();
+        fs::write(dir.join("assets/Alpha.txt"), original).unwrap();
         fs::write(dir.join("pages/Other.md"), ref_original).unwrap();
         let store = loaded_store(&dir);
-        let from = crate::FileId::from("pages/Alpha.md".to_owned());
-        let to = crate::FileId::from("pages/Beta.md".to_owned());
+        let from = crate::FileId::from("assets/Alpha.txt".to_owned());
+        let to = crate::FileId::from("assets/Beta.txt".to_owned());
         let rev = store.read(&from, None).unwrap().1;
         store.inject_fault(crate::FaultPoint::MidStepIo);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.transaction(None);
         tx.move_file(&from, rev, &to, None);
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::NotCommitted { .. }
-        ));
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
         assert_eq!(
-            fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
+            fs::read_to_string(dir.join("assets/Alpha.txt")).unwrap(),
             original
         );
         assert_eq!(
-            fs::read_to_string(dir.join("pages/Beta.md")).unwrap(),
+            fs::read_to_string(dir.join("assets/Beta.txt")).unwrap(),
             "external during undo",
             "rollback must not unlink a destination replaced after its check"
         );
@@ -7926,6 +7943,7 @@ mod tests {
         let path = dir.join("pages/ManualOrg.org");
         fs::write(&path, "* plain\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let id = tine_store::PageId::from("pages/ManualOrg.org");
         let mut dto = store.page(&id).unwrap().doc;
         let mut rev = dto.rev.clone().unwrap();
@@ -7949,6 +7967,7 @@ mod tests {
         let src = "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block\n";
         fs::write(dir.join("pages").join("Org Notes.org"), src).unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let id = tine_store::PageId::from("pages/Org Notes.org");
 
         // Listed, recognized as an org page.
@@ -7995,6 +8014,8 @@ mod tests {
     fn guide_flagged_pages_are_never_written_to_graph_files() {
         let dir = scratch("guide-no-save");
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
         let page = PageDto {
             name: "Tine-guide/Features/Sheets".into(),
             kind: PageKind::Page,
@@ -8014,13 +8035,15 @@ mod tests {
         };
 
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &tine_store::PageId::from("pages/Guide.md"),
                 tine_store::SaveBase::CreateNew,
                 &page,
             ),
-            tine_store::SaveOutcome::GuideEphemeral
+            Err(crate::test_host_writer_ext::SaveRefused::Planned(
+                tine_store::Why::Refused(tine_store::Refusal::InvalidTarget(_))
+            ))
         ));
         let files: Vec<_> = fs::read_dir(dir.join("pages"))
             .unwrap()
@@ -8065,19 +8088,22 @@ mod tests {
         fs::write(dir.join("pages").join("Weird.org"), src).unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let id = tine_store::PageId::from("pages/Weird.org");
-        let dto = store.page(&id).unwrap().doc;
+        let read = store.page(&id).unwrap();
+        let dto = read.doc;
         assert_eq!(dto.format, Format::Org);
         assert!(dto.read_only, "non-round-tripping org loads read-only");
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
         assert!(matches!(
-            tine_graph_features::pages::save_page(
-                &store,
+            host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
+                tine_store::SaveBase::Existing(read.rev),
                 &dto,
-                None,
-                true
             ),
-            Ok(tine_store::SaveOutcome::ReadOnly(_))
+            Err(crate::test_host_writer_ext::SaveRefused::Planned(
+                tine_store::Why::Refused(tine_store::Refusal::ReadOnly(_))
+            ))
         ));
         assert_eq!(
             fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(),
@@ -8456,6 +8482,7 @@ mod tests {
         let dir = scratch("org-h4");
         fs::write(dir.join("pages").join("P.org"), "* one\n* two\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let id = tine_store::PageId::from("pages/P.org");
         let dto = store.page(&id).unwrap().doc;
         assert_eq!(dto.blocks.len(), 2);
@@ -8507,6 +8534,7 @@ mod tests {
             guide: false,
         };
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         saved_rev(save_on_store(&store, &page, None));
         assert!(
             dir.join("pages").join("Fresh.org").exists(),
@@ -8531,6 +8559,7 @@ mod tests {
         let original = "- a\n- \n"; // second bullet: dash + trailing space
         fs::write(&path, original).unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let dto = store
             .page(&tine_store::PageId::from("pages/A.md"))
             .unwrap()
@@ -8570,6 +8599,8 @@ mod tests {
             let path = dir.join("pages").join("Property.md");
             fs::write(&path, original).unwrap();
             let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let store = std::sync::Arc::new(store);
+            let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
             let id = tine_store::PageId::from("pages/Property.md");
             let read = store.page(&id).unwrap();
             let mut dto = read.doc;
@@ -8586,13 +8617,15 @@ mod tests {
                 ..Default::default()
             }];
 
-            let err = match store.save(
+            let err = match host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
                 tine_store::SaveBase::Existing(read.rev),
                 &dto,
             ) {
-                tine_store::SaveOutcome::Io(error) => error,
+                Err(crate::test_host_writer_ext::SaveRefused::Planned(
+                    tine_store::Why::Failed(error),
+                )) => error,
                 outcome => panic!("header rewrite was accepted: {outcome:?}"),
             };
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -8671,17 +8704,24 @@ mod tests {
                     ..Default::default()
                 }];
 
-                let outcome = tine_graph_features::pages::save_page(
-                    &store,
+                // A forced save takes its base from the bytes now on disk.
+                let base = if forced {
+                    store.read(&id.file(), None).unwrap().1
+                } else {
+                    cached_before.rev.clone()
+                };
+                let store = std::sync::Arc::new(store);
+                let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
+                let outcome = host_writer.save(
                     tine_store::EditKind::ReplacePage,
                     &id,
+                    tine_store::SaveBase::Existing(base),
                     &dto,
-                    Some(cached_before.rev.clone().into()),
-                    forced,
-                )
-                .unwrap();
+                );
                 let err = match outcome {
-                    tine_store::SaveOutcome::Io(error) => error,
+                    Err(crate::test_host_writer_ext::SaveRefused::Planned(
+                        tine_store::Why::Failed(error),
+                    )) => error,
                     other => panic!("header rewrite was accepted: {other:?}"),
                 };
                 assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -8710,6 +8750,7 @@ mod tests {
         let path = dir.join("pages").join("Property.md");
         fs::write(&path, "A:: header\nB:: shared\n\n- B:: shared\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let id = tine_store::PageId::from("pages/Property.md");
         let mut dto = store.page(&id).unwrap().doc;
         dto.pre_block = Some("A:: edited header".into());
@@ -8751,6 +8792,7 @@ mod tests {
             let path = dir.join("pages").join("Property.md");
             fs::write(&path, original).unwrap();
             let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let store = std::sync::Arc::new(store);
             let id = tine_store::PageId::from("pages/Property.md");
             let mut dto = store.page(&id).unwrap().doc;
             dto.pre_block = Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX".into());
@@ -8773,6 +8815,7 @@ mod tests {
     fn new_property_only_first_root_becomes_canonical_page_header() {
         let dir = scratch("page-property-authoring");
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let _ = store.whole_graph().unwrap();
         let page = PageDto {
             name: "Property Authoring".into(),
@@ -8812,22 +8855,23 @@ mod tests {
         );
         assert_eq!(warm.blocks.len(), 1);
         assert_eq!(warm.blocks[0].raw, "Reading list");
-        assert_eq!(
-            warm.blocks[0].id, "body",
-            "normalization changed the body root identity"
-        );
         store.close();
         let reopened_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let cold = reopened_store.page(&id).unwrap().doc;
         assert_eq!(cold.pre_block, warm.pre_block);
+        assert_eq!(
+            cold.blocks[0].id, warm.blocks[0].id,
+            "normalization changed the body root identity"
+        );
         assert_eq!(cold.blocks.len(), warm.blocks.len());
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn dto_save_retains_runtime_ids_until_external_reparse() {
+    fn a_saved_page_reads_back_with_the_ids_of_a_cold_parse() {
         let dir = scratch("dto-save-runtime-ids");
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let _ = store.whole_graph().unwrap();
         let id = tine_store::PageId::from("pages/Runtime.md");
         let mut dto = PageDto {
@@ -8852,21 +8896,28 @@ mod tests {
         };
         saved_rev(save_on_store(&store, &dto, None));
         let first = store.page(&id).unwrap().doc;
-        assert_eq!(first.blocks[0].id, "live-parent");
-        assert_eq!(first.blocks[0].children[0].id, "live-child");
+        assert_eq!(first.blocks[0].raw, "Parent");
+        assert_eq!(first.blocks[0].children[0].raw, "Child");
 
         dto.blocks[0].raw = "Parent edited".into();
         saved_rev(save_on_store(&store, &dto, first.rev.as_deref()));
         let second = store.page(&id).unwrap().doc;
-        assert_eq!(second.blocks[0].id, "live-parent");
-        assert_eq!(second.blocks[0].children[0].id, "live-child");
-
-        let path = dir.join("pages/Runtime.md");
-        fs::write(&path, "- External edit\n  - Child\n").unwrap();
-        let external = store.page(&id).unwrap().doc;
-        assert_ne!(external.blocks[0].id, "live-parent");
-        assert_ne!(external.blocks[0].children[0].id, "live-child");
+        assert_eq!(second.blocks[0].raw, "Parent edited");
+        assert_eq!(second.blocks[0].children[0].raw, "Child");
+        // Publication reads the bytes it wrote, so a live read agrees with a
+        // cold one; a caller's runtime ids stay in the caller's own buffer.
+        assert_ne!(second.blocks[0].id, "live-parent");
+        assert_ne!(second.blocks[0].children[0].id, "live-child");
         store.close();
+        let cold_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let cold = cold_store.page(&id).unwrap().doc;
+        assert_eq!(cold.blocks[0].id, second.blocks[0].id);
+        assert_eq!(
+            cold.blocks[0].children[0].id,
+            second.blocks[0].children[0].id
+        );
+        cold_store.close();
+
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -8883,6 +8934,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "title:: The Nazi Mind\ntags:: books\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let loaded = store
             .page(&tine_store::PageId::from("pages/The Nazi Mind.md"))
             .unwrap()
@@ -8942,6 +8994,7 @@ mod tests {
         let path = dir.join("pages").join("Existing.md");
         fs::write(&path, "- Body\r\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let id = tine_store::PageId::from("pages/Existing.md");
         let mut dto = store.page(&id).unwrap().doc;
         dto.blocks.insert(
@@ -8976,6 +9029,7 @@ mod tests {
         let original = "Intro before outline\n\n- Body\n";
         fs::write(&path, original).unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         let id = tine_store::PageId::from("pages/Imported.md");
         let mut dto = store.page(&id).unwrap().doc;
         dto.pre_block = None;
@@ -8989,7 +9043,7 @@ mod tests {
         );
         let outcome = save_on_store(&store, &dto, dto.rev.as_deref());
         assert!(
-            matches!(outcome, tine_store::SaveOutcome::Io(ref err) if err.kind() == io::ErrorKind::InvalidData && err.to_string().contains("existing page preamble"))
+            matches!(outcome, Err(crate::test_host_writer_ext::SaveRefused::Planned(tine_store::Why::Failed(ref err))) if err.kind() == io::ErrorKind::InvalidData && err.to_string().contains("existing page preamble"))
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
         let cached = store.page(&id).unwrap().doc;
@@ -9109,6 +9163,7 @@ mod tests {
                 .unwrap();
             }
             let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let store = std::sync::Arc::new(store);
             let page = PageDto {
                 name: format!("Negative {label}"),
                 kind: PageKind::Page,
@@ -9981,6 +10036,7 @@ mod tests {
         )
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         // A custom filename format now creates today's journal at the CORRECT path
         // (the user's format) — not a misplaced default `yyyy_MM_dd` duplicate.
         saved_rev(save_on_store(&store, &jdto("Jun 24th, 2026"), None));
@@ -10024,6 +10080,7 @@ mod tests {
         let dir = scratch("jfmt-default");
         // No config.edn → defaults → creation proceeds as before.
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
         saved_rev(save_on_store(&store, &jdto("Jun 24th, 2026"), None));
         assert!(dir.join("journals").join("2026_06_24.md").exists());
         let _ = fs::remove_dir_all(&dir);
@@ -10187,6 +10244,7 @@ mod tests {
         )
         .unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let mut snapshot = published_snapshot(&store);
         let q = r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#;
 
@@ -10247,6 +10305,7 @@ mod tests {
         )
         .unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let mut snapshot = published_snapshot(&store);
 
         let first = snapshot.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
@@ -10289,6 +10348,7 @@ mod tests {
         )
         .unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let mut snapshot = published_snapshot(&store);
 
         let first_block = snapshot.block_referrers_bounded(TARGET, 20_000, 32 * 1024 * 1024);
@@ -10342,6 +10402,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("pages").join("Source.md"), "- unrelated\n").unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let mut snapshot = published_snapshot(&store);
 
         let first_linked = snapshot
@@ -10509,6 +10570,7 @@ mod tests {
         fs::write(dir.join("pages").join("B.md"), "- TODO second\n").unwrap();
         fs::write(dir.join("pages").join("Notes.md"), "- unrelated\n").unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let mut snapshot = published_snapshot(&store);
 
         let first = snapshot.run_query_bounded("(task TODO)", 1, 32 * 1024 * 1024);
@@ -10542,6 +10604,7 @@ mod tests {
         let dir = scratch("advanced-cache-nul-query");
         fs::write(dir.join("pages").join("P.md"), "- DONE ship\n").unwrap();
         let store = model_store(&dir);
+        let store = std::sync::Arc::new(store);
         let original = published_snapshot(&store);
         let query = "[:find (pull ?b [*]) :where \0 (task ?b #{\"TODO\"})]";
         let first = advanced_result(&original, query);
@@ -10755,32 +10818,6 @@ mod tests {
         .unwrap();
         assert!(Graph::open_checked(&dir).is_ok());
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn guide_twin_withdrawal_preserves_a_concurrent_markdown_replacement() {
-        let dir = scratch("guide-twin-withdrawal-race");
-        let store = loaded_store(&dir);
-        store.inject_fault(crate::FaultPoint::TwinAfterPublish);
-        store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-        tx.create(
-            &crate::FileId::from("pages/Guide.md".to_owned()),
-            crate::Content::Bytes(b"- bundled guide\n".to_vec()),
-        );
-        assert!(matches!(
-            tx.commit_internal(),
-            crate::TxOutcome::NotCommitted { .. }
-        ));
-        assert_eq!(
-            fs::read_to_string(dir.join("pages/Guide.md")).unwrap(),
-            "external during undo"
-        );
-        assert_eq!(
-            fs::read_to_string(dir.join("pages/Guide.org")).unwrap(),
-            "external twin"
-        );
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[cfg(unix)]
@@ -11000,6 +11037,8 @@ mod tests {
         )
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
         let page = PageDto {
             name: "Jul 10th, 2026".into(),
             kind: PageKind::Journal,
@@ -11014,20 +11053,22 @@ mod tests {
         };
         let id = store.journal_id(tine_store::Day(20260710));
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
                 tine_store::SaveBase::CreateNew,
                 &page
             ),
-            tine_store::SaveOutcome::InvalidTarget(_)
+            Err(crate::test_host_writer_ext::SaveRefused::Planned(
+                tine_store::Why::Refused(tine_store::Refusal::InvalidTarget(_))
+            ))
         ));
         assert!(!dir.parent().unwrap().join("2026_07_10.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
     /// Open a store over `dir` and wait for its initial load, so tests can
-    /// drive `Store::page`/`Store::save` by `PageId` and inspect the graph.
+    /// read with `Store::page` by `PageId` and inspect the graph.
     fn loaded_store(dir: &Path) -> crate::Store {
         let store = crate::Store::open(dir, Default::default()).unwrap().0;
         store.whole_graph().unwrap();
@@ -11066,17 +11107,19 @@ mod tests {
         // write the stray file, NOT be re-resolved by name onto the canonical one.
         let dir = dup_day_graph("savepinned");
         let store = loaded_store(&dir);
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = crate::PageId::from("journals/Friday, 26-06-2026.org");
         let read = store.page(&id).unwrap();
         let mut stray = read.doc;
         stray.blocks[0].raw = "stray body edited".into();
-        let rev = match store.save(
+        let rev = match host_writer.save(
             crate::EditKind::ReplacePage,
             &id,
             crate::SaveBase::Existing(read.rev),
             &stray,
         ) {
-            crate::SaveOutcome::Saved(rev) => rev,
+            Ok(rev) => rev,
             other => panic!("stray save must succeed, got {other:?}"),
         };
         assert_eq!(
@@ -11110,19 +11153,23 @@ mod tests {
     fn save_rejects_pinned_path_that_escapes_the_graph() {
         let dir = dup_day_graph("savebadpath");
         let store = loaded_store(&dir);
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let read = store
             .page(&crate::PageId::from("journals/Friday, 26-06-2026.org"))
             .unwrap();
         let bad = crate::PageId::from("../escape.md");
         assert!(
             matches!(
-                store.save(
+                host_writer.save(
                     crate::EditKind::ReplacePage,
                     &bad,
                     crate::SaveBase::Existing(read.rev),
                     &read.doc
                 ),
-                crate::SaveOutcome::InvalidTarget(_)
+                Err(crate::test_host_writer::SaveRefused::Planned(
+                    crate::Why::Refused(crate::Refusal::InvalidTarget(_))
+                ))
             ),
             "save must refuse an out-of-graph path"
         );
@@ -11188,6 +11235,8 @@ mod tests {
         )
         .unwrap();
         let store = loaded_store(&dir);
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = match store.whole_graph().unwrap().resolve("foo", false) {
             crate::Resolved::Existing { id, .. } => id,
             _ => panic!("nested page must resolve by name to an existing page"),
@@ -11197,13 +11246,13 @@ mod tests {
         let mut dto = read.doc;
         dto.blocks[0].raw = "after".into();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &id,
                 crate::SaveBase::Existing(read.rev),
                 &dto
             ),
-            crate::SaveOutcome::Saved(_)
+            Ok(_)
         ));
 
         // The nested file got the edit…
@@ -11235,6 +11284,8 @@ mod tests {
         )
         .unwrap();
         let store = loaded_store(&dir);
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
 
         let a_id = crate::PageId::from("pages/client-a/foo.md");
         let b_id = crate::PageId::from("pages/client-b/foo.md");
@@ -11249,22 +11300,22 @@ mod tests {
         a_doc.blocks[0].raw = "after a".into();
         b_doc.blocks[0].raw = "after b".into();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &a_id,
                 crate::SaveBase::Existing(a.rev),
                 &a_doc
             ),
-            crate::SaveOutcome::Saved(_)
+            Ok(_)
         ));
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &b_id,
                 crate::SaveBase::Existing(b.rev),
                 &b_doc
             ),
-            crate::SaveOutcome::Saved(_)
+            Ok(_)
         ));
 
         assert_eq!(
@@ -11297,6 +11348,8 @@ mod tests {
         fs::write(&nested, "- nested original sentinel\n").unwrap();
 
         let store = loaded_store(&dir);
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let g = &store.graph;
         assert!(g.warm_cache_cancellable(|| false));
         let logical_winner = g
@@ -11320,13 +11373,13 @@ mod tests {
         let mut non_winner = read.doc;
         non_winner.blocks[0].raw = "nested saved sentinel".into();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::ReplacePage,
                 &non_winner_id,
                 crate::SaveBase::Existing(read.rev),
                 &non_winner
             ),
-            crate::SaveOutcome::Saved(_)
+            Ok(_)
         ));
 
         assert_eq!(

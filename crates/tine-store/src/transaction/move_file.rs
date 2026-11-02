@@ -37,7 +37,6 @@ impl PagePlan<'_> {
             old: None,
             new: None,
             new_rev: None,
-            opaque_rev: None,
             created: false,
             moved: false,
         };
@@ -102,7 +101,6 @@ impl PagePlan<'_> {
             dst: Some(to.clone()),
             old: Some(bytes.to_vec()),
             new: Some(bytes.to_vec()),
-            saved_page: None,
             opaque_rev: None,
         };
         let before = BTreeMap::from([
@@ -110,15 +108,8 @@ impl PagePlan<'_> {
             (to.as_str().to_owned(), None),
         ]);
         let starting = self.store.graph.cache_generation();
-        let publication = self.publish_final_files(
-            &[plan],
-            &[],
-            &before,
-            false,
-            &mut Rollback::default(),
-            &[],
-            &[],
-        );
+        let publication =
+            self.publish_final_files(&[plan], &[], &before, false, &mut Rollback::default(), &[]);
         if publication.changed_any && self.store.graph.cache_generation() == starting {
             let root = &self.store.graph.root;
             self.store
@@ -447,7 +438,6 @@ impl PagePlan<'_> {
                 dst: None,
                 old: None,
                 new: Some(bytes),
-                saved_page: None,
                 opaque_rev: None,
             };
             let before = BTreeMap::from([(id.as_str().to_owned(), None)]);
@@ -458,7 +448,6 @@ impl PagePlan<'_> {
                 &before,
                 false,
                 &mut Rollback::default(),
-                &[],
                 &[],
             );
             if publication.changed_any && self.store.graph.cache_generation() == starting {
@@ -486,28 +475,6 @@ impl PagePlan<'_> {
         Ok(false)
     }
 
-    pub(super) fn undo_opaque_move(
-        &self,
-        record: &Undo,
-        dst_id: &FileId,
-        dst: &Path,
-        live: &Path,
-    ) -> io::Result<()> {
-        let mut undo = Undo {
-            kind: UndoKind::Rename,
-            src: dst_id.clone(),
-            dst: Some(record.src.clone()),
-            trash: None,
-            old: None,
-            new: None,
-            new_rev: None,
-            opaque_rev: record.opaque_rev.clone(),
-            created: false,
-            moved: false,
-        };
-        self.publish_move(&mut undo, dst, live)
-    }
-
     pub(super) fn apply_move(
         &self,
         plan: &Prepared,
@@ -517,37 +484,6 @@ impl PagePlan<'_> {
         let src = self.path(&plan.src)?;
         let dst_id = plan.dst.as_ref().expect("move destination");
         let dst = self.spelled_path(dst_id)?;
-        if let Some(rev) = &plan.opaque_rev {
-            self.verify_opaque(&plan.src, rev)?;
-            self.verify_move_destination(&plan.src, dst_id, index)?;
-            if let Some(parent) = dst.parent() {
-                crate::directory_durability::create_dir_all_durable(
-                    parent,
-                    self.store.graph.creation_bound(parent),
-                    &self.store.graph.root_binding,
-                )
-                .map_err(failed)?;
-            }
-            undo.kind = UndoKind::Rename;
-            undo.opaque_rev = Some(rev.clone());
-            self.fault_collision(&dst);
-            self.publish_move(undo, &src, &dst)
-                .map_err(|error| collision(dst_id, error, &dst))?;
-            undo.created = true;
-            self.fault_mid_step(index)?;
-            self.fault_twin(dst_id);
-            if let Some(twin) = self.disk_twin(dst_id)? {
-                return Err(Why::Conflict {
-                    file: twin.clone(),
-                    disk: disk_rev(&self.path(&twin)?),
-                });
-            }
-            self.verify_opaque(dst_id, rev)?;
-            return Ok(StepResult::Moved {
-                to: dst_id.clone(),
-                rev: rev.clone(),
-            });
-        }
         let old = plan.old.as_deref().expect("move baseline");
         let new = plan.new.as_ref().expect("move bytes");
         self.verify(&plan.src, Some(old), index)?;
@@ -566,24 +502,11 @@ impl PagePlan<'_> {
             // destination and writes the baseline back under `src`.
             undo.kind = UndoKind::Rename;
             undo.new = Some(Expected::Bytes(old.to_vec()));
-            if self.page(dst_id) {
-                self.store.graph.transaction_note_page(&dst, old);
-            }
-            if self.page(&plan.src) {
-                self.store.graph.transaction_note_delete(&src);
-            }
             self.fault_collision(&dst);
             self.publish_move(undo, &src, &dst)
                 .map_err(|error| collision(dst_id, error, &dst))?;
             undo.created = true;
             self.fault_mid_step(index)?;
-            self.fault_twin(dst_id);
-            if let Some(twin) = self.disk_twin(dst_id)? {
-                return Err(Why::Conflict {
-                    file: twin.clone(),
-                    disk: disk_rev(&self.path(&twin)?),
-                });
-            }
             if fs::read(&dst).map_err(failed)? != old {
                 return Err(Why::Conflict {
                     file: plan.src.clone(),
@@ -601,12 +524,6 @@ impl PagePlan<'_> {
         undo.kind = UndoKind::Rename;
         undo.new = Some(Expected::Bytes(old.to_vec()));
         self.fault_collision(&dst);
-        if self.page(dst_id) {
-            self.store.graph.transaction_note_page(&dst, new);
-        }
-        if self.page(&plan.src) {
-            self.store.graph.transaction_note_delete(&src);
-        }
         self.publish_move(undo, &src, &dst)
             .map_err(|error| collision(dst_id, error, &dst))?;
         undo.created = true;
@@ -645,13 +562,6 @@ impl PagePlan<'_> {
             std::process::abort();
         }
         self.fault_mid_step(index)?;
-        self.fault_twin(dst_id);
-        if let Some(twin) = self.disk_twin(dst_id)? {
-            return Err(Why::Conflict {
-                file: twin.clone(),
-                disk: disk_rev(&self.path(&twin)?),
-            });
-        }
         if fs::read(&trash).map_err(failed)? != old {
             return Err(Why::Conflict {
                 file: plan.src.clone(),
@@ -725,7 +635,6 @@ mod spelling_tests {
             old: None,
             new: None,
             new_rev: None,
-            opaque_rev: None,
             created: false,
             moved: false,
         };
@@ -762,7 +671,6 @@ mod spelling_tests {
             old: None,
             new: None,
             new_rev: None,
-            opaque_rev: None,
             created: false,
             moved: false,
         };
@@ -1027,7 +935,6 @@ mod spelling_tests {
                 old: None,
                 new: None,
                 new_rev: None,
-                opaque_rev: None,
                 created: false,
                 moved: false,
             };

@@ -131,6 +131,12 @@ mod test_cfg;
 mod test_config_client;
 #[cfg(test)]
 mod test_fixture_io;
+#[cfg(test)]
+use crate as store_crate;
+#[cfg(test)]
+mod test_host_writer;
+#[cfg(test)]
+mod test_host_writer_ext;
 pub mod transaction;
 mod transliteration;
 mod watch;
@@ -143,8 +149,8 @@ pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
     FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
     InventoryScope, IrAnswer, IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin,
-    PageId, PageRead, QueryError, Resolved, SaveBase, SaveOutcome, SearchRequest, Store,
-    StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
+    PageId, PageRead, QueryError, Resolved, SaveBase, SearchRequest, Store, StoreError,
+    Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::{QueryDialect, QueryResult};

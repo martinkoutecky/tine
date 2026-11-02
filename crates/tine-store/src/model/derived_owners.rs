@@ -281,6 +281,8 @@ impl Graph {
                 .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
         }
         let mut guard = self.derived.cache.write().unwrap();
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.cache_publish_pause);
         {
             let mut keys = self.held.keys.write().unwrap();
             let Some(indexed) = keys.get_mut(key) else {

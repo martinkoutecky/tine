@@ -549,6 +549,7 @@ fn sb1_c8_native_unicode_admission_and_noreplace_follow_volume() {
         let store = crate::Store::open(dir.path(), Default::default())
             .unwrap()
             .0;
+        let store = std::sync::Arc::new(store);
         store.whole_graph_reconciled().unwrap();
         let id = crate::FileId::from(to.clone());
         let admission = store.page_plan(None).page_create_checks(&id, proposed);
@@ -638,10 +639,9 @@ fn sb1_c8_native_unicode_admission_and_noreplace_follow_volume() {
                 crate::SaveBase::Existing(second.rev),
                 &second_doc,
             );
-            assert!(matches!(
-                tx.commit_internal(),
-                crate::TxOutcome::Committed { .. }
-            ));
+            crate::test_host_writer::HostWriter::start(&store)
+                .apply(tx.plan().unwrap())
+                .unwrap();
             let saved_first = fs::read_to_string(&old).unwrap();
             let saved_second = fs::read_to_string(&new).unwrap();
             assert!(saved_first.contains("first saved independently"));

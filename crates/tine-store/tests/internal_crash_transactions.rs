@@ -86,24 +86,19 @@ fn crash_transaction_worker() {
     }
     let root = Path::new(&root);
     let store = open(root);
-    let a = PageId::from("pages/A.md");
-    let b = store.file_id(Area::Pages, "B.md").unwrap();
-    let d = store.file_id(Area::Pages, "D.md").unwrap();
+    let a = store.file_id(Area::Assets, "A.md").unwrap();
+    let b = store.file_id(Area::Assets, "B.md").unwrap();
+    let d = store.file_id(Area::Assets, "D.md").unwrap();
     let c = store.file_id(Area::Assets, "c.bin").unwrap();
-    let a_rev = store.read(&a.file(), None).unwrap().1;
+    let a_rev = store.read(&a, None).unwrap().1;
     let b_rev = store.read(&b, None).unwrap().1;
     let c_rev = store.read(&c, None).unwrap().1;
-    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-    tx.save_page(
-        &[crate::EditKind::ReplacePage],
-        &a,
-        SaveBase::Existing(a_rev),
-        &page("A", "new A"),
-    );
+    let mut tx = store.transaction(None);
+    tx.replace(&a, a_rev, b"- new A\n".to_vec());
     tx.move_file(&b, b_rev, &d, None);
     tx.trash(&c, c_rev, crate::TrashIf::Any);
     store.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
-    let _ = tx.commit_internal();
+    let _ = tx.commit();
     panic!("I-2: transaction fault did not abort; exemplar Transaction::commit");
 }
 
@@ -112,8 +107,8 @@ fn transaction_kill_reopen_preserves_each_old_or_new_file() {
     let _integration_guard = crate::test_transactions::integration_lock();
     for boundary in 0..3 {
         let root = scratch("tx");
-        fs::write(root.join("pages/A.md"), b"- old A\n").unwrap();
-        fs::write(root.join("pages/B.md"), b"- old B\n").unwrap();
+        fs::write(root.join("assets/A.md"), b"- old A\n").unwrap();
+        fs::write(root.join("assets/B.md"), b"- old B\n").unwrap();
         fs::write(root.join("assets/c.bin"), b"old C").unwrap();
         child(
             &root,
@@ -122,11 +117,11 @@ fn transaction_kill_reopen_preserves_each_old_or_new_file() {
         );
         let reopened = open(&root);
         reopened.whole_graph().unwrap();
-        let a = fs::read(root.join("pages/A.md")).unwrap();
+        let a = fs::read(root.join("assets/A.md")).unwrap();
         assert!(a == b"- old A\n" || a == b"- new A\n",
             "I-2: no torn page after commit crash; exemplar Transaction::commit at {boundary}: {a:?}");
-        let b = fs::read(root.join("pages/B.md")).ok();
-        let d = fs::read(root.join("pages/D.md")).ok();
+        let b = fs::read(root.join("assets/B.md")).ok();
+        let d = fs::read(root.join("assets/D.md")).ok();
         assert!(
             b.as_deref() == Some(b"- old B\n") || d.as_deref() == Some(b"- old B\n"),
             "I-2: moved page survives at boundary {boundary}; exemplar Transaction::commit"
@@ -140,7 +135,7 @@ fn transaction_kill_reopen_preserves_each_old_or_new_file() {
 }
 
 #[test]
-fn crash_block_reference_worker() {
+fn crash_receiver_before_source_worker() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let Ok(root) = std::env::var("TINE_CRASH_REF_ROOT") else {
         return;
@@ -152,26 +147,26 @@ fn crash_block_reference_worker() {
     let target_rev = store.read(&target.file(), None).unwrap().1;
     let source_rev = store.read(&source.file(), None).unwrap().1;
     let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
-    let mut tx = store.page_plan(Some(crate::EditKind::SaveBlock));
+    let mut tx = store.page_plan(Some(crate::EditKind::RenamePage));
     tx.save_page(
-        &[crate::EditKind::SaveBlock],
+        &[crate::EditKind::RenamePage],
         &target,
         SaveBase::Existing(target_rev),
         &page("M target", &format!("target\nid:: {uuid}")),
     );
-    tx.save_page(
-        &[crate::EditKind::SaveBlock],
-        &source,
-        SaveBase::Existing(source_rev),
-        &page(&source_name, &format!("(({uuid}))")),
-    );
-    store.inject_fault(FaultPoint::AbortAfterStep(0));
-    let _ = tx.commit_internal();
-    panic!("block-reference transaction did not abort");
+    tx.trash(&source.file(), source_rev, crate::TrashIf::Any);
+    let mut op = tx.plan().unwrap();
+    op.moves.push((target, source));
+    crate::host_faults::abort_before(crate::host_faults::Phase::TrashMove, 0);
+    let host = crate::test_host_writer::HostWriter::start(&store);
+    let _ = host.apply(op);
+    panic!("the operation did not abort before the source's deletion");
 }
 
+/// The receiver is durable before its source goes, whichever name sorts first
+/// (a process kill; `binding_order_tests` pins the order in process).
 #[test]
-fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders() {
+fn a_receiver_is_durable_before_its_source_is_deleted_for_both_name_orders() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
     for source_name in ["A source", "Z source"] {
@@ -180,26 +175,31 @@ fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders()
         fs::write(root.join("pages/M target.md"), b"- target\n").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("test_transactions::i02_crash_gaps::crash_block_reference_worker")
+            .arg("test_transactions::i02_crash_gaps::crash_receiver_before_source_worker")
+            .arg("--nocapture")
             .env("TINE_CRASH_REF_ROOT", &root)
             .env("TINE_CRASH_REF_SOURCE", source_name)
             .output()
             .unwrap();
         assert!(
             !output.status.success(),
-            "child must abort at the first save step"
+            "child must abort before the deletion"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("did not abort"),
+            "{output:?}"
         );
         let reopened = open(&root);
         reopened.whole_graph().unwrap();
-        let source = fs::read_to_string(root.join(format!("pages/{source_name}.md"))).unwrap();
+        assert_eq!(
+            fs::read(root.join(format!("pages/{source_name}.md"))).unwrap(),
+            b"- draft\n",
+            "the source stays until its receiver is durable"
+        );
         let target = fs::read_to_string(root.join("pages/M target.md")).unwrap();
         assert!(
-            !source.contains(&format!("(({uuid}))")),
-            "source reference reached disk first"
-        );
-        assert!(
             target.contains(&format!("id:: {uuid}")),
-            "target ID missing after first step"
+            "receiver missing after the kill"
         );
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
@@ -219,10 +219,10 @@ fn crash_rewritten_move_worker() {
     };
     let store = open(Path::new(&root));
     let ext = std::env::var("TINE_CRASH_MOVE_EXT").unwrap_or_else(|_| "md".into());
-    let source = store.file_id(Area::Pages, &format!("Old.{ext}")).unwrap();
-    let destination = store.file_id(Area::Pages, &format!("New.{ext}")).unwrap();
+    let source = store.file_id(Area::Assets, &format!("Old.{ext}")).unwrap();
+    let destination = store.file_id(Area::Assets, &format!("New.{ext}")).unwrap();
     let rev = store.read(&source, None).unwrap().1;
-    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.transaction(None);
     tx.move_file(
         &source,
         rev,
@@ -230,7 +230,7 @@ fn crash_rewritten_move_worker() {
         Some(&RenameMap(vec![("Old".into(), "New".into())])),
     );
     store.inject_fault(point);
-    let _ = tx.commit_internal();
+    let _ = tx.commit();
     panic!("rewritten move did not abort at injected boundary");
 }
 
@@ -242,7 +242,7 @@ fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
         ("rewrite", b"- [[New]]\n".as_slice()),
     ] {
         let root = scratch("rewritten-move");
-        fs::write(root.join("pages/Old.md"), b"- [[Old]]\n").unwrap();
+        fs::write(root.join("assets/Old.md"), b"- [[Old]]\n").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
             .arg("test_transactions::i02_crash_gaps::crash_rewritten_move_worker")
@@ -256,10 +256,10 @@ fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
             let reopened = open(&root);
             reopened.whole_graph().unwrap();
             assert!(
-                !root.join("pages/Old.md").exists(),
+                !root.join("assets/Old.md").exists(),
                 "source must not reappear after {point}"
             );
-            assert_eq!(fs::read(root.join("pages/New.md")).unwrap(), expected);
+            assert_eq!(fs::read(root.join("assets/New.md")).unwrap(), expected);
             drop(reopened);
         }
         fs::remove_dir_all(root).unwrap();
@@ -271,12 +271,12 @@ fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("move-trash-rollback");
     let old = b"title:: Old\n- [[Old]]\n";
-    fs::write(root.join("pages/Old.md"), old).unwrap();
+    fs::write(root.join("assets/Old.md"), old).unwrap();
     let store = open(&root);
-    let source = store.file_id(Area::Pages, "Old.md").unwrap();
-    let destination = store.file_id(Area::Pages, "New.md").unwrap();
+    let source = store.file_id(Area::Assets, "Old.md").unwrap();
+    let destination = store.file_id(Area::Assets, "New.md").unwrap();
     let rev = store.read(&source, None).unwrap().1;
-    let mut tx = store.page_plan(Some(crate::EditKind::RenamePage));
+    let mut tx = store.transaction(None);
     tx.move_file(
         &source,
         rev,
@@ -284,12 +284,9 @@ fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
         Some(&RenameMap(vec![("Old".into(), "New".into())])),
     );
     store.inject_fault(FaultPoint::MoveAfterTrashCopyIo);
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::NotCommitted { .. }
-    ));
-    assert_eq!(fs::read(root.join("pages/Old.md")).unwrap(), old);
-    assert!(!root.join("pages/New.md").exists());
+    assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+    assert_eq!(fs::read(root.join("assets/Old.md")).unwrap(), old);
+    assert!(!root.join("assets/New.md").exists());
     let trash = root.join("logseq/.tine-trash");
     fn count_files(path: &Path) -> usize {
         fs::read_dir(path)

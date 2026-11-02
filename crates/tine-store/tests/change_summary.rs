@@ -1,7 +1,7 @@
 //! GX4 S1 soundness oracle: compare real immutable host answers, then require
 //! an invalidation key for every changed answer. The oracle does no writes
 //! outside its temporary graph; ordinary edits use the guarded transaction.
-use crate::{Area, Cancel, EditKind, IrAnswer, IrRequest, PageId, SaveBase, Store, TxOutcome};
+use crate::{Area, Cancel, EditKind, IrAnswer, IrRequest, PageId, SaveBase, Store};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -84,7 +84,7 @@ fn query_cases() -> Vec<(
     .collect()
 }
 
-fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
+fn fixture(blocks: usize) -> (tempfile::TempDir, std::sync::Arc<Store>) {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     fs::create_dir_all(dir.path().join("journals")).unwrap();
@@ -108,7 +108,7 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
         "alias:: DayShortcut\n\n- journal\n",
     )
     .unwrap();
-    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     store.stop_watcher_for_tests();
     for &target in TARGETS {
@@ -136,7 +136,31 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
     (dir, store)
 }
 
-fn commit(store: &Store, pages: &[(&str, PageDto, SaveBase)]) -> Value {
+fn apply_published(store: &std::sync::Arc<Store>, tx: crate::PagePlan<'_>) -> Value {
+    let subscription = store.subscribe();
+    let op = tx.plan().expect("planned");
+    crate::test_host_writer::HostWriter::for_store(store)
+        .apply(op)
+        .expect("applied");
+    // Published before the reply, page by page; a new hold's retired rows
+    // publish too and name no file.
+    let mut own = Vec::new();
+    while let Some(change) = subscription.try_recv().unwrap() {
+        if change.origin == crate::Origin::Own {
+            own.push(serde_json::to_value(change).unwrap());
+        } else {
+            assert!(
+                change.files.is_empty(),
+                "no outside echo: {:?}",
+                change.files
+            );
+        }
+    }
+    assert!(!own.is_empty(), "the operation published");
+    crate::test_host_writer::merged_changes(own)
+}
+
+fn commit(store: &std::sync::Arc<Store>, pages: &[(&str, PageDto, SaveBase)]) -> Value {
     let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     for (path, doc, base) in pages {
         tx.save_page(
@@ -146,18 +170,10 @@ fn commit(store: &Store, pages: &[(&str, PageDto, SaveBase)]) -> Value {
             doc,
         );
     }
-    let outcome = tx.commit_internal();
-    let TxOutcome::Committed {
-        change: Some(change),
-        ..
-    } = outcome
-    else {
-        panic!("expected publication: {outcome:?}")
-    };
-    serde_json::to_value(change).unwrap()
+    apply_published(store, tx)
 }
 
-fn edit(store: &Store, path: &str, mutate: impl FnOnce(&mut PageDto)) -> Value {
+fn edit(store: &std::sync::Arc<Store>, path: &str, mutate: impl FnOnce(&mut PageDto)) -> Value {
     let mut read = store.page(&PageId::from(path)).unwrap();
     mutate(&mut read.doc);
     commit(store, &[(path, read.doc, SaveBase::Existing(read.rev))])
@@ -578,14 +594,7 @@ fn change_summary_random_reader_oracle() {
                             crate::TrashIf::Any,
                         );
                     }
-                    let TxOutcome::Committed {
-                        change: Some(change),
-                        ..
-                    } = tx.commit_internal()
-                    else {
-                        panic!("lifecycle commit")
-                    };
-                    serde_json::to_value(change).unwrap()
+                    apply_published(&store, tx)
                 }
                 63 => edit(&store, "journals/2026_10_22.md", |doc| {
                     doc.blocks[0].raw = format!("Journal Target [[NS/Leaf]] {seed}")
@@ -1088,11 +1097,24 @@ fn change_summary_bulk_rebuild_and_config_fallbacks() {
                 (path.as_str(), read.doc, SaveBase::Existing(read.rev))
             })
             .collect();
+        // The host publishes page by page, so no own change reaches the bound.
         let wire = commit(&store, &edits);
+        assert_eq!(wire["summary"]["full"], false);
+        assert_eq!(wire["inventoryChanged"], false);
+    }
+    // The bound itself: one publication naming more pages than it.
+    crate::test_host_writer::HostWriter::for_store(&store).settle();
+    store.watch.stop_background_for_test();
+    let sub = store.subscribe();
+    for count in [32, 33] {
+        for path in paths.iter().take(count) {
+            fs::write(dir.path().join(path), format!("- outside {count}\n")).unwrap();
+        }
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let wire = serde_json::to_value(sub.try_recv().unwrap().unwrap()).unwrap();
         assert_eq!(wire["summary"]["full"], count > 32);
         assert_eq!(wire["inventoryChanged"], false);
     }
-    let sub = store.subscribe();
     store.refresh(crate::Depth::Rebuild).unwrap();
     let rebuilt = serde_json::to_value(sub.try_recv().unwrap().unwrap()).unwrap();
     assert_eq!(rebuilt["summary"]["full"], true);

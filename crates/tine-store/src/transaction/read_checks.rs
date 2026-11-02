@@ -141,37 +141,6 @@ impl PagePlan<'_> {
             Err(error) => Err(Why::Failed(error.into())),
         }
     }
-
-    /// Whether `apply` may skip the separate stage-2 read. A reference rewrite that
-    /// changes an existing page skips the separate read: `apply` writes it
-    /// with `atomic_write_with_check`, whose final pre-rename guard reads the
-    /// same file through the same `read_parse_bytes` and compares it with the
-    /// same `old` bytes before the rename, refusing a mismatch or absence as
-    /// the same `Why::Conflict` (via `collision`). The external-editor/sync
-    /// race this check defends against is therefore caught later in the same
-    /// step, before anything becomes visible; only a temp file is written
-    /// and withdrawn first (GH #623: one fewer open per referrer). Saves and
-    /// replacements keep both checks: an unchanged or new file has no final
-    /// guard, and their callers' contracts are not narrowed here.
-    pub(super) fn final_guard_covers(step: &Step, old: Option<&[u8]>, new: &[u8]) -> bool {
-        matches!(step, Step::Rewrite { .. }) && old.is_some_and(|old| old != new)
-    }
-
-    pub(super) fn verify_opaque(&self, file: &FileId, expected: &FileRev) -> Result<(), Why> {
-        let path = self.path(file)?;
-        match FileRev::from_file(&path) {
-            Ok(rev) if rev == *expected => Ok(()),
-            Ok(rev) => Err(Why::Conflict {
-                file: file.clone(),
-                disk: Some(rev),
-            }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Why::Conflict {
-                file: file.clone(),
-                disk: None,
-            }),
-            Err(error) => Err(failed(error)),
-        }
-    }
 }
 impl Store {
     /// Whether a streaming descriptor still names the live validated file.

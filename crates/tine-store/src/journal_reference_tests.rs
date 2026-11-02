@@ -3,7 +3,7 @@
 //! consistent when such a link is added by a later edit.
 
 use std::path::{Path, PathBuf};
-use tine_store::{EditKind, OpenOptions, PageId, Resolved, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, OpenOptions, PageId, Resolved, SaveBase, Store};
 
 fn scratch(tag: &str, config: &str, notes: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("tine-481-{tag}-{}", std::process::id()));
@@ -38,22 +38,22 @@ fn referrers(store: &Store, target: &str) -> Vec<String> {
     pages
 }
 
-fn rewrite_notes(store: &Store, raw: &str) {
+fn rewrite_notes(store: &std::sync::Arc<Store>, raw: &str) {
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(store);
     let id: PageId = match store.whole_graph().unwrap().resolve("Notes", false) {
         Resolved::Existing { id, .. } => id,
         _ => panic!("Notes must exist"),
     };
     let mut read = store.page(&id).unwrap();
     read.doc.blocks[0].raw = raw.into();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &read.doc,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -93,6 +93,7 @@ fn iso_link_under_default_title_format_reaches_the_journal_page() {
 fn an_edit_adding_an_iso_link_evicts_the_cached_journal_backlinks() {
     let root = scratch("iso-evict", "{}\n", "- nothing linked yet\n");
     let store = open(&root);
+    let store = std::sync::Arc::new(store);
     assert!(
         referrers(&store, "Sep 20th, 2026").is_empty(),
         "warm the derived cache"

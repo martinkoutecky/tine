@@ -2215,6 +2215,11 @@ fn a_real_alternate_extension_twin_fails_or_annotates_a_creating_save() {
     assert!(!f.graph.join("c.md").exists());
     assert_eq!(fs::read(f.graph.join("c.org")).unwrap(), b"* org");
     assert!(f.host.pages["c.md"].risk);
+    assert_eq!(f.host.pages["c.md"].buf, text("created"));
+    assert_eq!(f.host.begin_draft("c.md"), Disposition::Pending);
+    f.drain();
+    let recovered = drafts::scan(f.host.fs.draft_files(false));
+    assert_eq!(recovered.logical["c.md"].bytes, text("created"));
 
     let mut f = Fixture::new();
     f.edit("c.md", "created");
@@ -2236,6 +2241,7 @@ fn a_real_alternate_extension_twin_fails_or_annotates_a_creating_save() {
     assert_eq!(twin_events(&f), vec!["c.org".to_string()]);
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"created");
     assert_eq!(fs::read(f.graph.join("c.org")).unwrap(), b"* org");
+    assert_eq!(f.host.pages["c.md"].buf, text("created"));
 }
 
 /// A-R5: the reverse spelling map answers exactly the keys whose current

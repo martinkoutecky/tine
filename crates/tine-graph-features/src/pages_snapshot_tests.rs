@@ -1,6 +1,19 @@
 use super::*;
+use crate::test_host_writer::{save_on, HostWriter, SaveRefused};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs as disk, sync::Arc};
+use tine_store::{FileRev, Refusal, SaveBase, Why};
+
+/// Keep mine: a save guarded on the bytes on disk now, not the editor's base.
+fn keep_mine(store: &Arc<Store>, id: &PageId, page: &PageDto) -> Result<FileRev, SaveRefused> {
+    let (_, current) = store.read(&id.file(), None).unwrap();
+    HostWriter::for_store(store).save(
+        tine_store::EditKind::ReplacePage,
+        id,
+        SaveBase::Existing(current),
+        page,
+    )
+}
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -425,24 +438,26 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
             if written.swap(true, Ordering::AcqRel) {
                 return;
             }
-            let writer = Arc::clone(&store);
-            std::thread::spawn(move || {
-                let id = PageId::from("pages/Referrer.md");
-                let read = writer.page(&id).unwrap();
-                let mut doc = read.doc;
-                doc.blocks[0].raw = "[[Old]] concurrent".into();
-                assert!(matches!(
-                    writer.save(
-                        tine_store::EditKind::ReplacePage,
-                        &id,
-                        SaveBase::Existing(read.rev),
-                        &doc
-                    ),
-                    SaveOutcome::Saved(_)
-                ));
-            })
-            .join()
-            .unwrap();
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        let id = PageId::from("pages/Referrer.md");
+                        let read = store.page(&id).unwrap();
+                        let mut doc = read.doc;
+                        doc.blocks[0].raw = "[[Old]] concurrent".into();
+                        save_on(
+                            host,
+                            &store,
+                            tine_store::EditKind::ReplacePage,
+                            &id,
+                            SaveBase::Existing(read.rev),
+                            &doc,
+                        )
+                        .unwrap();
+                    })
+                    .join()
+                    .unwrap();
+            });
         })
     })
     .unwrap();
@@ -501,26 +516,19 @@ fn force_save_writes_only_the_named_twin_on_production_path() {
     let org = root.join("pages/Foo.org");
     disk::write(&md, "- md body\n").unwrap();
     disk::write(&org, "* org body\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let id = PageId::from("pages/Foo.md");
     let read = store.page(&id).unwrap();
     let mut page = read.doc;
     page.blocks[0].raw = "edited".into();
 
-    let outcome = save_page(
-        &store,
-        tine_store::EditKind::ReplacePage,
-        &id,
-        &page,
-        None,
-        true,
-    );
+    let outcome = keep_mine(&store, &id, &page);
     let md_after = disk::read_to_string(&md).unwrap();
     let org_after = disk::read_to_string(&org).unwrap();
     store.close();
     disk::remove_dir_all(root).unwrap();
     assert!(
-        matches!(outcome, Ok(SaveOutcome::Saved(_))),
+        outcome.is_ok(),
         "force-save must write the named twin: {outcome:?}"
     );
     assert_eq!(md_after, "- edited\n");
@@ -540,21 +548,24 @@ fn creating_a_named_page_refuses_an_existing_twin() {
     let md = root.join("pages/Foo.md");
     let org = root.join("pages/Foo.org");
     disk::write(&org, "* org body\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let id = PageId::from("pages/Foo.md");
     let mut page = store.page(&PageId::from("pages/Foo.org")).unwrap().doc;
     page.format = tine_core::model::Format::Md;
     page.blocks[0].raw = "edited".into();
-    let outcome = save_page(
-        &store,
+    let outcome = HostWriter::for_store(&store).save(
         tine_store::EditKind::ReplacePage,
         &id,
+        SaveBase::CreateNew,
         &page,
-        None,
-        false,
-    )
-    .unwrap();
-    assert!(matches!(outcome, SaveOutcome::Twin { .. }), "{outcome:?}");
+    );
+    assert!(
+        matches!(
+            outcome,
+            Err(SaveRefused::Planned(Why::Refused(Refusal::Twin { .. })))
+        ),
+        "{outcome:?}"
+    );
     assert!(!md.exists());
     assert_eq!(disk::read_to_string(&org).unwrap(), "* org body\n");
     store.close();
@@ -571,36 +582,20 @@ fn force_save_keeps_guide_ephemeral_and_refuses_unknown_bytes() {
     disk::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages/A.md");
     disk::write(&path, "- original\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let id = PageId::from("pages/A.md");
     let mut page = store.page(&id).unwrap().doc;
     page.guide = true;
-    assert!(matches!(
-        save_page(
-            &store,
-            tine_store::EditKind::ReplacePage,
-            &id,
-            &page,
-            None,
-            true
-        ),
-        Ok(SaveOutcome::GuideEphemeral)
-    ));
+    // A Guide page is never saved: the plan refuses it, nothing reaches disk.
+    assert!(keep_mine(&store, &id, &page).is_err());
     assert_eq!(disk::read_to_string(&path).unwrap(), "- original\n");
     page.guide = false;
     page.blocks[0].raw = "replacement".into();
     let unknown = b"\xff\xfeunknown on-disk bytes";
     disk::write(&path, unknown).unwrap();
     assert!(matches!(
-        save_page(
-            &store,
-            tine_store::EditKind::ReplacePage,
-            &id,
-            &page,
-            None,
-            true
-        ),
-        Err(StoreError::Undecodable)
+        keep_mine(&store, &id, &page),
+        Err(SaveRefused::Planned(_))
     ));
     assert_eq!(disk::read(&path).unwrap(), unknown);
     store.close();
@@ -630,21 +625,14 @@ fn force_save_refuses_non_round_trip_org_and_header_reclassification() {
         };
         let path = root.join("pages").join(rel);
         disk::write(&path, original).unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         let id = PageId::from(format!("pages/{rel}"));
         let mut page = store.page(&id).unwrap().doc;
         if label == "org" {
             assert!(page.read_only);
             assert!(matches!(
-                save_page(
-                    &store,
-                    tine_store::EditKind::ReplacePage,
-                    &id,
-                    &page,
-                    None,
-                    true
-                ),
-                Ok(SaveOutcome::ReadOnly(_))
+                keep_mine(&store, &id, &page),
+                Err(SaveRefused::Planned(Why::Refused(Refusal::ReadOnly(_))))
             ));
         } else {
             let normalized = original.replace("\r\n", "\n");
@@ -659,8 +647,8 @@ fn force_save_refuses_non_round_trip_org_and_header_reclassification() {
                 ..Default::default()
             }];
             assert!(matches!(
-                save_page(&store, tine_store::EditKind::ReplacePage, &id, &page, None, true),
-                Ok(SaveOutcome::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
+                keep_mine(&store, &id, &page),
+                Err(SaveRefused::Planned(Why::Failed(error))) if error.kind() == std::io::ErrorKind::InvalidData
             ));
         }
         assert_eq!(disk::read_to_string(&path).unwrap(), original);
@@ -718,7 +706,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
         disk::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/Property.md");
         disk::write(&path, original).unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         let id = PageId::from("pages/Property.md");
         let before = store.page(&id).unwrap().doc;
         let mut page = store.page(&id).unwrap().doc;
@@ -737,8 +725,8 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
             ..Default::default()
         }];
         assert!(matches!(
-            save_page(&store, tine_store::EditKind::ReplacePage, &id, &page, None, true),
-            Ok(SaveOutcome::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
+            keep_mine(&store, &id, &page),
+            Err(SaveRefused::Planned(Why::Failed(error))) if error.kind() == std::io::ErrorKind::InvalidData
         ));
         assert_eq!(disk::read_to_string(&path).unwrap(), original);
         let after = store.page(&id).unwrap().doc;
@@ -758,7 +746,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
     let path = root.join("pages/Imported.md");
     let original = "Intro before outline\n\n- Body\n";
     disk::write(&path, original).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let id = PageId::from("pages/Imported.md");
     let mut page = store.page(&id).unwrap().doc;
     page.pre_block = None;
@@ -770,18 +758,10 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
             ..Default::default()
         },
     );
-    let outcome = save_page(
-        &store,
-        tine_store::EditKind::ReplacePage,
-        &id,
-        &page,
-        None,
-        true,
-    )
-    .unwrap();
+    let outcome = keep_mine(&store, &id, &page);
     assert!(matches!(
         outcome,
-        SaveOutcome::Io(error) if error.kind() == std::io::ErrorKind::InvalidData
+        Err(SaveRefused::Planned(Why::Failed(error))) if error.kind() == std::io::ErrorKind::InvalidData
             && error.to_string().contains("existing page preamble")
     ));
     assert_eq!(disk::read_to_string(&path).unwrap(), original);
@@ -821,7 +801,7 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
     ] {
         disk::write(root.join("pages").join(name), text).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let shape = |old: &str, new: &str, into: Option<&str>| {
         let plan = plan_rename(&store, old, new, None, into, &|| {}).unwrap();
         let single = plan.single(&store).unwrap();

@@ -46,8 +46,6 @@ pub enum FaultPoint {
     UndoLiveWrite,
     /// Simulate failure to withdraw bytes written by this transaction during undo.
     UndoWithdrawalIo,
-    /// Simulate a twin appearing after publication.
-    TwinAfterPublish,
     /// Abort the process immediately after the indexed step has reached disk.
     AbortAfterStep(usize),
     /// Abort the process after a rewritten move has renamed and synced the old
@@ -96,7 +94,6 @@ pub(crate) enum FaultPoint {
     PublicationReadIo,
     UndoLiveWrite,
     UndoWithdrawalIo,
-    TwinAfterPublish,
     AbortAfterStep(usize),
     AbortAfterMoveRename,
     AbortBeforeMoveRename,

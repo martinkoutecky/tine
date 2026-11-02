@@ -31,33 +31,43 @@ fn fixture(label: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn gh538_create_save_and_rename_work_where_the_flag_is_refused() {
+fn gh538_host_creates_and_renames_pages_where_the_flag_is_refused() {
+    use crate::no_replace::{REFUSED_BY_NAME, REFUSE_NOREPLACE_LEAF};
+    use std::sync::atomic::Ordering::SeqCst;
     let root = fixture("rename");
     fs::write(root.join("pages/A.md"), "- original page\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    let _refused = Refused::on();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
+    let refused_before = REFUSED_BY_NAME.load(SeqCst);
+    let moved = format!("{REFUSE_NOREPLACE_LEAF}-moved.md");
     let a = store.file_id(Area::Pages, "A.md").unwrap();
-    let b = store.file_id(Area::Pages, "B.md").unwrap();
+    let b = store.file_id(Area::Pages, &moved).unwrap();
     let rev = store.read(&a, None).unwrap().1;
     let mut tx = store.page_plan(Some(EditKind::RenamePage));
     tx.move_file(&a, rev, &b, None);
-    assert!(
-        matches!(tx.commit_internal(), TxOutcome::Committed { .. }),
-        "GH #538: a page rename must succeed on flag-refusing storage"
-    );
+    host_writer
+        .apply(tx.plan().unwrap())
+        .expect("GH #538: a page rename must succeed on flag-refusing storage");
     assert_eq!(
-        fs::read_to_string(root.join("pages/B.md")).unwrap(),
+        fs::read_to_string(root.join("pages").join(&moved)).unwrap(),
         "- original page\n"
     );
     assert!(!root.join("pages/A.md").exists());
+    let after_rename = REFUSED_BY_NAME.load(SeqCst);
+    assert!(after_rename > refused_before, "the rename met the refusal");
 
+    let new_name = format!("{REFUSE_NOREPLACE_LEAF}-new");
     let created = store
-        .as_page(&store.file_id(Area::Pages, "New.md").unwrap())
+        .as_page(
+            &store
+                .file_id(Area::Pages, &format!("{new_name}.md"))
+                .unwrap(),
+        )
         .unwrap();
     let doc = PageDto {
-        name: "New".into(),
+        name: new_name.clone(),
         kind: tine_core::model::PageKind::Page,
-        title: "New".into(),
+        title: new_name.clone(),
         pre_block: None,
         format: tine_core::model::Format::Md,
         blocks: vec![tine_core::model::BlockDto {
@@ -69,15 +79,53 @@ fn gh538_create_save_and_rename_work_where_the_flag_is_refused() {
         read_only: false,
         guide: false,
     };
-    let mut tx = store.page_plan(Some(EditKind::CreatePage));
-    tx.save_page(&[EditKind::CreatePage], &created, SaveBase::CreateNew, &doc);
+    host_writer
+        .save(EditKind::CreatePage, &created, SaveBase::CreateNew, &doc)
+        .expect("GH #538: page creation must succeed on flag-refusing storage");
     assert!(
-        matches!(tx.commit_internal(), TxOutcome::Committed { .. }),
-        "GH #538: page creation must succeed on flag-refusing storage"
+        fs::read_to_string(root.join("pages").join(format!("{new_name}.md")))
+            .unwrap()
+            .contains("created")
     );
-    assert!(fs::read_to_string(root.join("pages/New.md"))
-        .unwrap()
-        .contains("created"));
+    assert!(
+        REFUSED_BY_NAME.load(SeqCst) > after_rename,
+        "the create met the refusal"
+    );
+    drop(host_writer);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn gh538_asset_create_and_move_work_where_the_flag_is_refused() {
+    let root = fixture("asset");
+    fs::create_dir_all(root.join("assets")).unwrap();
+    fs::write(root.join("assets/A.txt"), "asset").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let _refused = Refused::on();
+    let a = store.file_id(Area::Assets, "A.txt").unwrap();
+    let b = store.file_id(Area::Assets, "B.txt").unwrap();
+    let rev = store.read(&a, None).unwrap().1;
+    let mut tx = store.transaction(None);
+    tx.move_file(&a, rev, &b, None);
+    assert!(
+        matches!(tx.commit(), TxOutcome::Committed { .. }),
+        "GH #538: a move must succeed on flag-refusing storage"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("assets/B.txt")).unwrap(),
+        "asset"
+    );
+    assert!(!root.join("assets/A.txt").exists());
+
+    let created = store.file_id(Area::Assets, "New.txt").unwrap();
+    let mut tx = store.transaction(None);
+    tx.create(&created, crate::Content::Bytes(b"created".to_vec()));
+    assert!(
+        matches!(tx.commit(), TxOutcome::Committed { .. }),
+        "GH #538: creation must succeed on flag-refusing storage"
+    );
+    assert_eq!(fs::read(root.join("assets/New.txt")).unwrap(), b"created");
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
@@ -85,22 +133,20 @@ fn gh538_create_save_and_rename_work_where_the_flag_is_refused() {
 #[test]
 fn gh538_occupied_destination_is_still_refused_where_the_flag_is_refused() {
     let root = fixture("occupied");
-    fs::write(root.join("pages/source.md"), "source").unwrap();
-    fs::write(root.join("pages/dest.md"), "destination").unwrap();
+    fs::create_dir_all(root.join("assets")).unwrap();
+    fs::write(root.join("assets/source.txt"), "source").unwrap();
+    fs::write(root.join("assets/dest.txt"), "destination").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let src = store.file_id(Area::Pages, "source.md").unwrap();
-    let dest = store.file_id(Area::Pages, "dest.md").unwrap();
+    let src = store.file_id(Area::Assets, "source.txt").unwrap();
+    let dest = store.file_id(Area::Assets, "dest.txt").unwrap();
     let rev = store.read(&src, None).unwrap().1;
     let _refused = Refused::on();
-    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
+    let mut tx = store.transaction(None);
     tx.move_file(&src, rev, &dest, None);
-    assert!(matches!(
-        tx.commit_internal(),
-        TxOutcome::NotCommitted { .. }
-    ));
-    assert_eq!(fs::read(root.join("pages/source.md")).unwrap(), b"source");
+    assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+    assert_eq!(fs::read(root.join("assets/source.txt")).unwrap(), b"source");
     assert_eq!(
-        fs::read(root.join("pages/dest.md")).unwrap(),
+        fs::read(root.join("assets/dest.txt")).unwrap(),
         b"destination"
     );
     drop(store);

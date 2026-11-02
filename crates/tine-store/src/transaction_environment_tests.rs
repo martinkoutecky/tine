@@ -45,7 +45,6 @@ fn m3_transaction_apply_and_apply_move_c2_c3_escape_only() {
                         dst: moving.then(|| dst.clone()),
                         old: (operation != "create").then(|| old.to_vec()),
                         new: Some(new.to_vec()),
-                        saved_page: None,
                         opaque_rev: None,
                     };
                     let mut undo = Undo {
@@ -56,7 +55,6 @@ fn m3_transaction_apply_and_apply_move_c2_c3_escape_only() {
                         old: plan.old.clone(),
                         new: None,
                         new_rev: None,
-                        opaque_rev: None,
                         created: false,
                         moved: false,
                     };

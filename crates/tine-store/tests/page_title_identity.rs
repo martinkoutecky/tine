@@ -1,6 +1,6 @@
 use std::fs;
 use tine_core::model::PageKind;
-use tine_store::{EditKind, PageId, Resolved, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, Resolved, SaveBase, Store};
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -114,6 +114,8 @@ fn title_property_owns_page_name_through_store() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Effective", false),
         Resolved::Existing { .. }
@@ -158,15 +160,14 @@ fn title_property_owns_page_name_through_store() {
         .unwrap();
     assert_eq!(renamed.doc.name, "Renamed");
     renamed.doc.pre_block = Some("title:: Saved".into());
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &renamed.id,
             SaveBase::Existing(renamed.rev),
-            &renamed.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &renamed.doc,
+        )
+        .unwrap();
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Saved", false),
         Resolved::Existing { .. }
@@ -208,6 +209,8 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
         .unwrap();
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Archived", false),
         Resolved::Existing { .. }
@@ -222,15 +225,14 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
         Resolved::Absent { .. }
     ));
     page.doc.blocks[0].raw = "edited".into();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::SaveBlock,
             &page.id,
             SaveBase::Existing(page.rev),
-            &page.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page.doc,
+        )
+        .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("archive/Physical.md")).unwrap(),
         "title:: Archived\n\n- edited\n"
@@ -297,6 +299,8 @@ fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let title = "2026-07-23_18:01:20";
     let id = match store.whole_graph().unwrap().resolve(title, false) {
         Resolved::Absent { id } => id,
@@ -310,31 +314,33 @@ fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
         .doc;
     doc.name = title.into();
     doc.title = title.into();
-    assert!(matches!(
-        store.save(EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc),
-        SaveOutcome::Saved(_)
-    ));
+    host_writer
+        .save(EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc)
+        .unwrap();
     assert_eq!(fs::read(root.join(id.as_str())).unwrap(), b"- created\n");
     drop(store);
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let mut reopened = store.page_named(title, PageKind::Page).unwrap().unwrap();
     assert_eq!(reopened.id, id);
     reopened.doc.blocks[0].raw = "edited and durable".into();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::SaveBlock,
             &reopened.id,
             SaveBase::Existing(reopened.rev),
-            &reopened.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &reopened.doc,
+        )
+        .unwrap();
     assert_eq!(
         fs::read(root.join(id.as_str())).unwrap(),
         b"- edited and durable\n"
     );
     drop(store);
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     assert_eq!(
         store
             .page_named(title, PageKind::Page)
@@ -351,13 +357,13 @@ fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
         .unwrap();
     assert_eq!(legacy.id.as_str(), "pages/Release 1.0.md");
     assert!(matches!(
-        store.save(
+        host_writer.save(
             EditKind::ReplacePage,
             &legacy.id,
             SaveBase::Existing(legacy.rev),
             &legacy.doc
         ),
-        SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
+        Ok(_)
     ));
     assert_eq!(
         fs::read(root.join("pages/Release 1.0.md")).unwrap(),

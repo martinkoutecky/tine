@@ -2,15 +2,15 @@
 #[test]
 fn save_publication_reuses_only_verified_prepared_bytes() {
     let _integration_guard = crate::integration_lock();
-    let tx = include_str!("../src/transaction/publication.rs");
-    assert!(tx.contains(".filter(|plan| plan.new.as_deref() == now.as_deref())"),
-        "I-4/I-15: publish a prepared parse only for its exact final bytes; exemplar transaction/publication.rs post-apply sweep");
+    let host = include_str!("../src/page_host/binding.rs");
+    assert!(host.contains("handoff.filter(|h| h.bytes == *bytes).map(|h| h.document)"),
+        "I-4/I-15: publish a prepared parse only for its exact final bytes; exemplar page_host/binding.rs SavePublished");
     let model = include_str!("../src/model/transaction_publish.rs");
     let publish = model
         .split("if let Some(saved) = saved {")
         .nth(1)
         .unwrap()
-        .split("} else if own_rename")
+        .split("} else {")
         .next()
         .unwrap();
     assert!(

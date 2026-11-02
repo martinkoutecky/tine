@@ -2,9 +2,7 @@
 //! Usage: cargo run --release -p tine-store --example unlinked_profile -- <graph copy> <page>...
 //! `UNLINKED_DUMP=<file>` appends the full results (for old-vs-new equality diffs).
 //! Prints, per page and per run (3), the page-open (`resolve` + `Store::page`)
-//! and the unlinked-references time; a second thread measures how long a tiny
-//! writer-lock operation (`Store::save` of an untouched page) takes while the
-//! unlinked scan runs, which answers "does the command hold the writer lock".
+//! and the unlinked-references time.
 use std::path::Path;
 use std::time::Instant;
 use tine_store::{OpenOptions, Resolved, Store};

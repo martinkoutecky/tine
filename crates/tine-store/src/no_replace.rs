@@ -101,7 +101,7 @@ fn move_at(
     let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
     let to = std::ffi::CString::new(to.as_os_str().as_bytes())?;
     #[cfg(test)]
-    let refused_for_test = REFUSE_NOREPLACE_FLAG.with(std::cell::Cell::get);
+    let refused_for_test = REFUSE_NOREPLACE_FLAG.with(std::cell::Cell::get) || refused_by_name(&to);
     #[cfg(not(test))]
     let refused_for_test = false;
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -199,6 +199,28 @@ fn destination_absent_where_the_flag_is_refused(
         true => Ok(()),
         false => Err(error),
     }
+}
+
+/// A destination leaf with this prefix fails as flag-refusing storage does, on
+/// any thread: the page host publishes off its caller's thread.
+#[cfg(test)]
+pub(crate) const REFUSE_NOREPLACE_LEAF: &str = "gh538-flag-refused";
+#[cfg(test)]
+pub(crate) static REFUSED_BY_NAME: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(all(test, unix))]
+fn refused_by_name(to: &std::ffi::CStr) -> bool {
+    let leaf = to
+        .to_bytes()
+        .rsplit(|byte| *byte == b'/')
+        .next()
+        .unwrap_or_default();
+    let refused = leaf.starts_with(REFUSE_NOREPLACE_LEAF.as_bytes());
+    if refused {
+        REFUSED_BY_NAME.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    refused
 }
 
 #[cfg(test)]

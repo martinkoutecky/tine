@@ -2,13 +2,13 @@
 //! Mac, some tools, a sync peer) parses with `\r` as a line break, as mldoc and
 //! lsdoc do (`eol_chars = ['\r'; '\n']`), and a save keeps every untouched line's
 //! bytes, including its own terminator. Mixed-ending pages keep each untouched
-//! line's terminator too. Every case goes through the real `Store::save`.
+//! line's terminator too. Every case goes through the page plan and the page host.
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, PageDto};
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 /// The layout fixture of `save_layout_retention.rs`, one line per entry.
 const LINES: &[&str] = &[
@@ -37,7 +37,8 @@ fn source(ending: impl Fn(usize) -> &'static str) -> String {
 struct Page {
     root: PathBuf,
     path: String,
-    store: Store,
+    writer: crate::test_host_writer::HostWriter,
+    store: std::sync::Arc<Store>,
     id: PageId,
 }
 
@@ -56,8 +57,9 @@ impl Page {
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::write(root.join(path), source).unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
         Page {
+            writer: crate::test_host_writer::HostWriter::start(&store),
             root,
             path: path.into(),
             store,
@@ -74,12 +76,9 @@ impl Page {
         let mut doc = read.doc;
         edit(&mut doc);
         let outcome = self
-            .store
+            .writer
             .save(kind, &self.id, SaveBase::Existing(read.rev), &doc);
-        assert!(
-            matches!(outcome, SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)),
-            "{outcome:?}"
-        );
+        assert!(matches!(outcome, Ok(_)), "{outcome:?}");
         fs::read_to_string(self.root.join(&self.path)).unwrap()
     }
 }

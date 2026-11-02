@@ -4,8 +4,7 @@
 
 use crate::model::ReadSnapshot;
 use crate::store::{
-    OpenOptions, PageId, SaveBase, SaveOutcome, Store, RESULT_BRIDGE_MAX_BYTES,
-    RESULT_BRIDGE_MAX_ROWS,
+    OpenOptions, PageId, SaveBase, Store, RESULT_BRIDGE_MAX_BYTES, RESULT_BRIDGE_MAX_ROWS,
 };
 use std::sync::Arc;
 use tine_core::{BlockDto, RefGroup};
@@ -174,6 +173,8 @@ fn run_seed(seed: u64) {
     }
 
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let mut previous = store.whole_graph().unwrap();
     let mut previous_fp = fingerprint(&previous.graph);
 
@@ -201,30 +202,29 @@ fn run_seed(seed: u64) {
                 dto.pre_block = gen_pre(&mut r, pi);
             }
         }
-        match store.save(
-            crate::EditKind::ReplacePage,
-            &id,
-            SaveBase::Existing(read.rev),
-            &dto,
-        ) {
-            SaveOutcome::Saved(_) => {}
-            SaveOutcome::Unchanged(rev) => {
-                // Keep every random case while making this step a real generation.
-                dto.pre_block = Some(format!(
-                    "{}\nfuzz-step:: {iter}",
-                    dto.pre_block.unwrap_or_default()
-                ));
-                assert!(matches!(
-                    store.save(
-                        crate::EditKind::ReplacePage,
-                        &id,
-                        SaveBase::Existing(rev),
-                        &dto
-                    ),
-                    SaveOutcome::Saved(_)
-                ));
-            }
-            other => panic!("seed {seed} iter {iter}: save failed: {other:?}"),
+        let base = read.rev;
+        let saved = host_writer
+            .save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(base.clone()),
+                &dto,
+            )
+            .unwrap_or_else(|other| panic!("seed {seed} iter {iter}: save failed: {other:?}"));
+        if saved == base {
+            // Keep every random case while making this step a real generation.
+            dto.pre_block = Some(format!(
+                "{}\nfuzz-step:: {iter}",
+                dto.pre_block.unwrap_or_default()
+            ));
+            host_writer
+                .save(
+                    crate::EditKind::ReplacePage,
+                    &id,
+                    SaveBase::Existing(saved),
+                    &dto,
+                )
+                .unwrap();
         }
 
         let view = store.whole_graph().unwrap();
@@ -355,6 +355,8 @@ fn run_checkpoint_seed(seed: u64) -> usize {
         )
         .unwrap()
         .0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let reconciled = store.whole_graph_reconciled().unwrap();
         let outcome = store.diagnostics()["checkpoint"]["load"]["outcome"]
             .as_str()
@@ -401,13 +403,13 @@ fn run_checkpoint_seed(seed: u64) -> usize {
                     dto.pre_block = gen_pre(&mut r, page_idx);
                 }
             }
-            match store.save(
+            match host_writer.save(
                 crate::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
                 &dto,
             ) {
-                SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_) => {}
+                Ok(_) => {}
                 other => panic!("seed {seed} cycle {cycle}: save failed: {other:?}"),
             }
         }

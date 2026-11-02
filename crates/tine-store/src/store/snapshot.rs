@@ -71,60 +71,18 @@ impl WholeGraph {
     }
 }
 
-/// Test-only hooks on snapshot publication: a pause before a snapshot is
-/// published, and every published snapshot in order (tests compare each
-/// generation).
+/// Test-only hook on snapshot publication: a pause before a snapshot is
+/// published.
 #[cfg(test)]
 #[derive(Default)]
 pub(crate) struct PublishHooks {
     pub(crate) pause: Mutex<Option<super::TestPause>>,
-    log: Mutex<Vec<Arc<Snapshot>>>,
 }
 
 #[cfg(test)]
 impl PublishHooks {
     pub(super) fn before_publish(&self) {
         super::pause_at_hook(&self.pause);
-    }
-
-    pub(super) fn published(&self, snapshot: &Arc<Snapshot>) {
-        self.log.lock().unwrap().push(Arc::clone(snapshot));
-    }
-}
-
-#[cfg(test)]
-impl ChangeFeed {
-    /// How many snapshots this feed has published.
-    pub(crate) fn published_count(&self) -> usize {
-        self.publish_hooks.log.lock().unwrap().len()
-    }
-
-    /// For each snapshot published from index `from` on: the cache
-    /// generation it was captured from, its image, and the image of a
-    /// parent-free capture of the cache as it is now (comparable only at the
-    /// current generation).
-    pub(crate) fn published_images(
-        &self,
-        from: usize,
-        image: &dyn Fn(&crate::model::ReadSnapshot) -> String,
-    ) -> Vec<(u64, String, String)> {
-        let log: Vec<_> = self.publish_hooks.log.lock().unwrap()[from..].to_vec();
-        log.iter()
-            .map(|snapshot| {
-                let fresh = crate::model::ReadSnapshot::capture(
-                    &self.graph,
-                    (*snapshot.config.config).clone(),
-                    Arc::clone(&snapshot.list),
-                    None,
-                    &[],
-                );
-                (
-                    snapshot.cache_generation,
-                    image(&snapshot.graph),
-                    image(&fresh),
-                )
-            })
-            .collect()
     }
 }
 
@@ -156,9 +114,9 @@ impl Snapshot {
                 retired.insert(id);
             }
         }
-        // Rows the cache changed that no publication named (a failed
-        // transaction publishes its own files and an outside writer's
-        // separately, after caching both): every index patches them now.
+        // Rows the cache changed that no publication named (a host save while
+        // the graph is Failed publishes nothing, and the recovery's diff names
+        // only what it found): every index patches them now.
         let mut unnamed = false;
         for path in graph.take_touched() {
             let id = FileId::from(graph.rel_path(&path));
@@ -428,6 +386,11 @@ impl Store {
     /// pre-transition row, also when the owner's first publication fails.
     /// The caller holds the writer, under which the transitions ran.
     pub(crate) fn publish_retired(&self) {
+        // After a failed load nothing publishes until a successful refresh;
+        // that refresh's first view takes the rows.
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
+            return;
+        }
         if self.graph.has_retired() && self.defers_publication(false) {
             self.defer_retired();
         } else if self.graph.has_retired() {
@@ -477,6 +440,7 @@ impl Store {
             if journal_set_changed {
                 self.refresh_journal_ids();
             }
+            self.watch.reconcile_raced(&raced);
             return (self.changes.rev(), None);
         }
         // Before the first complete view, the publication waits for it

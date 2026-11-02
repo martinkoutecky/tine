@@ -3,24 +3,32 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use crate::host_faults::{abort_before, fail, Phase};
+use crate::test_host_writer::{HostWriter, SaveRefused};
 use crate::{
-    EditKind, FaultPoint, PageId, Refusal, SaveBase, SaveOutcome, StepResult, Store, StoreError,
+    Area, Content, EditKind, FaultPoint, FileRev, PageId, Refusal, SaveBase, Store, StoreError,
     TxOutcome, Why,
 };
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 
 type Entry = (PageId, SaveBase, PageDto, Vec<EditKind>);
 
-/// The guarded multi-page save these tests pin, over the transaction
-/// primitive that stays (the multi-page store save is deleted, STEP3 §12): one
-/// `save_page` step per entry, in input order, then one commit.
-fn save_all(store: &Store, entries: &[Entry]) -> TxOutcome {
+/// The guarded multi-page plan these tests pin: one `save_page` step per entry,
+/// in input order, handed to the host.
+fn plan_all(store: &Store, entries: &[Entry]) -> Result<crate::HostOp, Why> {
     let mut tx = store.page_plan(Some(entries[0].3[0]));
     for (id, base, doc, kinds) in entries {
         tx.save_page(kinds, id, base.clone(), doc);
     }
-    tx.commit_internal()
+    tx.plan()
+}
+
+fn open(fixture: &Fixture) -> (Arc<Store>, HostWriter) {
+    let store = Arc::new(Store::open(&fixture.0, Default::default()).unwrap().0);
+    let writer = HostWriter::start(&store);
+    (store, writer)
 }
 
 #[test]
@@ -44,20 +52,19 @@ fn g6b_one_block_edit_preserves_fixture_layout() {
         let fixture = Fixture::new();
         let rel = format!("pages/{name}.md");
         fixture.write(&rel, source);
-        let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+        let (store, writer) = open(&fixture);
         let id = PageId::from(rel.as_str());
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw.push_str(" edited");
-        assert!(matches!(
-            store.save(
+        writer
+            .save(
                 crate::EditKind::SaveBlock,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let expected =
             String::from_utf8(source.to_vec())
                 .unwrap()
@@ -77,20 +84,19 @@ fn g6b_explicit_eof_edit_is_not_lost() {
     let source = include_bytes!("../../../scripts/fixtures/g6b/graph/pages/TrailingBlanks.md");
     let fixture = Fixture::new();
     fixture.write("pages/TrailingBlanks.md", source);
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = PageId::from("pages/TrailingBlanks.md");
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.blocks[1].raw.push('\n');
-    assert!(matches!(
-        store.save(
+    writer
+        .save(
             crate::EditKind::SaveBlock,
             &id,
             SaveBase::Existing(read.rev),
-            &doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
     let after = fs::read(fixture.0.join("pages/TrailingBlanks.md")).unwrap();
     let count = |bytes: &[u8]| {
         bytes
@@ -101,136 +107,6 @@ fn g6b_explicit_eof_edit_is_not_lost() {
     };
     assert!(count(&after) > count(source));
     store.close();
-}
-
-#[test]
-fn a_page_save_transaction_keeps_order_and_reports_preflight_conflict_without_writes() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    fixture.write("pages/A.md", "- old A\n");
-    fixture.write("pages/B.md", "- old B\n");
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let a = PageId::from("pages/A.md");
-    let b = PageId::from("pages/B.md");
-    let read_a = store.page(&a).unwrap();
-    let read_b = store.page(&b).unwrap();
-    let mut doc_a = read_a.doc;
-    let mut doc_b = read_b.doc;
-    doc_a.blocks[0].raw = "new A".into();
-    doc_b.blocks[0].raw = "new B".into();
-    let entries = vec![
-        (
-            a.clone(),
-            SaveBase::Existing(read_a.rev),
-            doc_a,
-            vec![crate::EditKind::ReplacePage],
-        ),
-        (
-            b.clone(),
-            SaveBase::Existing(read_b.rev),
-            doc_b,
-            vec![crate::EditKind::ReplacePage],
-        ),
-    ];
-    fixture.write("pages/B.md", "- external B\n");
-    assert!(matches!(
-        save_all(&store, &entries),
-        TxOutcome::NotCommitted {
-            step: 1,
-            why: Why::Conflict { .. },
-            ..
-        }
-    ));
-    assert_eq!(
-        fs::read(fixture.0.join("pages/A.md")).unwrap(),
-        b"- old A\n"
-    );
-    assert_eq!(
-        fs::read(fixture.0.join("pages/B.md")).unwrap(),
-        b"- external B\n"
-    );
-    let (_, new_b_rev) = store.read(&b.file(), None).unwrap();
-    let mut entries = entries;
-    entries[1].1 = SaveBase::Existing(new_b_rev);
-    let TxOutcome::Committed { steps, .. } = save_all(&store, &entries) else {
-        panic!("save must commit")
-    };
-    assert_eq!(steps.len(), 2);
-    assert!(
-        matches!(&steps[0], StepResult::Written { rev, .. } if *rev == store.read(&a.file(), None).unwrap().1)
-    );
-    assert!(
-        matches!(&steps[1], StepResult::Written { rev, .. } if *rev == store.read(&b.file(), None).unwrap().1)
-    );
-    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone())
-        .unwrap()
-        .contains("new A"));
-    assert!(String::from_utf8(fixture.files()["pages/B.md"].clone())
-        .unwrap()
-        .contains("new B"));
-}
-
-#[test]
-fn a_page_save_transaction_mid_step_failure_restores_prior_files() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    for name in ["A", "B", "C"] {
-        fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
-    }
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let entries: Vec<_> = ["A", "B", "C"]
-        .into_iter()
-        .map(|name| {
-            let id = PageId::from(format!("pages/{name}.md"));
-            let read = store.page(&id).unwrap();
-            let mut doc = read.doc;
-            doc.blocks[0].raw = format!("new {name}");
-            (
-                id,
-                SaveBase::Existing(read.rev),
-                doc,
-                vec![crate::EditKind::ReplacePage],
-            )
-        })
-        .collect();
-    store.inject_fault(FaultPoint::MidStepIoAt(1));
-    assert!(matches!(
-        save_all(&store, &entries),
-        TxOutcome::NotCommitted {
-            step: 1,
-            why: Why::Failed(_),
-            ..
-        }
-    ));
-    for name in ["A", "B", "C"] {
-        assert_eq!(
-            fs::read(fixture.0.join(format!("pages/{name}.md"))).unwrap(),
-            format!("- old {name}\n").as_bytes()
-        );
-    }
-}
-
-#[test]
-fn a_page_save_transaction_repeated_file_has_own_family() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    fixture.write("pages/A.md", "- old\n");
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let id = PageId::from("pages/A.md");
-    let read = store.page(&id).unwrap();
-    let entry = (
-        id,
-        SaveBase::Existing(read.rev),
-        read.doc,
-        vec![crate::EditKind::ReplacePage],
-    );
-    assert!(matches!(
-        save_all(&store, &[entry.clone(), entry]),
-        TxOutcome::NotCommitted {
-            why: Why::Refused(Refusal::RepeatedFile(_)),
-            ..
-        }
-    ));
 }
 
 #[test]
@@ -246,7 +122,7 @@ fn a_page_save_with_an_empty_kind_list_is_refused_before_writing() {
             SaveBase::CreateNew,
             &fresh("New", PageKind::Page),
         );
-        tx.commit_internal()
+        tx.plan()
     }));
     let message = refused.expect_err("OG-RULES Rule 8: a kindless page save must not run");
     let text = message
@@ -262,87 +138,12 @@ fn a_page_save_with_an_empty_kind_list_is_refused_before_writing() {
 }
 
 #[test]
-fn a_page_save_transaction_rollback_failure_names_recovery_location() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let entries = vec![
-        (
-            PageId::from("pages/A.md"),
-            SaveBase::CreateNew,
-            fresh("A", PageKind::Page),
-            vec![crate::EditKind::CreatePage],
-        ),
-        (
-            PageId::from("pages/B.md"),
-            SaveBase::CreateNew,
-            fresh("B", PageKind::Page),
-            vec![crate::EditKind::CreatePage],
-        ),
-    ];
-    store.inject_fault(FaultPoint::MidStepIoAt(1));
-    store.inject_fault(FaultPoint::UndoWithdrawalIo);
-    let outcome = save_all(&store, &entries);
-    assert!(
-        matches!(&outcome, TxOutcome::NotCommitted {
-        step: 1, why: Why::Failed(_), rollback, ..
-    } if format!("{:?}", rollback.undo_failed).contains("pages/B.md")),
-        "{outcome:?}"
-    );
-}
-
-#[test]
-fn a_page_save_transaction_names_files_missing_from_publication_after_disk_write() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    store.inject_fault(FaultPoint::PublicationReadIo);
-    let outcome = save_all(
-        &store,
-        &[(
-            PageId::from("pages/New.md"),
-            SaveBase::CreateNew,
-            fresh("New", PageKind::Page),
-            vec![crate::EditKind::CreatePage],
-        )],
-    );
-    assert!(
-        matches!(&outcome, TxOutcome::PublicationIncomplete { files, .. }
-        if format!("{files:?}").contains("pages/New.md")),
-        "{outcome:?}"
-    );
-    assert!(
-        fixture.0.join("pages/New.md").is_file(),
-        "the write landed before publication failed"
-    );
-}
-
-#[test]
-fn single_save_reports_incomplete_rollback() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    store.inject_fault(FaultPoint::MidStepIoAt(0));
-    store.inject_fault(FaultPoint::UndoWithdrawalIo);
-    let outcome = store.save(
-        crate::EditKind::CreatePage,
-        &PageId::from("pages/New.md"),
-        SaveBase::CreateNew,
-        &fresh("New", PageKind::Page),
-    );
-    assert!(
-        matches!(outcome, SaveOutcome::Io(ref error) if error.message.contains("rollback incomplete") && error.message.contains("pages/New.md")),
-        "{outcome:?}"
-    );
-}
-
-#[test]
 fn page_save_transaction_crash_worker() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let Ok(root) = std::env::var("TINE_PAGE_SAVE_TX_CRASH_ROOT") else {
         return;
     };
-    let store = Store::open(Path::new(&root), Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(Path::new(&root), Default::default()).unwrap().0);
     let entries: Vec<_> = ["A", "B", "C"]
         .into_iter()
         .map(|name| {
@@ -358,8 +159,10 @@ fn page_save_transaction_crash_worker() {
             )
         })
         .collect();
-    store.inject_fault(FaultPoint::AbortAfterStep(0));
-    let _ = save_all(&store, &entries);
+    // A kill between the first page's write and the second's.
+    abort_before(Phase::PageRename, 1);
+    let writer = HostWriter::start(&store);
+    let _ = writer.apply(plan_all(&store, &entries).unwrap());
     panic!("page save transaction crash fault did not abort");
 }
 
@@ -488,17 +291,16 @@ fn own_write_before_initial_load_is_in_first_snapshot() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new();
     fs::write(fixture.0.join(".tine-test-pause-load"), b"").unwrap();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = PageId::from("pages/BeforeReady.md");
-    assert!(matches!(
-        store.save(
+    writer
+        .save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
-            &fresh("BeforeReady", PageKind::Page)
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &fresh("BeforeReady", PageKind::Page),
+        )
+        .unwrap();
     fs::remove_file(fixture.0.join(".tine-test-pause-load")).unwrap();
     let first = store.whole_graph().unwrap();
     assert!(first
@@ -509,20 +311,32 @@ fn own_write_before_initial_load_is_in_first_snapshot() {
     store.close();
 }
 
-fn store_wire(outcome: SaveOutcome, doc: &PageDto) -> Result<String, String> {
-    match outcome {
-        SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),
-        SaveOutcome::Conflict { .. } | SaveOutcome::Deleted => Err("conflict".into()),
-        SaveOutcome::ReadOnly(reason) | SaveOutcome::InvalidTarget(reason) => Err(reason),
-        SaveOutcome::Twin { .. } => Err(format!(
+fn store_wire(
+    outcome: Result<FileRev, SaveRefused>,
+    id: &PageId,
+    doc: &PageDto,
+) -> Result<String, String> {
+    let twin = || {
+        format!(
             "\"{}\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine",
             doc.name
-        )),
-        SaveOutcome::Repeated => Err("repeated".into()),
-        SaveOutcome::UnreadableOwner { file } => Err(format!("unreadable owner {}", file.as_str())),
-        SaveOutcome::Io(error) => Err(error.to_string()),
-        SaveOutcome::Closed => Err("store closed".into()),
-        SaveOutcome::GuideEphemeral => Ok("guide-ephemeral".into()),
+        )
+    };
+    match outcome {
+        Ok(rev) => Ok(rev.into()),
+        Err(SaveRefused::Host(crate::ApplyRefusal::Changed)) => Err("conflict".into()),
+        Err(SaveRefused::Host(refusal)) => Err(format!("{refusal:?}")),
+        Err(SaveRefused::Planned(why)) => Err(match why {
+            Why::Conflict {
+                file,
+                disk: Some(_),
+            } if file != id.file() => twin(),
+            Why::Conflict { .. } => "conflict".into(),
+            Why::Refused(Refusal::ReadOnly(reason) | Refusal::InvalidTarget(reason)) => reason,
+            Why::Refused(Refusal::Twin { .. }) => twin(),
+            Why::Refused(refusal) => format!("{refusal:?}"),
+            Why::Failed(error) => error.to_string(),
+        }),
     }
 }
 
@@ -557,7 +371,7 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
         }
         Case::New | Case::Appeared | Case::Guide => {}
     }
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let mut doc = match case {
         Case::New | Case::Appeared => fresh("New", PageKind::Page),
         Case::Alias => fresh("Alt", PageKind::Page),
@@ -602,7 +416,7 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
         Case::KeepMine | Case::KeepMineDeleted | Case::KeepMineUndecodable
     );
     let result = if doc.guide {
-        store_wire(SaveOutcome::GuideEphemeral, &doc)
+        Ok("guide-ephemeral".to_string())
     } else {
         let id = match case {
             Case::PinnedJournal => PageId::from("journals/Friday, 26-06-2026.org"),
@@ -639,7 +453,8 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
                 .unwrap_or(SaveBase::CreateNew)
         };
         store_wire(
-            store.save(crate::EditKind::ReplacePage, &id, base, &doc),
+            writer.save(crate::EditKind::ReplacePage, &id, base, &doc),
+            &id,
             &doc,
         )
     };
@@ -780,7 +595,7 @@ fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new();
     fixture.write("pages/Note.md", "- original\n");
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = PageId::from("pages/Note.md");
     let mut doc = store.page(&id).unwrap().doc;
     doc.blocks[0].raw = "mine".into();
@@ -788,13 +603,13 @@ fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
     let (_, shown_rev) = store.read(&id.file(), None).unwrap();
     fixture.write("pages/Note.md", "- external two\n");
     assert!(matches!(
-        store.save(
+        writer.save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(shown_rev),
             &doc
         ),
-        SaveOutcome::Conflict { .. }
+        Err(SaveRefused::Planned(Why::Conflict { .. }))
     ));
     assert_eq!(
         fs::read(fixture.0.join("pages/Note.md")).unwrap(),
@@ -815,7 +630,7 @@ fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
         "{:file/name-format :triple-lowbar :preferred-format \"Org\"}\n",
     )
     .unwrap();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = match store.whole_graph().unwrap().resolve("Proj/Child", false) {
         crate::Resolved::Absent { id } => id,
         _ => panic!("a brand-new name must resolve Absent"),
@@ -823,10 +638,9 @@ fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
     assert_eq!(id.as_str(), "pages/Proj___Child.org");
     let mut doc = fresh("Proj/Child", PageKind::Page);
     doc.format = Format::Org;
-    assert!(matches!(
-        store.save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc),
-        SaveOutcome::Saved(_)
-    ));
+    writer
+        .save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc)
+        .unwrap();
     let files = fixture.files();
     assert_eq!(files.keys().collect::<Vec<_>>(), ["pages/Proj___Child.org"]);
 }
@@ -837,20 +651,20 @@ fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
 fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = match store.whole_graph().unwrap().resolve("New", false) {
         crate::Resolved::Absent { id } => id,
         _ => panic!("a brand-new name must resolve Absent"),
     };
     fixture.write("pages/New.md", "- external creation\n");
     assert!(matches!(
-        store.save(
+        writer.save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
             &fresh("New", PageKind::Page)
         ),
-        SaveOutcome::Conflict { .. }
+        Err(SaveRefused::Planned(Why::Conflict { .. }))
     ));
     assert_eq!(
         fixture.files(),
@@ -862,36 +676,24 @@ fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
 }
 
 #[test]
-fn late_alternate_extension_twin_never_uses_its_revision_as_target_conflict() {
-    let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    store.whole_graph().unwrap();
-    let id = PageId::from("pages/Late.md");
-    store.inject_fault(FaultPoint::TwinAfterPublish);
-    assert!(matches!(
-        store.save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &fresh("Late", PageKind::Page)),
-        SaveOutcome::Twin { existing } if existing.as_str() == "pages/Late.org"
-    ));
-}
-
-#[test]
 fn hostile_page_content_is_a_refusal_not_an_io_failure() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new();
     let source = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
     fixture.write("pages/Deep.md", &source);
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = PageId::from("pages/Deep.md");
     let (_, rev) = store.read(&id.file(), None).unwrap();
     assert!(matches!(
-        store.save(
+        writer.save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(rev),
             &fresh("Deep", PageKind::Page)
         ),
-        SaveOutcome::InvalidTarget(_)
+        Err(SaveRefused::Planned(Why::Refused(Refusal::InvalidTarget(
+            _
+        ))))
     ));
 
     let mut doc = fresh("New", PageKind::Page);
@@ -908,13 +710,15 @@ fn hostile_page_content_is_a_refusal_not_an_io_failure() {
     }
     doc.blocks = vec![nested];
     assert!(matches!(
-        store.save(
+        writer.save(
             crate::EditKind::ReplacePage,
             &PageId::from("pages/New.md"),
             SaveBase::CreateNew,
             &doc
         ),
-        SaveOutcome::InvalidTarget(_)
+        Err(SaveRefused::Planned(Why::Refused(Refusal::InvalidTarget(
+            _
+        ))))
     ));
 }
 
@@ -922,15 +726,14 @@ fn hostile_page_content_is_a_refusal_not_an_io_failure() {
 fn own_journal_creation_updates_day_and_published_answers() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new();
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     store.whole_graph().unwrap();
     let id = PageId::from("journals/2026_09_25.org");
     let mut doc = fresh("Sep 25th, 2026", PageKind::Journal);
     doc.format = Format::Org;
-    assert!(matches!(
-        store.save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc),
-        SaveOutcome::Saved(_)
-    ));
+    writer
+        .save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc)
+        .unwrap();
     assert_eq!(store.journal_id(crate::Day(20260925)), id);
     let view = store.whole_graph().unwrap();
     assert!(matches!(
@@ -965,7 +768,7 @@ fn a_loaded_stray_journal_saves_to_its_own_file() {
     .unwrap();
     fixture.write("journals/2026_06_26.md", "- canonical\n");
     fixture.write("journals/Friday, 26-06-2026.md", "- stray\n");
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let stray = PageId::from("journals/Friday, 26-06-2026.md");
     let mut doc = store.page(&stray).unwrap().doc;
     let resolved = match store.whole_graph().unwrap().resolve(&doc.name, true) {
@@ -975,10 +778,9 @@ fn a_loaded_stray_journal_saves_to_its_own_file() {
     assert_ne!(resolved, stray, "the day's name must not answer the stray");
     doc.blocks[0].raw = "stray edit".into();
     let base = SaveBase::Existing(doc.rev.clone().unwrap().into());
-    assert!(matches!(
-        store.save(crate::EditKind::ReplacePage, &stray, base, &doc),
-        SaveOutcome::Saved(_)
-    ));
+    writer
+        .save(crate::EditKind::ReplacePage, &stray, base, &doc)
+        .unwrap();
     let files = fixture.files();
     assert_eq!(files["journals/2026_06_26.md"], b"- canonical\n");
     assert_eq!(files["journals/Friday, 26-06-2026.md"], b"- stray edit\n");
@@ -992,21 +794,20 @@ fn g6b_base_indented_file_keeps_its_outline_and_bytes() {
     let source = "\t- root\n\t\t- child\n\t- sibling\n";
     let fixture = Fixture::new();
     fixture.write("pages/BaseTab.md", source.as_bytes());
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let (store, writer) = open(&fixture);
     let id = PageId::from("pages/BaseTab.md");
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     assert_eq!(doc.blocks.len(), 2, "{:?}", doc.blocks);
     doc.blocks[0].children[0].raw.push_str(" edited");
-    assert!(matches!(
-        store.save(
+    writer
+        .save(
             crate::EditKind::SaveBlock,
             &id,
             SaveBase::Existing(read.rev),
-            &doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
     let after = fs::read_to_string(fixture.0.join("pages/BaseTab.md")).unwrap();
     assert_eq!(after, "\t- root\n\t\t- child edited\n\t- sibling\n");
     let reread = store.page(&id).unwrap().doc;
@@ -1019,35 +820,163 @@ fn g6b_base_indented_file_keeps_its_outline_and_bytes() {
     store.close();
 }
 
-/// G26 (storage.qnt mutant MQ, I-2): a save whose bytes equal the disk reports
-/// success, and success retires the editor's crash copy. Those bytes may be
-/// another program's unsynced write of the same text (Syncthing delivering the
-/// user's own edit), so the save must make them durable before it answers:
-/// otherwise a power cut reverts the file and the text has no copy left.
+/// A plan reads its pages in input order and refuses the whole operation on a
+/// stale base, before anything reaches disk; replanned from the current base,
+/// the host writes every page.
 #[test]
-fn unchanged_save_makes_the_equal_bytes_durable() {
+fn a_page_plan_keeps_order_and_reports_preflight_conflict_without_writes() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let fixture = Fixture::new();
+    fixture.write("pages/A.md", "- old A\n");
+    fixture.write("pages/B.md", "- old B\n");
+    let (store, writer) = open(&fixture);
+    let a = PageId::from("pages/A.md");
+    let b = PageId::from("pages/B.md");
+    let read_a = store.page(&a).unwrap();
+    let read_b = store.page(&b).unwrap();
+    let mut doc_a = read_a.doc;
+    let mut doc_b = read_b.doc;
+    doc_a.blocks[0].raw = "new A".into();
+    doc_b.blocks[0].raw = "new B".into();
+    let mut entries = vec![
+        (
+            a.clone(),
+            SaveBase::Existing(read_a.rev),
+            doc_a,
+            vec![crate::EditKind::ReplacePage],
+        ),
+        (
+            b.clone(),
+            SaveBase::Existing(read_b.rev),
+            doc_b,
+            vec![crate::EditKind::ReplacePage],
+        ),
+    ];
+    fixture.write("pages/B.md", "- external B\n");
+    assert!(matches!(
+        plan_all(&store, &entries),
+        Err(Why::Conflict { file, .. }) if file == b.file()
+    ));
+    assert_eq!(
+        fs::read(fixture.0.join("pages/A.md")).unwrap(),
+        b"- old A\n"
+    );
+    assert_eq!(
+        fs::read(fixture.0.join("pages/B.md")).unwrap(),
+        b"- external B\n"
+    );
+    let (_, new_b_rev) = store.read(&b.file(), None).unwrap();
+    entries[1].1 = SaveBase::Existing(new_b_rev);
+    let op = plan_all(&store, &entries).unwrap();
+    let order: Vec<_> = op.pages.iter().map(|(page, ..)| page.clone()).collect();
+    assert_eq!(order, [a, b]);
+    writer.apply(op).unwrap();
+    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone())
+        .unwrap()
+        .contains("new A"));
+    assert!(String::from_utf8(fixture.files()["pages/B.md"].clone())
+        .unwrap()
+        .contains("new B"));
+}
+
+#[test]
+fn a_page_plan_naming_a_file_twice_has_its_own_family() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let fixture = Fixture::new();
+    fixture.write("pages/A.md", "- old\n");
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/A.md");
+    let read = store.page(&id).unwrap();
+    let entry = (
+        id,
+        SaveBase::Existing(read.rev),
+        read.doc,
+        vec![crate::EditKind::ReplacePage],
+    );
+    assert!(matches!(
+        plan_all(&store, &[entry.clone(), entry]),
+        Err(Why::Refused(Refusal::RepeatedFile(_)))
+    ));
+}
+
+/// The generic undo stays for non-page transactions: an undo that fails names
+/// the file it left, so the user can recover it.
+#[test]
+fn a_transaction_rollback_failure_names_recovery_location() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let id = PageId::from("pages/Equal.md");
-    let doc = fresh("Equal", PageKind::Page);
-    let SaveOutcome::Saved(rev) =
-        store.save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc)
-    else {
-        panic!("create")
-    };
-    crate::directory_durability::take_synced_directories();
-    let outcome = store.save(
-        crate::EditKind::ReplacePage,
-        &id,
-        SaveBase::Existing(rev),
-        &doc,
+    let a = store.file_id(Area::Assets, "A.txt").unwrap();
+    let b = store.file_id(Area::Assets, "B.txt").unwrap();
+    store.inject_fault(FaultPoint::MidStepIoAt(1));
+    store.inject_fault(FaultPoint::UndoWithdrawalIo);
+    let mut tx = store.transaction(None);
+    tx.create(&a, Content::Bytes(b"first".to_vec()));
+    tx.create(&b, Content::Bytes(b"second".to_vec()));
+    let outcome = tx.commit();
+    assert!(
+        matches!(&outcome, TxOutcome::NotCommitted {
+        step: 1, why: Why::Failed(_), rollback, ..
+    } if format!("{:?}", rollback.undo_failed).contains("assets/B.txt")),
+        "{outcome:?}"
     );
-    assert!(matches!(outcome, SaveOutcome::Unchanged(_)), "{outcome:?}");
+}
+
+/// G26 (storage.qnt mutant MQ, I-2): a save whose bytes equal the disk reports
+/// success, and success retires the editor's crash copy. Those bytes may be
+/// another program's unsynced write of the same text (Syncthing delivering the
+/// user's own edit), so the save must make them durable before it answers. The
+/// host does not skip equal bytes: they take the whole temp, rename and
+/// directory-sync recipe, and a failure of either step is not a success.
+#[test]
+fn an_equal_bytes_host_save_makes_the_bytes_durable_or_does_not_report_success() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    for phase in [Phase::PageTemp, Phase::PageRename, Phase::PageSync] {
+        let fixture = Fixture::new();
+        fixture.write("pages/Equal.md", "- mine\n");
+        let store = Arc::new(Store::open(&fixture.0, Default::default()).unwrap().0);
+        let id = PageId::from("pages/Equal.md");
+        let read = store.page(&id).unwrap();
+        fail(phase, std::io::ErrorKind::Other, 1_000);
+        let writer = HostWriter::start(&store);
+        let outcome = writer.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc,
+        );
+        assert!(
+            matches!(outcome, Err(SaveRefused::Host(_))),
+            "an equal-bytes save reported success past a failed {phase:?} (G26, mutant MQ): {outcome:?}"
+        );
+        assert_eq!(
+            fs::read(fixture.0.join("pages/Equal.md")).unwrap(),
+            b"- mine\n"
+        );
+    }
+}
+
+/// G26 on the live non-page writer: an equal `Replace` reports `Unchanged` only
+/// after syncing the bytes at the path.
+#[test]
+fn an_unchanged_non_page_replace_makes_the_equal_bytes_durable() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.0.join("assets")).unwrap();
+    fixture.write("assets/equal.txt", "same");
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = store.file_id(Area::Assets, "equal.txt").unwrap();
+    let (_, rev) = store.read(&id, None).unwrap();
+    crate::directory_durability::take_synced_directories();
+    let mut tx = store.transaction(None);
+    tx.replace(&id, rev, b"same".to_vec());
+    assert!(matches!(
+        tx.commit(),
+        TxOutcome::Committed { steps, .. } if matches!(steps[0], crate::StepResult::Unchanged { .. })
+    ));
     let synced = crate::directory_durability::take_synced_directories();
     assert!(
-        synced.iter().any(|dir| dir.ends_with("pages")),
-        "an Unchanged save reported success without syncing the page's directory (G26, mutant MQ); synced: {synced:?}"
+        synced.iter().any(|dir| dir.ends_with("assets")),
+        "an Unchanged replace reported success without syncing its directory (G26, mutant MQ): {synced:?}"
     );
-    store.close();
 }

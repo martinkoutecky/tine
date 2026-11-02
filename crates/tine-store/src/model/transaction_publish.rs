@@ -10,7 +10,7 @@ impl Graph {
         saved: Option<&Document>,
         file_set_changed: bool,
     ) {
-        self.transaction_publish_page_inner(path, bytes, saved, file_set_changed, false);
+        self.transaction_publish_page_inner(path, bytes, saved, file_set_changed);
     }
     /// Publish `path`'s observed `bytes`. For an own save or reference
     /// rewrite, returns the cacheable entry named from those bytes (no
@@ -21,7 +21,6 @@ impl Graph {
         bytes: Option<&[u8]>,
         saved: Option<&Document>,
         file_set_changed: bool,
-        own_rename: bool,
     ) -> Option<PageEntry> {
         let before_gen = self.cache_generation();
         let before_name = self
@@ -49,15 +48,6 @@ impl Graph {
                         if let Some(entry) = self.cacheable_page_entry_in(path, Some(content)) {
                             named = Some(entry.clone());
                             self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
-                        }
-                    } else if own_rename {
-                        // Publication already observed changed bytes and matched them
-                        // to this guarded rewrite. Comparing with the old normalized
-                        // document cannot change that observation, and re-parses it.
-                        if let Some(entry) = self.cacheable_page_entry_in(path, Some(content)) {
-                            let (doc, disk) = parse_page_content(&entry, content);
-                            named = Some(entry.clone());
-                            self.cache_upsert(entry, doc, disk);
                         }
                     } else {
                         self.reconcile_page_content(path, content, false);

@@ -1,7 +1,9 @@
+use crate::test_host_writer::{HostWriter, SaveRefused};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tine_core::model::{BlockDto, PageDto, PageKind};
 use tine_graph_features::{assets, pages};
-use tine_store::{OpenOptions, PageId, Resolved, SaveOutcome, Store};
+use tine_store::{OpenOptions, PageId, Resolved, SaveBase, Store};
 
 struct Fixture(std::path::PathBuf);
 impl Fixture {
@@ -18,8 +20,8 @@ impl Fixture {
         std::fs::write(root.join("pages/Note.md"), "alias:: Shortcut\n- before\n").unwrap();
         Self(root)
     }
-    fn store(&self) -> Store {
-        Store::open(&self.0, OpenOptions::default()).unwrap().0
+    fn store(&self) -> Arc<Store> {
+        Arc::new(Store::open(&self.0, OpenOptions::default()).unwrap().0)
     }
 }
 impl Drop for Fixture {
@@ -56,20 +58,20 @@ fn journal_template_save_matches_master_bytes() {
         read_only: false,
         guide: false,
     };
-    let saved = pages::save_page(
-        &store,
-        tine_store::EditKind::CreatePage,
-        &id,
-        &page,
-        None,
-        false,
-    )
-    .unwrap();
-    assert!(matches!(saved, SaveOutcome::Saved(_)));
+    let writer = HostWriter::start(&store);
+    writer
+        .save(
+            tine_store::EditKind::CreatePage,
+            &id,
+            SaveBase::CreateNew,
+            &page,
+        )
+        .unwrap();
     assert_eq!(
         std::fs::read(fixture.0.join("journals/2026_07_30.md")).unwrap(),
         b"- ### Meetings\n- ### Notes\n- ### Tasks\n",
     );
+    drop(writer);
     drop(store);
     let reopened = fixture.store();
     let loaded = pages::get_page(&reopened, name, PageKind::Journal)
@@ -84,16 +86,15 @@ fn journal_template_save_matches_master_bytes() {
             .collect::<Vec<_>>(),
         ["### Meetings", "### Notes", "### Tasks"],
     );
-    let saved = pages::save_page(
-        &reopened,
-        tine_store::EditKind::ReplacePage,
-        &loaded.id,
-        &loaded.doc,
-        Some(loaded.rev.into()),
-        false,
-    )
-    .unwrap();
-    assert!(matches!(saved, SaveOutcome::Unchanged(_)));
+    let rev = HostWriter::start(&reopened)
+        .save(
+            tine_store::EditKind::ReplacePage,
+            &loaded.id,
+            SaveBase::Existing(loaded.rev.clone()),
+            &loaded.doc,
+        )
+        .unwrap();
+    assert_eq!(rev, loaded.rev, "the same bytes keep their revision");
     assert_eq!(
         std::fs::read(fixture.0.join("journals/2026_07_30.md")).unwrap(),
         b"- ### Meetings\n- ### Notes\n- ### Tasks\n",
@@ -120,29 +121,32 @@ fn page_resolution_and_force_save_preserve_the_live_revision_guard() {
         "alias:: Shortcut\n- changed outside\n",
     )
     .unwrap();
-    let outcome = pages::save_page(
-        &store,
-        tine_store::EditKind::ReplacePage,
-        &alias.id,
-        &doc,
-        None,
-        true,
-    )
-    .unwrap();
-    assert!(matches!(outcome, SaveOutcome::Saved(_)));
+    // Keep mine: the save guards on the bytes it reads now, not the editor's.
+    let writer = HostWriter::start(&store);
+    let (_, current) = store.read(&alias.id.file(), None).unwrap();
+    writer
+        .save(
+            tine_store::EditKind::ReplacePage,
+            &alias.id,
+            SaveBase::Existing(current),
+            &doc,
+        )
+        .unwrap();
     assert!(std::fs::read_to_string(fixture.0.join("pages/Note.md"))
         .unwrap()
         .contains("kept by force"));
     std::fs::write(fixture.0.join("pages/Note.md"), [0xff]).unwrap();
-    assert!(pages::save_page(
-        &store,
-        tine_store::EditKind::ReplacePage,
-        &alias.id,
-        &doc,
-        None,
-        true
-    )
-    .is_err());
+    // Keep mine over bytes that are not text refuses: nothing to keep them by.
+    let (_, undecodable) = store.read(&alias.id.file(), None).unwrap();
+    assert!(matches!(
+        writer.save(
+            tine_store::EditKind::ReplacePage,
+            &alias.id,
+            SaveBase::Existing(undecodable),
+            &doc,
+        ),
+        Err(SaveRefused::Planned(_))
+    ));
     assert_eq!(
         std::fs::read(fixture.0.join("pages/Note.md")).unwrap(),
         [0xff]

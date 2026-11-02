@@ -46,10 +46,11 @@ fn a_save_plan_stages_the_same_bytes_as_commit_without_publishing() {
         op.pages[0].2,
         HostExpected::Bytes(b"- original\n".as_slice().into())
     );
-    assert!(matches!(
-        transaction().commit_internal(),
-        crate::TxOutcome::Committed { .. }
-    ));
+    let app = tempfile::tempdir().unwrap();
+    PageHost::start_for_tests(&store, app.path())
+        .unwrap()
+        .apply(transaction().plan().unwrap())
+        .unwrap();
     assert_eq!(
         op.pages[0].1,
         HostEffect::Write(fs::read(dir.path().join(page.as_str())).unwrap().into())
@@ -119,10 +120,6 @@ fn a_repeated_file_has_the_same_preflight_refusal() {
     };
     assert!(
         matches!(transaction().plan(), Err(Why::Refused(Refusal::RepeatedFile(id))) if id == file)
-    );
-    assert!(
-        matches!(transaction().commit_internal(), crate::TxOutcome::NotCommitted {
-        why: Why::Refused(Refusal::RepeatedFile(id)), .. } if id == file)
     );
 }
 
@@ -217,26 +214,17 @@ fn two_unique_creates_allocate_the_same_names_as_commit() {
     let op = transaction().plan().unwrap();
     let names: Vec<_> = op.pages.iter().map(|(id, ..)| id.as_str()).collect();
     assert_eq!(names, ["pages/A.md", "pages/A_1.md"]);
-    assert!(matches!(
-        transaction().commit_internal(),
-        crate::TxOutcome::Committed { .. }
-    ));
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    host.apply(transaction().plan().unwrap()).unwrap();
     for (id, effect, _) in op.pages {
         assert_eq!(
             effect,
             HostEffect::Write(fs::read(dir.path().join(id.as_str())).unwrap().into())
         );
     }
-    let (host_dir, host_store) = graph();
-    let mut tx = host_store.page_plan(Some(EditKind::ReplacePage));
-    for _ in 0..2 {
-        tx.create_unique(Area::Pages, "A", ".md", Content::Bytes(b"- a\n".to_vec()));
-    }
-    let app = tempfile::tempdir().unwrap();
-    let host = PageHost::start_for_tests(&host_store, app.path()).unwrap();
-    host.apply(tx.plan().unwrap()).unwrap();
     for name in ["pages/A.md", "pages/A_1.md"] {
-        assert_eq!(fs::read(host_dir.path().join(name)).unwrap(), b"- a\n");
+        assert_eq!(fs::read(dir.path().join(name)).unwrap(), b"- a\n");
     }
 }
 
@@ -271,11 +259,8 @@ fn a_declared_transfer_keeps_create_news_dto_name_check() {
     store.refresh(crate::Depth::Bytes).unwrap();
     store.whole_graph().unwrap();
     assert!(matches!(
-        transaction().commit_internal(),
-        crate::TxOutcome::NotCommitted {
-            why: Why::Refused(Refusal::UnreadableOwner { .. }),
-            ..
-        }
+        transaction().plan(),
+        Err(Why::Refused(Refusal::UnreadableOwner { .. }))
     ));
     let app = tempfile::tempdir().unwrap();
     let host = PageHost::start_for_tests(&store, app.path()).unwrap();

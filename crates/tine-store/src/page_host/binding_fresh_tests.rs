@@ -1041,6 +1041,8 @@ fn a_store_retitle_moves_the_live_page_list() {
         .find_entry("a", tine_core::model::PageKind::Page)
         .is_some());
 
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let save = |rel: &str, base: crate::SaveBase, body: &str| {
         let path = store.graph.root.join(rel);
         let dto = store
@@ -1048,13 +1050,11 @@ fn a_store_retitle_moves_the_live_page_list() {
             .page_dto_for_bytes(&path, body.as_bytes())
             .unwrap()
             .unwrap();
-        let mut tx = store.page_plan(None);
-        tx.save_page(&[EditKind::SaveBlock], &PageId::from(rel), base, &dto);
-        tx.commit_internal()
+        host_writer.save(EditKind::SaveBlock, &PageId::from(rel), base, &dto)
     };
     let old = crate::SaveBase::Existing(FileRev::from_bytes(b"- a\n"));
     let retitled = save("pages/a.md", old, "title:: Renamed\n\n- a\n");
-    assert!(matches!(retitled, crate::TxOutcome::Committed { .. }));
+    assert!(retitled.is_ok());
 
     // The published view names the page by its title, as a fresh store does.
     let view = store.whole_graph().unwrap();
@@ -1081,10 +1081,9 @@ fn a_store_retitle_moves_the_live_page_list() {
     assert!(
         matches!(
             twin,
-            crate::TxOutcome::NotCommitted {
-                why: crate::Why::Refused(crate::Refusal::Twin { .. }),
-                ..
-            }
+            Err(crate::test_host_writer::SaveRefused::Planned(
+                crate::Why::Refused(crate::Refusal::Twin { .. })
+            ))
         ),
         "a twin of the retitled page was created"
     );

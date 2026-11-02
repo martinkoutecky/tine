@@ -6,7 +6,7 @@ use crate::test_config_client::ConfigClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tine_graph_features::{conflicts, pages};
-use tine_store::{Cancel, PageId, SaveBase, SaveOutcome, SearchRequest, Store};
+use tine_store::{Cancel, PageId, SaveBase, SearchRequest, Store};
 
 use crate::test_fixture_io::hosted;
 
@@ -21,22 +21,26 @@ fn store_at(root: &std::path::Path) -> Store {
         .0
 }
 
-fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model::PageDto)) {
+fn save_named(
+    store: &std::sync::Arc<Store>,
+    name: &str,
+    edit: impl FnOnce(&mut tine_core::model::PageDto),
+) {
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(store);
     let id = match store.whole_graph().unwrap().resolve(name, false) {
         tine_store::Resolved::Existing { id, .. } => id,
         _ => panic!("missing page {name}"),
     };
     let mut read = store.page(&id).unwrap();
     edit(&mut read.doc);
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &read.doc,
+        )
+        .unwrap();
 }
 
 fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGroup>> {
@@ -137,6 +141,7 @@ fn unlinked_references_include_plain_text_alias_mentions() {
     .unwrap();
 
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
     assert!(
         store
             .whole_graph()
@@ -192,6 +197,7 @@ fn backlinks_include_explicit_links_in_page_properties() {
     .unwrap();
 
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
     assert!(
         store
             .whole_graph()
@@ -236,6 +242,7 @@ fn backlinks_include_bare_tags_page_properties() {
     .unwrap();
 
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
     assert!(
         store
             .whole_graph()
@@ -381,6 +388,7 @@ fn search_cache_reflects_saves_and_deletes() {
     std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
 
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let find = || {
         store
@@ -409,15 +417,14 @@ fn search_cache_reflects_saves_and_deletes() {
 
         guide: false,
     };
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &PageId::from("pages/Fresh.md"),
             SaveBase::CreateNew,
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     let hits = find();
     assert_eq!(hits.len(), 1, "saved page should be searchable");
     assert_eq!(hits[0].page, "Fresh");
@@ -442,6 +449,8 @@ fn search_ignores_hidden_property_metadata() {
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
 
     // A block whose only occurrence of "qzxmeta" is in a property line (like an
     // id:: uuid or hl-color::) must NOT match — the user can't see it.
@@ -462,15 +471,14 @@ fn search_ignores_hidden_property_metadata() {
         guide: false,
     };
     let id = PageId::from("pages/Meta.md");
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     assert_eq!(
         search_count(&store, "qzxmeta"),
         0,
@@ -501,19 +509,21 @@ fn save_preserves_file_format_no_churn() {
     std::fs::write(root.join("pages").join("C.md"), spaces).unwrap();
 
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     // Load then save unchanged must be byte-identical (no churn): each file's
     // trailing-newline + indent convention is preserved.
     for name in ["A", "B", "C"] {
         let id = PageId::from(format!("pages/{name}.md"));
         let read = store.page(&id).unwrap();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
                 &read.doc
             ),
-            SaveOutcome::Unchanged(_) | SaveOutcome::Saved(_)
+            Ok(_)
         ));
     }
     assert_eq!(
@@ -571,6 +581,8 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
     // tested rename plan. Exercise the guarded Store save, inspect bytes,
     // then reopen Store so this cannot pass on an in-memory document.
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let id = PageId::from("pages/Sheet.org");
     let read = store.page(&id).expect("org sheet");
     let mut page = read.doc;
@@ -597,15 +609,14 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
             ":tine.col-aggregates: prop:OCC=sum;prop:severity=max",
         );
     owner.children[0].raw = owner.children[0].raw.replace(":occurrence: 2", ":OCC: 2");
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
 
     let disk = std::fs::read_to_string(&path).unwrap();
     assert!(disk.contains(":tine.fields: severity=number;OCC=number;detection=number"));
@@ -661,7 +672,7 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
 
 #[test]
 fn save_refuses_to_clobber_external_change() {
-    use crate::store::{SaveBase, SaveOutcome};
+    use crate::store::SaveBase;
     let root = std::env::temp_dir().join(format!("tine-conflict-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Production `Store::open` binds the canonical root; the write-target
@@ -673,6 +684,8 @@ fn save_refuses_to_clobber_external_change() {
 
     let g = Arc::new(Graph::open(&root));
     let store = InternalStore::from_graph_for_tests(Arc::clone(&g));
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/N.md");
     // Build the cache (Tine now "knows" N = "- one"), then load it for editing.
     g.search("one", 10);
@@ -683,29 +696,33 @@ fn save_refuses_to_clobber_external_change() {
     crate::test_fixture_io::atomic_write(&path, "- EXTERNAL EDIT").unwrap();
 
     // Saving the now-stale page must fail with a conflict and NOT overwrite.
-    let outcome = store.save(
+    let outcome = host_writer.save(
         crate::EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &dto,
     );
     assert!(
-        matches!(outcome, SaveOutcome::Conflict { .. }),
+        matches!(
+            outcome,
+            Err(crate::test_host_writer::SaveRefused::Planned(
+                crate::Why::Conflict { disk: Some(_), .. }
+            ))
+        ),
         "stale save over an external edit: {outcome:?}"
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "- EXTERNAL EDIT");
 
     // "Keep mine" force-saves over it.
     let (_, disk_rev) = store.read(&id.file(), None).unwrap();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(disk_rev),
-            &dto
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &dto,
+        )
+        .unwrap();
     assert!(std::fs::read_to_string(&path).unwrap().contains("one"));
 
     std::fs::remove_dir_all(&root).ok();
@@ -713,7 +730,7 @@ fn save_refuses_to_clobber_external_change() {
 
 #[test]
 fn save_conflicts_when_file_deleted_externally() {
-    use crate::store::{SaveBase, SaveOutcome};
+    use crate::store::SaveBase;
     let root = std::env::temp_dir().join(format!("tine-del-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Canonical like production `Store::open` (see save_refuses_to_clobber_external_change).
@@ -722,6 +739,8 @@ fn save_conflicts_when_file_deleted_externally() {
     std::fs::write(&path, "- one").unwrap();
     let g = Arc::new(Graph::open(&root));
     let store = InternalStore::from_graph_for_tests(Arc::clone(&g));
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/N.md");
     g.search("one", 10); // warm cache
     let read = store.page(&id).unwrap();
@@ -730,14 +749,19 @@ fn save_conflicts_when_file_deleted_externally() {
     std::fs::remove_file(&path).unwrap();
 
     // Saving must conflict, NOT silently resurrect the deleted note.
-    let outcome = store.save(
+    let outcome = host_writer.save(
         crate::EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &read.doc,
     );
     assert!(
-        matches!(outcome, SaveOutcome::Deleted),
+        matches!(
+            outcome,
+            Err(crate::test_host_writer::SaveRefused::Planned(
+                crate::Why::Conflict { disk: None, .. }
+            ))
+        ),
         "stale save over an external delete: {outcome:?}"
     );
     assert!(
@@ -754,6 +778,8 @@ fn load_reflects_external_change_then_save_is_clean() {
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let id = PageId::from("pages/N.md");
     let _ = store.whole_graph().unwrap();
     let _ = store.page(&id).unwrap();
@@ -769,13 +795,13 @@ fn load_reflects_external_change_then_save_is_clean() {
         "load reflects external change"
     );
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &read.doc
         ),
-        SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
+        Ok(_)
     ));
     store.close();
     std::fs::remove_dir_all(&root).ok();
@@ -793,6 +819,8 @@ fn consecutive_self_saves_do_not_conflict() {
     let root = std::env::temp_dir().join(format!("tine-selfsave-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let mk = |raw: &str| PageDto {
         name: "D".into(),
         kind: PageKind::Page,
@@ -811,35 +839,34 @@ fn consecutive_self_saves_do_not_conflict() {
     };
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
     let id = PageId::from("pages/D.md");
-    let r1 = match store.save(
+    let r1 = match host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::CreateNew,
         &mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"),
     ) {
-        SaveOutcome::Saved(rev) => rev,
+        Ok(rev) => rev,
         outcome => panic!("first save failed: {outcome:?}"),
     };
     // 2) user deletes the inserted text — must NOT be read as an external edit.
-    let r2 = match store.save(
+    let r2 = match host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::Existing(r1),
         &mk("TODO task"),
     ) {
-        SaveOutcome::Saved(rev) => rev,
+        Ok(rev) => rev,
         outcome => panic!("second save failed: {outcome:?}"),
     };
     // 3) and a further edit still saves cleanly.
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(r2),
-            &mk("TODO task edited")
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &mk("TODO task edited"),
+        )
+        .unwrap();
     assert!(std::fs::read_to_string(root.join("pages").join("D.md"))
         .unwrap()
         .contains("edited"));
@@ -906,6 +933,8 @@ fn noop_save_does_not_bump_cache_generation() {
     let root = std::env::temp_dir().join(format!("tine-noopgen-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let _ = store.whole_graph().unwrap();
     let mk = |raw: &str| PageDto {
         name: "N".into(),
@@ -924,24 +953,24 @@ fn noop_save_does_not_bump_cache_generation() {
         guide: false,
     };
     let id = PageId::from("pages/N.md");
-    let r1 = match store.save(
+    let r1 = match host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::CreateNew,
         &mk("hello"),
     ) {
-        SaveOutcome::Saved(rev) => rev,
+        Ok(rev) => rev,
         outcome => panic!("first save failed: {outcome:?}"),
     };
     let rev1 = store.whole_graph().unwrap().rev();
     // Re-save byte-identical content (no-op) with the returned baseline.
-    let r2 = match store.save(
+    let r2 = match host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::Existing(r1.clone()),
         &mk("hello"),
     ) {
-        SaveOutcome::Unchanged(rev) => rev,
+        Ok(rev) => rev,
         outcome => panic!("unchanged save failed: {outcome:?}"),
     };
     assert_eq!(r1, r2, "rev must be stable across a no-op save");
@@ -951,15 +980,14 @@ fn noop_save_does_not_bump_cache_generation() {
         "no-op save must not publish a new graph view"
     );
     // A real edit DOES bump it.
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(r2),
-            &mk("hello world")
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &mk("hello world"),
+        )
+        .unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > rev1,
         "a real edit must publish a new graph view"
@@ -981,6 +1009,8 @@ fn self_write_marker_does_not_outlive_its_save() {
     let root = std::env::temp_dir().join(format!("tine-marker-life-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let _ = store.whole_graph().unwrap();
     let page = PageDto {
         name: "C".into(),
@@ -999,20 +1029,21 @@ fn self_write_marker_does_not_outlive_its_save() {
         guide: false,
     };
     let id = PageId::from("pages/C.md");
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     let path = root.join("pages").join("C.md");
     let saved_bytes = std::fs::read(&path).unwrap();
     let saved_rev = store.whole_graph().unwrap().rev();
     std::fs::remove_file(&path).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
+    // The page's host publishes what it observes, on its own thread.
+    assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(20)));
     let removed_rev = store.whole_graph().unwrap().rev();
     assert!(removed_rev > saved_rev, "page deletion must be published");
     assert!(matches!(
@@ -1041,6 +1072,8 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     let root = std::env::temp_dir().join(format!("tine-diskrev-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let _ = store.whole_graph().unwrap();
     let page = PageDto {
         name: "R".into(),
@@ -1059,15 +1092,14 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
         guide: false,
     };
     let id = PageId::from("pages/R.md");
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     let path = root.join("pages").join("R.md");
     let saved = store.whole_graph().unwrap().rev();
     store.refresh(tine_store::Depth::Stamps).unwrap();
@@ -1086,6 +1118,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     // A real external edit must still be detected (not masked by disk_revs).
     std::fs::write(&path, "- beta\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
+    assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(20)));
     assert!(
         store.whole_graph().unwrap().rev() > saved,
         "external change detected despite disk_revs entry"
@@ -1114,6 +1147,8 @@ fn self_write_is_not_reported_as_external_change() {
     let root = std::env::temp_dir().join(format!("tine-selfwrite-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let _ = store.whole_graph().unwrap();
 
     let path = root.join("pages").join("W.md");
@@ -1134,15 +1169,14 @@ fn self_write_is_not_reported_as_external_change() {
         guide: false,
     };
     let id = PageId::from("pages/W.md");
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
-            &page
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &page,
+        )
+        .unwrap();
     assert!(std::fs::read_to_string(&path).unwrap().contains("hello"));
 
     // A watcher poll right after our own save must emit nothing.
@@ -1323,6 +1357,8 @@ fn legacy_namespace_file_round_trips() {
     .unwrap();
 
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     // Discoverable under the decoded, slashed name.
     let id = match store.whole_graph().unwrap().resolve("math/algebra", false) {
         tine_store::Resolved::Existing { id, .. } => id,
@@ -1332,13 +1368,13 @@ fn legacy_namespace_file_round_trips() {
     assert_eq!(read.doc.name, "math/algebra");
     // An edited save round-trips to the SAME file; no `___` twin appears.
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &read.doc
         ),
-        SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
+        Ok(_)
     ));
     assert!(root.join("pages").join("math%2Falgebra.md").exists());
     assert!(

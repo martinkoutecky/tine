@@ -14,6 +14,9 @@ pub(super) struct FilePublication {
 }
 
 impl PagePlan<'_> {
+    /// Observe and publish each file's final bytes after a non-page commit.
+    /// Also the page host's unheld spelling and launch recovery publication
+    /// (`publish_move`, temporary-entry completion), so page indexing stays.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn publish_final_files(
         &self,
@@ -23,7 +26,6 @@ impl PagePlan<'_> {
         failed: bool,
         rollback: &mut Rollback,
         kept_old: &[FileId],
-        steps: &[Step],
     ) -> FilePublication {
         let spelling_moves: HashSet<FileId> = plans
             .iter()
@@ -31,19 +33,6 @@ impl PagePlan<'_> {
             .flat_map(|plan| [plan.src.clone(), plan.dst.as_ref().unwrap().clone()])
             .collect();
         // Index each record once, preserving first-plan and ordered undo matching.
-        let mut source_plans = HashMap::new();
-        let mut opaque_plans = HashMap::new();
-        for (index, plan) in plans.iter().enumerate() {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::transaction_record_probe();
-            source_plans.entry(&plan.src).or_insert(index);
-            if plan.opaque_rev.is_some() {
-                opaque_plans.entry(&plan.src).or_insert(plan);
-                if let Some(dst) = &plan.dst {
-                    opaque_plans.entry(dst).or_insert(plan);
-                }
-            }
-        }
         let mut file_undos: HashMap<&FileId, Vec<&Undo>> = HashMap::new();
         for record in done {
             #[cfg(feature = "test-faults")]
@@ -91,47 +80,6 @@ impl PagePlan<'_> {
             } else {
                 false
             };
-            if let Some(plan) = opaque_plans.get(&id) {
-                let before_rev = (plan.src == id).then(|| plan.opaque_rev.clone()).flatten();
-                let now_rev = match if missing_spelling {
-                    Err(io::Error::from(io::ErrorKind::NotFound))
-                } else {
-                    FileRev::from_file(&path)
-                } {
-                    Ok(rev) => Some(rev),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                    Err(error) => {
-                        publication_errors.push((id.clone(), error.into()));
-                        self.store.graph.invalidate_cache();
-                        continue;
-                    }
-                };
-                if before_rev != now_rev {
-                    let kind = match (&before_rev, &now_rev) {
-                        (None, Some(_)) => ChangeKind::Created,
-                        (Some(_), None) => ChangeKind::Removed,
-                        _ => ChangeKind::Modified,
-                    };
-                    let own = file_undos.get(&id).into_iter().flatten().any(|record| {
-                        record.opaque_rev.is_some()
-                            && ((record.src == id
-                                && now_rev.is_none()
-                                && (record.moved || record.created))
-                                || (record.dst.as_ref() == Some(&id)
-                                    && record.created
-                                    && record.opaque_rev == now_rev))
-                    });
-                    let tuple = (id.clone(), kind, now_rev);
-                    if failed && !own {
-                        published_external.push(tuple);
-                    } else {
-                        published_own.push(tuple);
-                    }
-                    changed_any = true;
-                    self.store.graph.invalidate_cache();
-                }
-                continue;
-            }
             // A page's metadata comes from the read's own handle, before its
             // bytes, so the own-write stamp can later prove these bytes
             // unchanged without another open or re-hash (GH #623). Handle
@@ -231,35 +179,20 @@ impl PagePlan<'_> {
             if self.page(&id) {
                 if now.as_ref() != baseline.as_ref() {
                     changed_any = true;
-                    let saved_page = if !failed {
-                        source_plans
-                            .get(&id)
-                            .map(|&index| &plans[index])
-                            .filter(|plan| plan.new.as_deref() == now.as_deref())
-                            .and_then(|plan| plan.saved_page.as_ref())
-                    } else {
-                        None
-                    };
-                    let own_rename = !failed
-                        && own_final
-                        && source_plans
-                            .get(&id)
-                            .is_some_and(|&index| matches!(steps[index], Step::Rewrite { .. }));
                     // A held page's host publishes its index, and
                     // its row comes from those bytes (A-V4, (G)).
                     let graph = &self.store.graph;
                     let owned = graph.held_key(&path).and_then(|key| {
                         let bytes = now.as_deref().map(std::sync::Arc::from);
-                        graph.publish_owned(&key, bytes, saved_page).ok()
+                        graph.publish_owned(&key, bytes, None).ok()
                     });
                     let entry = match owned {
                         Some(entry) => entry,
                         None => graph.transaction_publish_page_inner(
                             &path,
                             now.as_deref(),
-                            saved_page,
+                            None,
                             baseline.is_none() || now.is_none(),
-                            own_rename,
                         ),
                     };
                     if let Some(entry) = entry {

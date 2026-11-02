@@ -10,10 +10,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{OpenOptions, PageId, Resolved, SaveBase, SaveOutcome, Store, WatchMode};
+use crate::{OpenOptions, PageId, Resolved, SaveBase, Store, WatchMode};
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 
-fn graph(files: &[(&str, &[u8])]) -> (PathBuf, Store) {
+fn graph(files: &[(&str, &[u8])]) -> (PathBuf, std::sync::Arc<Store>) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-og-create-unreadable-{}-{}",
@@ -27,15 +27,17 @@ fn graph(files: &[(&str, &[u8])]) -> (PathBuf, Store) {
     for (rel, bytes) in files {
         fs::write(root.join(rel), bytes).unwrap();
     }
-    let store = Store::open(
-        &root,
-        OpenOptions {
-            watch: WatchMode::Poll,
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .0;
+    let store = std::sync::Arc::new(
+        Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0,
+    );
     store.whole_graph().unwrap();
     (root, store)
 }
@@ -59,12 +61,18 @@ fn doc(name: &str) -> PageDto {
 }
 
 /// The user's path: resolve the name, then save the proposed id as CreateNew.
-fn create_by_name(store: &Store, name: &str) -> (PageId, SaveOutcome) {
+fn create_by_name(
+    store: &std::sync::Arc<Store>,
+    name: &str,
+) -> (
+    PageId,
+    Result<crate::FileRev, crate::test_host_writer::SaveRefused>,
+) {
     let id = match store.whole_graph().unwrap().resolve(name, false) {
         Resolved::Absent { id } => id,
         _ => panic!("{name} should resolve as absent"),
     };
-    let outcome = store.save(
+    let outcome = crate::test_host_writer::HostWriter::start(store).save(
         crate::EditKind::CreatePage,
         &id,
         SaveBase::CreateNew,
@@ -93,7 +101,9 @@ fn create_refuses_a_name_an_unreadable_file_could_own_and_names_the_file() {
     );
     let (id, outcome) = create_by_name(&store, "Target");
     match &outcome {
-        SaveOutcome::UnreadableOwner { file } => assert_eq!(
+        Err(crate::test_host_writer::SaveRefused::Planned(crate::Why::Refused(
+            crate::Refusal::UnreadableOwner { file },
+        ))) => assert_eq!(
             file.as_str(),
             "pages/Other.md",
             "the refusal names the unreadable file"
@@ -113,7 +123,7 @@ fn an_unreadable_file_blocks_only_names_it_could_be() {
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
     let (id, outcome) = create_by_name(&store, "Unrelated");
     assert!(
-        matches!(outcome, SaveOutcome::Saved(_)),
+        outcome.is_ok(),
         "a name the unreadable file cannot be is created: {outcome:?}"
     );
     assert!(root.join(id.file().as_str()).exists());
@@ -136,7 +146,7 @@ fn a_repaired_file_no_longer_blocks_its_name() {
         Resolved::Existing { .. }
     ));
     let (_, outcome) = create_by_name(&store, "Fresh");
-    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+    assert!(outcome.is_ok(), "{outcome:?}");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -161,7 +171,7 @@ fn a_parser_rejected_file_with_a_readable_title_blocks_only_that_title() {
         "precondition: the parser rejects Deep.md"
     );
     let (_, outcome) = create_by_name(&store, "Target");
-    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+    assert!(outcome.is_ok(), "{outcome:?}");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -176,11 +186,10 @@ fn create_unique_of_a_page_is_refused_too() {
         ".md",
         crate::Content::Bytes(b"- new\n".to_vec()),
     );
-    match tx.commit_internal() {
-        crate::TxOutcome::NotCommitted {
-            why: crate::Why::Refused(crate::Refusal::UnreadableOwner { file }),
-            ..
-        } => assert_eq!(file.as_str(), "pages/Other.md"),
+    match tx.plan() {
+        Err(crate::Why::Refused(crate::Refusal::UnreadableOwner { file })) => {
+            assert_eq!(file.as_str(), "pages/Other.md")
+        }
         other => panic!("expected the unreadable-owner refusal, got {other:?}"),
     }
     assert!(!root.join("pages/Target.md").exists());
@@ -203,6 +212,6 @@ fn a_fifo_in_pages_blocks_no_creation() {
     assert!(status.success());
     store.refresh(crate::Depth::Stamps).unwrap();
     let (_, outcome) = create_by_name(&store, "Target");
-    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+    assert!(outcome.is_ok(), "{outcome:?}");
     let _ = fs::remove_dir_all(root);
 }

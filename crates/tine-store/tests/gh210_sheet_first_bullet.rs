@@ -10,7 +10,7 @@
 
 use std::fs;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, SaveBase, Store};
 
 fn block(id: &str, raw: &str, children: Vec<BlockDto>) -> BlockDto {
     BlockDto {
@@ -49,18 +49,17 @@ fn a_titleless_table_first_bullet_stays_a_block_and_the_page_keeps_saving() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/Tabled.md");
     let config = "tine.view:: table\ntine.table-widths:: prop%3Atest=171;title=341";
-    let first = store.save(
+    let first = host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::CreateNew,
         &page("Tabled", vec![block("b1", config, vec![])]),
     );
-    assert!(
-        matches!(first, SaveOutcome::Saved(_)),
-        "first save: {first:?}"
-    );
+    assert!(matches!(first, Ok(_)), "first save: {first:?}");
     let read = store.page(&id).unwrap();
     assert_eq!(
         read.doc.pre_block,
@@ -73,14 +72,14 @@ fn a_titleless_table_first_bullet_stays_a_block_and_the_page_keeps_saving() {
     let mut next = read.doc.clone();
     let titled = format!("test table\n{config}");
     next.blocks = vec![block("b1", &titled, vec![block("c1", "blah", vec![])])];
-    let second = store.save(
+    let second = host_writer.save(
         tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &next,
     );
     assert!(
-        matches!(second, SaveOutcome::Saved(_)),
+        matches!(second, Ok(_)),
         "typing into the table block must keep saving: {second:?}"
     );
     let reread = store.page(&id).unwrap().doc;

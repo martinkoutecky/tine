@@ -1315,6 +1315,7 @@ mod tests {
     fn gh543_r1_save_racing_append_or_truncation_remains_a_conflict() {
         for external in ["- original\n- external append\n", "- cut\n"] {
             let (dir, store) = open();
+            let host_writer = crate::test_host_writer::HostWriter::start(&store);
             store.watch.stop_background_for_test();
             let path = dir.path().join("pages/P0.md");
             let id = PageId::from("pages/P0.md");
@@ -1325,14 +1326,19 @@ mod tests {
                 *hook.borrow_mut() =
                     Some(Box::new(move || fs::write(delivering, external).unwrap()));
             });
-            let outcome = store.save(
+            let outcome = host_writer.save(
                 crate::EditKind::SaveBlock,
                 &id,
                 crate::SaveBase::Existing(read.rev),
                 &read.doc,
             );
             assert!(
-                matches!(outcome, crate::SaveOutcome::Conflict { .. }),
+                matches!(
+                    outcome,
+                    Err(crate::test_host_writer::SaveRefused::Planned(
+                        crate::Why::Conflict { disk: Some(_), .. }
+                    ))
+                ),
                 "external delivery during save staging must use the conflict flow: {outcome:?}"
             );
             assert_eq!(fs::read_to_string(&path).unwrap(), external);
@@ -1654,6 +1660,7 @@ mod tests {
     #[test]
     fn focus_observation_retries_an_intervening_save_and_keeps_external_changes() {
         let (dir, store) = open();
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let core = store.watch.core_for_load();
         // REG-LOAD-FLAKY-FOCUS-WRITER: only the refresh may reach the walk
         // pause, and only this test may hold the writer while it waits there.
@@ -1691,13 +1698,13 @@ mod tests {
         let mut read = store.page(&id).unwrap();
         read.doc.blocks[0].raw = "saved during observation".into();
         assert!(matches!(
-            store.save(
+            host_writer.save(
                 crate::EditKind::SaveBlock,
                 &id,
                 crate::SaveBase::Existing(read.rev),
                 &read.doc
             ),
-            crate::SaveOutcome::Saved(_)
+            Ok(_)
         ));
         // A concurrent config publication changes eligibility as well as the
         // generation. Its writer must not wait for a directory-read guard.

@@ -3,7 +3,7 @@
 use serde_json::Value;
 use std::fs;
 use std::time::{Duration, Instant, SystemTime};
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, Store};
 
 const SECRET_NAME: &str = "Zyxwvu-Distinctive-Page-Name";
 const SECRET_BODY: &str = "quixotic-planted-body-sentence";
@@ -229,17 +229,16 @@ fn rescan_and_saves_are_recorded() {
     let rebuilt = latest_diff(&store.diagnostics(), "rebuild_command").expect("rebuild recorded");
     assert!(n(&rebuilt["files"]) >= 5);
 
-    let id = PageId::from("pages/Hub.md");
-    let mut read = store.page(&id).unwrap();
-    read.doc.blocks[0].raw = "edited".into();
+    // The saves section times the Transaction commit (asset and config writes).
+    let config = store.file_id(tine_store::Area::Meta, "custom.css").unwrap();
+    let mut tx = store.transaction(None);
+    tx.create(
+        &config,
+        tine_store::Content::Bytes(b"/* edited */\n".to_vec()),
+    );
     assert!(matches!(
-        store.save(
-            EditKind::ReplacePage,
-            &id,
-            SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        SaveOutcome::Saved(_)
+        tx.commit(),
+        tine_store::TxOutcome::Committed { .. }
     ));
     let saves = store.diagnostics()["saves"].clone();
     assert!(n(&saves["total"]) >= 1);

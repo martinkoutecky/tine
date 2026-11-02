@@ -33,7 +33,7 @@ mod c3s_content_loss;
 #[path = "../tests/change_summary.rs"]
 mod change_summary;
 #[path = "../tests/conformance_fixture.rs"]
-mod conformance_f3;
+pub(crate) mod conformance_f3;
 #[path = "../tests/f8_vcs_markers.rs"]
 mod f8_vcs_markers;
 #[path = "../tests/lifecycle.rs"]

@@ -1,5 +1,9 @@
 //! One integration executable; module names retain each source suite in test filters.
 
+use tine_store as store_crate;
+#[path = "../../tine-store/src/test_host_writer.rs"]
+mod test_host_writer;
+
 // Store cost/fault probes are process-global. Every case takes this lock so
 // ordinary graph activity cannot contaminate a measurement in another suite.
 // Child workers start a fresh executable and therefore have their own lock.

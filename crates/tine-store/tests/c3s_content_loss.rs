@@ -4,7 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{PageId, SaveBase, SaveOutcome, Store};
+use crate::test_host_writer::{HostWriter, SaveRefused};
+use crate::{FileRev, PageId, SaveBase, Store};
+use std::sync::Arc;
 
 fn scratch(label: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -20,7 +22,7 @@ fn scratch(label: &str) -> PathBuf {
     root
 }
 
-fn save_raw(store: &Store, id: &PageId, raw: &[&str]) -> SaveOutcome {
+fn save_raw(store: &Arc<Store>, id: &PageId, raw: &[&str]) -> Result<FileRev, SaveRefused> {
     let read = store.page(id).unwrap();
     let mut doc = read.doc;
     let template = doc.blocks[0].clone();
@@ -34,7 +36,7 @@ fn save_raw(store: &Store, id: &PageId, raw: &[&str]) -> SaveOutcome {
             block
         })
         .collect();
-    store.save(
+    HostWriter::for_store(store).save(
         crate::EditKind::ReplacePage,
         id,
         SaveBase::Existing(read.rev),
@@ -76,17 +78,14 @@ fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() 
         let rel = format!("journals/{stem}.md");
         let path = root.join(&rel);
         fs::write(&path, "- a\n").unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         // Wait for the background warm: the finding needs the warm page cache.
         store.whole_graph().unwrap();
         let id = PageId::from(rel.as_str());
         assert_eq!(raws(&store, &id), ["a"], "{format}");
 
         // Own save, then reload: the editor must see what it just saved.
-        assert!(
-            matches!(save_raw(&store, &id, &["b"]), SaveOutcome::Saved(_)),
-            "{format}"
-        );
+        assert!(save_raw(&store, &id, &["b"]).is_ok(), "{format}");
         // A save from that reload must keep `b` (it does not when the reload
         // served stale `a` under `b`'s revision).
         let reloaded = raws(&store, &id);
@@ -103,6 +102,10 @@ fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() 
 
         // External (sync/editor) write, then reload + save on its revision.
         fs::write(&path, "- x\n").unwrap();
+        // The page is held since the save: its host hears of the write from
+        // the watcher, and answers the read from then on.
+        assert!(crate::test_host_writer::HostWriter::for_store(&store)
+            .quiesce_for_tests(std::time::Duration::from_secs(20)));
         assert_eq!(
             raws(&store, &id),
             ["x"],
@@ -119,17 +122,19 @@ fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() 
     }
 }
 
-/// F2 (L07): a multi-page save whose later entry fails is undone by
-/// withdrawing each written file's new bytes to conflict trash and then
-/// rewriting its old bytes. A crash between the two must still leave every
-/// page's pre-save bytes on disk: live, or recoverable in graph trash.
+/// F2 (L07): a transaction whose later step fails is undone by withdrawing
+/// each written file's new bytes to conflict trash and then rewriting its old
+/// bytes. A crash between the two must still leave every file's earlier bytes
+/// on disk: live, or recoverable in graph trash. Non-page files: the page host
+/// promises no multi-page rollback (`page_operation_failures_retain_input_and_fresh_indexes_through_relaunch`).
 #[cfg(feature = "test-faults")]
 #[test]
-fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
+fn f2_crash_in_multi_file_undo_keeps_each_files_old_bytes() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("f2");
-    fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
-    fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+    fs::create_dir_all(root.join("assets")).unwrap();
+    fs::write(root.join("assets/A.txt"), "- old A\n").unwrap();
+    fs::write(root.join("assets/B.txt"), "- old B\n").unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -149,17 +154,17 @@ fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
     // A was written and then withdrawn by undo; the crash came before its old
     // bytes were rewritten. Its content must be live (old or new) or its old
     // bytes recoverable in graph trash / recovery roots.
-    let live = fs::read_to_string(root.join("pages/A.md")).ok();
+    let live = fs::read_to_string(root.join("assets/A.txt")).ok();
     assert!(
         matches!(live.as_deref(), Some("- old A\n" | "- new A\n"))
             || exists_anywhere(&root.join("logseq/.tine-trash"), b"- old A\n")
             || exists_anywhere(&root.join("assets/.tine-restore-recovery"), b"- old A\n"),
-        "I-2: page A's pre-save bytes are on disk nowhere after a crash in undo \
+        "I-2: A's earlier bytes are on disk nowhere after a crash in undo \
          (live {live:?}); exemplar: the rewritten move's trash copy in Transaction::apply"
     );
     // B's racing external write is untouched.
     assert_eq!(
-        fs::read_to_string(root.join("pages/B.md")).unwrap(),
+        fs::read_to_string(root.join("assets/B.txt")).unwrap(),
         "external stage-2"
     );
     reopened.close();
@@ -167,23 +172,23 @@ fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
 }
 
 /// F2 neighbour: an uninterrupted rollback restores the old bytes and withdraws
-/// its staged `tx-old` copy, so a refused multi-page save leaves no trash debris.
+/// its staged `tx-old` copy, so a refused transaction leaves no trash debris.
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("f2-ok");
-    fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
-    fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+    fs::create_dir_all(root.join("assets")).unwrap();
+    fs::write(root.join("assets/A.txt"), "- old A\n").unwrap();
+    fs::write(root.join("assets/B.txt"), "- old B\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let entries = two_page_entries(&store);
     store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
     assert!(matches!(
-        save_all(&store, &entries),
+        replace_both(&store),
         crate::TxOutcome::NotCommitted { step: 1, .. }
     ));
     assert_eq!(
-        fs::read_to_string(root.join("pages/A.md")).unwrap(),
+        fs::read_to_string(root.join("assets/A.txt")).unwrap(),
         "- old A\n"
     );
     assert!(!exists_anywhere(
@@ -194,50 +199,18 @@ fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// A multi-page save over the transaction primitive that stays
-/// (the multi-page store save is deleted, STEP3 §12): one `save_page` step per
-/// entry, in order, then one commit.
+/// One transaction replacing both assets, in order.
 #[cfg(feature = "test-faults")]
-fn save_all(
-    store: &Store,
-    entries: &[(
-        PageId,
-        SaveBase,
-        tine_core::model::PageDto,
-        Vec<crate::EditKind>,
-    )],
-) -> crate::TxOutcome {
-    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-    for (id, base, doc, kinds) in entries {
-        tx.save_page(kinds, id, base.clone(), doc);
+fn replace_both(store: &Store) -> crate::TxOutcome {
+    let mut tx = store.transaction(None);
+    for name in ["A", "B"] {
+        let file = store
+            .file_id(crate::Area::Assets, &format!("{name}.txt"))
+            .unwrap();
+        let rev = store.read(&file, None).unwrap().1;
+        tx.replace(&file, rev, format!("- new {name}\n").into_bytes());
     }
-    tx.commit_internal()
-}
-
-#[cfg(feature = "test-faults")]
-fn two_page_entries(
-    store: &Store,
-) -> Vec<(
-    PageId,
-    SaveBase,
-    tine_core::model::PageDto,
-    Vec<crate::EditKind>,
-)> {
-    ["A", "B"]
-        .into_iter()
-        .map(|name| {
-            let id = PageId::from(format!("pages/{name}.md").as_str());
-            let read = store.page(&id).unwrap();
-            let mut doc = read.doc;
-            doc.blocks[0].raw = format!("new {name}");
-            (
-                id,
-                SaveBase::Existing(read.rev),
-                doc,
-                vec![crate::EditKind::ReplacePage],
-            )
-        })
-        .collect()
+    tx.commit()
 }
 
 #[cfg(feature = "test-faults")]
@@ -248,12 +221,11 @@ fn f2_undo_crash_worker() {
         return;
     };
     let store = Store::open(Path::new(&root), Default::default()).unwrap().0;
-    let entries = two_page_entries(&store);
     // An external writer changes B just before its write (an external-editor
     // race): B is refused unwritten and undo runs for A alone.
     store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
     store.inject_fault(crate::FaultPoint::AbortAfterUndoWithdraw);
-    let _ = save_all(&store, &entries);
+    let _ = replace_both(&store);
     panic!("undo did not reach the withdraw abort point");
 }
 

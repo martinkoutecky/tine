@@ -8,12 +8,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::test_host_writer::{save_on, SaveRefused};
 use tine_core::concord_queue::{vcs_conflict_markers, ConflictSource, SideRole};
 use tine_core::model::Format;
 use tine_core::pdf::{Highlight, Position, Rect};
 use tine_core::sync_diff::{DiffRow, MergedSource, RowKind};
 use tine_graph_features::{conflicts, pdf};
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, Refusal, SaveBase, Store, Why};
 
 /// Markers exactly as `git merge` writes them in `diff3` style.
 const DIFF3: &str = concat!(
@@ -238,13 +239,15 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
     let read = store.page(&id).unwrap();
     assert!(
         matches!(
-            store.save(
+            save_on(
+                &host,
+                &store,
                 EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
                 &read.doc
             ),
-            SaveOutcome::ReadOnly(_)
+            Err(SaveRefused::Planned(Why::Refused(Refusal::ReadOnly(_))))
         ),
         "a marker-bearing page must refuse ordinary saves"
     );
@@ -581,13 +584,15 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
     let read = store.page(&other).unwrap();
     assert!(
         matches!(
-            store.save(
+            save_on(
+                &host,
+                &store,
                 EditKind::ReplacePage,
                 &other,
                 SaveBase::Existing(read.rev),
                 &read.doc
             ),
-            SaveOutcome::ReadOnly(_)
+            Err(SaveRefused::Planned(Why::Refused(Refusal::ReadOnly(_))))
         ),
         "the other marker page stays quarantined"
     );
@@ -601,13 +606,15 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
     let read = store.page(&id).unwrap();
     let mut edited = read.doc.clone();
     edited.blocks[0].raw = "edited after resolving".into();
-    let outcome = store.save(
+    let outcome = save_on(
+        &host,
+        &store,
         EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &edited,
     );
-    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+    assert!(outcome.is_ok(), "{outcome:?}");
     drop(host);
     let _ = fs::remove_dir_all(&root);
 }

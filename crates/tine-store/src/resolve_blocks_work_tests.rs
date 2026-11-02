@@ -2,7 +2,7 @@
 //! touches only the pages that hold the requested blocks, never every page,
 //! and answers exactly what a scan of every page in page order would.
 use crate::model::ReadSnapshot;
-use crate::store::{Depth, OpenOptions, PageId, SaveBase, SaveOutcome, Store};
+use crate::store::{Depth, OpenOptions, PageId, SaveBase, Store};
 use tine_core::doc::DocBlock;
 
 /// Enough pages that any per-call whole-graph pass dwarfs the allowed work.
@@ -107,19 +107,19 @@ fn resolve(store: &Store, ids: &[&str]) -> (Vec<Option<(String, String)>>, usize
     (got, touched)
 }
 
-fn save(store: &Store, rel: &str, edit: impl FnOnce(&mut tine_core::PageDto)) {
+fn save(store: &std::sync::Arc<Store>, rel: &str, edit: impl FnOnce(&mut tine_core::PageDto)) {
+    let host_writer = crate::test_host_writer::HostWriter::start(store);
     let id = PageId::from(rel.to_owned());
     let mut read = store.page(&id).unwrap();
     edit(&mut read.doc);
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             crate::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
-            &read.doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &read.doc,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -159,6 +159,7 @@ fn duplicate_ids_answer_the_first_page_in_page_order() {
 fn a_moved_block_resolves_on_its_new_page() {
     let root = graph("moved");
     let store = open(root.path());
+    let store = std::sync::Arc::new(store);
     resolve(&store, &[TARGET]);
     // Tine's own move: the copy lands first, then the original goes.
     save(&store, "pages/Other.md", |page| {
@@ -206,6 +207,7 @@ fn a_moved_block_resolves_on_its_new_page() {
 fn a_deleted_block_is_dangling_without_a_scan() {
     let root = graph("deleted");
     let store = open(root.path());
+    let store = std::sync::Arc::new(store);
     resolve(&store, &[TARGET]);
     save(&store, "pages/Target.md", |page| {
         page.blocks.remove(0);
@@ -261,6 +263,7 @@ fn an_external_edit_and_a_rename_keep_answers() {
 fn runtime_ids_resolve_after_edits() {
     let root = graph("runtime");
     let store = open(root.path());
+    let store = std::sync::Arc::new(store);
     save(&store, "pages/Other.md", |page| {
         let mut added = page.blocks[0].clone();
         added.id = "cccccccc-0000-4000-8000-000000000001".into();
@@ -309,6 +312,8 @@ fn the_carried_block_index_equals_a_fresh_build_under_random_edits() {
             std::fs::write(pages.join(format!("{name}.md")), "- start\n").unwrap();
         }
         let store = open(root.path());
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let mut seen: std::collections::BTreeSet<String> = Default::default();
         for step in 0..120 {
             let name = NAMES[r.below(NAMES.len())];
@@ -340,14 +345,14 @@ fn the_carried_block_index_equals_a_fresh_build_under_random_edits() {
                             }
                             page.blocks.push(added);
                         }
-                        let outcome = store.save(
+                        let outcome = host_writer.save(
                             crate::EditKind::ReplacePage,
                             &id_,
                             SaveBase::Existing(read.rev),
                             &read.doc,
                         );
                         assert!(
-                            matches!(outcome, SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)),
+                            matches!(outcome, Ok(_)),
                             "seed {seed} step {step}: {outcome:?}"
                         );
                     }
@@ -368,6 +373,8 @@ fn the_carried_block_index_equals_a_fresh_build_under_random_edits() {
                 }
             }
             store.refresh(Depth::Stamps).unwrap();
+            // A held page's external change reaches the index through its host.
+            assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(30)));
             let view = store.whole_graph().unwrap();
             view.graph.with_pages(|pages| {
                 for (_, doc) in pages.iter() {

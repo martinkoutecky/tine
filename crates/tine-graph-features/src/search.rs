@@ -406,7 +406,8 @@ fn run_advanced_query_after_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tine_store::{SaveBase, SaveOutcome};
+    use crate::test_host_writer::HostWriter;
+    use tine_store::SaveBase;
 
     #[test]
     fn search_and_advanced_scope_keep_one_generation_during_write() {
@@ -418,6 +419,7 @@ mod tests {
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::write(root.join("pages/Scope.md"), "- TODO oldtoken\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let host = HostWriter::start(&store);
         let lanes = SearchLanes::default();
         let scope = Scope {
             name: "Scope".into(),
@@ -439,21 +441,21 @@ mod tests {
             None,
             false,
             || {
-                let writer = Arc::clone(&store);
+                let reader = Arc::clone(&store);
+                let writer = host.clone();
                 std::thread::spawn(move || {
                     let id = PageId::from("pages/Scope.md");
-                    let read = writer.page(&id).unwrap();
+                    let read = reader.page(&id).unwrap();
                     let mut doc = read.doc;
                     doc.blocks[0].raw = "DONE newtoken".into();
-                    assert!(matches!(
-                        writer.save(
+                    writer
+                        .save(
                             tine_store::EditKind::ReplacePage,
                             &id,
                             SaveBase::Existing(read.rev),
-                            &doc
-                        ),
-                        SaveOutcome::Saved(_)
-                    ));
+                            &doc,
+                        )
+                        .unwrap();
                 })
                 .join()
                 .unwrap();
@@ -469,34 +471,32 @@ mod tests {
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "TODO oldtoken".into();
-        assert!(matches!(
-            store.save(
-                tine_store::EditKind::ReplacePage,
-                &id,
-                SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+        host.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc,
+        )
+        .unwrap();
         let advanced = run_advanced_query_after_scope(
             &store,
             r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#,
             || {
-                let writer = Arc::clone(&store);
+                let reader = Arc::clone(&store);
+                let writer = host.clone();
                 std::thread::spawn(move || {
                     let id = PageId::from("pages/Scope.md");
-                    let read = writer.page(&id).unwrap();
+                    let read = reader.page(&id).unwrap();
                     let mut doc = read.doc;
                     doc.blocks[0].raw = "DONE newtoken".into();
-                    assert!(matches!(
-                        writer.save(
+                    writer
+                        .save(
                             tine_store::EditKind::ReplacePage,
                             &id,
                             SaveBase::Existing(read.rev),
-                            &doc
-                        ),
-                        SaveOutcome::Saved(_)
-                    ));
+                            &doc,
+                        )
+                        .unwrap();
                 })
                 .join()
                 .unwrap();

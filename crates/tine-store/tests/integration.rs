@@ -13,6 +13,10 @@ fn integration_lock() -> std::sync::MutexGuard<'static, ()> {
 #[path = "../src/test_cfg.rs"]
 pub(crate) mod test_cfg;
 
+use tine_store as store_crate;
+#[path = "../src/test_host_writer.rs"]
+mod test_host_writer;
+
 // Process-wide allocation probes must also exclude libtest's own thread and
 // output bookkeeping, which runs outside integration_lock.
 fn isolated_case(name: &str) -> bool {

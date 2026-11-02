@@ -1,45 +1,53 @@
 //! I-12/I-25: every publisher uses the same bounded native answer signal.
-use crate::{Area, EditKind, PageId, SaveBase, Store, TxOutcome};
+use crate::{Area, EditKind, PageId, SaveBase, Store};
 use serde_json::{json, Value};
 use std::fs;
 const ONE: &str = "00000000-0000-4000-8000-000000000001";
 const TWO: &str = "00000000-0000-4000-8000-000000000002";
-fn fixture() -> (tempfile::TempDir, Store) {
+fn fixture() -> (tempfile::TempDir, std::sync::Arc<Store>) {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     fs::write(dir.path().join("pages/A.md"), "- before\n").unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     store.whole_graph().unwrap();
-    (dir, store)
+    (dir, std::sync::Arc::new(store))
 }
-/// One guarded page save over the transaction primitive (the multi-page save is
-/// deleted, STEP3 §12); the page host serializes and publishes through the
-/// same transaction steps.
-fn save_one(
-    store: &Store,
-    id: &PageId,
-    base: SaveBase,
-    doc: &tine_core::model::PageDto,
-    kind: EditKind,
-) -> TxOutcome {
-    let mut tx = store.page_plan(Some(kind));
-    tx.save_page(&[kind], id, base, doc);
-    tx.commit_internal()
+/// One operation through the page host, the published change as a value.
+fn apply_published(store: &std::sync::Arc<Store>, tx: crate::PagePlan<'_>) -> Value {
+    let sub = store.subscribe();
+    let op = tx.plan().expect("planned");
+    crate::test_host_writer::HostWriter::for_store(store)
+        .apply(op)
+        .expect("applied");
+    // Published before the reply, page by page; a new hold's retired rows
+    // publish too and name no file.
+    let mut own = Vec::new();
+    while let Some(change) = sub.try_recv().unwrap() {
+        if change.origin == crate::Origin::Own {
+            own.push(serde_json::to_value(change).unwrap());
+        } else {
+            assert!(
+                change.files.is_empty(),
+                "no outside echo: {:?}",
+                change.files
+            );
+        }
+    }
+    assert!(!own.is_empty(), "the operation published");
+    crate::test_host_writer::merged_changes(own)
 }
-fn save(store: &Store, raw: &str) -> Value {
+fn save(store: &std::sync::Arc<Store>, raw: &str) -> Value {
     let id = PageId::from("pages/A.md");
     let mut read = store.page(&id).unwrap();
     read.doc.blocks[0].raw = raw.into();
-    let TxOutcome::Committed { change, .. } = save_one(
-        store,
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
+    tx.save_page(
+        &[EditKind::ReplacePage],
         &id,
         SaveBase::Existing(read.rev),
         &read.doc,
-        EditKind::ReplacePage,
-    ) else {
-        panic!("save refused");
-    };
-    serde_json::to_value(change.expect("changed save publishes")).unwrap()
+    );
+    apply_published(store, tx)
 }
 /// External edits reach the store through its file watcher as well as through
 /// `refresh`; under load the watcher may publish part of a bulk edit first.
@@ -64,7 +72,6 @@ fn counts(signal: &Value, expected: Value) {
 fn save_signals_are_bounded_and_match_the_publication() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture();
-    let sub = store.subscribe();
     let text = save(&store, "after");
     assert_eq!(text["summary"]["full"], false);
     assert_eq!(text["summary"]["pages"], json!(["a"]));
@@ -72,7 +79,6 @@ fn save_signals_are_bounded_and_match_the_publication() {
     assert_eq!(text["summary"]["rev"], text["rev"]);
     assert_eq!(text["inventoryChanged"], false);
     counts(&text, json!({}));
-    assert_eq!(text, serde_json::to_value(sub.recv().unwrap()).unwrap());
     let refs = save(&store, &format!("(({ONE})) (({ONE}))"));
     counts(&refs, json!({ONE:1}));
     assert_eq!(refs["inventoryChanged"], false);
@@ -85,19 +91,14 @@ fn save_signals_are_bounded_and_match_the_publication() {
     for pre in [Some("alias:: Shortcut"), Some("title:: Retitled"), None] {
         let mut read = store.page(&id).unwrap();
         read.doc.pre_block = pre.map(str::to_owned);
-        let TxOutcome::Committed { change, .. } = save_one(
-            &store,
+        let mut tx = store.page_plan(Some(EditKind::SaveBlock));
+        tx.save_page(
+            &[EditKind::SaveBlock],
             &id,
             SaveBase::Existing(read.rev),
             &read.doc,
-            EditKind::SaveBlock,
-        ) else {
-            panic!("property refused");
-        };
-        assert_eq!(
-            serde_json::to_value(change).unwrap()["inventoryChanged"],
-            true
         );
+        assert_eq!(apply_published(&store, tx)["inventoryChanged"], true);
     }
     store.close();
 }
@@ -108,39 +109,28 @@ fn create_delete_and_rename_publish_both_answers() {
     let new = PageId::from("pages/New.md");
     let mut dto = store.page(&PageId::from("pages/A.md")).unwrap().doc;
     dto.blocks[0].raw = format!("(({ONE}))");
-    let TxOutcome::Committed { change, .. } = save_one(
-        &store,
-        &new,
-        SaveBase::CreateNew,
-        &dto,
-        EditKind::CreatePage,
-    ) else {
-        panic!("create refused");
-    };
-    let created = serde_json::to_value(change).unwrap();
+    let mut tx = store.page_plan(Some(EditKind::CreatePage));
+    tx.save_page(&[EditKind::CreatePage], &new, SaveBase::CreateNew, &dto);
+    let created = apply_published(&store, tx);
     assert_eq!(created["summary"]["full"], true);
     assert_eq!(created["inventoryChanged"], true);
     counts(&created, json!({ONE:1}));
     let renamed = store.file_id(Area::Pages, "Renamed.md").unwrap();
     let mut tx = store.page_plan(Some(EditKind::RenamePage));
     tx.move_file(&new.file(), store.page(&new).unwrap().rev, &renamed, None);
-    let TxOutcome::Committed { change, .. } = tx.commit_internal() else {
-        panic!("rename refused");
-    };
-    let moved = serde_json::to_value(change).unwrap();
+    let moved = apply_published(&store, tx);
     assert_eq!(moved["summary"]["full"], true);
     assert_eq!(moved["inventoryChanged"], true);
-    counts(&moved, json!({}));
+    // The destination publishes first and the source's removal last, so the
+    // merged value carries the final count.
+    counts(&moved, json!({ONE:1}));
     let mut tx = store.page_plan(Some(EditKind::DeletePage));
     tx.trash(
         &renamed,
         store.page(&PageId::from(renamed.as_str())).unwrap().rev,
         crate::TrashIf::Any,
     );
-    let TxOutcome::Committed { change, .. } = tx.commit_internal() else {
-        panic!("delete refused");
-    };
-    let deleted = serde_json::to_value(change).unwrap();
+    let deleted = apply_published(&store, tx);
     assert_eq!(deleted["summary"]["full"], true);
     assert_eq!(deleted["inventoryChanged"], true);
     counts(&deleted, json!({ONE:0}));

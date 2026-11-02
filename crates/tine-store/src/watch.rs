@@ -552,13 +552,23 @@ impl Core {
     /// Reconcile the paths an external writer raced an own write on. The
     /// caller holds the writer.
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
-        if !paths.is_empty() {
+        if paths.is_empty() {
+            return;
+        }
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
+            // After a failed load nothing publishes until a successful
+            // refresh. Its full diff trusts unchanged metadata, and `note_own`
+            // stamped these files with their current metadata: only `racy`
+            // makes it hash them (a sync delivery that keeps an old mtime).
+            let tracked = paths.iter().filter(|path| self.tracks_in_snapshot(path));
+            self.racy.lock().unwrap().extend(tracked.cloned());
+        } else {
             let _ = self.reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
-            let mut snapshot = self.snapshot.lock().unwrap();
-            for path in paths {
-                if !self.tracks_in_snapshot(path) {
-                    snapshot.remove(path);
-                }
+        }
+        let mut snapshot = self.snapshot.lock().unwrap();
+        for path in paths {
+            if !self.tracks_in_snapshot(path) {
+                snapshot.remove(path);
             }
         }
     }
@@ -2033,6 +2043,8 @@ mod tests {
         )
         .unwrap()
         .0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         store.whole_graph().unwrap();
         std::thread::sleep(Duration::from_millis(400));
         let core = store.watch.core_for_load();
@@ -2042,17 +2054,14 @@ mod tests {
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = format!("edit {round}");
-            let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
-            tx.save_page(
-                &[crate::EditKind::ReplacePage],
-                &id,
-                crate::SaveBase::Existing(read.rev),
-                &doc,
-            );
-            assert!(matches!(
-                tx.commit_internal(),
-                crate::TxOutcome::Committed { .. }
-            ));
+            host_writer
+                .save(
+                    crate::EditKind::ReplacePage,
+                    &id,
+                    crate::SaveBase::Existing(read.rev),
+                    &doc,
+                )
+                .unwrap();
             std::thread::sleep(Duration::from_millis(600));
         }
         assert_eq!(
@@ -2070,6 +2079,7 @@ mod tests {
             assert!(Instant::now() < deadline, "external edit never observed");
             std::thread::sleep(Duration::from_millis(50));
         }
+        drop(host_writer);
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

@@ -2,8 +2,7 @@
 //! Run with `--ignored --nocapture --test-threads=1`; no release build needed.
 use std::{fs, time::Instant};
 use tine_store::{
-    cost_counters, Cancel, EditKind, OpenOptions, PageId, SaveBase, SaveOutcome, SearchRequest,
-    Store,
+    cost_counters, Cancel, EditKind, OpenOptions, PageId, SaveBase, SearchRequest, Store,
 };
 
 #[test]
@@ -43,6 +42,8 @@ fn open_and_retained_snapshot_save_cost() {
             )
             .unwrap()
             .0;
+            let store = std::sync::Arc::new(store);
+            let host_writer = crate::test_host_writer::HostWriter::start(&store);
             let open_ms = started.elapsed().as_secs_f64() * 1000.0;
             let held = store.whole_graph().unwrap();
             let ready_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -92,7 +93,7 @@ fn open_and_retained_snapshot_save_cost() {
                     doc.blocks[0].raw = format!("after-{run}-{edit}");
                     cost_counters::reset();
                     let started = Instant::now();
-                    let outcome = store.save(
+                    let outcome = host_writer.save(
                         EditKind::ReplacePage,
                         &id,
                         SaveBase::Existing(read.rev),
@@ -100,7 +101,7 @@ fn open_and_retained_snapshot_save_cost() {
                     );
                     let save_ms = started.elapsed().as_secs_f64() * 1000.0;
                     let cost = cost_counters::snapshot();
-                    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+                    assert!(matches!(outcome, Ok(_)), "{outcome:?}");
                     assert_eq!(cost.files_written, 1);
                     let disk = fs::read(dir.path().join(id.as_str())).unwrap();
                     assert_eq!(cost.bytes_written, disk.len() as u64);

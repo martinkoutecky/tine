@@ -5,10 +5,15 @@
 //! Adds `pages/collapse_probe_1.md` and `pages/collapse_probe_60.md` before
 //! opening and removes them at the end. Needs `--features tine-store/test-faults`.
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 use tine_core::model::PageKind;
-use tine_graph_features::pages::{get_page, save_page};
-use tine_store::{cost_counters, EditKind, OpenOptions, QueryDialect, Store, WatchMode};
+use tine_graph_features::pages::get_page;
+use tine_store as store_crate;
+use tine_store::{cost_counters, EditKind, OpenOptions, QueryDialect, SaveBase, Store, WatchMode};
+#[path = "../../tine-store/src/test_host_writer.rs"]
+mod test_host_writer;
+use test_host_writer::HostWriter;
 
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1e3
@@ -31,7 +36,7 @@ fn warm(store: &Store) -> (f64, f64) {
     (backlinks, ms(t))
 }
 
-fn toggle(store: &Store, name: &str, on: bool) -> serde_json::Value {
+fn toggle(store: &Arc<Store>, name: &str, on: bool) -> serde_json::Value {
     let read = get_page(store, name, PageKind::Page).unwrap().unwrap();
     let mut doc = read.doc.clone();
     let block = &mut doc.blocks[0];
@@ -43,15 +48,14 @@ fn toggle(store: &Store, name: &str, on: bool) -> serde_json::Value {
     block.collapsed = on;
     cost_counters::reset();
     let t = Instant::now();
-    let outcome = save_page(
-        store,
-        EditKind::SaveBlock,
-        &read.id,
-        &doc,
-        Some(String::from(read.rev.clone())),
-        false,
-    )
-    .unwrap();
+    let outcome = HostWriter::for_store(store)
+        .save(
+            EditKind::SaveBlock,
+            &read.id,
+            SaveBase::Existing(read.rev.clone()),
+            &doc,
+        )
+        .unwrap();
     let save_ms = ms(t);
     let c = cost_counters::snapshot();
     let (backlinks_ms, query_ms) = warm(store);
@@ -78,16 +82,18 @@ fn main() {
     for (path, text) in &files {
         std::fs::write(path, text).unwrap();
     }
-    let store = Store::open(
-        Path::new(&root),
-        OpenOptions {
-            watch: WatchMode::Poll,
-            launch_checkpoint: Some(checkpoint),
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .0;
+    let store = Arc::new(
+        Store::open(
+            Path::new(&root),
+            OpenOptions {
+                watch: WatchMode::Poll,
+                launch_checkpoint: Some(checkpoint),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0,
+    );
     store.whole_graph().unwrap();
     let (backlinks_ms, query_ms) = warm(&store);
     let (backlinks_warm_ms, query_warm_ms) = warm(&store);

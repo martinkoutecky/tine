@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use tine_core::model::PageDto;
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, SaveBase, Store};
 
 #[test]
 fn rust_save_matches_shared_page_header_golden() {
@@ -27,18 +27,20 @@ fn rust_save_matches_shared_page_header_golden() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let update = std::env::var("TINE_UPDATE_GOLDEN").as_deref() == Ok("1");
     for (index, case) in cases.iter_mut().enumerate() {
         let doc: PageDto = serde_json::from_value(case["input"].clone()).unwrap();
         let id = PageId::from(format!("pages/I12_{index}.md"));
-        let outcome = store.save(
+        let outcome = host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
             &doc,
         );
         assert!(
-            matches!(outcome, SaveOutcome::Saved { .. }),
+            outcome.is_ok(),
             "I-12: Rust save oracle rejected fixture {index}: {outcome:?}"
         );
         let saved = store.page(&id).unwrap().doc;

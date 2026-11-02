@@ -111,7 +111,6 @@ impl<'a> PagePlan<'a> {
                 dst: None,
                 old: Some(self.stage(file, expected)?),
                 new: None,
-                saved_page: None,
                 opaque_rev: None,
             }),
             Step::Save {
@@ -132,14 +131,13 @@ impl<'a> PagePlan<'a> {
                     }
                     SaveBase::CreateNew => None,
                 };
-                let (new, saved_page) =
+                let (new, _) =
                     self.serialize_page(&file, doc, old.as_deref(), *markers == Markers::Resolve)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
                     old,
                     new: Some(new),
-                    saved_page: Some(saved_page),
                     opaque_rev: None,
                 })
             }
@@ -164,7 +162,6 @@ impl<'a> PagePlan<'a> {
                     dst: None,
                     old: None,
                     new: None,
-                    saved_page: None,
                     opaque_rev: None,
                 })
             }
@@ -229,7 +226,6 @@ impl<'a> PagePlan<'a> {
                     dst: None,
                     old: None,
                     new: None,
-                    saved_page: None,
                     opaque_rev: None,
                 })
             }
@@ -256,7 +252,6 @@ impl<'a> PagePlan<'a> {
                     dst: None,
                     old: Some(old),
                     new: Some(bytes.clone()),
-                    saved_page: None,
                     opaque_rev: None,
                 })
             }
@@ -292,7 +287,6 @@ impl<'a> PagePlan<'a> {
                     dst: None,
                     old: Some(old),
                     new: Some(new),
-                    saved_page: None,
                     opaque_rev: None,
                 })
             }
@@ -336,7 +330,6 @@ impl<'a> PagePlan<'a> {
                     dst: Some(to.clone()),
                     old,
                     new,
-                    saved_page: None,
                     opaque_rev,
                 })
             }
@@ -362,7 +355,6 @@ impl<'a> PagePlan<'a> {
                     dst: None,
                     old,
                     new: None,
-                    saved_page: None,
                     opaque_rev,
                 })
             }

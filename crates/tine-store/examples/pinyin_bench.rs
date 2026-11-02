@@ -1,15 +1,20 @@
 //! Fixed page-search probes for GH #151. Run on private graph copies only.
 use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Duration, Instant};
+use tine_store as store_crate;
 use tine_store::{Cancel, SearchRequest, Store};
+#[path = "../src/test_host_writer.rs"]
+mod test_host_writer;
 
 fn main() {
     let root = std::env::args().nth(1).expect("graph copy path");
     let enabled = std::env::args().nth(2).as_deref() == Some("on");
     let start = Instant::now();
-    let store = Store::open(std::path::Path::new(&root), Default::default())
-        .unwrap()
-        .0;
+    let store = Arc::new(
+        Store::open(std::path::Path::new(&root), Default::default())
+            .unwrap()
+            .0,
+    );
     let graph = store.whole_graph().unwrap();
     while !store.is_graph_ready().unwrap() {
         std::thread::sleep(Duration::from_millis(1));
@@ -70,6 +75,7 @@ fn main() {
                 _ => None,
             })
             .expect("a physical fixture page");
+        let writer = test_host_writer::HostWriter::start(&store);
         let mut save_ms = Vec::new();
         let mut publication_ms = Vec::new();
         let mut last = tine_store::cost_counters::snapshot();
@@ -79,15 +85,14 @@ fn main() {
             doc.blocks[0].raw = format!("benchmark body {n}");
             tine_store::cost_counters::reset();
             let start = Instant::now();
-            assert!(matches!(
-                store.save(
+            writer
+                .save(
                     tine_store::EditKind::ReplacePage,
                     &id,
                     tine_store::SaveBase::Existing(read.rev),
-                    &doc
-                ),
-                tine_store::SaveOutcome::Saved(_)
-            ));
+                    &doc,
+                )
+                .unwrap();
             last = tine_store::cost_counters::snapshot();
             if n > 0 {
                 save_ms.push(start.elapsed().as_secs_f64() * 1000.0);

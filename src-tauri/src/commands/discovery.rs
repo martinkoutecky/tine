@@ -127,9 +127,15 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
 }
 
 #[cfg(test)]
+#[path = "../../../crates/tine-store/src/test_host_writer.rs"]
+mod test_host_writer;
+#[cfg(test)]
+use tine_store as store_crate;
+
+#[cfg(test)]
 mod inventory_adapter_tests {
     use super::*;
-    use tine_store::{PageId, SaveBase, SaveOutcome};
+    use tine_store::{PageId, SaveBase};
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -279,18 +285,23 @@ mod inventory_adapter_tests {
                 _ => None,
             })
             .expect("a Markdown page");
+        let store = std::sync::Arc::new(store);
+        let app = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
         let mut after_save = Vec::new();
         for i in 0..20 {
             let read = store.page(&target).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw.push_str(&format!(" probe{i}"));
-            let outcome = store.save(
+            test_host_writer::save_on(
+                &host,
+                &store,
                 tine_store::EditKind::ReplacePage,
                 &target,
                 SaveBase::Existing(read.rev),
                 &doc,
-            );
-            assert!(matches!(outcome, SaveOutcome::Saved(_)), "probe save");
+            )
+            .expect("probe save");
             after_save.push(time(&store).0);
         }
         println!(

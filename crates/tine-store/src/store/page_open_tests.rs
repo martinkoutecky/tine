@@ -74,21 +74,18 @@ fn get_page_promptly(store: &Arc<Store>, name: &str) -> Option<PageRead> {
         .map(|read| read.unwrap().expect("page exists"))
 }
 
-fn save_text(store: &Store, read: &PageRead, text: &str) {
+fn save_text(store: &std::sync::Arc<Store>, read: &PageRead, text: &str) {
+    let host_writer = crate::test_host_writer::HostWriter::start(store);
     let mut doc = read.doc.clone();
     doc.blocks[0].raw = text.into();
-    assert!(
-        matches!(
-            store.save(
-                crate::EditKind::SaveBlock,
-                &read.id,
-                SaveBase::Existing(read.rev.clone()),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ),
-        "the save is accepted"
-    );
+    host_writer
+        .save(
+            crate::EditKind::SaveBlock,
+            &read.id,
+            SaveBase::Existing(read.rev.clone()),
+            &doc,
+        )
+        .unwrap();
 }
 
 /// The edit is in the published view, in a fresh page read and on disk.

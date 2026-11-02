@@ -3,15 +3,17 @@
 //! reports `TrashOutcome::Referenced`, never an error to match by text; once
 //! the saves that dropped every reference have landed, the same call trashes
 //! the file.
+use crate::test_host_writer::HostWriter;
 use std::fs;
+use std::sync::Arc;
 use tine_core::model::PageKind;
 use tine_graph_features::{
     assets::{self, TrashOutcome},
     pages,
 };
-use tine_store::{EditKind, SaveOutcome, Store};
+use tine_store::{EditKind, SaveBase, Store};
 
-fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
+fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Arc<Store>) {
     let root = tempfile::tempdir().unwrap();
     for dir in ["pages", "journals", "logseq", "assets"] {
         fs::create_dir_all(root.path().join(dir)).unwrap();
@@ -19,12 +21,12 @@ fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
     for (path, bytes) in files {
         fs::write(root.path().join(path), bytes).unwrap();
     }
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     (root, store)
 }
 
-fn drop_reference(store: &Store, name: &str) {
+fn drop_reference(store: &Arc<Store>, name: &str) {
     let read = pages::get_page(store, name, PageKind::Page)
         .unwrap()
         .unwrap();
@@ -36,16 +38,14 @@ fn drop_reference(store: &Store, name: &str) {
             .trim()
             .to_string();
     }
-    let saved = pages::save_page(
-        store,
-        EditKind::SaveBlock,
-        &read.id,
-        &doc,
-        Some(String::from(read.rev)),
-        false,
-    )
-    .unwrap();
-    assert!(matches!(saved, SaveOutcome::Saved(_)), "{saved:?}");
+    HostWriter::for_store(store)
+        .save(
+            EditKind::SaveBlock,
+            &read.id,
+            SaveBase::Existing(read.rev),
+            &doc,
+        )
+        .unwrap();
 }
 
 #[test]

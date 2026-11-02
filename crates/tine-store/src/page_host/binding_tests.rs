@@ -1557,6 +1557,117 @@ fn a_consumer_publication_names_the_bytes_it_publishes() {
     store.close();
 }
 
+/// REG-LOADING-JOURNAL-DAY-ON-HELD-PATH: an owner's first reading before the
+/// first view defers without a change, and still names its journal day. The
+/// file name is not the proposed one, so the answer can only come from the
+/// day index.
+#[test]
+fn a_journal_file_delivered_on_a_held_path_during_load_names_its_day() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("journals")).unwrap();
+    fs::write(temp.path().join(".tine-test-pause-load"), "").unwrap();
+    let store = Store::open(temp.path(), Default::default()).unwrap().0;
+    let day = crate::Day(
+        tine_core::date::JournalDate {
+            year: 2026,
+            month: 10,
+            day: 2,
+        }
+        .ordinal_key(),
+    );
+    let writer = store.writer.lock().unwrap();
+    store.graph.hold_unhosted("journals/2026-10-02.md");
+    fs::write(temp.path().join("journals/2026-10-02.md"), "- delivered\n").unwrap();
+    let publication = Publication {
+        key: "journals/2026-10-02.md".into(),
+        spelling: "journals/2026-10-02.md".into(),
+        bytes: Some(Arc::from(&b"- delivered\n"[..])),
+        own: None,
+        stamp: None,
+    };
+    assert!(index(&store, &publication));
+    drop(writer);
+    assert_eq!(store.journal_id(day).as_str(), "journals/2026-10-02.md");
+    fs::remove_file(temp.path().join(".tine-test-pause-load")).unwrap();
+    store.close();
+}
+
+/// REG-LOADING-ECHO-KEEPS-RACED: before the first view an owner observes its
+/// own deferred save (the read before its next edit, the production echo),
+/// and a delivery with a preserved old mtime lands between that read and the
+/// stamp. The echo's file is dropped; its race must not be: the stamp now
+/// says "the save's bytes" over the delivery's metadata, and no later diff
+/// rereads the file.
+#[test]
+fn a_filtered_echo_keeps_the_delivery_that_raced_it() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("pages")).unwrap();
+    let path = temp.path().join("pages/c.md");
+    fs::write(&path, "- old\n").unwrap();
+    fs::write(temp.path().join(".tine-test-pause-load"), "").unwrap();
+    let store = Store::open(
+        temp.path(),
+        crate::OpenOptions {
+            watch: crate::WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
+    let parsed: crate::store::TestPause =
+        Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&parsed));
+    fs::remove_file(temp.path().join(".tine-test-pause-load")).unwrap();
+    {
+        let (state, ready) = &*parsed;
+        let mut state = state.lock().unwrap();
+        while !state.0 {
+            state = ready.wait(state).unwrap();
+        }
+    }
+    let publication = |own| Publication {
+        key: "pages/c.md".into(),
+        spelling: "pages/c.md".into(),
+        bytes: Some(Arc::from(&b"- own\n"[..])),
+        own,
+        stamp: None,
+    };
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.graph.hold_unhosted("pages/c.md");
+        fs::write(&path, "- own\n").unwrap();
+        assert!(index(&store, &publication(Some((1, None)))));
+        assert!(store
+            .deferred_rev(&FileId::from("pages/c.md".to_owned()))
+            .is_some());
+        fs::write(&path, "- delivered\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        assert!(index(&store, &publication(None)));
+    }
+    {
+        let (state, ready) = &*parsed;
+        state.lock().unwrap().1 = true;
+        ready.notify_all();
+    }
+    store.whole_graph().unwrap();
+    // Released after the first view: its row is the save's, so the release
+    // rereads the file only if the race reached the stamp.
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.release_hold("pages/c.md");
+        store.publish_retired();
+    }
+    let view = store.whole_graph().unwrap();
+    let raw = view.corpus().pages[0].document.roots[0].raw().to_owned();
+    assert_eq!(raw, "delivered");
+    store.close();
+}
+
 /// E101 (P1): every host instance and every window reload draws a fresh
 /// session. A command of an earlier session is never admitted, whatever
 /// version it carries; ids continue above the host's admitted watermark.

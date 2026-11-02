@@ -117,12 +117,15 @@ fn transaction_unchanged_path_checks_the_same_guard_as_changed_writes() {
     let _integration_guard = crate::integration_lock();
     let source = include_str!("../src/transaction.rs");
     let start = source
-        .find("Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } =>")
+        .find("Step::Replace { .. } => {\n                let new = plan.new")
         .unwrap();
     let apply = &source[start..];
-    assert!(apply.find("self.verify(&plan.src, old, index)?;").unwrap() < apply.find("if old == Some(new.as_slice())").unwrap(),
-        "I-2/I-12: all Save/Replace/Rewrite steps verify preflight bytes before returning Unchanged; \
-         exemplar Transaction::apply in tine-store/src/transaction.rs");
+    assert!(
+        apply.find("self.verify(&plan.src, old, index)?;").unwrap()
+            < apply.find("if old == Some(new.as_slice())").unwrap(),
+        "I-2/I-12: a Replace step verifies preflight bytes before returning Unchanged; \
+         exemplar Transaction::apply in tine-store/src/transaction.rs"
+    );
 }
 
 #[test]

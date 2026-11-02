@@ -186,21 +186,34 @@ mod tests {
         for n in 0..pages {
             fs::write(root.path().join(format!("pages/北京{n}.md")), "- body\n").unwrap();
         }
+        // The mutant arms for this page's publication alone.
+        let edited = if rewalk {
+            format!("pages/北京{}.md", crate::model::REWALK_NAME_OWNERS_PAGE)
+        } else {
+            "pages/北京0.md".to_owned()
+        };
+        if rewalk {
+            fs::rename(
+                root.path().join("pages/北京0.md"),
+                root.path().join(&edited),
+            )
+            .unwrap();
+        }
         let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let before = store.whole_graph().unwrap();
-        let id = PageId::from("pages/北京0.md");
+        let id = PageId::from(edited);
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "changed body".into();
-        crate::model::REWALK_NAME_OWNERS.with(|armed| armed.set(rewalk));
-        let saved = store.save(
+        let saved = host_writer.save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &doc,
         );
-        crate::model::REWALK_NAME_OWNERS.with(|armed| armed.set(false));
-        assert!(matches!(saved, SaveOutcome::Saved(_)));
+        assert!(matches!(saved, Ok(_)));
         let after = store.whole_graph().unwrap();
         let shared = Arc::ptr_eq(
             &before.graph.transliteration_names,
@@ -254,6 +267,8 @@ mod tests {
         fs::create_dir(root.path().join("pages")).unwrap();
         fs::write(root.path().join("pages/Owner.md"), "- [[北京]]\n").unwrap();
         let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from("pages/Owner.md");
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
@@ -272,15 +287,14 @@ mod tests {
             "北京"
         );
         doc.blocks[0].raw = "[[b".into();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let after = store.whole_graph().unwrap();
         assert!(after
             .complete_page_names("bj", 8, editor, true, None)
@@ -377,6 +391,8 @@ mod tests {
         fs::write(root.path().join("pages/A.md"), "alias:: 北京\n- [[北京]]\n").unwrap();
         fs::write(root.path().join("pages/B.md"), "- [[北京]]\n").unwrap();
         let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let before = store.whole_graph().unwrap();
         let keys = Arc::clone(before.graph.transliteration_names.get("北京").unwrap());
         for page in ["A", "B"] {
@@ -385,15 +401,14 @@ mod tests {
             let mut doc = read.doc;
             doc.pre_block = None;
             doc.blocks[0].raw = "body".into();
-            assert!(matches!(
-                store.save(
+            host_writer
+                .save(
                     EditKind::ReplacePage,
                     &id,
                     SaveBase::Existing(read.rev),
-                    &doc
-                ),
-                SaveOutcome::Saved(_)
-            ));
+                    &doc,
+                )
+                .unwrap();
             let view = store.whole_graph().unwrap();
             if page == "A" {
                 assert!(Arc::ptr_eq(
@@ -481,21 +496,22 @@ mod tests {
         fs::create_dir(root.path().join("pages")).unwrap();
         fs::write(root.path().join("pages/Notes.md"), "- 北京 body only\n").unwrap();
         let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let before = store.whole_graph().unwrap();
         assert!(before.graph.transliteration_names.is_empty());
         let id = PageId::from("pages/Notes.md");
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "new body".into();
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let after = store.whole_graph().unwrap();
         assert!(Arc::ptr_eq(
             &before.graph.transliteration_names,
@@ -504,15 +520,14 @@ mod tests {
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.pre_block = Some("alias:: 北京".into());
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let changed = store.whole_graph().unwrap();
         assert_eq!(
             changed
@@ -533,6 +548,8 @@ mod tests {
         fs::create_dir(root.path().join("pages")).unwrap();
         fs::write(root.path().join("pages/北京.md"), "alias:: 南京\n- body\n").unwrap();
         let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let before = store.whole_graph().unwrap();
         assert_eq!(
             before
@@ -554,15 +571,14 @@ mod tests {
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.pre_block = Some("alias:: 上海".into());
-        assert!(matches!(
-            store.save(
+        host_writer
+            .save(
                 EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
+                &doc,
+            )
+            .unwrap();
         let after = store.whole_graph().unwrap();
         assert!(after
             .complete_page_names("nanjing", 8, None, true, None)

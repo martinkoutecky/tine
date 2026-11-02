@@ -1,13 +1,13 @@
 //! Family 22 byte differential: the Favorites arrangement page, as the
 //! frontend's `favoritesArrangementPage` sends it (same DTO shape as master's
 //! `layoutPageDto`, with collapse carried in the raw as every og block does),
-//! written through the store's page serializer (`Store::save`, the same
+//! written through the store's page serializer (a page plan, the same
 //! transaction serializer the page host's submit uses).
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::PageDto;
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 #[test]
 fn favorites_arrangement_page_bytes() {
@@ -21,6 +21,8 @@ fn favorites_arrangement_page_bytes() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let block = |raw: &str, collapsed: bool, children: serde_json::Value| serde_json::json!({ "id": "", "raw": raw, "collapsed": collapsed, "children": children });
     let dto: PageDto = serde_json::from_value(serde_json::json!({
         "name": "Favorites", "kind": "page", "title": "Favorites",
@@ -32,8 +34,8 @@ fn favorites_arrangement_page_bytes() {
     }))
     .unwrap();
     let id = PageId::from("pages/Favorites.md");
-    let outcome = store.save(EditKind::CreatePage, &id, SaveBase::CreateNew, &dto);
-    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+    let outcome = host_writer.save(EditKind::CreatePage, &id, SaveBase::CreateNew, &dto);
+    assert!(matches!(outcome, Ok(_)), "{outcome:?}");
     assert_eq!(
         fs::read_to_string(root.join("pages/Favorites.md")).unwrap(),
         "tine/favorites:: true\n\n- [[Alpha]]\n\t- [[Beta]]\n- Work\n  collapsed:: true\n\t- [[Gamma]]\n"
@@ -66,6 +68,8 @@ fn favorites_arrangement_page_in_an_org_preferred_graph() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = match store.whole_graph().unwrap().resolve("Favorites", false) {
         tine_store::Resolved::Absent { id } => id,
         _ => panic!("Favorites is not absent"),
@@ -82,8 +86,8 @@ fn favorites_arrangement_page_in_an_org_preferred_graph() {
         ],
     }))
     .unwrap();
-    let outcome = store.save(EditKind::CreatePage, &id, SaveBase::CreateNew, &dto);
-    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+    let outcome = host_writer.save(EditKind::CreatePage, &id, SaveBase::CreateNew, &dto);
+    assert!(matches!(outcome, Ok(_)), "{outcome:?}");
     let files: Vec<_> = fs::read_dir(root.join("pages"))
         .unwrap()
         .map(|e| e.unwrap().file_name())

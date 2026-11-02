@@ -1,6 +1,6 @@
 //! Structural publication cost at the real guarded Store save door.
 use std::fs;
-use tine_store::{cost_counters, EditKind, OpenOptions, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{cost_counters, EditKind, OpenOptions, PageId, SaveBase, Store};
 #[test]
 fn created_page_patches_reference_tables() {
     let _integration_guard = crate::integration_lock();
@@ -10,19 +10,20 @@ fn created_page_patches_reference_tables() {
         fs::write(dir.path().join(format!("pages/P{i}.md")), "- unchanged\n").unwrap();
     }
     let store = Store::open(dir.path(), OpenOptions::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let held = store.whole_graph().unwrap();
     let mut doc = store.page(&PageId::from("pages/P0.md")).unwrap().doc;
     doc.name = "Added".into();
     cost_counters::reset();
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             EditKind::ReplacePage,
             &PageId::from("pages/Added.md"),
             SaveBase::CreateNew,
-            &doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
     let counts = cost_counters::snapshot();
     assert_eq!(counts.snapshot_rebuilds,0,"I-25: patch new/remove/retitle signatures through stable page slots; exemplar model/persistent.rs: {counts:?}");
     assert!(

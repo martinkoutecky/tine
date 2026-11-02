@@ -23,8 +23,6 @@ impl RenamePlan {
         }
     }
 }
-#[cfg(any(test, feature = "test-faults"))]
-use tine_store::SaveOutcome;
 use tine_store::{
     Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
     Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
@@ -94,49 +92,6 @@ pub fn source_path_for_os_handoff(
             StoreError::PageSource(reason) => PageReadError::Source(reason),
             other => PageReadError::Store(other),
         })
-}
-
-/// Test oracle: one-page save over tine-store's test-only `Store::save`.
-/// Production saves are the page host's (STEP3 §12). Keep-mine reads the current UTF-8
-/// revision and lets the save guard reject later edits. Cost O(page bytes +
-/// transaction publication).
-#[cfg(any(test, feature = "test-faults"))]
-pub fn save_page(
-    store: &Store,
-    kind: tine_store::EditKind,
-    id: &PageId,
-    page: &PageDto,
-    base_rev: Option<String>,
-    force: bool,
-) -> Result<SaveOutcome, StoreError> {
-    if page.guide {
-        return Ok(SaveOutcome::GuideEphemeral);
-    }
-    let base = save_base(store, id, base_rev, force)?;
-    Ok(store.save(kind, id, base, page))
-}
-
-#[cfg(any(test, feature = "test-faults"))]
-fn save_base(
-    store: &Store,
-    id: &PageId,
-    base_rev: Option<String>,
-    force: bool,
-) -> Result<SaveBase, StoreError> {
-    Ok(if force {
-        match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-            Ok((bytes, rev)) => {
-                std::str::from_utf8(&bytes).map_err(|_| StoreError::Undecodable)?;
-                SaveBase::Existing(rev)
-            }
-            Err(StoreError::NotFound) => SaveBase::CreateNew,
-            Err(error) => return Err(error),
-        }
-    } else {
-        base_rev
-            .map(|rev| SaveBase::Existing(rev.into()))
-            .unwrap_or(SaveBase::CreateNew)
-    })
 }
 
 use crate::store_error;

@@ -117,7 +117,8 @@ fn referenced_fileless_past_days_are_paged_without_writing_files() {
 #[test]
 fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day() {
     let _integration_guard = crate::integration_lock();
-    use tine_store::{EditKind, SaveBase, SaveOutcome};
+    use crate::test_host_writer::HostWriter;
+    use tine_store::{EditKind, SaveBase};
     let root = tempfile::tempdir().unwrap();
     for directory in ["pages", "journals"] {
         std::fs::create_dir(root.path().join(directory)).unwrap();
@@ -163,15 +164,14 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
     // The usual CreateNew guard is sufficient for the virtual body's first edit.
     let mut body = after.pages[0].doc.clone();
     body.blocks.push(serde_json::from_value(serde_json::json!({"id":"new-body", "raw":"first edit", "children":[], "collapsed":false})).unwrap());
-    assert!(matches!(
-        store.save(
+    HostWriter::for_store(&store)
+        .save(
             EditKind::ReplacePage,
             &after.pages[0].id,
             SaveBase::CreateNew,
-            &body
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &body,
+        )
+        .unwrap();
     assert_eq!(
         std::fs::read_to_string(root.path().join("journals/2000_01_01.md")).unwrap(),
         "- first edit\n"

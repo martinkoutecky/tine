@@ -190,13 +190,13 @@ struct store::ConfigState
 # callers and intentionally never flushes there; reusing it would change graph
 # saves. A mode parameter would break the existing graph/backup call signature;
 # expose the existing helper, preserving Unix witness handling in the app.
-## Save (ceiling: 7)
+# R6: Transaction has no page commit, so the test oracle's SaveOutcome goes (7 -> 6).
+## Save (ceiling: 6)
 fn directory_durability::sync_directory_entry
 enum directory_durability::DirectoryWitness
 fn directory_durability::sync_directory_witness
 fn directory_durability::sync_private_directory
 enum store::SaveBase
-enum store::SaveOutcome
 enum store::StoreError
 
 ## Transaction steps (ceiling: 39)
@@ -525,7 +525,7 @@ use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.

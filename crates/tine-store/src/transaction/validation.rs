@@ -75,28 +75,6 @@ pub(crate) fn rewrite_move(
     Ok(rebound.into_bytes())
 }
 
-pub(super) fn valid_utf8_file(path: &Path) -> io::Result<bool> {
-    use std::io::Read;
-    let mut file = File::open(path)?;
-    let mut carry = Vec::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            return Ok(carry.is_empty());
-        }
-        carry.extend_from_slice(&buf[..n]);
-        match std::str::from_utf8(&carry) {
-            Ok(_) => carry.clear(),
-            Err(error) if error.error_len().is_none() => {
-                let valid = error.valid_up_to();
-                carry.drain(..valid);
-            }
-            Err(_) => return Ok(false),
-        }
-    }
-}
-
 pub(super) fn validate_stream(source: &File, max_bytes: u64) -> Result<(), Why> {
     use std::io::Read;
     let mut input = source.try_clone().map_err(failed)?;

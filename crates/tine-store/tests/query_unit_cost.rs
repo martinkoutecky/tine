@@ -12,9 +12,7 @@ use tine_core::date::JournalDate;
 use tine_core::query::ir::{ExecutionContext, ViewSettings};
 use tine_core::query::{parse_query_text, QueryDialect as IrDialect};
 use tine_store::cost_counters::{self, Counts};
-use tine_store::{
-    IrAnswer, IrRequest, PageId, QueryDialect, SaveBase, SaveOutcome, Store, WholeGraph,
-};
+use tine_store::{IrAnswer, IrRequest, PageId, QueryDialect, SaveBase, Store, WholeGraph};
 
 /// Counts bytes allocated while `COUNTING` is set, process-wide except the
 /// watcher thread: its settlement of an earlier write lands in a measured
@@ -295,6 +293,8 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
         fs::write(root.join("pages").join(format!("Page{index:04}.md")), body).unwrap();
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/Page0000.md".to_string());
     warm(&store.whole_graph().unwrap(), memo);
     // A first edit settles one-time work (the seed's first patch), so the
@@ -304,7 +304,7 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
         let mut doc = read.doc;
         doc.blocks[0].raw = text.into();
         let (outcome, save_bytes, save) = measure(|| {
-            store.save(
+            host_writer.save(
                 tine_store::EditKind::ReplacePage,
                 &id,
                 SaveBase::Existing(read.rev),
@@ -312,7 +312,7 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
             )
         });
         let save_watcher_bytes = WATCHER_ALLOCATED.load(Ordering::Relaxed);
-        assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+        assert!(matches!(outcome, Ok(_)), "{outcome:?}");
         let graph = store.whole_graph().unwrap();
         let ((), query_bytes, query) = measure(|| after_edit(&graph));
         let watcher_bytes = save_watcher_bytes + WATCHER_ALLOCATED.load(Ordering::Relaxed);
@@ -558,6 +558,8 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
                 .unwrap();
         }
         let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(store);
+        let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from("pages/Page00000.md".to_string());
         // Build the alias list of the current generation.
         store.whole_graph().unwrap().backlinks("Page00003").unwrap();
@@ -574,7 +576,7 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
             OWN.store(0, Ordering::Relaxed);
             MEASURER.with(|m| m.set(true));
             let (outcome, bytes, _) = measure(|| {
-                store.save(
+                host_writer.save(
                     tine_store::EditKind::ReplacePage,
                     &id,
                     SaveBase::Existing(read.rev),
@@ -583,7 +585,7 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
             });
             MEASURER.with(|m| m.set(false));
             let own_bytes = OWN.load(Ordering::Relaxed);
-            assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            assert!(matches!(outcome, Ok(_)), "{outcome:?}");
             eprintln!(
                 "I-25 alias carry sample aliases={aliases} save={index}: process={bytes} \
                  measuring-thread={own_bytes} other-threads={}",

@@ -175,6 +175,27 @@ fn a_non_page_rescue_preserves_invalid_utf8() {
     assert!(!f.root.join(src).exists());
 }
 
+/// R6: rescue preserves imported bytes even when their source exceeds the
+/// page parser's depth limit. Ordinary page creation still refuses this input.
+#[test]
+fn a_non_page_rescue_preserves_excessive_depth_bytes() {
+    let _guard = crate::integration_lock();
+    let f = hosted(&[]);
+    let source = "pages/Deep.sync-conflict-20261012-000000-DEVICE.md";
+    let hostile = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
+    fs::write(f.root.join(source), hostile.as_bytes()).unwrap();
+    f.store.refresh(tine_store::Depth::Bytes).unwrap();
+    pages::rename_file_to_page(&f.store, &f.host, source, "Deep").unwrap();
+    assert!(!f.root.join(source).exists());
+    assert_eq!(
+        fs::read(f.root.join("pages/Deep.md")).unwrap(),
+        hostile.as_bytes()
+    );
+    assert!(f.host.quiesce_for_tests(Duration::from_secs(10)));
+    let live = f.store.whole_graph().unwrap().unreadable_files().to_vec();
+    assert!(live.iter().any(|(id, _)| id.as_str() == "pages/Deep.md"));
+}
+
 #[test]
 fn a_rescue_planned_before_an_external_edit_moves_the_edited_bytes() {
     let _integration_guard = crate::integration_lock();

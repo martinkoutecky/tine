@@ -11,7 +11,7 @@
 use std::fs;
 
 use tine_core::model::BlockDto;
-use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, Store};
 
 fn block(id: &str, raw: &str) -> BlockDto {
     BlockDto {
@@ -29,6 +29,8 @@ fn removing_a_header_property_beside_a_fenced_example_is_not_a_reclassification(
     let path = dir.path().join("pages").join("Doc.md");
     fs::write(&path, "alpha:: value\n\n- item\n").unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/Doc.md");
     let read = store.page(&id).unwrap();
     let mut dto = read.doc.clone();
@@ -38,13 +40,13 @@ fn removing_a_header_property_beside_a_fenced_example_is_not_a_reclassification(
     dto.pre_block = None;
     dto.blocks
         .push(block("example", "```text\nbeta:: example\n```"));
-    match store.save(
+    match host_writer.save(
         EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &dto,
     ) {
-        SaveOutcome::Saved(_) => {}
+        Ok(_) => {}
         other => panic!("a fenced example is not a header property: {other:?}"),
     }
     let text = fs::read_to_string(&path).unwrap();
@@ -61,18 +63,22 @@ fn a_real_property_block_moved_out_of_the_header_is_still_refused() {
     let path = dir.path().join("pages").join("Doc.md");
     fs::write(&path, "alpha:: value\nbeta:: two\n\n- item\n").unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
     let id = PageId::from("pages/Doc.md");
     let read = store.page(&id).unwrap();
     let mut dto = read.doc.clone();
     dto.pre_block = Some("alpha:: value".into());
     dto.blocks.insert(0, block("moved", "beta:: two"));
-    match store.save(
+    match host_writer.save(
         EditKind::ReplacePage,
         &id,
         SaveBase::Existing(read.rev),
         &dto,
     ) {
-        SaveOutcome::Io(error) => assert!(error.to_string().contains("page-header property")),
+        Err(crate::test_host_writer::SaveRefused::Planned(tine_store::Why::Failed(error))) => {
+            assert!(error.to_string().contains("page-header property"))
+        }
         other => panic!("moving a header property into the outline must be refused: {other:?}"),
     }
     assert_eq!(

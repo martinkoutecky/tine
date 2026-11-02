@@ -41,20 +41,20 @@ fn open(root: &Path, checkpoint: &Path) -> Store {
     .0
 }
 
-fn save_first_block(store: &Store, rel: &str, edit: impl FnOnce(&str) -> String) {
+fn save_first_block(store: &std::sync::Arc<Store>, rel: &str, edit: impl FnOnce(&str) -> String) {
+    let host_writer = crate::test_host_writer::HostWriter::start(store);
     let id = PageId::from(rel);
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.blocks[0].raw = edit(&doc.blocks[0].raw);
-    assert!(matches!(
-        store.save(
+    host_writer
+        .save(
             crate::EditKind::SaveBlock,
             &id,
             SaveBase::Existing(read.rev),
-            &doc
-        ),
-        SaveOutcome::Saved(_)
-    ));
+            &doc,
+        )
+        .unwrap();
 }
 
 fn dirty(store: &Store) -> bool {
@@ -75,6 +75,7 @@ fn a_fold_rebuilds_nothing_and_survives_a_warm_relaunch() {
     let dir = tempfile::tempdir().unwrap();
     let cp = dir.path().join("graph.bin");
     let store = open(root.path(), &cp);
+    let store = std::sync::Arc::new(store);
     let view = store.whole_graph_reconciled().unwrap();
     // A session's derived state: backlinks answers and the alias list.
     let unaffected = view.backlinks("U").unwrap();

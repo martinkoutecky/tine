@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tine_core::model::ReferenceKind;
 use tine_core::{PageKind, RefGroup};
 use tine_graph_features::pages;
-use tine_store::{PageId, Resolved, SaveBase, SaveOutcome, Store};
+use tine_store::{PageId, Resolved, SaveBase, Store};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
@@ -40,13 +40,13 @@ impl Fixture {
 
     fn graph(&self) -> FixtureGraph {
         FixtureGraph {
-            store: Store::open(&self.root, Default::default()).unwrap().0,
+            store: std::sync::Arc::new(Store::open(&self.root, Default::default()).unwrap().0),
         }
     }
 }
 
 struct FixtureGraph {
-    store: Store,
+    store: std::sync::Arc<Store>,
 }
 
 impl FixtureGraph {
@@ -353,19 +353,20 @@ fn issue232_runtime_ids_never_serialize_as_synthetic_id_properties() {
     let original = "- first\n\t- child\n- second\n";
     fixture.page("Roundtrip", original);
     let graph = fixture.graph();
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&graph.store);
     let entry = graph.find_entry("Roundtrip", PageKind::Page).unwrap();
     let read = graph.store.page(&entry).unwrap();
     let dto = read.doc;
     assert!(dto.blocks.iter().all(|block| !block.id.is_empty()));
 
     assert!(matches!(
-        graph.store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &entry,
             SaveBase::Existing(read.rev),
             &dto
         ),
-        SaveOutcome::Unchanged(_) | SaveOutcome::Saved(_)
+        Ok(_)
     ));
     let persisted = fs::read_to_string(fixture.root.join("pages/Roundtrip.md")).unwrap();
     assert_eq!(persisted, original);

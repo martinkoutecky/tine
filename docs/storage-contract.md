@@ -521,7 +521,10 @@ the store closed) before it reads the checkpoint and while it decodes it, and
 stops at once on one, so a race costs the decode done before it plus a cold
 launch, never the whole decode and then a cold launch. A config write or a config change never defers. If the load stops, the
 deferred changes are dropped and the recovery's first view covers their
-writes. The page host's `wait_published` means durable and indexed, as after
+writes; a file that raced one, or raced any publication while the graph is
+`Failed`, is remembered as racy so the recovery's diff hashes it, since a
+delivery can keep an old modification time and its stamp no longer moves
+(`store/load_panic_tests.rs` `a_raced_*`). The page host's `wait_published` means durable and indexed, as after
 Ready; it does not wait for the Ready view. Proof:
 `crates/tine-store/src/store/loading_save_tests.rs` (for the release and
 the race, `a_page_opened_and_closed_while_loading_builds_no_graph_under_the_writer`,
@@ -673,12 +676,14 @@ Every per-page index of a generation (this relation, the explicit-reference
 index, the candidate signatures, the name keys and the rest) is patched by the
 files its publication names plus every row the page cache changed since the
 previous capture (`Graph::take_touched`), so a generation never lacks a
-mutation its pages root contains. The case that needs the second set: a failed
-transaction caches the files it wrote and an outside writer's replacement
-together, then publishes them as an Own and an External change; the first
-capture sees both, the second reuses it. Proof:
-`model/index_oracle_tests.rs`
-`split_own_external_publication_equals_a_fresh_build`.
+mutation its pages root contains. The rows no publication names come from a
+host save while the graph is `Failed`, which publishes nothing; the recovery's
+diff publishes only what it found. Proof:
+`store/load_panic_tests.rs`
+`a_save_while_a_rescan_failed_reaches_every_index_after_recovery` (fails if the
+capture ignores `take_touched`). The mixed-sequence tests in
+`page_host/binding_fresh_tests.rs` prove the indexes for the rows a publication
+names; they do not reach this case.
 
 ## Page host binding (step 3b)
 
@@ -1253,7 +1258,6 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::preflight::RepeatedFile` | 1 | A unique filename collides with a fixed step of the same operation; refuse the ambiguous plan. Earlier unique allocations are reserved and later unique steps choose the next free candidate. |
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
 | `transaction.rs::apply::RepeatedFile` | 1 | A unique candidate collides with another step after planning; refuse rather than overwrite. |
-| `transaction.rs::apply::Undecodable` | 2 | Imported bytes fail UTF-8 validation after staging; remove the stage and keep the original. |
 | `transaction.rs::prepare_steps::InvalidTarget` | 1 | A non-page transaction receives a page source or destination through a dynamic file ID, including a configured page directory or a unique candidate. Refuse the whole transaction before any mutation; page changes require a host plan. |
 | `transaction.rs::preflight_names::Closed` | 1 | A graph is closed while a queued save or plan waits; refuse its old binding. |
 | `transaction.rs::preflight_names::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write or operation. |
@@ -1267,16 +1271,8 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
 | `transaction.rs::page_content_bytes<'a>::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. Shared validation supplies staged bytes to planning too. |
 | `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
-| `store.rs::from_failed_step::Closed` | 1 | A transaction closes before commit; retain all unsaved page snapshots. |
-| `store.rs::from_failed_step::Conflict` | 1 | An external edit makes an entry's target revision stale; return its current disk revision for resolution. |
-| `store.rs::from_failed_step::Deleted` | 1 | Sync deletes an entry's page while its editor buffer is open; retain the buffer and report deletion. |
-| `store.rs::from_failed_step::ReadOnly` | 1 | A parser or format check rejects a round-trip edit, or the file carries unresolved VCS markers (R-VCS-MARKERS); retain the buffer. |
-| `store.rs::from_failed_step::Twin` | 2 | A second same-name physical file appears before or after the guarded create; identify that claimant instead of presenting its revision as the target's. |
-| `store.rs::from_failed_step::InvalidTarget` | 2 | A saved target becomes invalid or undecodable; retain the buffer. |
-| `store.rs::from_failed_step::UnreadableOwner` | 1 | R-CREATE-UNREADABLE-OWNER: a new page's name may already belong to an unreadable file; return that file as a recovery location (wire family `unreadable-owner`), keep the buffer dirty, and let the user repair or move the file. |
-| `store.rs::from_failed_step::Repeated` | 1 | Two entries name the same file; refuse the request before writing either entry. |
 
-The following rows cover refusals outside the two constructor families counted
+The following rows cover refusals outside the constructor family counted
 above. Their individual call sites are inventoried in `og/batches/E-survey-errors.md`
 §I-8; the key here is the production owner and operation family. Error-return
 sites that report a disk failure rather than refusing an operation are covered
@@ -1404,9 +1400,9 @@ consuming operation is `plan()`: a feature crate cannot commit it. The public
 `Transaction` has no page-save or reference-rewrite methods, and preflight
 refuses any mutating file step whose dynamically resolved source or destination
 is a page. Read-only page expectations remain allowed. Both builders use the
-same revision, containment, claimant and content preflight. Direct page commits
-are crate-private and used by internal regression fixtures; host publication
-remains the production page writer. Restore and demo graph creation retain
+same revision, containment, claimant and content preflight. Host publication
+is the only page writer: `PagePlan` has no commit, and a page step reaching the
+non-page commit is a programmer error. Restore and demo graph creation retain
 their documented exceptions. Compile-fail doctests keep the public separation
 checked; the former writer call-graph census is retired. The operation-kind
 check remains.
@@ -1725,9 +1721,9 @@ Unit cost, only on such a provider: per case-only move 2 extra renames and
 4 extra directory syncs (plus the folders' creation on first use), 0 extra
 bytes written, 0 files left on success, no transport bytes; 0 elsewhere.
 
-For the transaction helper, before the atomic rename, the source is live; after it, original bytes are
+For a host move, before the atomic rename, the source is live; after it, original bytes are
 live at the new spelling. There is no intermediate Trash-only window or
-manual page restoration step. After the existing atomic rewrite, updated
+manual page restoration step. After the host's atomic rewrite, updated
 title/reference bytes are live there. Retrying after the rename finishes an
 old explicit title in place, through `PagePlan::rewrite_refs` with
 `TitleRebind::Own` under the same revision guard; `move_file` onto its own
@@ -1797,11 +1793,11 @@ payload test measures 10 B live plus 10 B old for 1 block and 600 B live plus
 
 ## Rename publication work (GH #623)
 
-Final publication indexes transaction plans and undo records once and matches
-each observed file only against its records. A successful own reference rewrite
-whose final bytes equal the guarded output parses the changed document once;
-there is no old-document serialization/parse comparison. Failed transactions
-and external bytes keep ordinary reconciliation. The revision observations,
+A non-page transaction's final publication indexes its plans and undo records
+once and matches each observed file only against its records. A host reference
+rewrite parses the changed document once when it publishes; there is no
+old-document serialization/parse comparison. Failed transactions and external
+bytes keep ordinary reconciliation. The revision observations,
 publication error reporting, path locks, ordered writes and undo remain the same.
 `rename_cost.rs` checks changed-document parses at the literal feature/store
 entry. A rename now publishes through the page host (step 3b), so its linear

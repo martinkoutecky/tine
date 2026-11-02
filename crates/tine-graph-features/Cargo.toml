@@ -6,8 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# Test oracles over tine-store's test-faults surface (for example the one-page
-# `pages::save_page`); never enabled by a production build.
+# Test helpers over tine-store's test-faults surface (for example
+# `pages::rename_page_expected`); never enabled by a production build.
 test-faults = ["tine-store/test-faults"]
 
 [dependencies]

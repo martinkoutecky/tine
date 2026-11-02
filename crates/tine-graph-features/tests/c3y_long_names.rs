@@ -8,13 +8,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::test_host_writer::HostWriter;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_graph_features::{assets, pages};
-use tine_store::{Content, EditKind, PageId, SaveBase, SaveOutcome, Store, TxOutcome};
+use tine_store::{Content, EditKind, PageId, SaveBase, Store};
 
 const NAME_MAX: usize = 255;
 
-fn fixture(label: &str) -> (PathBuf, Store) {
+fn fixture(label: &str) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-c3y-{label}-{}-{}",
@@ -25,7 +26,7 @@ fn fixture(label: &str) -> (PathBuf, Store) {
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -214,13 +215,13 @@ fn y3_create_of_a_255_byte_page_name_is_not_refused_by_the_twin_probe() {
     let title = "字".repeat(84);
     let rel = format!("pages/{title}.md");
     assert_eq!(rel.len() - "pages/".len(), NAME_MAX);
-    let created = store.save(
+    let created = HostWriter::for_store(&store).save(
         EditKind::CreatePage,
         &PageId::from(rel.as_str()),
         SaveBase::CreateNew,
         &dto(&title, "fresh"),
     );
-    assert!(matches!(created, SaveOutcome::Saved(_)), "{created:?}");
+    assert!(created.is_ok(), "{created:?}");
     assert!(fs::read_to_string(root.join(&rel))
         .unwrap()
         .contains("fresh"));

@@ -34,7 +34,8 @@ fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGro
     }
 }
 
-fn toggle_and_save(store: &Store, name: &str, journal: bool) {
+fn toggle_and_save(store: &std::sync::Arc<Store>, name: &str, journal: bool) {
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(store);
     let id = match store.whole_graph().unwrap().resolve(name, journal) {
         tine_store::Resolved::Existing { id, .. } => id,
         _ => panic!("missing page {name}"),
@@ -42,17 +43,22 @@ fn toggle_and_save(store: &Store, name: &str, journal: bool) {
     let mut read = store.page(&id).unwrap();
     read.doc.blocks[0].raw = read.doc.blocks[0].raw.replace("TODO", "DOING");
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &read.doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
 }
 
-fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model::PageDto)) {
+fn save_named(
+    store: &std::sync::Arc<Store>,
+    name: &str,
+    edit: impl FnOnce(&mut tine_core::model::PageDto),
+) {
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(store);
     let id = match store.whole_graph().unwrap().resolve(name, false) {
         tine_store::Resolved::Existing { id, .. } => id,
         _ => panic!("missing page {name}"),
@@ -60,13 +66,13 @@ fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model
     let mut read = store.page(&id).unwrap();
     edit(&mut read.doc);
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &read.doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
 }
 
@@ -332,6 +338,7 @@ fn search_reflects_toggle_on_named_page() {
     )
     .unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
     toggle_and_save(&store, "Tasks", false);
     assert!(
         search_matches(&store, "DOING"),
@@ -353,6 +360,7 @@ fn search_reflects_toggle_on_journal_page() {
     )
     .unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
     let title = query_simple(&store, "(task TODO)")[0].page.clone();
     toggle_and_save(&store, &title, true);
     assert!(
@@ -375,6 +383,8 @@ fn new_journal_appears_in_journals_desc_via_cache() {
     let root = mk("newjournal");
     std::fs::write(root.join("journals").join("2026_06_16.md"), "- old day\n").unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let feed = |store: &Store| {
         tine_graph_features::journals::feed_journals_desc_through(store, tine_store::Day(99991231))
             .unwrap()
@@ -398,13 +408,13 @@ fn new_journal_appears_in_journals_desc_via_cache() {
     };
     let id = store.journal_id(tine_store::Day(20260618));
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::CreateNew,
             &dto
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
 
     let js = feed(&store);
@@ -430,6 +440,8 @@ fn own_write_is_suppressed_by_watcher() {
     // A block WITHOUT id:: (the common case): cache uuid is generated, disk has none.
     std::fs::write(&path, "- TODO ship the thing\n- another line\n").unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let id = tine_store::PageId::from("pages/Notes.md");
     let before = store.whole_graph().unwrap().rev();
 
@@ -446,18 +458,20 @@ fn own_write_is_suppressed_by_watcher() {
     let mut dto = read.doc;
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &dto
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
 
     // The watcher polling this file must see it as OUR write, not external.
+    // The saved page is held: its host answers the observation, not refresh.
     let after_save = store.whole_graph().unwrap().rev();
     store.refresh(tine_store::Depth::Stamps).unwrap();
+    assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(30)));
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         after_save,
@@ -467,6 +481,7 @@ fn own_write_is_suppressed_by_watcher() {
     // A genuine external change is still detected.
     std::fs::write(&path, "- DOING ship the thing\n- edited by hand\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
+    assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(30)));
     assert!(
         store.whole_graph().unwrap().rev() > after_save,
         "external edit → detected"
@@ -513,6 +528,8 @@ fn frontend_added_id_survives_reload_and_resolves() {
     )
     .unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
 
     // Simulate the frontend save: load the page, append `id:: <uuid>` to the
     // query block's raw (what ensureStableBlockId does), save back.
@@ -525,13 +542,13 @@ fn frontend_added_id_survives_reload_and_resolves() {
     eprintln!("store uuid = {uuid}");
     read.doc.blocks[0].raw = format!("{}\nid:: {}", read.doc.blocks[0].raw, uuid);
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &read.doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
 
     eprintln!(
@@ -566,6 +583,7 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
     std::fs::write(root.join("pages").join("Tasks.md"), "- TODO a\n- DONE b\n").unwrap();
     std::fs::write(root.join("pages").join("Note.md"), "- see [[Tasks]]\n").unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
     let total = |r: &[tine_core::RefGroup]| r.iter().map(|g| g.blocks.len()).sum::<usize>();
 
     // Prime the memo: one open TODO, one backlink to Tasks.
@@ -749,6 +767,8 @@ fn save_new_page_while_initial_load_is_pending() {
     let pause = root.join(".tine-test-pause-load");
     std::fs::write(&pause, "").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let mut b = store
         .page(&tine_store::PageId::from("pages/A.md"))
         .unwrap()
@@ -757,13 +777,13 @@ fn save_new_page_while_initial_load_is_pending() {
     b.title = "B".into();
     b.rev = None;
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &tine_store::PageId::from("pages/B.md"),
             tine_store::SaveBase::CreateNew,
             &b,
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     std::fs::remove_file(pause).unwrap();
     assert!(root.join("pages/B.md").exists());
@@ -776,6 +796,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     let root = mk("listmemo");
     std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
     let store = Arc::new(store_at(&root));
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let names = |store: &Store| {
         let mut v: Vec<String> = store
             .whole_graph()
@@ -803,13 +824,13 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     b.title = "B".into();
     b.rev = None;
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &tine_store::PageId::from("pages/B.md"),
             tine_store::SaveBase::CreateNew,
             &b
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     assert!(
         names(&store).contains(&"B".to_string()),
@@ -1007,19 +1028,21 @@ fn page_icons_index_updates_after_icon_and_alias_edit() {
     )
     .unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let old = store.whole_graph().unwrap();
     let id = tine_store::PageId::from("pages/IconPage.md");
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.pre_block = Some("icon:: moon\nalias:: New Alias\n".into());
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &doc
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     let current = store.whole_graph().unwrap();
     assert_eq!(
@@ -1183,6 +1206,8 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
 fn new_journal_saved_with_date_stem_not_title() {
     let root = mk("journalname");
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let _ = store.whole_graph().unwrap();
     // Save a brand-new journal by its title (no file yet).
     let dto = tine_core::model::PageDto {
@@ -1206,13 +1231,13 @@ fn new_journal_saved_with_date_stem_not_title() {
     };
     let id = store.journal_id(tine_store::Day(20260618));
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::CreateNew,
             &dto
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     // It must land on the date-stem file, and reopening must show it in the feed.
     assert!(
@@ -1287,6 +1312,8 @@ fn crlf_files_round_trip_without_churn() {
     let path = root.join("pages").join("Win.md");
     std::fs::write(&path, original).unwrap();
     let store = store_at(&root);
+    let store = std::sync::Arc::new(store);
+    let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
     let id = tine_store::PageId::from("pages/Win.md");
     let _ = store.whole_graph().unwrap();
 
@@ -1302,13 +1329,13 @@ fn crlf_files_round_trip_without_churn() {
     }
     // (2) an unchanged save is byte-identical — CRLF preserved, no churn
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &dto
         ),
-        tine_store::SaveOutcome::Unchanged(_) | tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
@@ -1320,13 +1347,13 @@ fn crlf_files_round_trip_without_churn() {
     let mut dto2 = read2.doc;
     dto2.blocks[0].raw = dto2.blocks[0].raw.replace("ship it", "shipped");
     assert!(matches!(
-        store.save(
+        host_writer.save(
             tine_store::EditKind::ReplacePage,
             &id,
             tine_store::SaveBase::Existing(read2.rev),
             &dto2
         ),
-        tine_store::SaveOutcome::Saved(_)
+        Ok(_)
     ));
     let after = std::fs::read_to_string(&path).unwrap();
     assert!(after.contains("shipped"), "edit applied: {after:?}");

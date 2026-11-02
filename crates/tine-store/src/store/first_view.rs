@@ -44,6 +44,15 @@ pub(super) struct Deferred {
     published_early: HashSet<String>,
 }
 
+impl Deferred {
+    fn last_rev(&self, file: &FileId) -> Option<Option<FileRev>> {
+        (self.changes.iter().rev())
+            .flat_map(|change| change.files.iter().rev())
+            .find(|(id, _, _)| id == file)
+            .map(|(_, _, rev)| rev.clone())
+    }
+}
+
 impl Store {
     /// Whether a publication now waits for the first complete view: the
     /// initial load is still running and no view exists yet. A config
@@ -64,8 +73,19 @@ impl Store {
 
     /// Note that rows an ownership transition retired wait for the first
     /// view's capture, which takes them (`Graph::take_retired`).
-    pub(super) fn defer_retired(&self) {
+    pub(crate) fn defer_retired(&self) {
         self.changes.deferred.lock().unwrap().any = true;
+    }
+
+    /// The revision the last deferred change names for `file` (`Some(None)`
+    /// for a removal); `None` when no deferred change names it.
+    pub(crate) fn deferred_rev(&self, file: &FileId) -> Option<Option<FileRev>> {
+        self.changes.deferred.lock().unwrap().last_rev(file)
+    }
+
+    /// A journal file appeared where no publication will name it.
+    pub(crate) fn refresh_journal_names(&self) {
+        self.changes.refresh_journal_names();
     }
 
     pub(crate) fn refresh_journal_ids(&self) {
@@ -82,6 +102,12 @@ impl ChangeFeed {
             && self.snapshot.read().unwrap().is_none()
     }
 
+    /// The day index from the journal directory's file names (no file opened).
+    fn refresh_journal_names(&self) {
+        *self.journal_ids.lock().unwrap() =
+            journal_ids_from_entries(&self.graph, &self.graph.scan_journal_names());
+    }
+
     /// Defer a publication (see the module doc): a transaction's, or a
     /// watcher observation's. A journal file created or removed updates the
     /// day index from the journal directory's file names (no file opened),
@@ -90,16 +116,28 @@ impl ChangeFeed {
     pub(crate) fn defer_publication(
         &self,
         origin: Origin,
-        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-        pages: Vec<(FileId, PageKind, String)>,
+        mut files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        mut pages: Vec<(FileId, PageKind, String)>,
         (raced, journal_set_changed): (HashSet<PathBuf>, bool),
     ) {
         if journal_set_changed {
-            *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, &self.graph.scan_journal_names());
+            self.refresh_journal_names();
         }
         let mut deferred = self.deferred.lock().unwrap();
         deferred.any = true;
+        // An echo of the deferred change before it (a released hold rereads
+        // its file, the owner observes its own save) is no outside write.
+        if origin == Origin::External && !files.is_empty() {
+            files.retain(|(id, _, rev)| deferred.last_rev(id).as_ref() != Some(rev));
+            pages.retain(|(id, ..)| files.iter().any(|(file, ..)| file == id));
+            if files.is_empty() {
+                // The echoed change reconciles what raced the echo.
+                if let Some(echoed) = deferred.changes.last_mut() {
+                    echoed.raced.extend(raced);
+                }
+                return;
+            }
+        }
         deferred.changes.push(DeferredChange {
             origin,
             files,
@@ -136,16 +174,20 @@ impl ChangeFeed {
         written
     }
 
-    /// End deferral. With `watch` (the first view was just published, and
-    /// the caller still holds the writer), publish each deferred change in
-    /// order; without (the load stopped), drop them: the recovery's first
-    /// view covers their writes, as for any publication after a failed load.
-    pub(super) fn end_deferral(&self, watch: Option<&crate::watch::Core>) {
+    /// End deferral; the caller still holds the writer. When the first view
+    /// was just published, publish each deferred change in order; when the
+    /// load stopped, drop them: the recovery's first view covers their writes,
+    /// as for any publication after a failed load, and what raced them stays
+    /// noted for its diff.
+    pub(super) fn end_deferral(&self, watch: &crate::watch::Core, published: bool) {
         let deferred = std::mem::take(&mut *self.deferred.lock().unwrap());
-        let Some(watch) = watch else {
-            return;
-        };
-        self.publish_deferred(deferred.changes, watch);
+        if published {
+            self.publish_deferred(deferred.changes, watch);
+        } else {
+            for change in deferred.changes {
+                watch.reconcile_raced(&change.raced);
+            }
+        }
     }
 
     /// Publish the waiting changes now, before Ready, because a view already

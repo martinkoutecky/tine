@@ -771,7 +771,7 @@ pub struct PageDto {
     /// bypass a read-only refusal or make an editable file read-only.
     #[serde(default)]
     pub read_only: bool,
-    /// True for bundled in-app Guide pages. `Store::save` rejects this DTO
+    /// True for bundled in-app Guide pages. A page plan rejects this DTO
     /// before disk access even if the caller supplies a real `PageId`.
     #[serde(default)]
     pub guide: bool,

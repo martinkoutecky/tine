@@ -106,9 +106,15 @@ pub(super) fn index(store: &Store, publication: &Publication) -> bool {
     let rev = bytes.map(FileRev::from_bytes);
     let cached = graph.cached_rev(&path);
     let text = bytes.and_then(|bytes| std::str::from_utf8(bytes).ok());
+    // What a deferred change already says of this file (`store/first_view.rs`).
+    let pending = store.first_view_pending();
+    let deferred = pending.then(|| store.deferred_rev(&id)).flatten();
     // A new hold retired the page's rows (R1): the published snapshot still
-    // knows it.
-    let known = cached.is_some() || store.snapshot_knows(&path);
+    // knows it. So does a deferred save, and an own removal found it on disk.
+    let known = cached.is_some()
+        || store.snapshot_knows(&path)
+        || deferred.as_ref().is_some_and(Option::is_some)
+        || (pending && bytes.is_none() && publication.own.is_some());
     let kind = match (known, bytes) {
         _ if cached.is_some() && text.map(content_rev) == cached => None,
         (false, None) => None,
@@ -139,11 +145,23 @@ pub(super) fn index(store: &Store, publication: &Publication) -> bool {
             bytes,
             document,
             kind != ChangeKind::Modified,
-            false,
         ),
     };
     if graph.cache_generation() == before {
         graph.transaction_bump_generation(&[&path]);
+    }
+    // Before the first view the launch pass reads every file and announces
+    // what changed since open: an owner's first reading is no change (BqbeQ).
+    // It defers as a publication does, which keeps a launch checkpoint declined.
+    if pending && publication.own.is_none() && bytes.is_some() && deferred.is_none() {
+        store.defer_retired();
+        let journals = format!("{}/", store.config().journals_dir);
+        if kind == ChangeKind::Created && id.as_str().starts_with(&journals) {
+            store.refresh_journal_names();
+        }
+        let raced = store.watch.note_own_observed(&[(id, rev)], &stamps);
+        store.watch.reconcile_raced(&raced);
+        return true;
     }
     let files = vec![(id.clone(), kind, rev)];
     let mut observations = PublishedObservations {

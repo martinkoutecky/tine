@@ -223,6 +223,12 @@ mod error_tests;
 use test_host::test_host;
 
 #[cfg(test)]
+use tine_store as store_crate;
+#[cfg(test)]
+#[path = "../../tine-store/src/test_host_writer.rs"]
+mod test_host_writer;
+
+#[cfg(test)]
 mod test_host {
     /// A running page host for `store`, the only writer of page files
     /// (host-only-writer DESIGN §3.6), under its own app data; it derefs to

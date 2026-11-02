@@ -179,7 +179,7 @@ fn own_saves_while_loading_match_a_fresh_open_on_the_anonymized_graph() {
     );
     let hold = root.join(".tine-test-pause-load");
     fs::write(&hold, "").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let read = store.page(&PageId::from(edited.as_str())).unwrap();
     let mut doc = read.doc.clone();
     doc.blocks.push(BlockDto {
@@ -213,10 +213,9 @@ fn own_saves_while_loading_match_a_fresh_open_on_the_anonymized_graph() {
         crate::SaveBase::Existing(read.rev.clone()),
         &doc,
     );
-    assert!(matches!(
-        tx.commit_internal(),
-        crate::TxOutcome::Committed { change: None, .. }
-    ));
+    crate::test_host_writer::HostWriter::start(&store)
+        .apply(tx.plan().unwrap())
+        .unwrap();
     assert_eq!(builds(&store), 0, "the saves built the graph while loading");
     fs::remove_file(&hold).unwrap();
     let during = fingerprint(&store);
