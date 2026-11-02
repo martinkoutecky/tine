@@ -28,6 +28,9 @@ fs.writeFileSync(typingFile,"- user\n- agent\n");
 // #840: an edit keeps the properties its text does not name, under either owner.
 const propsFile = path.join(GRAPH,"pages/Props.md");
 fs.writeFileSync(propsFile,"- serve\n  status:: done\n- app\n  status:: done\n");
+// #842: parallel appends to one page against the app, with it open and closed.
+const parallelFiles = { "Parallel Open": path.join(GRAPH,"pages/Parallel Open.md"), "Parallel Closed": path.join(GRAPH,"pages/Parallel Closed.md") };
+for (const f of Object.values(parallelFiles)) fs.writeFileSync(f,"- existing one\n- existing two\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Referrer.md"), "- see [[CLI]]\n");
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), '{:default-home {:page "CLI"}}\n');
 const ownerFixture = installAccountHome(TMP, process.env.E2E_ARTIFACT_DIR || TMP);
@@ -97,6 +100,21 @@ try {
   await cli(["edit",handle(await cli(["page","show","Props"]),1),"app edited"]);
   await waitForFileText(propsFile, text => text === "- serve edited\n  status:: done\n- app edited\n  status:: done\n");
   steps.push("both owners: edit keeps the block's properties");
+
+  // #842: the app adds a window flush and reload per write; all must still land.
+  const parallelAdds = async (name, round) => {
+    const results = await Promise.all([1,2,3,4,5,6].map(i => cli(["add","--page",name,`- ${name} ${round}-${i}`],null)));
+    const failed = results.filter(r => r.exit !== 0);
+    assert.deepEqual(failed, [], `${name} round ${round}: every parallel add lands`);
+    const text = fs.readFileSync(parallelFiles[name],"utf8");
+    assert(text.startsWith("- existing one\n- existing two\n"), "existing blocks stay first and in order");
+    for (const i of [1,2,3,4,5,6]) assert.equal(text.split(`- ${name} ${round}-${i}\n`).length, 2, `${name} ${round}-${i} once`);
+  };
+  await openPageByName(browser,"Parallel Open");
+  for (const round of [1,2,3]) await parallelAdds("Parallel Open",round);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".page")?.textContent.includes("Parallel Open 3-6") && document.querySelector(".page")?.textContent.includes("Parallel Open 3-1")), {timeout:15_000});
+  for (const round of [1,2,3]) await parallelAdds("Parallel Closed",round);
+  steps.push("parallel adds: all land with the page open in the window and with it closed");
 
   // Independent page: a failed window notification must not hide typing proof.
   await openPageByName(browser,"Typing");

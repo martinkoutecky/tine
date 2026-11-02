@@ -34,6 +34,9 @@ mod proof;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;
 
+#[path = "owner_tests/parallel_write_tests.rs"]
+mod parallel_writes;
+
 #[cfg(desktop)]
 #[path = "owner_tests/git_run_tests.rs"]
 mod git_run;
