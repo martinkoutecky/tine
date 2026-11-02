@@ -228,6 +228,15 @@ it("with no options a capture lands in today's journal, untemplated, and does no
   expect(route()).toEqual(before);
 });
 
+it("a capture saves when the system language is not a language tag (Linux LANG=C)", async () => {
+  // WebKitGTK under LANG=C reports navigator.language "C", which Intl rejects.
+  vi.spyOn(navigator, "language", "get").mockReturnValue("C");
+  const today = journalTitle(appNow());
+  await receiveConfigured({}, { text: "- under C" }, []);
+  expect(rootsOf(today)).toEqual(["under C"]);
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", expect.objectContaining({ ok: true }));
+});
+
 it("GH #832: redirect-page? opens the page the capture landed on", async () => {
   mainPaneRouter.openPage("Elsewhere");
   await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_redirect_page: true }, { text: "- go" }, ["Inbox"]);

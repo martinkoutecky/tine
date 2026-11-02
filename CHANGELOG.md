@@ -27,6 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Typing a page link in Quick Capture no longer shows the red error "Couldn't refresh the page list. The last loaded list is kept." in the capture window. Nothing was lost: the capture window asked for a list of pages it is not given, and page completion there never needed it (UI-CAPTURE-NO-PAGE-INVENTORY).
 - The gear on a query block now closes the query editor when you click it again; the second click used to leave it open (#850).
 - Editing a block shown under a query result, such as a child you expanded, no longer re-runs the query while you are still typing there: the results stay as they are until you leave the block, as they already did for the result block itself. Expanded and collapsed result rows keep their state through the rerun (#851).
 - Android: when a line you tap to edit is moved out of view while the keyboard opens, Tine now brings it back just above the keyboard toolbar, where 0.7.4 put it, instead of at the top of the screen, where the pinned parent blocks could still cover it (#783). With an interface zoom other than 100%, a line just under the pinned parents is no longer taken as visible and left covered. Not yet confirmed on the reporter's phone.

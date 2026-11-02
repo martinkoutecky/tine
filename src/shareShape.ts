@@ -169,10 +169,25 @@ export function shapeShare(item: SharedContent, context: ShapeContext): string |
   return trimmed.trim() ? trimmed : null;
 }
 
-/** `date/get-current-time`: the locale's two-digit 24-hour time. */
+/** `date/get-current-time`: the locale's two-digit 24-hour time. A system
+ *  language that is not a BCP 47 tag (WebKitGTK reports Linux `LANG=C` as
+ *  `navigator.language` "C", which Intl rejects with a RangeError) falls back to
+ *  the runtime's default locale, so a capture is never lost to its timestamp. */
 export function captureTime(date: Date, locale?: string): string {
-  return date.toLocaleTimeString(locale ?? (typeof navigator === "undefined" ? undefined : navigator.language),
-    { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const options: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+  const wanted = locale ?? (typeof navigator === "undefined" ? undefined : navigator.language);
+  try {
+    return date.toLocaleTimeString(wanted, options);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
+  try {
+    return date.toLocaleTimeString(undefined, options);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
 }
 
 /** One block of outline Markdown holding `content` (continuation lines
