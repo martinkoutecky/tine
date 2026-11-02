@@ -71,7 +71,7 @@ it("the Beta Guide explains seen marks, controls and the reachable notice", () =
 
 it("the Beta Guide covers git sign-in, divergence, repair and phone lifecycle", () => {
   const files = guide("files-external-edits-backups");
-  for (const detail of ["**Sign in**", "**Commit and sync automatically**", "**both have new commits**", "**Copy the git command**", "**Turn off line-ending conversion for this repository**", "When you switch to another app", "at most once per interval", "never starts bringing in changes while in the background"]) expect(files).toContain(detail);
+  for (const detail of ["**Sign in**", "**Commit and sync automatically**", "**both have new commits**", "**Copy the git command**", "**Turn off line-ending conversion for this repository**", "When you switch to another app", "commits pending edits immediately, without waiting for the interval", "switching apps without edits adds no commit", "never starts bringing in changes while in the background"]) expect(files).toContain(detail);
 });
 
 it("onboarding documents explicit clone and init with git optional and automation off", () => {

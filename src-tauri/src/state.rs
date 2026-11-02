@@ -36,6 +36,8 @@ pub(crate) struct GraphSlot {
     /// it so an IPC queued before an in-place graph switch cannot execute against
     /// the replacement graph after the window label is rebound.
     pub(crate) binding_generation: u64,
+    /// How long an owner write waits for its turn (`owner::write`); tests shorten it.
+    pub(crate) turn_wait: std::time::Duration,
     startup_idle: Mutex<Option<Instant>>,
     startup_changed: Condvar,
     pub(crate) warm_done: AtomicBool,
@@ -180,6 +182,7 @@ impl GraphSlot {
             query_runs: QueryRuns::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            turn_wait: crate::owner::write::TURN_WAIT,
             startup_idle: Mutex::new(None),
             startup_changed: Condvar::new(),
             warm_done: AtomicBool::new(false),
