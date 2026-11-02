@@ -271,7 +271,10 @@ impl WholeGraph {
 
     /// What a `[[name]]` link opens in this view ([`link_target_in`]): the one
     /// answer; the frontend reads it from the inventory's `link` field.
-    pub(crate) fn link_target(&self, name: &str) -> LinkTarget {
+    /// Production reads the same answer from the inventory's `link` field;
+    /// this per-name form is the conformance harnesses' oracle.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn link_target(&self, name: &str) -> LinkTarget {
         link_target_in(&self.claimants, &self.graph, &self.journal_format, name)
     }
 
