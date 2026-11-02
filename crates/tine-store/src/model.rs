@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+pub(crate) mod index_probe;
 mod inline_map;
 mod launch_patch;
 mod layout_retention;
@@ -737,10 +738,32 @@ impl ReadSnapshot {
         old: Option<&Self>,
         changed_paths: &[String],
     ) -> Self {
+        Self::capture_rows(
+            graph.peek_pages().expect("loaded graph"),
+            graph.cache_generation(),
+            graph.observed_page_mtimes(),
+            Arc::clone(&graph.completion_name_keys),
+            config,
+            list,
+            old,
+            changed_paths,
+        )
+    }
+
+    /// [`Self::capture`] over any rows: it reads nothing else of a graph.
+    #[allow(clippy::too_many_arguments)]
+    fn capture_rows(
+        pages: Arc<Pages>,
+        cache_generation: u64,
+        observed_mtimes: Arc<SharedMap<String, std::time::SystemTime>>,
+        completion_name_keys: CompletionSessions,
+        config: Config,
+        list: Arc<EntryList>,
+        old: Option<&Self>,
+        changed_paths: &[String],
+    ) -> Self {
         #[cfg(feature = "test-faults")]
         let capture_started = std::time::Instant::now();
-        let pages = graph.peek_pages().expect("loaded graph");
-        let cache_generation = graph.cache_generation();
         // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
             // First, on the page-parse workers: it builds every block
@@ -873,7 +896,7 @@ impl ReadSnapshot {
             pages,
             config,
             list,
-            observed_mtimes: graph.observed_page_mtimes(),
+            observed_mtimes,
             explicit_index,
             reference_candidate_index: RwLock::new(reference_candidate_index),
             cache_generation,
@@ -891,7 +914,7 @@ impl ReadSnapshot {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
-            completion_name_keys: Arc::clone(&graph.completion_name_keys),
+            completion_name_keys,
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]
@@ -1727,6 +1750,8 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
             add_blocks(out, &block.children);
         }
     }
+    #[cfg(test)]
+    index_probe::test_row_fault(&entry.path);
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let mut out = vec![doc
         .pre_block
@@ -2259,12 +2284,7 @@ impl SnapshotExplicitIndex {
         };
         let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
         #[cfg(test)]
-        if rows.iter().any(|(entry, _)| {
-            (TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap().iter())
-                .any(|root| entry.path.starts_with(root))
-        }) {
-            panic!("deterministic test sentinel for a full graph index build panic");
-        }
+        index_probe::test_full_build_fault(rows.iter().map(|(entry, _)| entry.path.as_path()));
         let workers = page_cache_worker_count();
         if workers <= 1 || rows.len() < 64 {
             insert(&rows);

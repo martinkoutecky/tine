@@ -7,6 +7,17 @@ import type { BlockDto } from "./types";
 export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) => BlockDto): [string, BlockDto[]][] {
   return [
     [
+      // GH #843: a block with both a reference count and a margin comment count.
+      "Badge alignment regression", [
+        b("The method section compares two approaches on the same survey.\nid:: f672c5bf-cba9-4704-93f4-06b22bc30cec", [
+          b("Which survey? Name it here.\nquote:: survey"),
+        ]),
+        b("((f672c5bf-cba9-4704-93f4-06b22bc30cec))"),
+        b("# A heading with both badges\nid:: f672c5bf-cba9-4704-93f4-06b22bc30ced", [b("And its comment.\nquote:: heading")]),
+        b("((f672c5bf-cba9-4704-93f4-06b22bc30ced))"),
+      ],
+    ],
+    [
       // GH #110: the first comment on a block with a long existing subtree.
       "Margin creation regression", [
         ...Array.from({ length: 12 }, (_, i) => b(`Opening paragraph ${i + 1}.`)),

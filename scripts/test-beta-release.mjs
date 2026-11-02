@@ -43,7 +43,7 @@ for (const tag of ["beta", "latest", "v0.6.987", "0.7.0", undefined]) assert.thr
 assert.equal(updaterAssetUrl("owner/repo", "app.sig", "stable"), "https://github.com/owner/repo/releases/latest/download/app.sig");
 assert.equal(updaterAssetUrl("owner/repo", "app.sig", "beta", "0.7.0-beta.1"), "https://github.com/owner/repo/releases/download/v0.7.0-beta.1/app.sig");
 assert.throws(() => updaterAssetUrl("owner/repo", "app.sig", "beta"));
-assert.equal(appImageUpdateInformation(conf, "owner/repo", "Tine-Beta_0.7.0-beta.1_aarch64.AppImage"), "zsync|https://tine.page/updates/beta/aarch64.AppImage.zsync");
+assert.equal(appImageUpdateInformation(conf, "owner/repo", "Tine-Beta_0.7.0-beta.1_aarch64.AppImage"), "gh-releases-zsync|owner|repo|latest-pre|Tine-Beta_*_aarch64.AppImage.zsync");
 assert.equal(appImageUpdateInformation(stableConf, "owner/repo", "Tine_0.7.0_amd64.AppImage"), "gh-releases-zsync|owner|repo|latest|Tine_*_amd64.AppImage.zsync");
 assert.ok(releaseLayout(conf.version).allAssets.includes(`${IDENTITY.productName.replace(/\s+/g, "-")}_${conf.version}_android-arm64.apk`));
 const workflow = fs.readFileSync(".github/workflows/release.yml", "utf8");
@@ -73,11 +73,11 @@ try {
   const tag = releaseTag(live);
   const wrongTag = "beta";
   const updateInformation = channel === "beta"
-    ? "zsync|https://tine.page/updates/beta/amd64.AppImage.zsync"
+    ? "gh-releases-zsync|owner|repo|latest-pre|Tine-Beta_*.AppImage.zsync"
     : "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync";
   const otherUpdateInformation = channel === "beta"
-    ? "gh-releases-zsync|owner|repo|beta|Tine_*.AppImage.zsync"
-    : "zsync|https://tine.page/updates/beta/amd64.AppImage.zsync";
+    ? "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync"
+    : "gh-releases-zsync|owner|repo|latest-pre|Tine-Beta_*.AppImage.zsync";
   const updaterRoute = channel === "beta" ? `/releases/download/v${version}/` : "/releases/latest/download/";
   const commit = "a".repeat(40);
   const input = path.join(temp, "input");
