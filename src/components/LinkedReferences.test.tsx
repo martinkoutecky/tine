@@ -49,7 +49,8 @@ describe("Linked References filters", () => {
     const dispose = render(() => <ReferenceSection name="Target" unlinked={unlinked} />, root);
     try {
       await tick(); await tick();
-      if (unlinked) root.querySelector<HTMLElement>(".references-header")!.click();
+      // Cost audit 6a: unlinked loads only once expanded.
+      if (unlinked) { root.querySelector<HTMLElement>(".references-header")!.click(); await tick(); await tick(); }
       const controls = root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button");
       expect(controls).toHaveLength(1);
       expect(controls[0].textContent).toBe("Collapse all");

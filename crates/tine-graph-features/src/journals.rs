@@ -155,7 +155,6 @@ pub fn feed_page_through(
     include_references: bool,
 ) -> Result<FeedPage<FeedRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
-    let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
     let graph = if include_references {
         Some(
             store
@@ -164,6 +163,20 @@ pub fn feed_page_through(
         )
     } else {
         None
+    };
+    // A scroll step (`before_day`) on a loaded graph pages through the view's
+    // day index (cost audit 2026-11-02 row 8: it listed the journals
+    // directory per 3-day step, O(J) syscalls). The first page keeps the disk
+    // listing: it reports the listing's unreadable entries (only the first
+    // page ever did) and shows journal files that appeared where no watcher
+    // event published them; a file-only step (graph still loading) has no
+    // view to ask.
+    let (entries, listing_unreadable) = match (&graph, before_day) {
+        (Some(graph), Some(_)) => (
+            indexed_days_through(store, graph, Day(as_of_day)),
+            Vec::new(),
+        ),
+        _ => feed_days_through(store, Day(as_of_day))?,
     };
     let referenced: std::collections::BTreeSet<_> = graph
         .as_ref()
@@ -421,7 +434,20 @@ fn format(store: &Store) -> JournalFormat {
 /// The journals listing: every listed file, plus `name: reason` for each entry
 /// the scan could not read. A failed scan of the whole area is an error.
 fn listing(store: &Store) -> io::Result<(Vec<FileEntry>, Vec<String>)> {
+    #[cfg(test)]
+    JOURNAL_LISTINGS.with(|count| count.set(count.get() + 1));
     crate::conflicts::area_listing(store, Area::Journals)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Journals directory listings on this thread (cost audit row 8).
+    static JOURNAL_LISTINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn journal_listings() -> usize {
+    JOURNAL_LISTINGS.with(std::cell::Cell::get)
 }
 
 /// The complete journals listing, for the filename migration, which renames
@@ -458,6 +484,26 @@ fn stem(entry: &FileEntry) -> Option<&str> {
 #[cfg(any(test, feature = "test-faults"))]
 pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<(Day, PageId)>> {
     Ok(feed_days_through(store, cutoff)?.0)
+}
+
+/// [`feed_days_through`]'s days from the view's day index instead of the
+/// directory: no disk access, O(J log J) in memory.
+fn indexed_days_through(
+    store: &Store,
+    graph: &tine_store::WholeGraph,
+    cutoff: Day,
+) -> Vec<(Day, PageId)> {
+    let days: std::collections::BTreeSet<Day> = graph
+        .inventory(tine_store::InventoryScope::JournalFiles)
+        .0
+        .iter()
+        .filter_map(|entry| entry.day)
+        .filter(|day| *day <= cutoff)
+        .collect();
+    days.into_iter()
+        .rev()
+        .map(|day| (day, store.journal_id(day)))
+        .collect()
 }
 
 /// `feed_journals_desc_through` plus the listing's unreadable entries.

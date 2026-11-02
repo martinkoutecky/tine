@@ -1,7 +1,8 @@
 import { createEffect, createSignal, createUniqueId, on, onCleanup, Show, untrack, useContext } from "solid-js";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
-import { autocompleteFacets, backend } from "../backend";
+import { backend } from "../backend";
+import { propertyCompletionSession } from "./propertyCompletionSession";
 import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, propertyValueKeyAfterBoundary, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
 import { node, pageByName, persistBlockRefTarget, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
@@ -60,7 +61,7 @@ export function cm6Completions(props: {
   const [acIndex, setAcIndex] = createSignal(0);
   const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
   const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
-  let propertyFacets: [string, string[]][] = [];
+  const propertyCompletion = propertyCompletionSession();
   let acListRef: HTMLDivElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let applying = false, pluginInvocation = 0;
@@ -77,6 +78,7 @@ export function cm6Completions(props: {
   const closeAc = () => {
     clearTimeout(timer); releaseCompletionLease(); completionOriginalRaw = null;
     setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0); setPropertyValueKey(null);
+    propertyCompletion.end();
     props.languagePicker(false);
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger) => left !== null
@@ -94,7 +96,7 @@ export function cm6Completions(props: {
       ? { ...open, query: "", end: caret() } : null;
   };
   const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
-    const values = propertyFacets.find(([candidate]) => candidate === key)?.[1] ?? [];
+    const values = propertyCompletion.values(key);
     const q = query.trim(), excluded = new Set(used.map(value => value.toLocaleLowerCase()));
     const ranked: AcItem[] = values.map((value, index) => ({ value, index, score: q ? fuzzyScore(q, value) : 1 }))
       .filter(({ value, score }) => score > 0 && !excluded.has(value.toLocaleLowerCase()))
@@ -117,9 +119,9 @@ export function cm6Completions(props: {
     setAcIndex(0);
     const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => current() && sameAcTrigger(ac(), t)));
     if (t.kind === "property-name") {
-      let facets: [string, string[]][];
+      let keys: string[] | null;
       try {
-        facets = await autocompleteFacets();
+        keys = await propertyCompletion.keys();
       } catch (error) {
         // Completion is an optional aid: a transient facet-query failure must
         // never reject the editor input event or pile up global error toasts.
@@ -127,17 +129,16 @@ export function cm6Completions(props: {
         if (requestOwner()) setAcItems([]);
         return;
       }
-      if (!requestOwner()) return;
-      propertyFacets = facets;
+      if (!keys || !requestOwner()) return;
       const q = t.query.trim();
-      const ranked = facets
-        .map(([key], index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
+      const ranked = keys
+        .map((key, index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
         .filter(({ score }) => score > 0)
         .sort((left, right) => right.score - left.score || left.index - right.index)
         .slice(0, 100)
         .map(({ key }) => ({ label: key, propertyName: key }));
       const created = propertyKeyFold(t.query);
-      if (created && !facets.some(([key]) => key === created)) {
+      if (created && !keys.includes(created)) {
         ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
       }
       setAcItems(ranked);
@@ -145,6 +146,9 @@ export function cm6Completions(props: {
     }
     if (t.kind === "property-value") {
       setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
+      void propertyCompletion.load(t.property!).then((loaded) => {
+        if (loaded && sameAcTrigger(ac(), t)) setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
+      });
       return;
     }
     if (t.kind === "code-language") {
@@ -323,8 +327,12 @@ export function cm6Completions(props: {
       const result = applyCompletion(text(), t.start, t.end, `${key}:: `);
       apply(result.raw, result.caret);
       setPropertyValueKey(key);
-      setAc({ kind: "property-value", query: "", start: result.caret, end: result.caret, property: key });
+      const valueTrigger: Trigger = { kind: "property-value", query: "", start: result.caret, end: result.caret, property: key };
+      setAc(valueTrigger);
       setAcIndex(0); setAcItems(propertyValueItems(key, ""));
+      void propertyCompletion.load(key).then((loaded) => {
+        if (loaded && sameAcTrigger(ac(), valueTrigger)) setAcItems(propertyValueItems(key, ""));
+      });
       return;
     }
     if (item.propertyValue !== undefined) { replaceTrigger(item.propertyValue); return; }

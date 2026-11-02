@@ -93,7 +93,8 @@ impl Graph {
                 return Some((entry, document, disk));
             }
         }
-        self.owned_row(key, bytes, doc)
+        // No row: the publication settles the page, which lists why.
+        self.owned_row(key, bytes, doc).ok().flatten()
     }
 
     pub(crate) fn source(&self, path: &Path) -> Source {

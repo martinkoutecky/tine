@@ -521,7 +521,8 @@ export function QueryBuilder(props: {
   /** The workspace's permanently expanded sheet (§7.2). */
   sheetAlwaysOpen?: boolean;
   inline?: boolean;
-  openRequest?: () => { n: number; tab: "filter" | "display" | "text" } | null;
+  /** `close` shuts the inline editor (the gear's second click, GH #850); otherwise opens `tab`. */
+  openRequest?: () => { n: number; tab: "filter" | "display" | "text"; close?: boolean } | null;
   /** The live result count, rendered beside the sentence (§7.2). */
   total?: JSX.Element;
   /** The pane's text no longer parses, so the rows on screen are the LAST reading that ran. */
@@ -567,6 +568,7 @@ export function QueryBuilder(props: {
   createEffect(() => {
     const request = props.openRequest?.();
     if (!request) return;
+    if (request.close) { if (untrack(open)) closeInline(); return; }
     setTab(request.tab);
     setOpen(true);
     if (props.inline) queueMicrotask(() => {

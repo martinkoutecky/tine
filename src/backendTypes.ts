@@ -1,7 +1,7 @@
 /** Plain data shapes carried by `Backend` (diagnostics, backups, graph change
  *  events). Split from `backend.ts` along the type/implementation seam; import
  *  them from `./backend`, which re-exports every one. */
-import type { GraphMeta } from "./types";
+import type { GraphMeta, PageInventoryDelta } from "./types";
 
 export interface DebugInfo {
   enabled: boolean;
@@ -312,6 +312,10 @@ export type TrashAssetOutcome = "trashed" | "referenced";
 export interface GraphAnswersChange {
   rev: string;
   inventoryChanged: boolean;
+  /** With `inventoryChanged`: the entries that moved, for the page index to
+   *  patch instead of refetching. Absent: refetch (a claim changed, or an
+   *  older host). */
+  inventoryDelta?: PageInventoryDelta;
   blockRefCounts: Record<string, number>;
   /** Absent with older hosts and synthetic legacy notifications. */
   summary?: ChangeSummary;

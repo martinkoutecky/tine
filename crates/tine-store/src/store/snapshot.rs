@@ -394,7 +394,8 @@ impl Snapshot {
             answers: Default::default(),
             folds_only,
         };
-        let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let (inventory, delta, counts) =
+            snapshot.answer_changes(old, &changed_paths, name_set_changed);
         let summary = snapshot.change_summary(
             old,
             &changed_paths,
@@ -404,8 +405,31 @@ impl Snapshot {
             &targets.unlinked,
             &targets.queries,
         );
-        snapshot.answers = (inventory, counts, summary);
+        snapshot.answers = (inventory, counts, summary, delta);
         snapshot
+    }
+}
+
+impl Store {
+    /// Another chance for pages a panic retired (`derived_contained.rs`): a
+    /// focus or a rescan comes here, the watcher's own ticks do not. Nothing
+    /// to do when no retired page has a retry left.
+    pub(super) fn retry_contained_rows(&self) {
+        if !self.graph.contained_retry_due() {
+            return;
+        }
+        let _writer = self.writer.lock().unwrap();
+        let (mut files, mut pages) = (Vec::new(), Vec::new());
+        for (path, entry, rev) in self.graph.retry_contained_rows() {
+            let id = FileId::from(self.graph.rel_path(&path));
+            if let Some(entry) = entry {
+                pages.push((id.clone(), entry.kind, entry.name));
+            }
+            files.push((id, ChangeKind::Modified, Some(rev)));
+        }
+        if !files.is_empty() {
+            self.changes.publish(Origin::External, files, false, pages);
+        }
     }
 }
 
@@ -455,26 +479,29 @@ impl ChangeFeed {
         };
         let mut pending = PendingFiles::of(&files, &self.graph);
         let captured = capture(&pending, config_changed).or_else(|| {
-            // Only a patch names its suspects: a capture that builds every
-            // index has no page to blame (`contain_index_publication`).
-            if old.is_none() || rebuild {
-                return None;
-            }
             // Parses are isolated per page before this, so this is a Rust
             // index stage. Patch each page alone to learn which one it is. A
             // file that is no page would build every index, so it is no suspect.
-            let suspects: Vec<_> = (pending.files().iter())
-                .map(|file| (file, self.graph.root.join(file.0.as_str())))
-                .filter(|(_, path)| {
-                    crate::model::graph_text_eligible(
-                        &self.graph.root,
-                        path,
-                        &self.graph.current_config(),
-                    )
-                })
-                .filter(|(file, _)| capture(&pending.only(file), false).is_none())
-                .map(|(_, path)| path)
-                .collect();
+            let mut suspects = Vec::new();
+            if old.is_some() && !rebuild {
+                suspects = (pending.files().iter())
+                    .map(|file| (file, self.graph.root.join(file.0.as_str())))
+                    .filter(|(_, path)| {
+                        crate::model::graph_text_eligible(
+                            &self.graph.root,
+                            path,
+                            &self.graph.current_config(),
+                        )
+                    })
+                    .filter(|(file, _)| capture(&pending.only(file), false).is_none())
+                    .map(|(_, path)| path)
+                    .collect();
+            }
+            // A capture that builds every index names no page: find its rows.
+            let probed = suspects.is_empty() && (old.is_none() || rebuild || config_changed);
+            if probed {
+                suspects = self.graph.rows_that_panic_an_index_build();
+            }
             if suspects.is_empty() {
                 return None;
             }
@@ -482,7 +509,13 @@ impl ChangeFeed {
                 self.graph.retire_index_stage_failure(path);
             }
             pending.take_rows(&self.graph);
-            capture(&pending, config_changed)
+            let without = capture(&pending, config_changed);
+            // Rows that panic built alone but do not explain this build's panic
+            // are not shown to be bad: the graph fails with no page blamed.
+            if without.is_none() && probed {
+                suspects.iter().for_each(|path| self.graph.unblame(path));
+            }
+            without
         });
         let Some(mut snapshot) = captured else {
             // Under the writer, so a panic that reached it would poison every

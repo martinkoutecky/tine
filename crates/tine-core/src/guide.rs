@@ -233,6 +233,13 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn unlinked_references_say_they_are_found_on_opening() {
+        // Cost audit 2026-11-02 row 6a: nothing is computed while folded.
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("they are looked for only when you open the section"));
+    }
+
+    #[test]
     fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
         let places = include_str!("templates/where-things-are.md");
         assert!(places.contains("**Themes** is the first section under Settings → **Appearance**"));

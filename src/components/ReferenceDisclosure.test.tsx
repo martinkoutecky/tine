@@ -30,8 +30,9 @@ it("GH #658: both reference headers and their page groups use the same disclosur
     expect(shapes[0]).toBeDefined();
     expect(shapes[1]).toBe(shapes[0]);
     root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
+    // Cost audit 6a: unlinked loads only once expanded.
+    await vi.waitFor(() => expect(root.querySelectorAll(".reference-group-disclosure")).toHaveLength(2));
     const disclosures = [...root.querySelectorAll(".reference-group-disclosure")];
-    expect(disclosures).toHaveLength(2);
     for (const disclosure of disclosures) {
       expect(disclosure.querySelector(".ref-collapse svg")?.outerHTML).toBe(shapes[0]);
       expect(disclosure.getAttribute("aria-expanded")).toBe("true");

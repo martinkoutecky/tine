@@ -345,7 +345,7 @@ impl<'de, K: serde::Deserialize<'de> + Ord, V: serde::Deserialize<'de>> serde::D
 }
 
 use super::{Document, PageEntry};
-type Page = (PageEntry, Arc<Document>);
+pub(crate) type Page = (PageEntry, Arc<Document>);
 /// Stable slots retain the original iteration order through deletion. New
 /// pages append; removed slots disappear without shifting any survivor/index.
 #[derive(Clone, Default)]
@@ -476,6 +476,10 @@ impl EntryList {
             self.paths.remove(path);
             self.projected.take();
         }
+    }
+    /// One journal entry per day, ascending by day. O(J) to iterate.
+    pub(crate) fn journal_days(&self) -> impl Iterator<Item = &PageEntry> {
+        self.days.iter().filter_map(|(_, slot)| self.rows.get(slot))
     }
     pub(crate) fn remove_day(&mut self, day: i64) {
         if let Some(path) = self

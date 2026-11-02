@@ -9,7 +9,8 @@ import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
-import { autocompleteFacets, backend } from "../backend";
+import { backend } from "../backend";
+import { propertyCompletionSession } from "../editor/propertyCompletionSession";
 import { pinyinMatchingEnabled } from "../launcherRanking";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
@@ -724,7 +725,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     });
   };
   const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
-  let propertyFacets: [string, string[]][] = [];
+  const propertyCompletion = propertyCompletionSession();
   let acListRef: HTMLDivElement | undefined;
   // The autocomplete popup is rendered through a Portal (fixed-positioned), so a
   // clipping ancestor — the right sidebar's `overflow:auto`, a modal — can't cut
@@ -778,6 +779,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setAcItems([]);
     setAcIndex(0);
     setPropertyValueKey(null);
+    propertyCompletion.end();
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger): boolean =>
     left !== null &&
@@ -792,7 +794,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       ? null
       : detectTrigger(value, caret, propertyValueKey(), pageFmt());
   const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
-    const values = propertyFacets.find(([candidate]) => candidate === key)?.[1] ?? [];
+    const values = propertyCompletion.values(key);
     const q = query.trim();
     const excluded = new Set(used.map((value) => value.toLocaleLowerCase()));
     const ranked = values
@@ -832,9 +834,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setAcIndex(0);
     const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => editorMounted && sameAcTrigger(ac(), t)));
     if (t.kind === "property-name") {
-      let facets: [string, string[]][];
+      let keys: string[] | null;
       try {
-        facets = await autocompleteFacets();
+        keys = await propertyCompletion.keys();
       } catch (error) {
         // Completion is an optional aid: a transient facet-query failure must
         // never reject the editor input event or pile up global error toasts.
@@ -843,17 +845,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         return;
       }
       const cur = ac();
-      if (!sameAcTrigger(cur, t)) return;
-      propertyFacets = facets;
+      if (!keys || !sameAcTrigger(cur, t)) return;
       const q = t.query.trim();
-      const ranked = facets
-        .map(([key], index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
+      const ranked = keys
+        .map((key, index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
         .filter(({ score }) => score > 0)
         .sort((left, right) => right.score - left.score || left.index - right.index)
         .slice(0, 100)
         .map(({ key }) => ({ label: key, propertyName: key }));
       const created = propertyKeyFold(t.query);
-      if (created && !facets.some(([key]) => key === created)) {
+      if (created && !keys.includes(created)) {
         ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
       }
       setAcItems(ranked);
@@ -861,6 +862,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     if (t.kind === "property-value") {
       setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
+      void propertyCompletion.load(t.property!).then((loaded) => {
+        if (loaded && sameAcTrigger(ac(), t)) setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
+      });
       return;
     }
     if (t.kind === "code-language") {
@@ -1185,6 +1189,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       setAc(valueTrigger);
       setAcIndex(0);
       setAcItems(propertyValueItems(key, ""));
+      void propertyCompletion.load(key).then((loaded) => {
+        if (loaded && sameAcTrigger(ac(), valueTrigger)) setAcItems(propertyValueItems(key, ""));
+      });
       queueMicrotask(() => {
         ref.value = result.raw;
         ref.setSelectionRange(result.caret, result.caret);

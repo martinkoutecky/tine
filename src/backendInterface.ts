@@ -58,6 +58,9 @@ export interface ConfirmOptions {
   cancelLabel: string;
 }
 
+/** A property-completion facet request (see `queryFacets`). */
+export type FacetScope = { keys: true } | { key: string };
+
 export interface Backend {
   graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
@@ -284,8 +287,11 @@ export interface Backend {
    *  view; no `result-too-large` refusal. Waits for graph load. */
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<ExplainEmptyResult>;
   /** Property keys (each with their distinct values) for query-builder
-   *  autocomplete. */
-  queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
+   *  autocomplete. With `autocomplete` and a `scope`, the editor's property
+   *  completion asks for less: `{ keys: true }` every key (values may be
+   *  empty), `{ key }` that key's values only. A backend may ignore `scope`
+   *  and answer every key with its values; callers read only what they asked. */
+  queryFacets(autocomplete?: boolean, scope?: FacetScope): Promise<[string, string[]][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
   pageIcons(names: string[]): Promise<Record<string, string>>;
   /** Persist favorited page names to config.edn `:favorites` and, when given,
