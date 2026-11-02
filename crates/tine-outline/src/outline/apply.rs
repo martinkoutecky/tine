@@ -44,6 +44,11 @@ pub fn apply_with_policy(
             absorbed,
             absorbed_referenced,
         } => merge(&mut cx, survivor, absorbed, *absorbed_referenced)?,
+        Verb::MergeMany {
+            survivor,
+            absorbed,
+            referenced,
+        } => merge_many::merge_many(&mut cx, survivor, absorbed, referenced)?,
         Verb::Indent { keys } => indent(&mut cx, keys)?,
         Verb::Outdent { keys, logical } => outdent(&mut cx, keys, *logical)?,
         Verb::Delete { keys } => delete(&mut cx, keys)?,

@@ -11,7 +11,7 @@ import { cm6ArrowLeave } from "./cm6ArrowLeave";
 
 const blockedCommands = new Set([
   "editor/comment", "editor/indent", "editor/outdent", "editor/move-block-up", "editor/move-block-down",
-  "editor/select-block-up", "editor/select-block-down", "editor/select-all",
+  "editor/select-block-up", "editor/select-block-down", "editor/select-all", "editor/new-sibling-after-subtree",
 ]);
 
 /** The same sheet/outline boundary as the ordinary editor, using CM visual rows.

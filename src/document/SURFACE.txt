@@ -84,6 +84,7 @@ insertEmptyChildBlock
 insertOutlineAfter
 insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
 insertOutlineChildren
+insertSiblingAfterSubtree  # why: Alt+Enter adds a block after the current block's whole subtree (GH #818); batch-og-merge-sibling-764-818
 installAliasDraftRouteHandler
 installExternalChangeUiHandler
 installHistoryRouteContextAdapter
@@ -106,6 +107,7 @@ loadedPage
 mainPages
 makeOwnNumberedList
 markDirty
+mergeSelection  # why: Merge selected blocks joins a selection into its first block in one kernel step (GH #764); batch-og-merge-sibling-764-818
 mergeWithNext  # why: Delete at block end forward-merges (GH #213); batch17a
 mergeWithPrev
 moveBlock

@@ -1,7 +1,7 @@
 import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
-  beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, indentBlock, insertOutlineAfter,
+  beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
   mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection, nextVisible,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
@@ -123,6 +123,11 @@ export function cm6Structure(ctx: StructureContext) {
     "editor/move-block-down": v => move(v, 1),
     "editor/collapse": () => collapse(true),
     "editor/expand": () => collapse(false),
+    "editor/new-sibling-after-subtree": v => {
+      const id = insertSiblingAfterSubtree(ctx.id, () => ctx.commit(v.state.doc.toString()), ctx.scope?.forceExpandedRoot === ctx.id);
+      if (id) startEditing(id, 0, null, editSurface());
+      return true;
+    },
     "editor/soft-newline": softNewline,
     "editor/select-embedding-block": v => {
       if (!ctx.embedExit) return false;

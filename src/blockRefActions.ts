@@ -10,7 +10,12 @@ import {
   blockHasFoldableBody,
   buildClipboardPayload,
   hasSelection,
+  blockHasPageEmbed,
+  blockHasQueryBody,
+  blockIsGridView,
   insertEmptyChildBlock,
+  mergeSelection,
+  formatForBlock,
   insertOutlineAfter,
   insertOutlineBefore,
   pageByName,
@@ -33,6 +38,8 @@ import { copyBlockLink } from "./components/blockLinkCopy";
 import { type ClipboardPayloadSlot } from "./clipboard";
 import { isPasteableUrl, wrapLink, type Edit } from "./editor/format";
 import { activeElement, isElementTag, selectionOf } from "./windowRealm";
+import { soleBlockMacro } from "./render/parse";
+import { isAnnotationBlock } from "./editor/annotation";
 
 /** Open a block in the sidebar, a new tab, or the other pane. Synchronous: no save. */
 export function openDurableBlock(id: string, destination: "sidebar" | "tab" | "pane"): void {
@@ -152,6 +159,26 @@ export function insertChildIntoTarget(): string | null {
   if (!child) return null;
   startEditing(child, 0, null, editingSurface());
   return child;
+}
+
+/** GH #764: merge the selected blocks into the first one (palette and keymap
+ *  only). Blocks whose meaning lives in their whole text or their children are
+ *  refused whole, not flattened into a paragraph: a query, a page or block
+ *  embed, a sheet and a PDF highlight. Everything else is the kernel's
+ *  `merge_many` (`mergeSelection`). */
+export function mergeSelectedBlocks(): boolean {
+  const ids = selectedIds();
+  for (const id of ids) {
+    const n = docNode(id);
+    if (!n) continue;
+    const format = formatForBlock(id);
+    if (blockHasQueryBody(id) || blockHasPageEmbed(id) || blockIsGridView(id)
+      || soleBlockMacro(n.raw, format)?.name === "embed" || isAnnotationBlock(n.raw, format)) {
+      pushToast(msg("selection-merge-special-blocks"), "warn");
+      return false;
+    }
+  }
+  return mergeSelection();
 }
 
 /** GH #525 / #696: collapse immediate children; expand the first level with

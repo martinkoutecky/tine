@@ -102,7 +102,7 @@ export { commentsFirst } from "./commentOrder";
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undoTopTag, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
-export { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
+export { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertSiblingAfterSubtree, insertOutlineChildren, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
 export { reportQueryFoldOption, storedFold } from "./edits/queryFoldOption";
 export { seenPageSnapshot } from "./seenSnapshot";
 export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste";
@@ -111,7 +111,7 @@ export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, c
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
 export { blockExternalId, blockPositionRef, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, resolveBlockRef, settleBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
-export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, selectionScope, setSelectionHeading } from "./edits/selection";
+export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, mergeSelection, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, selectionScope, setSelectionHeading } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";

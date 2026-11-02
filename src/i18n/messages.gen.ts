@@ -182,8 +182,10 @@ export interface MessageArgs {
   "command-editor-italics": {};
   "command-editor-kill-line-after": {};
   "command-editor-kill-line-before": {};
+  "command-editor-merge-selected-blocks": {};
   "command-editor-move-block-down": {};
   "command-editor-move-block-up": {};
+  "command-editor-new-sibling-after-subtree": {};
   "command-editor-open-link-in-sidebar": {};
   "command-editor-outdent": {};
   "command-editor-paste-as-link": {};
@@ -2392,6 +2394,13 @@ export interface MessageArgs {
   "seen-settings-label": {};
   "seen-settings-mark-graph": {};
   "seen-state-forgotten": {};
+  "selection-merge-needs-two-blocks": {};
+  "selection-merge-not-in-results": {};
+  "selection-merge-one-page-only": {};
+  "selection-merge-read-only": {};
+  "selection-merge-refused": {};
+  "selection-merge-special-blocks": {};
+  "selection-merge-would-break-a-reference": {};
   "selection-outline-is-too-deep-to-indent": {};
   "session-could-not-restore-workspaces": { "error": string | number };
   "session-live-changes-were-kept-workspace-recovery-was-skipped": {};

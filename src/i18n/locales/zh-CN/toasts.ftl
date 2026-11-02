@@ -203,6 +203,20 @@ properties-page-header-has-child-blocks = 页面属性暂时无法保存：属�
 
 selection-outline-is-too-deep-to-indent = 大纲层级过深，无法缩进
 
+selection-merge-needs-two-blocks = 请选择两个或更多块再合并
+
+selection-merge-not-in-results = 结果列表中的块无法合并；请在它们所在的页面中选择
+
+selection-merge-one-page-only = 无法合并来自多个页面的所选块
+
+selection-merge-read-only = 无法合并：所选块位于只读页面
+
+selection-merge-would-break-a-reference = 无法合并这些块：第一个块之外的某个块有被引用的块 ID，而合并后的块只能保留一个块 ID
+
+selection-merge-special-blocks = 无法合并包含查询、嵌入、表格或 PDF 高亮的块
+
+selection-merge-refused = 无法合并这些块
+
 graph-rewrite-rename-failed = 重命名失败：{ $error }
 
 history-undo-history-for-this-page-was-discarded-the = 此页面的撤销历史已丢弃：这些编辑后，页面曾被重新加载

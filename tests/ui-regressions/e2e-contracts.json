@@ -1123,6 +1123,15 @@
       "acceptableVariations": ["Toolbar may flip below when there is no room above; dimensions, wrapping and theme colors may vary."],
       "nonRequirements": ["OG has no selection toolbar. Mobile retains the docked toolbar. Native platforms other than Linux WebKitGTK require separate acceptance."],
       "stability":"burn-in"
+    },
+    "scripts/e2e-merge-sibling.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"With several blocks selected, the palette command Merge selected blocks saves them as one block in the first block's place, their texts on separate lines and their children kept under it, and one Ctrl+Z restores the file exactly (GH #764).","blocking":true},
+        {"class":"core-operation","userOutcome":"Alt+Enter while editing saves a new block at the same level after the block's whole subtree (before the next block), leaves the block it was pressed in unsplit, and takes the text typed next (GH #818).","blocking":true}
+      ],
+      "acceptableVariations": ["Palette ranking, selection highlight, save latency and where the caret sits when the key is pressed."],
+      "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK; the CM6 editor, which the render-level tests cover."],
+      "stability":"burn-in"
     }
   }
 }

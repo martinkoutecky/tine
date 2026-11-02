@@ -205,6 +205,10 @@ command-editor-duplicate-block-above = 在上方复制块（含子块）
 
 command-editor-insert-child-block = 插入子块
 
+command-editor-merge-selected-blocks = 合并所选块
+
+command-editor-new-sibling-after-subtree = 在此块的子块之后新建块
+
 command-editor-select-embedding-block = 选择嵌入所在块
 
 command-editor-collapse-children = 折叠（一层）

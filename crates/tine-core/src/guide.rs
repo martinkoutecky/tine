@@ -727,6 +727,25 @@ mod parity_guide_tests {
 }
 
 #[cfg(test)]
+mod merge_sibling_guide_tests {
+    #[test]
+    fn alt_enter_and_merge_selected_blocks_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for text in [
+            "**Alt+Enter** while editing adds an empty block at the same level",
+            "after its whole subtree",
+            "**Merge selected blocks** is in **Commands**",
+            "starts unbound",
+            "keeps every child under it",
+            "It is one Undo step.",
+            "a block ID that other blocks refer to moves to the merged block",
+        ] {
+            assert!(tips.contains(text), "missing Guide detail: {text}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod search_guide_tests {
     #[test]
     fn friendly_search_sections_scope_and_save_are_documented() {
