@@ -476,6 +476,10 @@ pub(crate) struct Graph {
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_install_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// In a whole-cache install, after its unlocked work, before the cache
+    /// lock and its race checks.
+    #[cfg(test)]
+    pub(crate) install_lock_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) cold_cache_reconcile_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -2339,6 +2343,7 @@ pub(crate) struct LaunchObservations {
     pub(crate) announce: Vec<(PathBuf, bool, PageKind, String)>,
 }
 
+#[derive(Default)]
 struct PageCacheBuild {
     pages: Vec<ParsedPage>,
     failures: Vec<String>,
@@ -2894,6 +2899,8 @@ impl Graph {
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_after_install_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            install_lock_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             cold_cache_reconcile_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -3487,7 +3494,7 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false, None, None) {
+                if self.install_built(built, gen0, false, None, None).is_ok() {
                     break;
                 }
             }
@@ -5593,16 +5600,18 @@ mod tests {
     fn launch_does_not_report_a_file_that_vanished_during_naming() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path());
-        assert!(graph.install_built(
-            PageCacheBuild::with_capacity(0),
-            (graph.cache_generation(), graph.held.epoch()),
-            false,
-            None,
-            Some(vec![(
-                crate::FileId::from("pages/Gone.md".to_owned()),
-                io::Error::from(io::ErrorKind::NotFound).into()
-            )])
-        ));
+        assert!(graph
+            .install_built(
+                PageCacheBuild::with_capacity(0),
+                (graph.cache_generation(), graph.held.epoch()),
+                false,
+                None,
+                Some(vec![(
+                    crate::FileId::from("pages/Gone.md".to_owned()),
+                    io::Error::from(io::ErrorKind::NotFound).into()
+                )])
+            )
+            .is_ok());
         assert!(
             graph.reported_unreadable_pages().is_empty(),
             "{:?}",

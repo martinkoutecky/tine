@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Opening or creating a page while a large graph is still loading (for example today's journal from the daily template) could make loading take nearly twice as long, because the graph was indexed a second time. Tine now keeps the index it just built (REG-LOADING-INSTALL-RACE-SECOND-BUILD).
 - `tine add`, `edit`, `prop`, `move`, `delete` and the other write commands running at the same time on one page now all land, in some order, instead of most failing with "the page kept changing" (exit 6) when no `--rev` or handle had gone out of date. Commands take turns; `--rev` and block handles still refuse a page that moved, and text from the app, an editor or Syncthing is still never overwritten (#842).
 - A file a sync tool delivered with its original modification time, while Tine was saving or rereading that page, no longer leaves search, backlinks and queries on the old text until the page next changes. This could happen while the graph loaded, or after a failed load once its retry succeeded (REG-FAILED-LOAD-RACED-OBSERVATION-KEPT, REG-LOADING-ECHO-KEEPS-RACED).
 - After a graph fails to load, opening a page or observing a changed file no longer publishes a partial graph before the retry succeeds (REG-FAILED-LOAD-RETIRED-ROWS-PUBLISH, REG-FAILED-LOAD-WATCH-DIFF-PUBLISHES).
