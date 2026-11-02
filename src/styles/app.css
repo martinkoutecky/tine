@@ -1693,6 +1693,8 @@ html[data-system-insets="native-viewport"] {
 .export-modal.graph-name-prompt { width: min(420px, 100%); box-sizing: border-box; overflow-y: auto; }
 .graph-name-field { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
 .graph-name-field input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; }
+.comment-name-prompt-body, .comment-name-prompt-scope { margin: 0; padding: 12px 16px 0; line-height: 1.45; }
+.comment-name-prompt-scope { padding-top: 0; opacity: 0.8; font-size: 0.9em; }
 .graph-name-error { padding: 0 16px; color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 .export-modal {
   width: 620px;
@@ -4774,6 +4776,9 @@ mark {
 .inline-image {
   max-width: 100%;
   border-radius: 4px;
+  /* GH #836: the wrapper's `line-height: 0` is inherited by the alt text a browser draws in place of a
+     file that will not load, which clipped it. A loaded image ignores its own line-height. */
+  line-height: 1.5;
 }
 
 /* Drag-to-resize wrapper: the grip sits in the image's bottom-right corner and

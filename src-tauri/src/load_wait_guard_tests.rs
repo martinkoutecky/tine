@@ -364,6 +364,8 @@ const ORDERED_WRITES: &[&str] = &[
     "set_default_home",
     "import_asset",
     "import_native_capture",
+    "capture_import_asset",
+    "capture_save_asset",
     "empty_asset_trash",
     "trash_journal_file",
     "save_asset",

@@ -1115,7 +1115,7 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 38] = [
+    let cases: [(&str, String, bool); 39] = [
         (
             "default_journal_queries",
             format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
@@ -1226,6 +1226,11 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         (
             "linked_references_collapsed_threshold",
             format!("{BASE} :ref/linked-references-collapsed-threshold 5"),
+            false,
+        ),
+        (
+            "ref_default_open_blocks_level",
+            format!("{BASE} :ref/default-open-blocks-level 5"),
             false,
         ),
         (

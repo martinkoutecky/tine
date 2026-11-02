@@ -220,7 +220,12 @@ fn cli_command(verb: &str, args: &Value) -> Vec<String> {
     let get = |key: &str| args[key].as_str().unwrap().to_string();
     let mut command = vec!["tine".to_string()];
     match verb {
-        "block.edit" => command.extend(["edit".into(), get("handle"), get("text")]),
+        "block.edit" => {
+            command.extend(["edit".into(), get("handle"), get("text")]);
+            if args["author_property"].is_string() {
+                command.extend(["--author".into(), get("author_property")]);
+            }
+        }
         "block.delete" => command.extend(["delete".into(), get("handle")]),
         "block.prop" => {
             command.extend([
@@ -287,6 +292,27 @@ fn write_transcript_corpus() {
         };
         let mut cases = vec![
             ("edit", "block.edit", json!({"handle": UUID, "text": "ONE"})),
+            // #840: properties the text does not name stay; a named one replaces.
+            (
+                "edit-keeps-properties",
+                "block.edit",
+                json!({"handle": UUID, "text": "ONE"}),
+            ),
+            (
+                "edit-names-property",
+                "block.edit",
+                json!({"handle": UUID, "text": if org {"ONE\n:PROPERTIES:\n:status: doing\n:END:"} else {"ONE\nstatus:: doing"}}),
+            ),
+            (
+                "edit-author",
+                "block.edit",
+                json!({"handle": UUID, "text": "ONE", "author_property": "codex"}),
+            ),
+            (
+                "edit-empty-author",
+                "block.edit",
+                json!({"handle": UUID, "text": "ONE", "author_property": " "}),
+            ),
             (
                 "prop-set",
                 "block.prop",
@@ -379,6 +405,12 @@ fn write_transcript_corpus() {
         for (name, command, mut args) in cases {
             let input = if name == "read-only" {
                 "* a\n*** skipped level\n".to_string()
+            } else if name.starts_with("edit-") {
+                if org {
+                    format!("* one\n:PROPERTIES:\n:id: {UUID}\n:status: done\n:author: claude\n:END:\n** child\n")
+                } else {
+                    format!("- one\n  id:: {UUID}\n  status:: done\n  author:: claude\n\t- child\n")
+                }
             } else {
                 input.clone()
             };
@@ -500,17 +532,17 @@ fn generated(verb_name: &str) {
             let args = match verb_name {
                 "edit" => {
                     let text = format!("DONE changed {iteration}\nsecond line");
-                    // Construct the editor projection independently: hidden id survives,
-                    // visible note/body are replaced; descendants are untouched.
+                    // Constructed independently: id and note survive (#840), the two
+                    // text lines are replaced in place; descendants are untouched.
                     let id = format!("00000000-0000-4000-8000-{:012x}", target + 1);
                     let child_at = chunks[target]
                         .find(if org { "** child" } else { "\t- child" })
                         .unwrap();
                     expected[target] = if org {
-                        format!("* DONE changed {iteration}\n:PROPERTIES:\n:id: {id}\n:END:\nsecond line\n{}", &chunks[target][child_at..])
+                        format!("* DONE changed {iteration}\n:PROPERTIES:\n:id: {id}\n:note: keep {target}\n:END:\nsecond line\n{}", &chunks[target][child_at..])
                     } else {
                         format!(
-                            "- DONE changed {iteration}\n  second line\n  id:: {id}\n{}",
+                            "- DONE changed {iteration}\n  id:: {id}\n  note:: keep {target}\n  second line\n{}",
                             &chunks[target][child_at..]
                         )
                     };

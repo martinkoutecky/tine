@@ -902,6 +902,11 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
     };
   };
+  /** GH #838: "not answered yet" is more than `execution.loading`. While a result change is in flight
+   *  (hydration, the user's own save) the membership resource holds its read and is idle, and between
+   *  a retype and its first answer it has no value for the new identity. Neither may read as "No
+   *  matching pages". A failed read is shown as a failure, never as pending. */
+  const awaitingAnswer = () => !!source().trim() && !execution.error && (execution.loading || executed() === undefined);
   const hits = () => executed()?.hits ?? [];
   const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
   const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");
@@ -1227,7 +1232,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
       <section class="query-workspace-status" aria-live="polite" aria-atomic="true">
         <Show when={!source().trim()}>{sourceKind() === "search" ? t("query-query-workspace-enter-a-search-to-begin") : t("query-query-workspace-enter-a-query-to-begin")}</Show>
-        <Show when={!!source().trim() && execution.loading}>{t("query-query-workspace-searching")}</Show>
+        <Show when={awaitingAnswer()}>{t("query-query-workspace-searching")}</Show>
         <Show when={!!source().trim() && !execution.loading && execution.error}>
           {t("query-workspace-search-failed", { detail: execution.error instanceof Error ? execution.error.message : String(execution.error) })}
         </Show>
@@ -1267,7 +1272,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
       <Show when={source().trim() && !ogHint()?.date_windows}>
       <QueryResultSections
-        pending={execution.loading}
+        pending={awaitingAnswer()}
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
         families={([
           { kind: "page", hits: pageHits().length, hasMore: !!executed()?.has_more?.pages,

@@ -1,6 +1,8 @@
 import { msg } from "../../i18n";
 import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
+import { existingBlockId } from "./identity";
+import { captureReferenceChangeCount } from "../../toasts";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
@@ -345,6 +347,63 @@ export function deleteSelection() {
   markOutlineDirty(change);
   reselectSurvivingBlock(survivor);
   notice.show();
+}
+
+/** GH #764: merge the selected blocks into the first one. Their texts follow in
+ *  visible order, one line break between them; the first block keeps its place,
+ *  its identity and its properties, and every selected block's children stay
+ *  under it (the first block's own, then each merged block's in turn). One
+ *  kernel verb (`merge_many`), one undo step, the ordinary save path. The kernel
+ *  refuses, changing nothing, when a merged block's referenced `id::` would be
+ *  lost (the first block already has one, or an earlier merged block's moved
+ *  there), across pages, past the depth cap, and on a read-only page. A caller
+ *  vets what a merge must not swallow (queries, embeds, sheets, highlights).
+ *  Returns whether anything merged; the merged block stays selected. */
+export function mergeSelection(): boolean {
+  const ids = selectedIds().filter((id) => doc.byId[id]);
+  if (ids.length < 2) {
+    pushToast(msg("selection-merge-needs-two-blocks"), "warn");
+    return false;
+  }
+  const scope = activeSelectionScope;
+  // A result list orders blocks by the query, not by the outline.
+  if (scope?.navOnly) {
+    pushToast(msg("selection-merge-not-in-results"), "warn");
+    return false;
+  }
+  const page = doc.byId[ids[0]].page;
+  if (ids.some((id) => doc.byId[id].page !== page)) {
+    pushToast(msg("selection-merge-one-page-only"), "warn");
+    return false;
+  }
+  if (ids.some((id) => !blockWritable(id))) {
+    pushToast(msg("selection-merge-read-only"), "warn");
+    return false;
+  }
+  const [survivor, ...absorbed] = ids;
+  // The same reference test as Backspace: an unknown count counts as referenced.
+  const referenced = absorbed.filter((id) => {
+    const durable = existingBlockId(doc.byId[id].raw, formatForBlock(id));
+    if (!durable) return false;
+    const count = captureReferenceChangeCount([durable]);
+    return typeof count !== "number" || count > 0;
+  });
+  const change = outlineChange({ verb: "merge_many", survivor, absorbed, referenced }, [page]);
+  if ("refused" in change) {
+    if (change.refused === "depth_cap") pushToast(msg("blocks-outline-is-too-deep-to-merge"), "error");
+    else if (change.refused === "referenced_identity") pushToast(msg("selection-merge-would-break-a-reference"), "error");
+    else if (change.refused === "cross_page_merge") pushToast(msg("selection-merge-one-page-only"), "warn");
+    else pushToast(msg("selection-merge-refused"), "error");
+    return false;
+  }
+  const transferred = change.notices.some((n) => n.kind === "id_transferred");
+  const notice = prepareReferenceChangeNotice(absorbed, false, transferred);
+  pushUndo(notice.tag, outlineChangePages(change));
+  applyOutlineChange(change);
+  markOutlineDirty(change);
+  selectBlock(survivor, scope);
+  notice.show();
+  return true;
 }
 
 /** Public clipboard text for the selected roots; O(visible-order resolution + selected subtree bytes).

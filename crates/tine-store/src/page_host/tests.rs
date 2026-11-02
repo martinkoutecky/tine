@@ -1027,10 +1027,13 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 .collect::<Vec<_>>()
                 .join("/");
             // An integration test crate cannot name a private module; there
-            // "page_host" is only a path string (the I-21 owner census).
+            // "page_host" is only a path string (the I-21 owner census). An
+            // example is in no shipped binary: `graph_heap_probe` starts a host
+            // to measure it.
             if relative.contains("/page_state/")
                 || relative.contains("/page_host/")
                 || relative.contains("/tests/")
+                || relative.contains("/examples/")
             {
                 continue;
             }

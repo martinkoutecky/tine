@@ -86,12 +86,69 @@ impl PublishHooks {
     }
 }
 
+/// What one capture patches: the publication's files and the rows the cache
+/// changed that no publication named. Held outside the capture because taking
+/// those rows is not repeatable, and a capture that panics is retried.
+#[derive(Default)]
+pub(super) struct PendingFiles {
+    files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+    /// Paths whose rows a hold or respelling retired since the last capture
+    /// (E105): each is renamed from what it names now.
+    retired: HashSet<FileId>,
+    /// Rows the cache changed that no publication named (a host save while
+    /// the graph is Failed publishes nothing, and the recovery's diff names
+    /// only what it found): every index patches them now.
+    unnamed: bool,
+}
+
+impl PendingFiles {
+    pub(super) fn of(files: &[(FileId, ChangeKind, Option<FileRev>)], graph: &Graph) -> Self {
+        let mut pending = Self {
+            files: files.to_vec(),
+            ..Self::default()
+        };
+        pending.take_rows(graph);
+        pending
+    }
+
+    pub(super) fn take_rows(&mut self, graph: &Graph) {
+        for path in graph.take_retired() {
+            let id = FileId::from(graph.rel_path(&path));
+            if !self.files.iter().any(|(file, _, _)| *file == id) {
+                self.files.push((id.clone(), ChangeKind::Modified, None));
+                self.retired.insert(id);
+            }
+        }
+        for path in graph.take_touched() {
+            let id = FileId::from(graph.rel_path(&path));
+            if !self.files.iter().any(|(file, _, _)| *file == id) {
+                self.files.push((id.clone(), ChangeKind::Modified, None));
+                self.retired.insert(id);
+                self.unnamed = true;
+            }
+        }
+    }
+
+    /// One of these files alone, to learn which one a capture panics on.
+    pub(super) fn only(&self, file: &(FileId, ChangeKind, Option<FileRev>)) -> Self {
+        Self {
+            files: vec![file.clone()],
+            retired: self.retired.clone(),
+            unnamed: self.unnamed,
+        }
+    }
+
+    pub(super) fn files(&self) -> &[(FileId, ChangeKind, Option<FileRev>)] {
+        &self.files
+    }
+}
+
 impl Snapshot {
     pub(super) fn capture(
         graph: &Graph,
         config: &RwLock<ConfigState>,
         old: Option<&Snapshot>,
-        files: &[(FileId, ChangeKind, Option<FileRev>)],
+        pending: &PendingFiles,
         config_changed: bool,
         rebuild: bool,
         rev: GraphRev,
@@ -103,29 +160,12 @@ impl Snapshot {
         graph.with_pages(|_| ());
         let config = config.read().unwrap().clone();
         let journal_format = graph.current_journal_format();
-        // Paths whose rows a hold or respelling retired since the last
-        // capture (E105): each is renamed from what it names now.
-        let mut files = files.to_vec();
-        let mut retired = HashSet::new();
-        for path in graph.take_retired() {
-            let id = FileId::from(graph.rel_path(&path));
-            if !files.iter().any(|(file, _, _)| *file == id) {
-                files.push((id.clone(), ChangeKind::Modified, None));
-                retired.insert(id);
-            }
-        }
-        // Rows the cache changed that no publication named (a host save while
-        // the graph is Failed publishes nothing, and the recovery's diff names
-        // only what it found): every index patches them now.
-        let mut unnamed = false;
-        for path in graph.take_touched() {
-            let id = FileId::from(graph.rel_path(&path));
-            if !files.iter().any(|(file, _, _)| *file == id) {
-                files.push((id.clone(), ChangeKind::Modified, None));
-                retired.insert(id);
-                unnamed = true;
-            }
-        }
+        let PendingFiles {
+            files,
+            retired,
+            unnamed,
+        } = pending;
+        let unnamed = *unnamed;
         let changed_names: Vec<_> = files
             .iter()
             .filter_map(|(id, kind, _)| {
@@ -369,6 +409,128 @@ impl Snapshot {
     }
 }
 
+impl ChangeFeed {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn publish_inner(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+        pages: Vec<(FileId, PageKind, String)>,
+        before_notify: impl FnOnce(),
+        watch: Option<WatchBatch>,
+        rebuild: bool,
+        published: &HashMap<FileId, PageEntry>,
+    ) -> GraphRev {
+        let old = self.snapshot.read().unwrap().clone();
+        let journals_dir = self.graph.current_config().journals_dir.clone();
+        if old.is_none()
+            || config_changed
+            || rebuild
+            || files.iter().any(|(id, kind, _)| {
+                id.as_str().starts_with(&format!("{journals_dir}/"))
+                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            })
+        {
+            *self.journal_ids.lock().unwrap() =
+                journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+        }
+        let rev = GraphRev(self.rev().0 + 1);
+        let targets = self.registered_targets();
+        let capture = |pending: &PendingFiles, config_changed: bool| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Snapshot::capture(
+                    &self.graph,
+                    &self.config,
+                    old.as_deref(),
+                    pending,
+                    config_changed,
+                    rebuild,
+                    rev,
+                    published,
+                    &targets,
+                )
+            }))
+            .ok()
+        };
+        let mut pending = PendingFiles::of(&files, &self.graph);
+        let captured = capture(&pending, config_changed).or_else(|| {
+            // Only a patch names its suspects: a capture that builds every
+            // index has no page to blame (`contain_index_publication`).
+            if old.is_none() || rebuild {
+                return None;
+            }
+            // Parses are isolated per page before this, so this is a Rust
+            // index stage. Patch each page alone to learn which one it is. A
+            // file that is no page would build every index, so it is no suspect.
+            let suspects: Vec<_> = (pending.files().iter())
+                .map(|file| (file, self.graph.root.join(file.0.as_str())))
+                .filter(|(_, path)| {
+                    crate::model::graph_text_eligible(
+                        &self.graph.root,
+                        path,
+                        &self.graph.current_config(),
+                    )
+                })
+                .filter(|(file, _)| capture(&pending.only(file), false).is_none())
+                .map(|(_, path)| path)
+                .collect();
+            if suspects.is_empty() {
+                return None;
+            }
+            for path in &suspects {
+                self.graph.retire_index_stage_failure(path);
+            }
+            pending.take_rows(&self.graph);
+            capture(&pending, config_changed)
+        });
+        let Some(mut snapshot) = captured else {
+            // Under the writer, so a panic that reached it would poison every
+            // later save: the graph fails instead, `refresh()` retries, and
+            // the retry patches these files.
+            self.graph.touch_rows(
+                (pending.files().iter()).map(|(id, _, _)| self.graph.root.join(id.as_str())),
+            );
+            self.load.fail_publication(&self.graph);
+            return self.rev();
+        };
+        // A fold leaves the launch checkpoint's derived state true; its file
+        // stamp is stale, so the next launch diff rereads that one file
+        // (ADR 0070) instead of the whole checkpoint being rewritten for it.
+        if (old.is_none() || config_changed || rebuild || !files.is_empty()) && !snapshot.folds_only
+        {
+            self.checkpoint.get().inspect(|signal| signal.published());
+        }
+        #[cfg(test)]
+        self.publish_hooks.before_publish();
+        let mut state = self.state.lock().unwrap();
+        state.rev += 1;
+        let rev = GraphRev(state.rev);
+        debug_assert_eq!(snapshot.rev, rev);
+        // Holding the snapshot write lock orders a later registration's first
+        // read after this install; one made during the capture fires here.
+        let mut current = self.snapshot.write().unwrap();
+        self.fire_registered_since(&targets, &mut snapshot);
+        let snapshot = Arc::new(snapshot);
+        let answers = snapshot.answers.clone();
+        *current = Some(snapshot);
+        drop(current);
+        before_notify();
+        if !state.closed {
+            state.queue.push_back(Change {
+                graph_rev: rev,
+                origin,
+                files,
+                pages,
+                answers,
+                watch,
+            });
+            self.ready.notify_all();
+        }
+        rev
+    }
+}
+
 /// What final publication already observed of the files it published, so
 /// the own-write stamp and the name index need not reopen them (GH #623).
 #[derive(Default)]
@@ -464,15 +626,11 @@ impl Store {
             pages.clone(),
             &observations.entries,
         );
-        let answers = self
-            .changes
-            .snapshot
-            .read()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .answers
-            .clone();
+        // No snapshot: a publication during the load whose capture panicked.
+        // The write landed; only its answers are unknown.
+        let answers = (self.changes.snapshot.read().unwrap().as_ref())
+            .map(|snapshot| snapshot.answers.clone())
+            .unwrap_or_default();
         let change = Change {
             graph_rev: rev,
             origin,

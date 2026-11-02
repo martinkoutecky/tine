@@ -9,7 +9,7 @@ export function revealNode(id: string): void {
 }
 import { applyMarkerTransition } from "../../logbook";
 import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, removeDeletedBlocksFromSidebar } from "../../ui";
-import { pushRawUndo, pushUndo, undo, undoTopTag } from "../history";
+import { pushRawUndo, pushUndo, undo, undoTopTag, withUndoUnit } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, type OutlineChange, type OutlinePlace } from "../kernel";
@@ -109,6 +109,25 @@ export function insertEmptyChildBlock(parentId: string, at: number): string | nu
   applyOutlineChange(change);
   markOutlineDirty(change);
   return change.focus?.key ?? null;
+}
+
+/** GH #818 (`editor/new-sibling-after-subtree`): a new empty block at the same
+ *  level as `id`, after the block's whole subtree (its children stay put). One
+ *  undo step covers `flush`, which saves the text being edited. A zoom root has
+ *  no sibling inside the zoomed view, so its new block is its last child, as
+ *  Enter makes one there. Returns the new block, or null when nothing changed
+ *  (read-only page, outline too deep). */
+export function insertSiblingAfterSubtree(id: string, flush: () => void, zoomRoot = false): string | null {
+  const n = doc.byId[id];
+  if (!n || !blockWritable(id)) return null;
+  const made = withUndoUnit(`new-sibling:${id}`, [n.page], () => {
+    flush();
+    const created = zoomRoot
+      ? insertEmptyChildBlock(id, doc.byId[id].children.length)
+      : insertOutlineAfter(id, [{ raw: "", children: [] }]);
+    return created ?? false;
+  });
+  return typeof made === "string" ? made : null;
 }
 
 /** Replace child ordering for existing blocks under existing parents.

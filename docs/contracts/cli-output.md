@@ -262,10 +262,14 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
   (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
   page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
-  `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
+  `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
-- **`block.edit`**: the text replaces the block's editor text, as typing it would: OG hidden built-ins
-  (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
+- **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
+  built-ins including SRS keys, graph-configured hidden keys, and visible ones such as `status::`, `src::`,
+  `author::`) is kept byte-exact; children are kept too. Removing a property takes `tine prop remove`. This is an
+  intentional difference from typing in the app, whose editor buffer owns visible properties, and from OG, which
+  has no command line (#840, D-20261101-CLIE). A block whose parse failed is refused (`refused:kernel`): the
+  in-scope threat is malformed input, where properties cannot be told from text.
   Raw text returned by reads may be submitted directly: an explicitly supplied primary property replaces
   the retained row with the same normalized key, so a read-then-edit never adds a second copy. This also
   permits an explicit new value, except that a supplied primary `id` differing from an existing accepted
@@ -273,10 +277,12 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   malformed agent input, such as submitting another block's raw text or mistyping its UUID.
   IDs compare after trimming, ignoring ASCII letter case, as block-handle resolution does. Same-id and
   omitted-id edits keep the identity; a block without an accepted id may receive one, even when its body
-  contains a non-primary lookalike. A property-looking line inside a fence does not replace metadata.
-  On a block whose own primary properties
-  include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
-  kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
+  contains a non-primary lookalike. A property-looking line inside a fence is text: it neither replaces
+  metadata nor counts as naming a key.
+  `--author NAME` on the command line sets `author::`, replacing a retained or supplied one and adding one
+  to a block without it. An empty name is refused (`refused:kernel`, malformed input). `TINE_AUTHOR` alone names
+  the run's commits and leaves `author::` alone: set once for a session, it would overwrite people's attribution
+  on every edit.
   Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
   property ownership and creates no more property groups than canonical placement. Otherwise the join
   restores canonical placement so OG can read the retained properties, including repairing earlier split groups.
@@ -292,7 +298,7 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
   nothing changes. **`--author NAME`** (or `TINE_AUTHOR`, default `agent`) names the agent on created blocks'
-  `author::` and on the run's commits.
+  `author::` and on the run's commits; on `block.edit`, see above.
 
 Kind `written`. Write replies carry no page text.
 

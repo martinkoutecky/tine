@@ -38,6 +38,7 @@ binding-some-state-of-the-previous-graph-could-not = 无法清除上一图谱的
 binding-was-not-saved-it-was-opened-in-a = { $what } 未保存：其所在图谱已关闭。
 
 block-ref-actions-select-blocks-or-edit-one-to-copy-their = 请选择块（或编辑一个块）以复制块引用
+block-ref-actions-select-blocks-or-edit-one-to-set-depth = 请选择块（或编辑一个块）以设置展开深度
 
 block-ref-actions-too-much-selected-to-duplicate = 所选内容过多，无法创建副本
 
@@ -202,6 +203,20 @@ properties-page-header-bad-line = 页面属性暂时无法保存：属性块的�
 properties-page-header-has-child-blocks = 页面属性暂时无法保存：属性块下有子块。请将其取消缩进或删除。
 
 selection-outline-is-too-deep-to-indent = 大纲层级过深，无法缩进
+
+selection-merge-needs-two-blocks = 请选择两个或更多块再合并
+
+selection-merge-not-in-results = 结果列表中的块无法合并；请在它们所在的页面中选择
+
+selection-merge-one-page-only = 无法合并来自多个页面的所选块
+
+selection-merge-read-only = 无法合并：所选块位于只读页面
+
+selection-merge-would-break-a-reference = 无法合并这些块：第一个块之外的某个块有被引用的块 ID，而合并后的块只能保留一个块 ID
+
+selection-merge-special-blocks = 无法合并包含查询、嵌入、表格或 PDF 高亮的块
+
+selection-merge-refused = 无法合并这些块
 
 graph-rewrite-rename-failed = 重命名失败：{ $error }
 

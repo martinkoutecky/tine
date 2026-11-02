@@ -34,6 +34,7 @@ binding-some-state-of-the-previous-graph-could-not = Some state of the previous 
 binding-was-not-saved-it-was-opened-in-a = { $what } was not saved: it was opened in a graph that is no longer open.
 
 block-ref-actions-select-blocks-or-edit-one-to-copy-their = Select blocks (or edit one) to copy their block refs
+block-ref-actions-select-blocks-or-edit-one-to-set-depth = Select blocks (or edit one) to set their depth
 
 block-ref-actions-too-much-selected-to-duplicate = Too much selected to duplicate
 
@@ -229,6 +230,13 @@ properties-page-header-bad-line = Page properties can't be saved yet: line { $li
 properties-page-header-has-child-blocks = Page properties can't be saved yet: the properties block has child blocks. Outdent or delete them.
 
 selection-outline-is-too-deep-to-indent = Outline is too deep to indent
+selection-merge-needs-two-blocks = Select two or more blocks to merge
+selection-merge-not-in-results = Blocks in a results list can’t be merged; select them on their own page
+selection-merge-one-page-only = Selected blocks from more than one page can’t be merged
+selection-merge-read-only = Can’t merge: a selected block is on a read-only page
+selection-merge-would-break-a-reference = Can’t merge these blocks: a block other than the first is referenced by its block ID, and the merged block can keep only one block ID
+selection-merge-special-blocks = Can’t merge blocks that hold a query, an embed, a sheet or a PDF highlight
+selection-merge-refused = Can’t merge these blocks
 
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-rewrite-rename-failed = Rename failed: { $error }

@@ -123,6 +123,8 @@ command-ui-toggle-code-block-wrap = 切换代码块自动换行
 
 command-ui-toggle-document-mode = 切换文档模式
 
+command-ui-toggle-comment-margin = 切换评论边栏
+
 command-ui-toggle-focus-mode = 切换专注模式
 
 command-ui-toggle-dim-blocks = 切换淡化非活动块
@@ -203,11 +205,18 @@ command-editor-duplicate-block-above = 在上方复制块（含子块）
 
 command-editor-insert-child-block = 插入子块
 
+command-editor-merge-selected-blocks = 合并所选块
+
+command-editor-new-sibling-after-subtree = 在此块的子块之后新建块
+
 command-editor-select-embedding-block = 选择嵌入所在块
 
 command-editor-collapse-children = 折叠（一层）
 
 command-editor-expand-children = 展开（一层）
+
+# $depth (number): how many levels stay open, 0 to 9.
+command-editor-set-depth-n = 设置展开深度 { $depth }
 
 command-editor-paste-as-link = 粘贴为链接
 command-editor-zoom-in = 放大到块

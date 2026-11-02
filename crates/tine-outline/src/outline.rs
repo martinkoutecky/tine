@@ -21,6 +21,7 @@ mod apply;
 mod header;
 pub use apply::apply_with_policy;
 mod insert;
+mod merge_many;
 use header::header_root_kept;
 use insert::insert_outline;
 
@@ -251,6 +252,15 @@ pub enum Verb {
         #[serde(default)]
         absorbed_referenced: bool,
     },
+    /// Merge selected blocks (GH #764): append each of `absorbed`, in order, to
+    /// `survivor` with a line break between the texts. `referenced` names the
+    /// absorbed blocks whose `id::` the host's reference index says is used.
+    MergeMany {
+        survivor: Key,
+        absorbed: Vec<Key>,
+        #[serde(default)]
+        referenced: Vec<Key>,
+    },
     /// Tab on one block or a selection: `keys` (top-level, document order)
     /// become the last children of the first key's previous sibling.
     Indent { keys: Vec<Key> },
@@ -322,6 +332,13 @@ impl Verb {
             Verb::Merge {
                 survivor, absorbed, ..
             } => vec![read(survivor, false), read(absorbed, true)],
+            Verb::MergeMany {
+                survivor, absorbed, ..
+            } => {
+                let mut reads = vec![read(survivor, false)];
+                reads.extend(absorbed.iter().map(|k| read(k, true)));
+                reads
+            }
             Verb::Indent { keys } | Verb::Outdent { keys, .. } | Verb::Delete { keys } => {
                 whole(keys)
             }

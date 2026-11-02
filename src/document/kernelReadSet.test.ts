@@ -107,4 +107,34 @@ describe("the read-set marshal", () => {
     expect(partialSent).toBeGreaterThan(1500);
     resetStore();
   });
+
+  // GH #764: a selection merge reads every absorbed block and the survivor only.
+  it("answers as whole pages do for a selection merge, without falling back", () => {
+    const r = rng(20261101);
+    let partialSent = 0;
+    for (let trial = 0; trial < 150; trial++) {
+      resetStore();
+      const pages = ["P", "Q"];
+      loadFeed(pages.map((name, i) => ({ name, kind: "page" as const, title: name, pre_block: null, format: "md" as const, read_only: false, blocks: randomPage(r, name, 3 + Math.floor(r() * 30), i ? "q" : "p") })));
+      for (let step = 0; step < 4; step++) {
+        const keys = Object.values(doc.byId).filter((n) => n.page === "P").map((n) => n.id);
+        const survivor = keys[Math.floor(r() * keys.length)];
+        const absorbed = keys.filter((k) => k !== survivor && r() < 0.35);
+        if (!absorbed.length) continue;
+        const verb: OutlineVerb = { verb: "merge_many", survivor, absorbed, referenced: absorbed.filter(() => r() < 0.3) };
+        outlineMarshal.whole = true;
+        const whole = outlineChange(verb, pages);
+        outlineMarshal.whole = false;
+        outlineMarshal.fallbacks = 0;
+        const partial = outlineChange(verb, pages);
+        const context = JSON.stringify({ trial, step, verb, whole });
+        expect(partial, context).toEqual(whole);
+        const expected = "refused" in whole && whole.refused === "incomplete" ? 1 : 0;
+        expect(outlineMarshal.fallbacks, context).toBe(expected);
+        if (!expected) partialSent++;
+      }
+    }
+    expect(partialSent).toBeGreaterThan(100);
+    resetStore();
+  });
 });

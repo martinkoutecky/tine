@@ -10,7 +10,12 @@ import {
   blockHasFoldableBody,
   buildClipboardPayload,
   hasSelection,
+  blockHasPageEmbed,
+  blockHasQueryBody,
+  blockIsGridView,
   insertEmptyChildBlock,
+  mergeSelection,
+  formatForBlock,
   insertOutlineAfter,
   insertOutlineBefore,
   pageByName,
@@ -33,6 +38,8 @@ import { copyBlockLink } from "./components/blockLinkCopy";
 import { type ClipboardPayloadSlot } from "./clipboard";
 import { isPasteableUrl, wrapLink, type Edit } from "./editor/format";
 import { activeElement, isElementTag, selectionOf } from "./windowRealm";
+import { soleBlockMacro } from "./render/parse";
+import { isAnnotationBlock } from "./editor/annotation";
 
 /** Open a block in the sidebar, a new tab, or the other pane. Synchronous: no save. */
 export function openDurableBlock(id: string, destination: "sidebar" | "tab" | "pane"): void {
@@ -154,18 +161,49 @@ export function insertChildIntoTarget(): string | null {
   return child;
 }
 
-/** GH #525 / #696: collapse immediate children; expand the first level with
- *  folded non-leaves, starting at the immediate children. The target opens so
- *  the result shows. Without a target, start at the page's top-level blocks.
- *  GH #792: a query block's children are its result rows (and any outline
- *  children); the rows fold through their group's local surface, never the file. */
-export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
+/** GH #764: merge the selected blocks into the first one (palette and keymap
+ *  only). Blocks whose meaning lives in their whole text or their children are
+ *  refused whole, not flattened into a paragraph: a query, a page or block
+ *  embed, a sheet and a PDF highlight. Everything else is the kernel's
+ *  `merge_many` (`mergeSelection`). */
+export function mergeSelectedBlocks(): boolean {
+  const ids = selectedIds();
+  for (const id of ids) {
+    const n = docNode(id);
+    if (!n) continue;
+    const format = formatForBlock(id);
+    if (blockHasQueryBody(id) || blockHasPageEmbed(id) || blockIsGridView(id)
+      || soleBlockMacro(n.raw, format)?.name === "embed" || isAnnotationBlock(n.raw, format)) {
+      pushToast(msg("selection-merge-special-blocks"), "warn");
+      return false;
+    }
+  }
+  return mergeSelection();
+}
+
+/** How the fold commands (GH #525 / #696 one level, GH #794 set depth) see the
+ *  tree under their targets: which rows answer through a local surface (embed
+ *  rows, query result groups), what counts as folded, and each block's visible
+ *  children. GH #792: a query block's children are its result rows (and any
+ *  outline children); the rows fold through their group's local surface, never
+ *  the file. */
+interface FoldWalk {
+  /** The command targets (empty when the command falls back to the page's roots). */
+  parents: string[];
+  pageRoots: string[] | null;
+  isCollapsed: (id: string) => boolean;
+  surfaceOf: (id: string) => CommandCollapseSurface | undefined;
+  children: (ids: string[]) => string[];
+}
+
+function foldWalk(pageFallback: boolean): FoldWalk | null {
   let parents: string[] = commandTargetIds();
   let pageRoots: string[] | null = null;
   if (!parents.length) {
+    if (!pageFallback) return null;
     const route = paneRouter(focusedPaneId()).route();
     pageRoots = route.kind === "page" ? [...(pageByName(route.name)?.roots ?? [])] : null;
-    if (!pageRoots) return false;
+    if (!pageRoots) return null;
     parents = [];
   }
   const row = parents.length ? collapseCommandRow(parents[0]) : undefined;
@@ -178,10 +216,6 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   const isCollapsed = (id: string) => {
     const stored = storedFold(id); // `collapsed::`, else a query's authored `:collapsed? true`
     return surfaceOf(id)?.collapsed(id, stored) ?? stored;
-  };
-  const folded = (id: string) => {
-    const n = docNode(id);
-    return !!n && blockHasFoldableBody(id) && isCollapsed(id);
   };
   const children = (ids: string[]) => {
     const out = new Set<string>();
@@ -198,6 +232,39 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
       }
     }
     return [...out];
+  };
+  return { parents, pageRoots, isCollapsed, surfaceOf, children };
+}
+
+/** Apply fold changes as ONE undo step through the existing per-block door.
+ *  Occurrence toggles own their persistence: an embed root saves its HOST
+ *  property (with its own undo); below it a block embed saves the source's
+ *  folds (D-20261030-EMB) and other surfaces change local presentation only.
+ *  A source-page undo snapshot would suppress and then lose that host undo. */
+function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][], tag: string): void {
+  const apply = () => {
+    for (const [id, value] of changes) {
+      if (!blockHasFoldableBody(id) || walk.isCollapsed(id) === value) continue;
+      const own = walk.surfaceOf(id);
+      if (own) own.toggle(id, walk.isCollapsed(id));
+      else setCollapsed(id, value);
+    }
+  };
+  const written = [...new Set(changes.filter(([id]) => !walk.surfaceOf(id)).map(([id]) => docNode(id)?.page).filter((p): p is string => !!p))];
+  if (!written.length) apply();
+  else withUndoUnit(tag, written, apply);
+}
+
+/** GH #525 / #696: collapse immediate children; expand the first level with
+ *  folded non-leaves, starting at the immediate children. The target opens so
+ *  the result shows. Without a target, start at the page's top-level blocks. */
+export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
+  const walk = foldWalk(true);
+  if (!walk) return false;
+  const { parents, pageRoots, isCollapsed, children } = walk;
+  const folded = (id: string) => {
+    const n = docNode(id);
+    return !!n && blockHasFoldableBody(id) && isCollapsed(id);
   };
   // GH #696: one level includes the targets themselves. Collapse folds the
   // children first and the targets once no child is left open; it never opens
@@ -219,26 +286,52 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     while (level.length && !level.some(folded)) level = children(level);
   }
   const touched = [...opened, ...level];
-  const pages = [...new Set(touched.map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
-  if (!pages.length) return false;
-  const apply = () => {
-    const setFold = (id: string, value: boolean) => {
-      if (!blockHasFoldableBody(id) || isCollapsed(id) === value) return;
-      const own = surfaceOf(id);
-      if (own) own.toggle(id, isCollapsed(id));
-      else setCollapsed(id, value);
-    };
-    for (const id of opened) setFold(id, false);
-    for (const id of level) setFold(id, collapsed);
-  };
-  // Occurrence toggles own their persistence: an embed root saves its HOST
-  // property (with its own undo); below it a block embed saves the source's
-  // folds (D-20261030-EMB) and other surfaces change local presentation only.
-  // A source-page undo snapshot would suppress and then lose that host undo.
-  const written = [...new Set(touched.filter((id) => !surfaceOf(id)).map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
-  if (!written.length) apply();
-  else withUndoUnit(collapsed ? "collapse-children" : "expand-children", written, apply);
+  if (!touched.some((id) => docNode(id)?.page)) return false;
+  commitFolds(walk, [...opened.map((id): [string, boolean] => [id, false]), ...level.map((id): [string, boolean] => [id, collapsed])],
+    collapsed ? "collapse-children" : "expand-children");
   return true;
+}
+
+/** GH #794: show each target down to `depth`. The target is level 0; levels
+ *  0 to depth-1 are opened and the blocks at level `depth` are folded, so depth
+ *  0 folds the target and depth 2 shows children with their grandchildren folded.
+ *  Levels below `depth` are hidden by the fold above them and are left alone,
+ *  expanded or not. Only blocks whose state differs are written, in one undo
+ *  step through the same door as the one-level commands (#696). Result rows of
+ *  a query and block embeds fold through their own surfaces, as there. A
+ *  descendant that is not loaded has no children to walk and is skipped.
+ *  Returns whether anything changed; nothing selected or edited is a no-op. */
+export function setTargetDepth(depth: number): boolean {
+  const walk = foldWalk(false);
+  if (!walk) return false;
+  const { parents, isCollapsed, children } = walk;
+  // A selection holds a block and its visible descendants: depth is relative to
+  // the topmost selected blocks, so a nested selected block is not a second root.
+  const set = new Set(parents);
+  let level = parents.filter((id) => !ancestorsIn(id, set));
+  const changes: [id: string, collapsed: boolean][] = [];
+  const visit = (ids: string[], collapsed: boolean) => {
+    for (const id of ids) {
+      if (docNode(id) && blockHasFoldableBody(id) && isCollapsed(id) !== collapsed) changes.push([id, collapsed]);
+    }
+  };
+  for (let n = 0; n < depth && level.length; n++) {
+    visit(level, false);
+    level = children(level);
+  }
+  visit(level, true);
+  if (!changes.length) return false;
+  commitFolds(walk, changes, "set-depth");
+  return true;
+}
+
+/** The Set depth commands' door: with no block selected or edited, say what they need. */
+export function runSetDepth(depth: number): boolean {
+  if (!commandTargetIds().length) {
+    pushToast(msg("block-ref-actions-select-blocks-or-edit-one-to-set-depth"), "warn");
+    return false;
+  }
+  return setTargetDepth(depth);
 }
 
 /** The text a "search for selection" command should look up: the focused block

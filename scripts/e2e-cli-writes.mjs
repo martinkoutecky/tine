@@ -25,6 +25,9 @@ const file = path.join(GRAPH, "pages/CLI.md");
 fs.writeFileSync(file, "- user\n- agent\n");
 const typingFile = path.join(GRAPH,"pages/Typing.md");
 fs.writeFileSync(typingFile,"- user\n- agent\n");
+// #840: an edit keeps the properties its text does not name, under either owner.
+const propsFile = path.join(GRAPH,"pages/Props.md");
+fs.writeFileSync(propsFile,"- serve\n  status:: done\n- app\n  status:: done\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Referrer.md"), "- see [[CLI]]\n");
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), '{:default-home {:page "CLI"}}\n');
 const ownerFixture = installAccountHome(TMP, process.env.E2E_ARTIFACT_DIR || TMP);
@@ -60,6 +63,8 @@ try {
   assert.equal((await cli(["status"])).owner, "serve");
   const page = await cli(["page", "show", "CLI"]);
   await cli(["edit", handle(page,1), "agent before handover"]);
+  await cli(["edit", handle(await cli(["page","show","Props"]),0), "serve edited"]);
+  await waitForFileText(propsFile, text => text.startsWith("- serve edited\n  status:: done\n"));
   const driverLog = fs.openSync(path.join(TMP,"driver.log"), "w");
   driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port,native,process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, stdio: ["ignore",driverLog,driverLog], detached:true });
   fs.closeSync(driverLog);
@@ -88,6 +93,10 @@ try {
     failures.push({journey:"open-window",classification:"product",expected:"CLI write appears without navigation",observed:"file changed; window still displays old text"});
     fs.writeFileSync(path.join(TMP,"window-failure-dom.json"),JSON.stringify(await browser.execute(() => ({text:document.body.innerText,errors:window.__cliErrors})),null,2));
   }
+
+  await cli(["edit",handle(await cli(["page","show","Props"]),1),"app edited"]);
+  await waitForFileText(propsFile, text => text === "- serve edited\n  status:: done\n- app edited\n  status:: done\n");
+  steps.push("both owners: edit keeps the block's properties");
 
   // Independent page: a failed window notification must not hide typing proof.
   await openPageByName(browser,"Typing");

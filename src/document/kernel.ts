@@ -26,6 +26,7 @@ export type OutlineVerb =
   | { verb: "insert_outline"; place: OutlinePlace; blocks: readonly OutlineNode[]; live_ids?: string[]; reuse?: string }
   | { verb: "split"; key: string; raw_offset: number; force_child: boolean; children_visible: boolean; keep_start_in_scope: boolean }
   | { verb: "merge"; survivor: string; absorbed: string; absorbed_referenced: boolean }
+  | { verb: "merge_many"; survivor: string; absorbed: string[]; referenced: string[] }
   | { verb: "indent"; keys: string[] }
   | { verb: "outdent"; keys: string[]; logical: boolean }
   | { verb: "delete"; keys: string[] }

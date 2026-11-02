@@ -44,3 +44,32 @@ config-query-title = 查询
 config-query-unsupported = Tine 暂时无法运行 config.edn 中的此查询。
 
 config-query-details = 技术详情
+
+sidebar-namespaces-title = 命名空间
+
+pages-namespaces-open-full-view = 打开完整视图…
+
+pages-namespaces-filter = 筛选命名空间和页面
+
+pages-namespaces-expand-all = 全部展开
+
+pages-namespaces-collapse-all = 全部折叠
+
+pages-namespaces-column-namespace = 命名空间
+
+pages-namespaces-column-pages = 页面
+
+pages-namespaces-no-matches = 没有匹配的命名空间或页面名称。
+
+pages-namespaces-empty = 尚无命名空间页面。将页面命名为 Project/Roadmap 这样即可创建。
+
+pages-namespaces-expand = 展开 { $name }
+
+pages-namespaces-collapse = 折叠 { $name }
+
+pages-namespaces-matches = { $count ->
+    [one] { NUMBER($count, useGrouping: 0) } 个匹配
+   *[other] { NUMBER($count, useGrouping: 0) } 个匹配
+    }
+
+pages-namespaces-count = { NUMBER($pages, useGrouping: 0) } 个页面，{ NUMBER($namespaces, useGrouping: 0) } 个命名空间

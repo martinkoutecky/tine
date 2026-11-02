@@ -46,7 +46,7 @@ import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } f
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -499,6 +499,8 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
   // The grid owns mod+a (whole-grid selection) — a cell editor must not
   // escalate into outline block selection.
   "editor/select-all",
+  // A cell is not an outline sibling; Alt+Enter there appends a child (sheet keys).
+  "editor/new-sibling-after-subtree",
 ]);
 
 
@@ -1123,7 +1125,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   const assets = editorAssets({
-    id: props.id, element: () => ref, mounted: () => editorMounted,
+    id: props.id, element: () => ref, mounted: () => editorMounted, capture: !!cap,
     insert: (markdown, current) => {
       const start = ref.selectionStart, end = ref.selectionEnd;
       const newRaw = ref.value.slice(0, start) + markdown + ref.value.slice(end);
@@ -1938,6 +1940,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       return true;
     },
     "editor/cycle-todo": (e) => { e.preventDefault(); cycleTodoCmd(); return true; },
+    "editor/new-sibling-after-subtree": (e) => {
+      e.preventDefault();
+      const created = insertSiblingAfterSubtree(props.id, () => commit(ref.value), outlineScope?.forceExpandedRoot === props.id);
+      if (created) startEditing(created, 0, null, editSurface());
+      return true;
+    },
     "editor/indent": (e) => {
       e.preventDefault();
       // First-line Markdown markers keep OG outline Tab semantics (GH #632).

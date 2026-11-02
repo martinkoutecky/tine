@@ -76,6 +76,30 @@ describe("a checkout-sized batch (graph-changed-bulk)", () => {
   });
 });
 
+// tine#644 follow-up F5. A window answers a change on a page it shows but no
+// host holds with one read, and nothing here damps a repeat. So the bound is
+// the store's: reading a page must not announce a change for it
+// (`reading_a_contained_page_again_publishes_nothing`). With a store that does,
+// each read starts the next one.
+describe("a shown page no host holds", () => {
+  const readsFor = async (announcedByReads: number) => {
+    reads = [];
+    let left = announcedByReads;
+    vi.spyOn(backend(), "getPage").mockImplementation(async (name) => {
+      reads.push(name);
+      if (left-- > 0) await applyGraphChange(changed("Open"));
+      return page("Open", ["text"]) as never;
+    });
+    await applyGraphChange(changed("Open"));
+    return reads.length;
+  };
+
+  it("takes one read per announced change", async () => {
+    expect(await readsFor(0)).toBe(1);
+    expect(await readsFor(5)).toBe(6);
+  });
+});
+
 describe("always ask", () => {
   it("holds the silent reload of a loaded clean page until Reload from disk", async () => {
     ensurePageLoaded(page("Open", ["old"]));

@@ -51,6 +51,7 @@ import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
+import { toggleCommentMargin } from "./commentMargin";
 import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
@@ -83,7 +84,7 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
-import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, searchSelectedText, setTargetChildrenCollapsed } from "./blockRefActions";
+import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed } from "./blockRefActions";
 import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
 import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
@@ -431,6 +432,8 @@ const COMMANDS: CommandDef[] = [
   },
   { id: "ui/toggle-wide-mode", binding: "t w", label: msg("command-ui-toggle-wide-mode"), scope: "global", run: toggleWideMode },
   { id: "ui/toggle-document-mode", binding: "t d", label: msg("command-ui-toggle-document-mode"), scope: "global", run: toggleDocumentMode },
+  // GH #845: the comment margin, a view state like wide and document mode (OG binds no "t m").
+  { id: "ui/toggle-comment-margin", binding: "t m", label: msg("command-ui-toggle-comment-margin"), scope: "global", run: toggleCommentMargin },
   { id: "ui/toggle-focus-mode", binding: "t f", label: msg("command-ui-toggle-focus-mode"), scope: "global", run: toggleFocusMode },
   { id: "ui/toggle-dim-blocks", binding: "t b", label: msg("command-ui-toggle-dim-blocks"), scope: "global", run: toggleDimInactiveBlocks },
   // Web KeyboardEvent reports Shift+/ as key "?", so the binding must use the
@@ -466,9 +469,20 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/duplicate-block", binding: "", label: msg("command-editor-duplicate-block"), scope: "global", run: () => void duplicateTargetBlocks(), global: true },
   { id: "editor/duplicate-block-above", binding: "", label: msg("command-editor-duplicate-block-above"), scope: "global", run: () => void duplicateTargetBlocks("above"), global: true },
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
+  // GH #764 (D-20261101-L5): palette and keymap only, no default key. Acts on a block selection.
+  { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
+  // GH #794: Set depth 0 to 9 on the block(s) in play. No default chords: Mod+digit is pane focus.
+  ...Array.from({ length: 10 }, (_, depth): CommandDef => ({
+    id: `editor/set-depth-${depth}`,
+    binding: "",
+    label: msg("command-editor-set-depth-n", { depth }),
+    scope: "global",
+    run: () => { runSetDepth(depth); },
+    global: true,
+  })),
   // GH #799 (OG `:editor/zoom-in` / `:editor/zoom-out`, config.cljs:349-353). Unbound:
   // OG's non-Mac chords alt+right / alt+left are Tine's Forward / Back, and its Mac
   // mod+, is Settings. Both go through the router's one zoom path (zoomCommands.ts).
@@ -501,6 +515,9 @@ const COMMANDS: CommandDef[] = [
   // Ctrl/Cmd+A ladder (GH #262): first press selects the block's text natively,
   // then the block's subtree, then each ancestor's subtree, then the outline.
   { id: "editor/select-all", binding: "mod+a", label: msg("command-editor-select-all"), scope: "editor" },
+  // GH #818: a new block at this block's level after its whole subtree. Alt+Enter is free in
+  // OG and in Tine's block editors (sheet cells keep their own Alt+Enter, "add a child").
+  { id: "editor/new-sibling-after-subtree", binding: "alt+enter", label: msg("command-editor-new-sibling-after-subtree"), scope: "editor" },
   { id: "editor/cycle-todo", binding: "mod+enter", label: msg("command-editor-cycle-todo"), scope: "editor" },
   // Quick-capture mini-window only: file the capture to today's journal. Acts
   // only when CaptureCtx is present (Block.tsx); a no-op in the main app. Default

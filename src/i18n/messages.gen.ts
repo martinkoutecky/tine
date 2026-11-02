@@ -100,6 +100,7 @@ export interface MessageArgs {
   "block-parts-start": {};
   "block-parts-type": {};
   "block-ref-actions-select-blocks-or-edit-one-to-copy-their": {};
+  "block-ref-actions-select-blocks-or-edit-one-to-set-depth": {};
   "block-ref-actions-too-much-selected-to-duplicate": {};
   "blocks-merge-would-break-a-reference": {};
   "blocks-outline-is-too-deep-to-insert-a-child": {};
@@ -182,8 +183,10 @@ export interface MessageArgs {
   "command-editor-italics": {};
   "command-editor-kill-line-after": {};
   "command-editor-kill-line-before": {};
+  "command-editor-merge-selected-blocks": {};
   "command-editor-move-block-down": {};
   "command-editor-move-block-up": {};
+  "command-editor-new-sibling-after-subtree": {};
   "command-editor-open-link-in-sidebar": {};
   "command-editor-outdent": {};
   "command-editor-paste-as-link": {};
@@ -193,6 +196,7 @@ export interface MessageArgs {
   "command-editor-select-block-down": {};
   "command-editor-select-block-up": {};
   "command-editor-select-embedding-block": {};
+  "command-editor-set-depth-n": { "depth": string | number };
   "command-editor-strike-through": {};
   "command-editor-toggle-open-blocks": {};
   "command-editor-toggle-undo-redo-mode": {};
@@ -257,6 +261,7 @@ export interface MessageArgs {
   "command-ui-reset-zoom": {};
   "command-ui-toggle-brackets": {};
   "command-ui-toggle-code-block-wrap": {};
+  "command-ui-toggle-comment-margin": {};
   "command-ui-toggle-custom-css": {};
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};
@@ -288,10 +293,17 @@ export interface MessageArgs {
   "comment-block-changed": {};
   "comment-delete": {};
   "comment-margin-count": { "count": number };
+  "comment-margin-draft-pending": {};
   "comment-margin-label": {};
   "comment-name-hint": {};
   "comment-name-label": {};
   "comment-name-placeholder": {};
+  "comment-name-prompt-body": {};
+  "comment-name-prompt-dismiss": {};
+  "comment-name-prompt-graph-changed": {};
+  "comment-name-prompt-save": {};
+  "comment-name-prompt-scope": {};
+  "comment-name-prompt-title": {};
   "comment-on-whole-block": {};
   "comment-quote-changed": {};
   "comment-reply": {};
@@ -1445,6 +1457,18 @@ export interface MessageArgs {
   "pages-all-open-more": { "count": string | number };
   "pages-all-show-journals": {};
   "pages-all-title": {};
+  "pages-namespaces-collapse": { "name": string | number };
+  "pages-namespaces-collapse-all": {};
+  "pages-namespaces-column-namespace": {};
+  "pages-namespaces-column-pages": {};
+  "pages-namespaces-count": { "namespaces": number; "pages": number };
+  "pages-namespaces-empty": {};
+  "pages-namespaces-expand": { "name": string | number };
+  "pages-namespaces-expand-all": {};
+  "pages-namespaces-filter": {};
+  "pages-namespaces-matches": { "count": number };
+  "pages-namespaces-no-matches": {};
+  "pages-namespaces-open-full-view": {};
   "paste-pasted-as-a-copy-references-to-these-blocks": {};
   "paste-pasted-outline-is-too-deep": {};
   "pdf-area-highlight": {};
@@ -2384,6 +2408,13 @@ export interface MessageArgs {
   "seen-settings-label": {};
   "seen-settings-mark-graph": {};
   "seen-state-forgotten": {};
+  "selection-merge-needs-two-blocks": {};
+  "selection-merge-not-in-results": {};
+  "selection-merge-one-page-only": {};
+  "selection-merge-read-only": {};
+  "selection-merge-refused": {};
+  "selection-merge-special-blocks": {};
+  "selection-merge-would-break-a-reference": {};
   "selection-outline-is-too-deep-to-indent": {};
   "session-could-not-restore-workspaces": { "error": string | number };
   "session-live-changes-were-kept-workspace-recovery-was-skipped": {};
@@ -2511,6 +2542,8 @@ export interface MessageArgs {
   "settings-search-code-blocks-line-wrapping-long-lines": {};
   "settings-search-color-scheme": {};
   "settings-search-comment-author-name-margin-reply": {};
+  "settings-search-comment-margin": {};
+  "settings-search-comment-threads-hide-show": {};
   "settings-search-copy-a-parent-block-s-sub-blocks": {};
   "settings-search-default-journal-template": {};
   "settings-search-default-nord-solarized-gruvbox-soft-medium-light": {};
@@ -2648,6 +2681,7 @@ export interface MessageArgs {
   "settings-ui-carry-over-header": {};
   "settings-ui-carry-over-keeps-context": {};
   "settings-ui-click-a-block-reference-to-zoom-in": {};
+  "settings-ui-comment-margin": {};
   "settings-ui-config-edn-could-not-be-read-this-graph-is": {};
   "settings-ui-conflicts": {};
   "settings-ui-controls-enter-for-non-exact-name-and-name-completion": {};
@@ -2768,6 +2802,7 @@ export interface MessageArgs {
   "settings-ui-show-carry-over-buttons": {};
   "settings-ui-show-the-around-page-references-saved-to-ui-show": {};
   "settings-ui-show-the-carry-buttons-next-to-journal-titles-off": {};
+  "settings-ui-shows-the-comment-threads-beside-the-page-off-hides": {};
   "settings-ui-smaller-ctrl": {};
   "settings-ui-smooth-scrolling-experimental": {};
   "settings-ui-snapshots-to-keep": {};
@@ -2947,6 +2982,7 @@ export interface MessageArgs {
   "sidebar-favorites-rename-group": { "groupName": string | number };
   "sidebar-journals": {};
   "sidebar-namespaces": {};
+  "sidebar-namespaces-title": {};
   "sidebar-new-graph": {};
   "sidebar-new-page": {};
   "sidebar-open-graph": {};

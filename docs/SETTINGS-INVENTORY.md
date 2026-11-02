@@ -32,6 +32,7 @@ dynamic keys are outside this core inventory.
 | `appearance` | `settings-search-wide-mode` | Wide mode | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `settings-search-standard-page-width` | Standard page width | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `settings-search-wide-page-width` | Wide page width | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
+| `appearance` | `settings-search-comment-margin` | Comment margin | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `settings-search-document-mode` | Document mode | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `settings-search-document-mode-enter-creates-a-new-block` | Document-mode Enter creates a new block | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `settings-search-show-brackets` | Show brackets | Basic | Visible workflow, accessibility, permission or safety choice. |

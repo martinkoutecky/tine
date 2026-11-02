@@ -52,6 +52,10 @@ settings-search-document-mode = 文档模式
 
 settings-search-hide-bullets-prose = 隐藏 项目符号 正文
 
+settings-search-comment-margin = 评论边栏
+
+settings-search-comment-threads-hide-show = 评论 评论串 隐藏 显示
+
 settings-search-document-mode-enter-creates-a-new-block = 文档模式下 Enter 新建块
 
 settings-search-enter-shift-enter-internal-newline-config = Enter Shift Enter 块内 换行 配置

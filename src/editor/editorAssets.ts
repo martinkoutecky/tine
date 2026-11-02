@@ -27,7 +27,14 @@ export function editorAssets(ctx: {
   element(): HTMLElement;
   mounted(): boolean;
   insert(markup: string, current: () => boolean): void;
+  /** Quick Capture has no graph slot of its own, so its pasted and uploaded files go to the
+   *  narrow capture asset commands, never the graph-window ones (GH #835). */
+  capture?: boolean;
 }) {
+  const saveAsset = (name: string, bytes: Uint8Array, generation: number) =>
+    ctx.capture ? backend().captureSaveAsset(name, bytes, generation) : backend().saveAsset(name, bytes, generation);
+  const importAsset = (path: string, name: string | undefined, generation: number) =>
+    ctx.capture ? backend().captureImportAsset(path, name, generation) : backend().importAsset(path, name, generation);
   const captureAssetEditorToken = () => captureAssetEditor(ctx.element());
   const assetEditorCurrent = (token: AssetEditorToken) => assetEditorIsCurrent(token, ctx.element(), ctx.mounted());
 
@@ -45,7 +52,7 @@ export function editorAssets(ctx: {
     try {
       // Data before reference: a crash may leave an orphan asset, but can never
       // persist a note that points at bytes which existed only in WebView memory.
-      const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
+      const result = await writeOwned(owner, trackAssetWrite(saveAsset(candidate, bytes, token.binding.backendGeneration)));
       if (result.kind === "stale") { reportStaleAsset(); return; }
       stored = result.value;
     } catch (error) { pushToast(msg("editor-block-couldn-t-save-to-assets", { detail: String(error) }), "error"); return; }
@@ -95,7 +102,7 @@ export function editorAssets(ctx: {
         skipped += native.skipped;
         for (const file of native.files) {
           try {
-            const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
+            const result = await writeOwned(owner, trackAssetWrite(importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
           } catch (error) {
             pushToast(msg("editor-block-couldn-t-import-pasted-file", { detail: String(error) }), "error");
@@ -160,7 +167,7 @@ export function editorAssets(ctx: {
               continue;
             }
             const candidate = assetFileName(file.name || undefined);
-            const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
+            const result = await writeOwned(owner, trackAssetWrite(saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; const saved = result.value;
             stored.push({ stored: saved, label: file.name || undefined });
             try {
@@ -297,7 +304,7 @@ export function editorAssets(ctx: {
     try {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
+      const saved = await writeOwned(owner, trackAssetWrite(importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
       if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
     } catch (error) {
       pushToast(msg("editor-block-couldn-t-import-asset", { detail: String(error) }), "error");

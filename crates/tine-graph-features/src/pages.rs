@@ -327,7 +327,8 @@ pub fn delete_page_expected(
 /// OG `:block/refs` semantics: `{{query}}` arguments are not references) are
 /// rewritten, including bare `tags::` members and self-references; a bare
 /// `alias::` member stays, as in OG `replace-old-page!` (C3Y Y4). Non-UTF-8
-/// candidates are skipped as in v0.6.5; a non-round-tripping Org referrer
+/// candidates refuse (C3W W2), as does a page listed unreadable that may hold a
+/// renamed name; a non-round-tripping Org referrer
 /// refuses the entire rename (H1). An `old` with no file still rewrites its
 /// references; journal files never move. A case-only rename updates filename
 /// spelling, title and references through the same transaction. A target another

@@ -56,7 +56,6 @@ impl Graph {
                 .is_err()
                 {
                     named = None;
-                    self.invalidate_cache();
                     self.record_index_failure(path);
                 }
             }
