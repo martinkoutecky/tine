@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android: when a line you tap to edit is moved out of view while the keyboard opens, Tine now brings it back just above the keyboard toolbar, where 0.7.4 put it, instead of at the top of the screen, where the pinned parent blocks could still cover it (#783). With an interface zoom other than 100%, a line just under the pinned parents is no longer taken as visible and left covered. Not yet confirmed on the reporter's phone.
 - Opening or creating a page while a large graph is still loading (for example today's journal from the daily template) could make loading take nearly twice as long, because the graph was indexed a second time. Tine now keeps the index it just built (REG-LOADING-INSTALL-RACE-SECOND-BUILD).
 - A page with many linked references no longer keeps moving while you do nothing. With more than 80 source pages loaded, references kept reloading one another, so their text changed form and the scrollbar crept (#849).
 - Coming back to a tab or going back in history now returns to the row you were reading in Linked References, even when the references load slowly, instead of the top, the end of the scrollbar or a nearby reference (#848).
