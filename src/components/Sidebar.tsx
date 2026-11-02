@@ -4,7 +4,7 @@ import { msg, t } from "../i18n";
 import { HomeIcon, JournalsIcon } from "./JournalsIcon";
 import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
-import { openAllGraphs, openAllPages, openConflicts, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openAllGraphs, openAllPages, openNamespaces, openConflicts, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openJournalsFromClick } from "../journalsNavigation";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
@@ -238,6 +238,14 @@ export function Sidebar(props: {
           >
             <ReferenceDisclosure class="nav-toggle-caret" collapsed={!showNs()} />{t("sidebar-namespaces")}</div>
           <Show when={showNs()}>
+            <button
+              type="button"
+              class="nav-item nav-namespaces-open"
+              classList={{ active: route().kind === "namespaces" }}
+              onClick={() => { openNamespaces(); props.onActiveNavigationComplete?.(); }}
+            >
+              {t("pages-namespaces-open-full-view")}
+            </button>
             <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
         </div></Show>

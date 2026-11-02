@@ -21,8 +21,7 @@ import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
 import { retirePdfNavigationIntent } from "./pdfNavigation";
-import { VIEW_KINDS } from "./editor/queryIr";
-import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
+import { applyQueryRoutePatch, type QueryRoutePatch } from "./queryRoutePatch";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 import { mainWindow, requestFrame } from "./windowRealm";
 import {
@@ -30,59 +29,7 @@ import {
   rootSlot, setTabCollapsed as treeSetCollapsed, settleTabTree,
 } from "./tabTree";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
-
-/** The one reader of a query presentation; null is "unreadable". */
-export function normalizeQueryPresentation(value: unknown): QueryPresentation | null {
-  return typeof value === "string" && (VIEW_KINDS as readonly string[]).includes(value) ? value as QueryPresentation : null;
-}
-
-/** What one atomic edit to the active query workspace may change. For each display
- * or presentation field: absent keeps the route's value, an explicit `undefined`
- * removes the override, a present value must normalize (`{}` stays an explicit clear). */
-export type QueryRoutePatch = Partial<Pick<QueryRoute,
-  "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>;
-
-/** The pure half of `updateActiveQuery`: the next route, or null when the patch
- * carries a value this build cannot read and the whole edit is refused. */
-export function applyQueryRoutePatch(current: QueryRoute, patch: QueryRoutePatch): QueryRoute | null {
-  const next: QueryRoute = { ...current };
-  if (Object.hasOwn(patch, "source")) {
-    if (typeof patch.source !== "string") return null;
-    next.source = patch.source;
-  }
-  if (Object.hasOwn(patch, "sourceKind")) {
-    if (patch.sourceKind !== "search" && patch.sourceKind !== "dsl") return null;
-    next.sourceKind = patch.sourceKind;
-  }
-  if (Object.hasOwn(patch, "presentation")) {
-    const presentation = normalizeQueryPresentation(patch.presentation);
-    if (!presentation) return null;
-    next.presentation = presentation;
-  }
-  for (const key of ["pageDisplay", "blockDisplay"] as const) {
-    if (!Object.hasOwn(patch, key)) continue;
-    if (patch[key] === undefined) { delete next[key]; continue; }
-    const display = normalizeQueryDisplayDraft(patch[key]);
-    if (!display) return null;
-    next[key] = display;
-  }
-  for (const key of ["pagePresentation", "blockPresentation"] as const) {
-    if (!Object.hasOwn(patch, key)) continue;
-    if (patch[key] === undefined) { delete next[key]; continue; }
-    const presentation = normalizeQueryPresentation(patch[key]);
-    if (!presentation) return null;
-    next[key] = presentation;
-  }
-  if (Object.hasOwn(patch, "pageMatchScope")) {
-    if (patch.pageMatchScope === undefined) delete next.pageMatchScope;
-    else {
-      const scope = normalizeFriendlyPageMatchScope(patch.pageMatchScope);
-      if (!scope) return null;
-      next.pageMatchScope = scope;
-    }
-  }
-  return next;
-}
+export { normalizeQueryPresentation, applyQueryRoutePatch, type QueryRoutePatch } from "./queryRoutePatch";
 
 /** One logical page plus its optional concrete graph-relative file owner. */
 export interface BlockTarget extends PageTarget {
@@ -178,6 +125,7 @@ export interface PaneRouter {
   openJournals(opts?: { inPlace?: boolean }): void;
   openConflicts(opts?: { inPlace?: boolean }): void;
   openAllPages(opts?: { inPlace?: boolean }): void;
+  openNamespaces(opts?: { inPlace?: boolean }): void;
   openAllGraphs(opts?: { inPlace?: boolean }): void;
   /** Navigate this pane to a PDF tab. Cost O(tabs); no file read until mounted. */
   openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
@@ -244,6 +192,7 @@ export function routeTitle(r: Route): string {
   if (r.kind === "journals") return translate("navigation-prose-journals");
   if (r.kind === "conflicts") return translate("navigation-prose-conflicts");
   if (r.kind === "all-pages") return translate("navigation-prose-all-pages");
+  if (r.kind === "namespaces") return translate("sidebar-namespaces-title");
   if (r.kind === "all-graphs") return translate("command-go-all-graphs");
   if (r.kind === "pdf") return r.label.trim() || r.filename;
   if (r.kind === "invalid") return r.title;
@@ -273,7 +222,7 @@ export function resolveRouteBlock(r: Route): string | null {
 
 export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
-  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages" || a.kind === "all-graphs") return true;
+  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages" || a.kind === "namespaces" || a.kind === "all-graphs") return true;
   if (a.kind === "query") return a.id === (b as QueryRoute).id;
   if (a.kind === "pdf") return a.viewId === (b as PdfRoute).viewId;
   if (a.kind === "invalid") return a === b;
@@ -623,12 +572,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     );
   }
 
-  function openOverview(kind: "journals" | "conflicts" | "all-pages" | "all-graphs", opts: { inPlace?: boolean } = {}) {
+  function openOverview(kind: "journals" | "conflicts" | "all-pages" | "namespaces" | "all-graphs", opts: { inPlace?: boolean } = {}) {
     navigate({ kind }, { sticky: !opts.inPlace });
   }
   const openJournals = (opts?: { inPlace?: boolean }) => openOverview("journals", opts);
   const openConflicts = (opts?: { inPlace?: boolean }) => openOverview("conflicts", opts);
   const openAllPages = (opts?: { inPlace?: boolean }) => openOverview("all-pages", opts);
+  const openNamespaces = (opts?: { inPlace?: boolean }) => openOverview("namespaces", opts);
   const openAllGraphs = (opts?: { inPlace?: boolean }) => openOverview("all-graphs", opts);
 
   function openPdf(pdfRoute: PdfRoute, opts: { inPlace?: boolean } = {}) {
@@ -1217,6 +1167,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openJournals,
     openConflicts,
     openAllPages,
+    openNamespaces,
     openAllGraphs,
     openPdf,
     updateActivePdfViewState,
@@ -1354,6 +1305,10 @@ export function openConflicts(opts: { inPlace?: boolean } = {}) {
 
 export function openAllPages(opts: { inPlace?: boolean } = {}) {
   focusedRouterInstance().openAllPages(opts);
+}
+
+export function openNamespaces(opts: { inPlace?: boolean } = {}) {
+  focusedRouterInstance().openNamespaces(opts);
 }
 
 export function openAllGraphs(opts: { inPlace?: boolean } = {}) {

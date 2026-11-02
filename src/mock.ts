@@ -713,7 +713,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         preferred_workflow: "todo",
         shortcuts: {},
         start_of_week: 0,
-        block_hidden_properties: [], linked_references_collapsed_threshold: 100,
+        block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2,
         default_journal_template: null,
         favorites: [],
         mobile_gestures_disabled_in_block_with_tags: [],

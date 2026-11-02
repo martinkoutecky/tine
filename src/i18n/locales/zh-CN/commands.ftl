@@ -215,6 +215,9 @@ command-editor-collapse-children = 折叠（一层）
 
 command-editor-expand-children = 展开（一层）
 
+# $depth (number): how many levels stay open, 0 to 9.
+command-editor-set-depth-n = 设置展开深度 { $depth }
+
 command-editor-paste-as-link = 粘贴为链接
 command-editor-zoom-in = 放大到块
 command-editor-zoom-out = 缩小一级

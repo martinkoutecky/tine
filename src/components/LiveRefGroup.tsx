@@ -17,6 +17,7 @@ import { editingId, startEditing } from "../editorController";
 import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { LinkDepthContext } from "./linkDepth";
+import { foldsByDefaultInResults } from "../refOpenLevel";
 import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
@@ -388,10 +389,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
     const depth = relativeDepth(id);
     const hasChildren = (liveNode(id)?.children.length ?? 0) > 0;
     // Released OG initializes reference/query disclosure from the source state
-    // and default-open level 2, then keeps that copy local to the result view.
-    // Tine's displayed hit is relative depth 0, so branches immediately below it
-    // default folded.
-    const initial = stored || (props.surface !== "embed" && depth !== null && depth >= 1 && hasChildren);
+    // and `:ref/default-open-blocks-level` (default 2), then keeps that copy
+    // local to the result view (GH #793). Tine's displayed hit is relative depth
+    // 0 (OG level 1), so with level 2 the branches immediately below it default
+    // folded; a larger level opens deeper, a level of 1 or less folds the hit.
+    const initial = stored || (props.surface !== "embed" && depth !== null && foldsByDefaultInResults(depth, hasChildren));
     initialCollapsed.set(id, initial);
     return initial;
   };

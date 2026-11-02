@@ -155,6 +155,68 @@ impl RenamePlan {
     }
 }
 
+/// Whether unindexed `file` holds a reference `map` renames. A file too big or
+/// too deep to hand the rewriter, or that panics it, is searched for the names
+/// themselves, so one stray file cannot block every rename. Bytes past a UTF-8
+/// error still spell references. A file gone holds none.
+fn may_hold_reference(
+    store: &Store,
+    file: &FileId,
+    map: &RenameMap,
+    format: tine_core::config::FileNameFormat,
+) -> bool {
+    let bytes = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((bytes, _)) => bytes,
+        Err(StoreError::NotFound) => return false,
+        Err(StoreError::TooLarge { .. }) => {
+            return store
+                .path_for_os_handoff(file, false)
+                .ok()
+                .and_then(|path| file_mentions_a_name(&path, map).ok())
+                .unwrap_or(true)
+        }
+        Err(_) => return true,
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let org = Format::from_path(file.as_str().as_ref()) == Format::Org;
+    if !tine_store::parse_input_depth_within_limit(&text)
+        || (org && !tine_core::org::headline_levels_within_limit(&text, 128))
+    {
+        return text_mentions_a_name(&text.to_lowercase(), map);
+    }
+    std::panic::catch_unwind(|| refs::rename_rewrite(&text, org, &map.0, format) != text)
+        .unwrap_or_else(|_| text_mentions_a_name(&text.to_lowercase(), map))
+}
+
+fn text_mentions_a_name(lowercase: &str, map: &RenameMap) -> bool {
+    map.0
+        .iter()
+        .any(|(old, _)| lowercase.contains(&old.to_lowercase()))
+}
+
+/// The same search for a file too big to hold in memory: chunks overlap by more
+/// than the longest name, so a name across two chunks is still seen.
+fn file_mentions_a_name(path: &std::path::Path, map: &RenameMap) -> io::Result<bool> {
+    const CHUNK: usize = 1024 * 1024;
+    let overlap = map.0.iter().map(|(old, _)| old.len()).max().unwrap_or(0) * 4;
+    let mut input = std::fs::File::open(path)?;
+    let mut window = vec![0u8; CHUNK + overlap];
+    let mut kept = 0;
+    loop {
+        let read = io::Read::read(&mut input, &mut window[kept..])?;
+        if read == 0 {
+            return Ok(false);
+        }
+        let filled = kept + read;
+        let text = String::from_utf8_lossy(&window[..filled]);
+        if text_mentions_a_name(&text.to_lowercase(), map) {
+            return Ok(true);
+        }
+        kept = overlap.min(filled);
+        window.copy_within(filled - kept..filled, 0);
+    }
+}
+
 pub(super) fn plan_rename(
     store: &Store,
     old: &str,
@@ -287,6 +349,22 @@ pub(super) fn plan_rename(
     });
     candidates.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
     candidates.dedup();
+    // A page Tine could not index (malformed imported or sync-delivered
+    // content) has no referrers row, so nothing above sees its references.
+    // Skipping it would leave `[[Old]]` dangling with no word, and it is not
+    // ours to rewrite: refuse, naming the file, before anything is written.
+    for (file, _) in graph.unreadable_files() {
+        let planned = candidates.iter().any(|id| id.file() == *file);
+        if !planned && may_hold_reference(store, file, &map, config.file_name_format) {
+            return Err(error(
+                io::ErrorKind::InvalidData,
+                &format!(
+                    "cannot rename: {} could not be indexed and may link to this page; repair or remove it first",
+                    file.as_str()
+                ),
+            ));
+        }
+    }
     Ok(RenamePlan {
         graph,
         config,

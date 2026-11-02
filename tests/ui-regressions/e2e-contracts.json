@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-set-depth.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A bound Set depth 2 on a folded block opens it and its child and folds the grandchild in the file, leaving a folded great-grandchild's own fold unchanged; a bound Set depth 0 then folds the block. With a high :ref/default-open-blocks-level in config.edn every row of a linked reference shows, and the referencing page's file is unchanged.","blocking":false,"authority":"GH #794; GH #793; D-20261101-L5"}],
+      "acceptableVariations": ["Selection styling, animation, save latency and the exact reference-section layout may vary while the saved collapsed properties and visible rows agree."],
+      "nonRequirements": ["No boundary values of the level (component tests cover 0, 1, negative and non-integer), no query or embed surfaces, no platform other than Linux WebKitGTK, no burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-rtl-notes.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A Persian task reads right to left rendered and in the editor; a horizontal arrow in its leading Latin run stays in the task and Up from the first row reaches the previous block. Note layout mirrors bullets without changing note bytes. A Persian interface relaunch keeps submenus on screen and resize grips on their physical edges.","blocking":false,"authority":"GH #823"}],
       "acceptableVariations": ["Exact geometry, settings navigation, font choice and timing may vary."],
@@ -106,6 +112,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"A block reference and embed show their block's new page content after an external move and after reopening from a launch checkpoint; the referring file remains unchanged.","blocking":true,"authority":"HB4 / HI1 / HJ6; REG-AUDIT-L10-06-BLOCK-MOVE-CHECKPOINT; docs/storage-contract.md"}],
       "acceptableVariations": ["Watcher and render latency, page layout, and checkpoint size."],
       "nonRequirements": ["Exact pixels, DOM nesting, or native certification outside Linux WebKitGTK; dangling-reference work and owner permutations are covered by store tests."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-namespaces-view.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a graph of hundreds of namespaced pages, Open the full view in the sidebar's Namespaces section opens a Namespaces view in the main pane while the sidebar keeps its inline tree; only a window of rows is drawn; Expand all, Collapse all and the size column work; a filter lists each match with its full path; clicking a name opens that page; the view is still the active tab after a restart.","blocking":true,"authority":"GH #335; UI-NAMESPACES-FULL-VIEW; D-20261101-L5"}],
+      "acceptableVariations": ["Row height, indentation, column widths and icon rendering; session-save and render latency."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; tens-of-thousands scale and filter cost are measured in unit tests and the scale screenshot; phone drawer completion has component coverage."],
       "stability":"burn-in"
     },
     "scripts/e2e-all-graphs.mjs": {
