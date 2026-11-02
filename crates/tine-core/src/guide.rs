@@ -315,6 +315,9 @@ mod journal_guide_tests {
             "Insert child block",
             "Collapse (one level)",
             "Expand (one level)",
+            "Set depth 0",
+            "Set depth 9",
+            "Depth 2 opens the block and its children and folds the grandchildren",
             "once its children are all folded",
             "a folded block opens by itself first",
             "Copy block refs of the selected blocks",
@@ -701,6 +704,21 @@ mod parity_guide_tests {
     }
 
     #[test]
+    fn the_default_open_level_of_references_is_documented() {
+        // GH #793: `:ref/default-open-blocks-level`, restored from Logseq.
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for phrase in [
+            ":ref/default-open-blocks-level",
+            "(default `2`)",
+            "so you can select the whole list and copy it",
+            "A block you folded yourself with `collapsed:: true` stays folded",
+            "nothing is written to your files",
+        ] {
+            assert!(guide.contains(phrase), "Guide missing {phrase}");
+        }
+    }
+
+    #[test]
     fn the_alias_group_rows_and_owner_rule_are_documented() {
         // D-20261019-AL1/AL2 (card hB9Zjw): names apart from real pages, and
         // the fixed rule an alias of several pages opens.
@@ -1044,9 +1062,14 @@ mod rename_guide_tests {
             "**quoted text changed**",
             "**Reply…**",
             "`author:: <your name>`",
+            "the first comment or reply you write without a name asks for one once",
             "**Ctrl/Cmd+Z** restores them together",
             "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
             "zooming into a commented bullet also shows them there",
+            "press **t** then **m**, run **Toggle comment margin** from the command palette",
+            "switch off **Comment margin** in Settings > Appearance",
+            "the comments stay in your file and nothing is deleted",
+            "opening a link or search result that leads to one, shows them again",
         ] {
             assert!(
                 tips.contains(behavior),
@@ -1962,6 +1985,24 @@ mod og_20d_guide_tests {
             assert!(
                 map.contains(detail),
                 "missing All pages view detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_things_are_documents_the_full_namespaces_view() {
+        // GH #335: the sidebar Namespaces section keeps its tree and opens the full view.
+        let map = page("Start/Where things are");
+        for detail in [
+            "**Open the full view…**",
+            "full **Namespaces** view",
+            "**Expand all** and **Collapse all**",
+            "The **Pages** column",
+            "each with the path above its name",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing Namespaces view detail: {detail}"
             );
         }
     }

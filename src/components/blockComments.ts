@@ -9,6 +9,7 @@ import { isCommentId, marginNext, marginPrev } from "../margin";
 import { commentsFirst, nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
+import { commentMarginHidden } from "../commentMarginPref";
 
 interface CommentNode { parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];
@@ -49,11 +50,13 @@ const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || s
 /** Slice 2: on a page whose comments are drawn in the margin, the main column's
  * outline leaves them out (the count marker stands for them). Inside a margin
  * thread, without a margin, and in reference and embed copies every child is
- * drawn, the comments first, right under their block (commentOrder.ts). */
+ * drawn, the comments first, right under their block (commentOrder.ts). With the
+ * margin hidden (GH #845) every surface leaves the comments out. */
 export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: () => "md" | "org") {
   const place = useContext(MarginContext);
   const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
-  const outlineChildren = () => (main() ? node().children.filter((id) => !isCommentId(id, fmt())) : commentsFirst(node().children));
+  // GH #845: with the margin hidden no surface draws a thread (not even inline).
+  const outlineChildren = () => (main() || commentMarginHidden() ? node().children.filter((id) => !isCommentId(id, fmt())) : commentsFirst(node().children));
   const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt())) : []);
   return { outlineChildren, marginComments };
 }

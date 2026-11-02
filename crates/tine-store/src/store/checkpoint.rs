@@ -238,6 +238,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         all_pages_public: _,
         start_of_week: _,
         linked_references_collapsed_threshold: _,
+        ref_default_open_blocks_level: _,
         default_journal_template: _,
         default_journal_queries: _,
         disable_scheduled_and_deadline_query: _,

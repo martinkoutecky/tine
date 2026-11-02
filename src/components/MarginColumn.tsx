@@ -19,6 +19,7 @@ import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
 import { countMarginMeasurePass, isCommentId, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
 import { node as docNode, type FeedPage } from "../document";
+import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
 
 export interface MarginSurface {
@@ -42,7 +43,7 @@ export function createMarginSurface(opts: {
   outline: () => HTMLElement | undefined;
 }): MarginSurface {
   const hasComment = createMemo(() => {
-    if (!opts.eligible()) return false;
+    if (!opts.eligible() || commentMarginHidden()) return false;
     watchCommentsWritten();
     const page = opts.page();
     return !!page && pageHasComment(page.roots, page.format);

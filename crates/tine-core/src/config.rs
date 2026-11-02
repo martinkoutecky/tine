@@ -55,6 +55,13 @@ pub struct Config {
     /// (OG `(>= total threshold)`, `components/reference.cljs`). Absent or
     /// non-integer means OG's default 100; zero collapses always (GH #479).
     pub linked_references_collapsed_threshold: u32,
+    /// `:ref/default-open-blocks-level` — the level to which a reference or
+    /// query result opens by default: a block at level `>=` this that has
+    /// children starts folded, level 1 being the displayed hit itself (OG
+    /// `block-default-collapsed?`, `handler/editor.cljs`; GH #793). OG takes any
+    /// integer (zero and negative values fold every hit that has children);
+    /// absent or not an integer means 2.
+    pub ref_default_open_blocks_level: i32,
     /// `:property/separated-by-commas #{:a :b}` — keys added to the built-in
     /// `alias`/`aliases`/`tags` set. Tine already comma-splits EVERY key's plain
     /// value (Q21), so this only matters for a value that also contains refs: the
@@ -174,6 +181,10 @@ pub struct JournalQuery {
 /// the one declaration the `Config` default and the graph-meta DTO share.
 pub const DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD: u32 = 100;
 
+/// OG's default when `:ref/default-open-blocks-level` is absent or not an
+/// integer (`state/get-ref-open-blocks-level`); shared like the one above.
+pub const DEFAULT_REF_OPEN_BLOCKS_LEVEL: i32 = 2;
+
 /// Preferred task marker cycle.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +242,7 @@ impl Default for Config {
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
             linked_references_collapsed_threshold: DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD,
+            ref_default_open_blocks_level: DEFAULT_REF_OPEN_BLOCKS_LEVEL,
             separated_by_commas: Vec::new(),
             ignored_page_references_keywords: Vec::new(),
             property_pages_enabled: true,
@@ -310,6 +322,9 @@ impl Config {
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
         if let Some(n) = int_value(edn, ":ref/linked-references-collapsed-threshold") {
             cfg.linked_references_collapsed_threshold = n;
+        }
+        if let Some(n) = integer_value(edn, ":ref/default-open-blocks-level") {
+            cfg.ref_default_open_blocks_level = n;
         }
         cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
         cfg.ignored_page_references_keywords =
@@ -803,6 +818,29 @@ fn int_value(edn: &str, key: &str) -> Option<u32> {
         .take_while(|c| c.is_ascii_digit())
         .collect();
     digits.parse().ok()
+}
+
+/// The value after `key` when it is one EDN integer, of either sign (OG's
+/// `integer?`): `5.5`, `"5"`, `5N` and `1e3` are not, so the caller keeps its
+/// default. A magnitude beyond `i32` saturates, which no level can tell apart.
+fn integer_value(edn: &str, key: &str) -> Option<i32> {
+    let start = read_keyword(edn, key)?;
+    let from = skip_blank(edn, start + key.len());
+    if from >= edn.len() {
+        return None;
+    }
+    let token = &edn[from..form_end(edn, from)];
+    let (negative, digits) = match token.as_bytes().first()? {
+        b'-' => (true, &token[1..]),
+        b'+' => (false, &token[1..]),
+        _ => (false, token),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let magnitude = digits.parse::<i64>().unwrap_or(i64::MAX);
+    let signed = if negative { -magnitude } else { magnitude };
+    Some(signed.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
 }
 
 /// Read `:hidden` as a bounded vector of strings. An invalid value hides all
@@ -1687,6 +1725,41 @@ mod tests {
                 .linked_references_collapsed_threshold,
             100
         );
+    }
+
+    #[test]
+    fn ref_default_open_blocks_level_reads_the_og_key() {
+        // GH #793. OG `state/get-ref-open-blocks-level`: any integer counts
+        // (zero and negative included), anything else is the default 2.
+        let level = |edn: &str| Config::parse(edn).ref_default_open_blocks_level;
+        assert_eq!(level("{}"), 2);
+        assert_eq!(DEFAULT_REF_OPEN_BLOCKS_LEVEL, 2);
+        assert_eq!(Config::default().ref_default_open_blocks_level, 2);
+        assert_eq!(level("{:ref/default-open-blocks-level 5}"), 5);
+        assert_eq!(level("{:ref/default-open-blocks-level 1}"), 1);
+        assert_eq!(level("{:ref/default-open-blocks-level 0}"), 0);
+        assert_eq!(level("{:ref/default-open-blocks-level -3}"), -3);
+        assert_eq!(level("{:ref/default-open-blocks-level +4}"), 4);
+        assert_eq!(
+            level("{:ref/default-open-blocks-level 99999999999999}"),
+            i32::MAX
+        );
+        assert_eq!(
+            level("{:ref/default-open-blocks-level 5 :start-of-week 1}"),
+            5
+        );
+        assert_eq!(level("{:ref/default-open-blocks-level 5}\n"), 5);
+        assert_eq!(level("{:ref/default-open-blocks-level ;; deeper\n 7}"), 7);
+        // Not integers: the default, never a prefix read.
+        for bad in [
+            "\"5\"", "5.5", "5N", "1e3", ":five", "nil", "[5]", "true", "-", "",
+        ] {
+            assert_eq!(
+                level(&format!("{{:ref/default-open-blocks-level {bad}}}")),
+                2,
+                "{bad}"
+            );
+        }
     }
 
     #[test]

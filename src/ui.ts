@@ -86,7 +86,7 @@ export function changeLogicalOutdenting(on: boolean) {
 }
 
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
-function loadStr(key: string): string | null {
+export function loadStr(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
@@ -94,7 +94,7 @@ function loadStr(key: string): string | null {
     return null;
   }
 }
-function saveStr(key: string, val: string | null, what: "display preference" | "keyboard shortcuts" = "display preference"): boolean {
+export function saveStr(key: string, val: string | null, what: "display preference" | "keyboard shortcuts" = "display preference"): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);

@@ -58,6 +58,7 @@ import { pageIdentityKey } from "../pageIdentity";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
 import { captureReadingViewport } from "./readingViewportAnchor";
+import { revealCommentMarginFor } from "../commentMargin";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
 import { JournalFeedDays } from "./JournalFeedDays";
@@ -472,7 +473,7 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages" || r.kind === "all-graphs") {
+        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages" || r.kind === "namespaces" || r.kind === "all-graphs") {
           // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
           // guard so the page loader never interprets a virtual route as a file.
           setLoadedRoute(r);
@@ -901,6 +902,8 @@ function ZoomedView(props: { id: string }): JSX.Element {
     return out;
   };
   const pageName = () => docNode(props.id)?.page ?? "";
+  // GH #845: zooming into a comment (a link, a search result) shows a hidden margin.
+  createEffect(() => revealCommentMarginFor(props.id));
   const pageKind = () => loadedPage(pageName())?.kind ?? "page";
   const pageTarget = () => {
     const owner = pageByName(pageName());

@@ -28,3 +28,30 @@ pages-all-open-more = +{ NUMBER($count, useGrouping: 0) } more — open the full
 config-query-title = Query
 config-query-unsupported = Tine can't run this query from config.edn yet.
 config-query-details = Technical details
+
+## Namespaces view (GH #335)
+sidebar-namespaces-title = Namespaces
+pages-namespaces-open-full-view = Open the full view…
+pages-namespaces-filter = Filter namespaces and pages
+pages-namespaces-expand-all = Expand all
+pages-namespaces-collapse-all = Collapse all
+pages-namespaces-column-namespace = Namespace
+pages-namespaces-column-pages = Pages
+pages-namespaces-no-matches = No namespace or page name matches.
+pages-namespaces-empty = No namespaced pages yet. Name a page like Project/Roadmap to start one.
+# $name (text): the full path of the namespace.
+pages-namespaces-expand = Expand { $name }
+pages-namespaces-collapse = Collapse { $name }
+# $count (number): entries whose path matches the filter.
+pages-namespaces-matches = { $count ->
+    [one] { NUMBER($count, useGrouping: 0) } match
+   *[other] { NUMBER($count, useGrouping: 0) } matches
+    }
+# $pages (number): pages that have a namespaced name; $namespaces (number): levels that have something below them.
+pages-namespaces-count = { $pages ->
+    [one] { NUMBER($pages, useGrouping: 0) } page
+   *[other] { NUMBER($pages, useGrouping: 0) } pages
+    } in { $namespaces ->
+    [one] { NUMBER($namespaces, useGrouping: 0) } namespace
+   *[other] { NUMBER($namespaces, useGrouping: 0) } namespaces
+    }

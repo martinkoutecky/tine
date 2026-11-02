@@ -11,6 +11,7 @@ import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from ".
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { AllPages } from "./components/AllPages";
+import { Namespaces } from "./components/Namespaces";
 import { AllGraphs } from "./components/AllGraphs";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
@@ -79,6 +80,7 @@ import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initHoverPreviewSettings } from "./hoverPreviewSettings";
 import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
 import { initCommentIdentity } from "./commentIdentity";
+import { initCommentNamePrompt, probeGraphGit } from "./commentNamePrompt";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
@@ -329,6 +331,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       </Match>
       <Match when={props.router.route().kind === "all-pages"}>
         <AllPages router={props.router} />
+      </Match>
+      <Match when={props.router.route().kind === "namespaces"}>
+        <Namespaces router={props.router} />
       </Match>
       <Match when={props.router.route().kind === "all-graphs"}>
         <AllGraphs />
@@ -822,7 +827,12 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(initHoverPreviewSettings);
   onMount(() => void initNavSettings());
-  onMount(() => initCommentIdentity());
+  onMount(() => { initCommentIdentity(); initCommentNamePrompt(); });
+  // tine#841: learn once per opened graph whether it sits in git, so the first
+  // margin comment can ask for "Your name" without waiting for the answer.
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) probeGraphGit();
+  }));
   onMount(() => void initSettingsLayout());
   onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
