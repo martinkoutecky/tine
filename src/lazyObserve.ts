@@ -19,6 +19,7 @@ import { batchViewportChanges, cachedScrollContainer } from "./scrollContainer";
 // observers are released so closed panes cannot accumulate in the window map.
 
 const nearCbs = new WeakMap<Element, (entry?: IntersectionObserverEntry) => void>();
+const nearTrackers = new WeakMap<Element, (near: boolean) => void>();
 interface NearObserver { io: IntersectionObserver; count: number; release: () => void }
 const nearObservers = new Map<Window, Map<Element | null, NearObserver>>();
 const observing = new WeakMap<Element, NearObserver>();
@@ -35,6 +36,7 @@ function observerFor(el: Element): NearObserver | null {
   if (existing) return existing;
   const io = newIntersectionObserver(win, (entries) => batchViewportChanges(() => {
     for (const e of entries) {
+      nearTrackers.get(e.target)?.(e.isIntersecting);
       if (!e.isIntersecting) continue;
       const fn = nearCbs.get(e.target);
       if (fn) {
@@ -86,6 +88,23 @@ export function unobserveNear(el: Element) {
   observer?.io.unobserve(el);
   observing.delete(el);
   if (observer && --observer.count === 0) observer.release();
+}
+
+/** Report every crossing of the same near margin until the returned stop runs,
+ * sharing this root's one observer. O(1) per host. `el` must already be attached.
+ * Without IntersectionObserver nothing is reported: the caller's initial answer
+ * stands, as a realm without layout has no viewport to leave. */
+export function trackNear(el: Element, report: (near: boolean) => void): () => void {
+  const observer = observerFor(el);
+  if (!observer) return () => {};
+  nearTrackers.set(el, report);
+  observer.count++;
+  observer.io.observe(el);
+  return () => {
+    nearTrackers.delete(el);
+    if (!nearCbs.has(el)) observer.io.unobserve(el);
+    if (--observer.count === 0) observer.release();
+  };
 }
 
 // "This block id has rendered its body at least once." A block's body is parsed

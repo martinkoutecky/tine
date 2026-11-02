@@ -1,7 +1,7 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
-import { bigPageBlocks, embedScrollBlocks } from "./mockScrollFixtures";
+import { bigPageBlocks, embedScrollBlocks, manyRefsPages } from "./mockScrollFixtures";
 import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
@@ -400,6 +400,9 @@ if (typeof location !== "undefined" && /[?&]embedscroll\b/.test(location.search)
   const { source, page } = embedScrollBlocks(b);
   NAMED.push({ name: "Embed scroll source", kind: "page", title: "Embed scroll source", pre_block: null, blocks: source },
     { name: "Embed scroll", kind: "page", title: "Embed scroll", pre_block: null, blocks: page });
+}
+if (typeof location !== "undefined" && /[?&]manyrefs\b/.test(location.search)) {
+  for (const page of manyRefsPages(b)) NAMED.push({ ...page, kind: "page", title: page.name, pre_block: null });
 }
 // D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
 // pages and three names with no file of their own.
@@ -910,6 +913,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return `${dir.replace(/[\\/]$/, "")}/${name.trim()}`; // no real scaffolding in the browser mock
     },
     async getBacklinks(name: string): Promise<RefGroup[]> {
+      // `?refslatency=ms`: a slow answer, as on a big graph (GH #848).
+      const latency = typeof location === "undefined" ? 0 : Number(new URLSearchParams(location.search).get("refslatency")) || 0;
+      if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
     },

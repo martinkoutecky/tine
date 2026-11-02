@@ -1,15 +1,15 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
 import { isBlockEmbedMacro } from "./blockParts";
-import { observeNear, unobserveNear } from "../lazyObserve";
+import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
@@ -141,10 +141,28 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   let alive = true;
   onCleanup(() => { alive = false; });
 
-  // Load the source page only once the group is near the viewport.
+  // GH #849: only the viewport moves a source page in or out of the working set.
+  // A group near the view pins its page; once away it may be evicted (its rows
+  // fall back to their DTO copies) and it loads again on coming back. So a page
+  // answering a read can never evict what another read needs, and an idle page has
+  // no loads left to do, however many source pages it references.
+  const [nearView, setNearView] = createSignal(true);
+  const [acquire, setAcquire] = createSignal(0);
+  onCleanup(pinPageNearViewport(() => nearView() ? props.page : null));
+  onMount(() => {
+    const host = props.geometryHost();
+    if (host) onCleanup(trackNear(host, setNearView));
+  });
+  createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
+    if (previous && isNear && !present && (!previous[0] || previous[1])) setAcquire(n => n + 1);
+  }));
+  // Load the source page only once the group is near the viewport. A string
+  // source: the parent recomputing an equal group must not read again.
   const [readyResource] = createResource(
-    () => ({ p: props.page, k: props.kind, path: props.path }),
-    async ({ p, k, path }) => {
+    () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
+    async (source) => {
+      const [p, k, savedPath] = JSON.parse(source) as [string, PageKind, string | null];
+      const path = savedPath ?? undefined;
       const occupied = pageByName(p);
       if (occupied) return occupied.kind === k && (!path || occupied.id === path);
       const epoch = graphEpoch();

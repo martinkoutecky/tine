@@ -7379,14 +7379,19 @@ img.emoji {
    the sidebar. */
 .block-refs-count {
   float: right;
-  margin-left: 8px;
-  padding: 0 6px;
+  box-sizing: border-box;
+  /* Same pill and same line as .margin-marker (GH #843): centered on the first line. */
+  margin: calc((var(--ls-block-line-height) - 18px) / 2) 0 0 8px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
   font-size: 11px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 18px;
+  text-align: center;
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  border-radius: 7px;
+  border-radius: 9px;
   cursor: pointer;
   user-select: none;
 }

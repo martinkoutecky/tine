@@ -139,6 +139,7 @@ const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or h
   + "exemplar src/lazyObserve.ts renderedBlocks and src/binding.ts clearOnBindingInvalidated. "
   + "The existing collection baseline may only shrink";
 const BOUNDED_COLLECTIONS: Record<string, string> = {
+  "src/document/workingSet.ts#viewportPins": "one accessor per mounted live reference row; MountedRefGroup registers on mount and its Solid cleanup removes it, so a graph switch empties it with its surfaces",
   "src/editorController.ts#editEntryGuards": "one guard per mounted native property input; FieldCell registers on mount and its Solid cleanup removes it on commit, cancel or unmount; captureResultDraft still guards the write's binding",
   "src/themes/fontAvailability.ts#memo": "one answer per leading font family of an installed theme row (at most 3 per theme, 32 themes), cleared at MEMO_LIMIT=256; device-level font presence, no graph state",
   "src/inputCapability.ts#watched": "one entry per media-query string asked (pointer: coarse, any-pointer: coarse); app-lifetime, no graph state",
