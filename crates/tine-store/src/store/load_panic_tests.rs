@@ -14,9 +14,11 @@
 //!   graph-wide index build, outside the per-page isolation, killing the
 //!   load thread with the store still Loading, so `whole_graph` never
 //!   returned.
-//! - A graph-wide index stage itself (pure Rust after the parse): the
-//!   backstop. The load ends `Failed` promptly (reported, `refresh()`
-//!   retries), pages still open, and the writer lock is not poisoned.
+//! - A graph-wide index stage itself (pure Rust after the parse) that no row
+//!   explains: the backstop. The load ends `Failed` promptly (reported,
+//!   `refresh()` retries), pages still open, and the writer lock is not
+//!   poisoned. A row that does explain it costs that row
+//!   (`panic_isolation_tests.rs`).
 //! - The same stage in a later publication's patch, which names its pages:
 //!   only the panicking page is lost, a journal day's file included, and it
 //!   stays retired until its bytes change.
@@ -27,7 +29,7 @@ use std::time::{Duration, Instant};
 use crate::model::{TEST_INDEX_PANIC_SENTINEL, TEST_PAGE_PARSE_PANIC_SENTINEL};
 use tine_core::doc::TEST_PROJECTION_PANIC_SENTINEL;
 
-fn graph_with_bad_page(tag: &str, bad: &str, fillers: usize) -> PathBuf {
+pub(super) fn graph_with_bad_page(tag: &str, bad: &str, fillers: usize) -> PathBuf {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -54,7 +56,7 @@ fn graph_with_bad_page(tag: &str, bad: &str, fillers: usize) -> PathBuf {
 }
 
 /// A guarded save of an edited first block of `Good`.
-fn edit_good(
+pub(super) fn edit_good(
     store: &Arc<Store>,
     good: &PageRead,
 ) -> Result<crate::FileRev, crate::test_host_writer::SaveRefused> {
@@ -70,7 +72,7 @@ fn edit_good(
 
 /// The load's settled state, polled: `Ok(true)` Ready, `Err(_)` Failed or
 /// Closed. Panics (test failure) when still Loading after the deadline.
-fn settled(store: &Store) -> Result<bool, LoadError> {
+pub(super) fn settled(store: &Store) -> Result<bool, LoadError> {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         match store.is_graph_ready() {
@@ -172,9 +174,28 @@ fn a_page_property_projection_panic_leaves_one_unreadable_file_and_a_ready_graph
     }
 }
 
+/// While it lives, every whole-graph index build of `root` panics and no row
+/// reproduces it: what a load fails on now that a bad row costs only that row.
+pub(super) struct NoRowExplains(PathBuf);
+
+impl NoRowExplains {
+    pub(super) fn arm(root: &Path) -> Self {
+        let canonical = fs::canonicalize(root).unwrap();
+        (crate::model::TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap()).push(canonical.clone());
+        Self(canonical)
+    }
+}
+
+impl Drop for NoRowExplains {
+    fn drop(&mut self) {
+        (crate::model::TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap()).retain(|r| *r != self.0);
+    }
+}
+
 #[test]
 fn an_index_build_panic_fails_the_load_instead_of_hanging_it() {
-    let root = graph_with_bad_page("index", &format!("- {TEST_INDEX_PANIC_SENTINEL}\n"), 2);
+    let root = graph_with_bad_page("index", "- fine\n", 2);
+    let no_row = NoRowExplains::arm(&root);
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     assert!(
         matches!(settled(&store), Err(LoadError::Failed { .. })),
@@ -199,7 +220,7 @@ fn an_index_build_panic_fails_the_load_instead_of_hanging_it() {
     assert!(fs::read_to_string(root.join("pages/Good.md"))
         .unwrap()
         .contains("edited after the load"));
-    drop(store);
+    drop((store, no_row));
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -207,7 +228,7 @@ fn an_index_build_panic_fails_the_load_instead_of_hanging_it() {
 /// edit (the watcher's and focus rescan's sync) and an own save. Each panics
 /// a projection for that page only; the writer stays usable and the other
 /// pages stay indexed.
-fn assert_rest_of_graph_answers(store: &Store, tag: &str, referrers: usize) {
+pub(super) fn assert_rest_of_graph_answers(store: &Store, tag: &str, referrers: usize) {
     let view = store.whole_graph().unwrap();
     let backlinks = view.backlinks("Target").unwrap();
     assert_eq!(
@@ -531,18 +552,19 @@ fn deliver_with_old_mtime(path: &Path, text: &str) {
 
 /// A load that failed at the index stage with its cache built, its watcher
 /// stopped so that only the recovery's diff can observe a file.
-fn failed_at_the_index_stage(tag: &str) -> (PathBuf, Arc<Store>) {
-    let root = graph_with_bad_page(tag, &format!("- {TEST_INDEX_PANIC_SENTINEL}\n"), 2);
+fn failed_at_the_index_stage(tag: &str) -> (PathBuf, Arc<Store>, NoRowExplains) {
+    let root = graph_with_bad_page(tag, "- fine\n", 2);
+    let no_row = NoRowExplains::arm(&root);
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     assert!(matches!(settled(&store), Err(LoadError::Failed { .. })));
     assert!(store.graph.cache_built(), "the parse finished");
     store.watch.stop_background_for_test();
-    (root, store)
+    (root, store, no_row)
 }
 
-/// The bad page repaired and the graph recovered: Good's first block now.
-fn recovered_good(root: &Path, store: &Store) -> String {
-    fs::write(root.join("pages/Bad.md"), "- repaired\n").unwrap();
+/// The panic gone and the graph recovered: Good's first block now.
+fn recovered_good(root: &Path, store: &Store, no_row: NoRowExplains) -> String {
+    drop(no_row);
     store.refresh(Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
     let corpus = view.corpus();
@@ -555,7 +577,7 @@ fn recovered_good(root: &Path, store: &Store) -> String {
 /// recovery's diff must hash it, or its row stays on the old bytes for good.
 #[test]
 fn a_raced_delivery_while_the_load_failed_reaches_the_index_after_recovery() {
-    let (root, store) = failed_at_the_index_stage("raced-reconcile");
+    let (root, store, no_row) = failed_at_the_index_stage("raced-reconcile");
     let path = store.graph.root.join("pages/Good.md");
     let published = FileRev::from_file(&path).unwrap();
     deliver_with_old_mtime(&path, "- delivered\n");
@@ -565,7 +587,7 @@ fn a_raced_delivery_while_the_load_failed_reaches_the_index_after_recovery() {
         .note_own_observed(&[(id, Some(published))], &HashMap::new());
     assert!(raced.contains(&path));
     store.watch.reconcile_raced(&raced);
-    assert_eq!(recovered_good(&root, &store), "delivered");
+    assert_eq!(recovered_good(&root, &store, no_row), "delivered");
     drop(store);
     let _ = fs::remove_dir_all(&root);
 }
@@ -573,7 +595,7 @@ fn a_raced_delivery_while_the_load_failed_reaches_the_index_after_recovery() {
 /// REG-FAILED-LOAD-RACED-OBSERVATION-KEPT, the publication's early return.
 #[test]
 fn a_raced_publication_while_the_load_failed_reaches_the_index_after_recovery() {
-    let (root, store) = failed_at_the_index_stage("raced-publication");
+    let (root, store, no_row) = failed_at_the_index_stage("raced-publication");
     let path = store.graph.root.join("pages/Good.md");
     let published = FileRev::from_file(&path).unwrap();
     deliver_with_old_mtime(&path, "- delivered\n");
@@ -581,7 +603,7 @@ fn a_raced_publication_while_the_load_failed_reaches_the_index_after_recovery() 
     let files = vec![(id, ChangeKind::Modified, Some(published))];
     let (_, change) = store.publish_own(files, Default::default());
     assert!(change.is_none(), "nothing publishes before recovery");
-    assert_eq!(recovered_good(&root, &store), "delivered");
+    assert_eq!(recovered_good(&root, &store, no_row), "delivered");
     drop(store);
     let _ = fs::remove_dir_all(&root);
 }
@@ -590,11 +612,8 @@ fn a_raced_publication_while_the_load_failed_reaches_the_index_after_recovery() 
 /// deferred when it failed: the failure drops the change, not its race.
 #[test]
 fn a_raced_deferred_publication_outlives_the_failed_load() {
-    let root = graph_with_bad_page(
-        "raced-deferred",
-        &format!("- {TEST_INDEX_PANIC_SENTINEL}\n"),
-        2,
-    );
+    let root = graph_with_bad_page("raced-deferred", "- fine\n", 2);
+    let no_row = NoRowExplains::arm(&root);
     fs::write(root.join(".tine-test-pause-load"), "").unwrap();
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.watch.stop_background_for_test();
@@ -624,7 +643,7 @@ fn a_raced_deferred_publication_outlives_the_failed_load() {
         ready.notify_all();
     }
     assert!(matches!(settled(&store), Err(LoadError::Failed { .. })));
-    assert_eq!(recovered_good(&root, &store), "delivered");
+    assert_eq!(recovered_good(&root, &store, no_row), "delivered");
     drop(store);
     let _ = fs::remove_dir_all(&root);
 }
@@ -729,7 +748,7 @@ fn a_save_while_a_rescan_failed_reaches_every_index_after_recovery() {
 
 /// The page cache's document for `rel`, for identity comparison: the same
 /// `Arc` afterwards means that page was neither re-read nor re-parsed.
-fn cached_doc(store: &Store, rel: &str) -> Arc<tine_core::doc::Document> {
+pub(super) fn cached_doc(store: &Store, rel: &str) -> Arc<tine_core::doc::Document> {
     let pages = store
         .graph
         .peek_pages()
@@ -788,7 +807,7 @@ fn assert_only_filler_00_lost(
         .contains("edited after the load"));
 }
 
-fn ready_graph_without_watcher(tag: &str) -> (PathBuf, Arc<Store>) {
+pub(super) fn ready_graph_without_watcher(tag: &str) -> (PathBuf, Arc<Store>) {
     let root = graph_with_bad_page(tag, "- fine for now\n", 2);
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     assert!(matches!(settled(&store), Ok(true)), "{tag}");
@@ -796,7 +815,7 @@ fn ready_graph_without_watcher(tag: &str) -> (PathBuf, Arc<Store>) {
     (root, store)
 }
 
-fn others_cached(store: &Store) -> Vec<(&'static str, Arc<tine_core::doc::Document>)> {
+pub(super) fn others_cached(store: &Store) -> Vec<(&'static str, Arc<tine_core::doc::Document>)> {
     ["pages/Good.md", "pages/Target.md", "pages/Filler 01.md"]
         .map(|rel| (rel, cached_doc(store, rel)))
         .to_vec()
@@ -1002,7 +1021,7 @@ fn a_repaired_page_returns_after_an_index_stage_panic() {
 }
 
 /// A held page's owner publishes `bytes`, as a window save does.
-fn publish_held(store: &Store, key: &str, bytes: String) {
+pub(super) fn publish_held(store: &Store, key: &str, bytes: String) {
     let _writer = store.writer.lock().unwrap();
     let bytes = Some(Arc::from(bytes.as_bytes()));
     assert!(store.graph.publish_owned(key, bytes, None).is_ok());

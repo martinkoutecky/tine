@@ -149,6 +149,7 @@ fn a_rename_refuses_when_a_listed_page_may_hold_the_name() {
     };
     for (label, holder, at_load) in [
         ("retired", retired.as_bytes().to_vec(), false),
+        ("retired-at-load", retired.as_bytes().to_vec(), true),
         ("non-utf8", b"- links [[Target]] \xff\xfe\n".to_vec(), true),
         ("too-deep", deep, true),
         ("over-cap", over_cap(b"- links [[target]]\n"), true),
@@ -164,6 +165,105 @@ fn a_rename_refuses_when_a_listed_page_may_hold_the_name() {
             "{label}: the refusal names the file: {error}"
         );
         assert_eq!(before, snapshot(&root), "{label}: a refusal writes nothing");
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// A page's identity folds to NFC, so a link in a listed file spelled in NFD
+/// names the NFC page. The literal search of an over-cap, too-deep or
+/// rewriter-panicking file lower-cased only, so the rename went ahead and left
+/// that link dangling with no word.
+#[test]
+fn a_rename_refuses_when_a_listed_page_holds_the_name_in_another_normal_form() {
+    let _integration_guard = crate::integration_lock();
+    let nfc = "Caf\u{e9}";
+    let nfd = "Cafe\u{301}";
+    let mut deep = deep_outline();
+    deep.extend_from_slice(format!("- links [[{nfd}]]\n").as_bytes());
+    let mut over_cap = vec![b' '; tine_store::PARSE_INPUT_MAX_BYTES as usize + 1024];
+    // Across a chunk boundary of the search, which must still see it.
+    let line = format!("- links [[{nfd}]]\n");
+    let at = 1024 * 1024 + 20 - 8;
+    over_cap[at..at + line.len()].copy_from_slice(line.as_bytes());
+    for (label, holder, from) in [
+        ("nfd-too-deep", deep, nfc),
+        ("nfd-over-cap", over_cap.clone(), nfc),
+        (
+            "nfc-over-cap-nfd-page",
+            String::from_utf8(over_cap)
+                .unwrap()
+                .replace(nfd, nfc)
+                .into_bytes(),
+            nfd,
+        ),
+    ] {
+        let (root, store) = listed_holder(label, &holder, true);
+        fs::write(root.join(format!("pages/{from}.md")), "- the page\n").unwrap();
+        store.refresh(Depth::Bytes).unwrap();
+        let before = snapshot(&root);
+        let result = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, from, "Renamed", None, None, &[])
+        });
+        let error = result.expect_err(label);
+        assert!(error.to_string().contains("Holder.md"), "{label}: {error}");
+        assert_eq!(before, snapshot(&root), "{label}: a refusal writes nothing");
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// What cannot be read cannot be searched: a page or a directory without read
+/// permission may link to any page, so every rename refuses, naming that path,
+/// until access returns (refusal table).
+#[cfg(unix)]
+#[test]
+fn a_rename_refuses_while_a_listed_path_cannot_be_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let _integration_guard = crate::integration_lock();
+    for (label, rel, make_dir) in [
+        ("mode-000-file", "pages/locked.md", false),
+        ("mode-000-dir", "pages/locked", true),
+    ] {
+        let (root, store) = fixture(label, b"- child\n");
+        let path = root.join(rel);
+        if make_dir {
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join("inside.md"), "- links [[Target]]\n").unwrap();
+        } else {
+            fs::write(&path, "- links [[Target]]\n").unwrap();
+        }
+        // Past the racy window, or the watcher waits to settle what it read.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        let handle = fs::File::open(&path).unwrap();
+        if !make_dir {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+        drop(handle);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(&path).is_ok() || (!make_dir && fs::read(&path).is_ok()) {
+            // Running as root: the permission does not bind, nothing to test.
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+        store.refresh(Depth::Bytes).unwrap();
+        let result = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+        });
+        let error = result.expect_err(label);
+        assert!(error.to_string().contains(rel), "{label}: {error}");
+        assert!(root.join("pages/Target.md").exists(), "{label}");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        // Access back: the rename goes through and rewrites the link inside.
+        store.refresh(Depth::Bytes).unwrap();
+        let result = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+        });
+        assert!(result.is_ok(), "{label}: {result:?}");
         let _ = fs::remove_dir_all(&root);
     }
 }

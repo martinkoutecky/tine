@@ -48,3 +48,26 @@ export function embedScrollBlocks(b: Block): { source: BlockDto[]; page: BlockDt
     page: [section("Top one"), b("Short A"), section("Top two"), b("Short B"), section("Top three"), section("Top four")],
   };
 }
+
+// GH #848/#849 (`?manyrefs`): one hub with 127 linked references on 93 pages, with the heavy content the reports
+// name (quotes, code, images, citations, long text), plus a plain neighbour page to switch tabs to.
+export function manyRefsPages(b: Block): { name: string; blocks: BlockDto[] }[] {
+  const image = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520"><rect width="900" height="520" fill="#789"/></svg>');
+  const body = (p: number, i: number): string => {
+    const needle = p % 15 === 7 ? "Foreign" : "Other";
+    const tail = `in page ${p} row ${i} about [[Hub]]`;
+    switch ((p + i) % 6) {
+      case 0: return `> Quoted [[open-source]] ${needle} material ${tail}, long enough to wrap in a narrow pane and use the quote style.`;
+      case 1: return `A very long paragraph ${tail}. ` + `${needle} words and ordinary prose wrap over several lines here. `.repeat(6);
+      case 2: return `Image ${needle} ${tail}\n![figure](${image})`;
+      case 3: return `Code ${needle} ${tail}\n\`\`\`js\n` + Array.from({ length: 24 }, (_, k) => `const line${k} = ${k};`).join("\n") + "\n\`\`\`";
+      case 4: return `${needle} math $$\\sum_{k=0}^{${p}} k$$ and a [citation](https://example.com/${p}) ${tail}`;
+      default: return `Plain ${needle} row ${tail}`;
+    }
+  };
+  const pages = Array.from({ length: 93 }, (_, p) => ({
+    name: `Refpage ${String(p).padStart(2, "0")}`,
+    blocks: Array.from({ length: p < 34 ? 2 : 1 }, (_, i) => b(body(p, i), [b(`Child of ${p}/${i}`)])),
+  }));
+  return [{ name: "Hub", blocks: [b("Hub intro"), b("A second hub row")] }, { name: "Plain neighbour", blocks: Array.from({ length: 200 }, (_, i) => b(`Neighbour row ${i}`)) }, ...pages];
+}

@@ -177,6 +177,13 @@ pub(crate) fn record_panic(info: &std::panic::PanicHookInfo<'_>) {
         return;
     };
     ring.push(line, FLIGHT_MAX_BYTES);
+    // A panic crate code provokes and catches on purpose (an index probe
+    // narrowing a failed build to its bad file, one per probe build) ends no
+    // process: the flusher publishes it, no sync per panic.
+    if tine_core::diag_line::panics_contained() {
+        DIRTY.store(true, Ordering::Release);
+        return;
+    }
     let encoded = ring.encoded();
     drop(ring);
     // The process may be about to die: publish now, but never wait on a lock
@@ -1516,6 +1523,22 @@ mod tests {
                 crate::debug::install_panic_logger();
                 std::panic::panic_any(String::from("PRIVATE_PROBE_PAYLOAD"));
             }
+            "contained-panic" => {
+                crate::debug::install_panic_logger();
+                let contained = tine_core::diag_line::ContainedPanics::enter();
+                let caught = std::panic::catch_unwind(|| {
+                    std::panic::panic_any(String::from("PRIVATE_PROBE_PAYLOAD"))
+                });
+                drop(contained);
+                let ring = (FLIGHT.lock().unwrap().lines.iter())
+                    .any(|line| line.contains("runtime.panic"));
+                let dirty = DIRTY.load(Ordering::Acquire);
+                println!(
+                    "PROBE-CONTAINED caught={} ring={ring} dirty={dirty}",
+                    caught.is_err()
+                );
+                std::process::abort();
+            }
             "flood" => {
                 for pages in 0..40_000 {
                     record_watcher_batch(pages, pages % 2 == 0, None);
@@ -1627,6 +1650,25 @@ mod tests {
         let history = std::fs::read_to_string(dir.join(crate::flight_store::HISTORY_FILE));
         assert!(!report.to_string().contains("PRIVATE_PROBE_PAYLOAD"));
         assert!(!history.unwrap().contains("PRIVATE_PROBE_PAYLOAD"));
+    }
+
+    /// An index probe provokes and catches one panic
+    /// per probe build, and each rewrote and synced the history under the
+    /// graph's writer. A contained panic waits in the ring for the flusher.
+    #[test]
+    fn a_contained_panic_waits_for_the_flusher_instead_of_syncing() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("diagnostics");
+        let output = launch_output(&dir, "contained-panic");
+        let report = launch(&dir, "report").expect("report after the run");
+        assert!(
+            !events(&report, "previous").contains(&"runtime.panic"),
+            "the contained panic was synced at once"
+        );
+        assert!(
+            output.contains("PROBE-CONTAINED caught=true ring=true dirty=true"),
+            "kept for the flusher: {output}"
+        );
     }
 
     #[test]

@@ -345,7 +345,7 @@ impl<'de, K: serde::Deserialize<'de> + Ord, V: serde::Deserialize<'de>> serde::D
 }
 
 use super::{Document, PageEntry};
-type Page = (PageEntry, Arc<Document>);
+pub(crate) type Page = (PageEntry, Arc<Document>);
 /// Stable slots retain the original iteration order through deletion. New
 /// pages append; removed slots disappear without shifting any survivor/index.
 #[derive(Clone, Default)]

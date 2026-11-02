@@ -13,6 +13,13 @@
 //! installed sink wins; with none installed the line goes to stderr only.
 //! `crates/tine-store/tests/i05_log_sinks.rs` keeps this the only production
 //! stderr writer in `tine-core`, `tine-store` and `tine-graph-features`.
+//!
+//! **Contained panics.** While a [`ContainedPanics`] lives, crate code is
+//! provoking panics it catches itself (an index probe narrowing a failed build
+//! to its bad file, one panic per probe build). The host's panic hook asks
+//! [`panics_contained`] and keeps such a panic for its periodic flush instead
+//! of syncing its crash record once per panic. A panic on another thread in
+//! that window is deferred the same way: a hint, never a filter.
 
 type DiagnosticLineSink = Box<dyn Fn(&str) + Send + Sync>;
 static DIAGNOSTIC_LINE_SINK: std::sync::OnceLock<DiagnosticLineSink> = std::sync::OnceLock::new();
@@ -29,6 +36,29 @@ pub fn diagnostic_line(line: &'static str) {
     if let Some(sink) = DIAGNOSTIC_LINE_SINK.get() {
         sink(line);
     }
+}
+
+static CONTAINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// While this lives, panics are being provoked and caught on purpose.
+pub struct ContainedPanics(());
+
+impl ContainedPanics {
+    pub fn enter() -> Self {
+        CONTAINED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(())
+    }
+}
+
+impl Drop for ContainedPanics {
+    fn drop(&mut self) {
+        CONTAINED.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Whether a [`ContainedPanics`] lives anywhere in the process.
+pub fn panics_contained() -> bool {
+    CONTAINED.load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
 #[cfg(test)]

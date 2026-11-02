@@ -118,9 +118,23 @@ fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     })
 }
 
+/// The view after one stat walk of graph text and config
+/// (`Depth::PageStamps`; the walk waits for Ready, so the view is never the
+/// launch checkpoint). A page operation takes it once (a rename once per
+/// attempt, in `multi_rename`'s plan reuse check). The walk is the only
+/// proof that the plan sees an external edit or sync delivery the watcher
+/// has not published yet (its 200 ms debounce, a watch that reports nothing
+/// on some network and FUSE mounts, Poll mode's 3 s): a referrer, a twin or a
+/// claimant anywhere in the graph (B20d). After the walk, a planned page's
+/// edit is refused by the commit's byte check, and a change the watcher
+/// publishes before admission by the host's bound-view admission (B2); both
+/// replan. A page that becomes a referrer, twin or claimant after the walk
+/// and is not published by admission is not seen, the window the walk always
+/// had (`docs/storage-contract.md`). Assets and `custom.css` are not walked:
+/// no page plan reads them. Cost O(P stamps).
 fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     store
-        .refresh(tine_store::Depth::Stamps)
+        .refresh(tine_store::Depth::PageStamps)
         .map_err(|failure| match failure {
             tine_store::LoadError::Failed { reason } => error(io::ErrorKind::Other, &reason),
             tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
@@ -288,7 +302,8 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
 /// confirmation), which succeeds without a write; an absent name with no
 /// displayed path is a no-op. The host's deletion is bound to the bytes the
 /// check read and refuses if its own read differs. The window waits for a
-/// `Pending` deletion to publish (§4.4). Cost O(P + file bytes).
+/// `Pending` deletion to publish (§4.4). Cost one stat walk of the graph's
+/// text files (O(P), [`refreshed_view`]) plus the file's bytes.
 pub fn delete_page_expected(
     store: &Store,
     host: &PageHost,
@@ -452,7 +467,16 @@ fn rename_page_after_inventory(
         )
     };
     crate::retry_on_conflict("page changed repeatedly during rename", || {
-        let first = plan()?;
+        // Planned from the published view; the attempt's walk runs in
+        // `multi_rename`, after the flush. A refusal (or nothing to do) is
+        // never decided on an unwalked view: walk and plan again.
+        let first = match plan() {
+            Ok(first) if !first.map.0.is_empty() => first,
+            _ => {
+                refreshed_view(store)?;
+                plan()?
+            }
+        };
         if first.map.0.is_empty() {
             return Ok(Some(RenameReport::unchanged()));
         }
@@ -499,12 +523,22 @@ fn multi_rename(
         refused,
         || {
             built.replace(None);
-            // Reuse only while view/config and held input still match.
-            let retained = initial.take().filter(|first| {
-                refreshed_view(store).is_ok_and(|current| current.rev() == first.graph.rev())
-                    && std::sync::Arc::ptr_eq(&store.config().config, &first.config.config)
-                    && host.inputs().is_ok_and(|now| now == before_flush)
-            });
+            // Reuse only while view/config and held input still match. The
+            // first call takes the attempt's one walk (`refreshed_view`),
+            // after the flush and as near the host's admission as planning
+            // gets: the first plan read the published view, so it is reused
+            // only if the walk published nothing. A replan reads the
+            // published view.
+            let retained = match initial.take() {
+                Some(first) => {
+                    let current = refreshed_view(store)?;
+                    (current.rev() == first.graph.rev()
+                        && std::sync::Arc::ptr_eq(&store.config().config, &first.config.config)
+                        && host.inputs().is_ok_and(|now| now == before_flush))
+                    .then_some(first)
+                }
+                None => None,
+            };
             let reused = retained.is_some();
             let mut plan = match retained {
                 Some(first) => first,
@@ -1027,8 +1061,9 @@ pub enum RenameOutcome {
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
 /// v0.6.5 model.rs 1779. One host operation of the source and
-/// the target (DESIGN §3.1): their unsaved input is saved first. Cost O(P +
-/// source bytes) per try; four tries maximum.
+/// the target (DESIGN §3.1): their unsaved input is saved first. Cost one
+/// stat walk and one listing of the pages area (O(P)), then O(source bytes)
+/// per try; four tries maximum.
 pub fn rename_file_to_page(
     store: &Store,
     host: &PageHost,
@@ -1047,17 +1082,25 @@ pub fn rename_file_to_page(
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
-    // claimant but OG loads it as that page: refuse like a live claimant
-    // (external-editor / multi-device graph; master 46a0e8c27).
+    let taken = || {
+        error(
+            io::ErrorKind::AlreadyExists,
+            "a page with that name already exists",
+        )
+    };
+    // Once per operation (`refreshed_view`): the walk, and the
+    // listing that alone sees a retained non-portable legacy filename
+    // (`pages/A:B.md`), which is no view claimant but OG loads as that page:
+    // refuse like a live claimant (external-editor / multi-device graph;
+    // master 46a0e8c27). A try then resolves on the published view; the
+    // host rechecks the destination's name slot at admission.
+    refreshed_view(store)?;
+    if retained_legacy_page_identity_exists(store, name)? {
+        return Err(taken());
+    }
     let unclaimed = || {
-        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
-            || retained_legacy_page_identity_exists(store, name)?
-        {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "a page with that name already exists",
-            ));
+        if !existing(view(store)?.resolve(name, false)).is_empty() {
+            return Err(taken());
         }
         Ok(())
     };

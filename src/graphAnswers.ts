@@ -1,7 +1,8 @@
 /** Native publication answers, consumed identically by saves and notifications.
  * The caller owns the graph binding. No content metadata is derived here. */
 import type { GraphAnswersChange } from "./backend";
-import { graphEpoch, bumpPageInventoryRev } from "./graphSession";
+import { graphEpoch, bumpPageAliasRev, bumpPageInventoryRev } from "./graphSession";
+import { patchPageIndex } from "./pageIndex";
 import { applyChangeSummary } from "./changeSummary";
 let epoch = -1, inventoryRev = -1n;
 // One app-lifetime subscriber: the count-badge cache. This slot has a fixed bound.
@@ -19,6 +20,10 @@ export function applyGraphAnswers(change: GraphAnswersChange | null | undefined)
   const rev = BigInt(change.rev);
   if (change.inventoryChanged && rev > inventoryRev) {
     inventoryRev = rev;
-    bumpPageInventoryRev();
+    // A name-only change patches the held inventory (no IPC); anything the
+    // page index cannot patch in order refetches, as before.
+    const patched = change.inventoryDelta ? patchPageIndex(rev, change.inventoryDelta) : null;
+    if (patched === null) bumpPageInventoryRev();
+    else if (patched.aliases) bumpPageAliasRev();
   }
 }

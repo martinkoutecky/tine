@@ -23,6 +23,9 @@ export function QueryMacroActions(props: {
   editable: boolean;
   results: boolean;
   edit: (tab: "filter" | "display" | "text") => void;
+  /** The inline editor is open: the gear closes it instead of opening it again (GH #850). */
+  editOpen?: () => boolean;
+  closeEdit?: () => void;
   fold?: (collapsed: boolean) => void;
   export: () => void;
   exportRequest?: () => QueryPublicationRequest;
@@ -65,7 +68,10 @@ export function QueryMacroActions(props: {
     {/* GH #619 c6 (D-20261018-Q619): the most frequent action, one click beside the menu. */}
     <Show when={props.editable}>
       <button type="button" class="qc-edit" title={t("query-calm-edit-query")} aria-label={t("query-calm-edit-query")}
-        onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); props.edit("filter"); }}>
+        onMouseDown={(event) => event.stopPropagation()} onClick={(event) => {
+          event.stopPropagation();
+          if (props.editOpen?.()) props.closeEdit?.(); else props.edit("filter");
+        }}>
         <span aria-hidden="true">{"\u2699\uFE0E"}</span>
       </button>
     </Show>

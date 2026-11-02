@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+pub(crate) mod index_probe;
 mod inline_map;
 mod launch_patch;
 mod layout_retention;
@@ -26,6 +27,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
+pub(crate) mod referenced_names;
 pub(crate) mod write_target;
 #[cfg(test)]
 pub(crate) use write_target::assert_checked_target;
@@ -472,10 +474,18 @@ pub(crate) struct Graph {
     /// Between a name discovery's authority decision and its record.
     #[cfg(test)]
     pub(crate) discovery_record_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// In a listing's certify, between its disk rows' authority and its
+    /// owners' rows.
+    #[cfg(test)]
+    pub(crate) certify_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_install_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// In a whole-cache install, after its unlocked work, before the cache
+    /// lock and its race checks.
+    #[cfg(test)]
+    pub(crate) install_lock_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) cold_cache_reconcile_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -549,6 +559,10 @@ pub(crate) struct ReadSnapshot {
     block_index: std::sync::OnceLock<SnapshotBlockIndex>,
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
+    /// Graph-wide referenced names by page key, derived from
+    /// `referenced_name_index` on first use and patched per generation
+    /// (`referenced_names.rs`). In memory only.
+    referenced_name_table: std::sync::OnceLock<referenced_names::ReferencedNameTable>,
     real_page_names: Arc<crate::query::RealPageNames>,
     /// The alias relation: edge index, owner paths and alias list in one
     /// persistent value. Built on first use by one walk; a later generation
@@ -733,10 +747,32 @@ impl ReadSnapshot {
         old: Option<&Self>,
         changed_paths: &[String],
     ) -> Self {
+        Self::capture_rows(
+            graph.peek_pages().expect("loaded graph"),
+            graph.cache_generation(),
+            graph.observed_page_mtimes(),
+            Arc::clone(&graph.completion_name_keys),
+            config,
+            list,
+            old,
+            changed_paths,
+        )
+    }
+
+    /// [`Self::capture`] over any rows: it reads nothing else of a graph.
+    #[allow(clippy::too_many_arguments)]
+    fn capture_rows(
+        pages: Arc<Pages>,
+        cache_generation: u64,
+        observed_mtimes: Arc<SharedMap<String, std::time::SystemTime>>,
+        completion_name_keys: CompletionSessions,
+        config: Config,
+        list: Arc<EntryList>,
+        old: Option<&Self>,
+        changed_paths: &[String],
+    ) -> Self {
         #[cfg(feature = "test-faults")]
         let capture_started = std::time::Instant::now();
-        let pages = graph.peek_pages().expect("loaded graph");
-        let cache_generation = graph.cache_generation();
         // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
             // First, on the page-parse workers: it builds every block
@@ -851,6 +887,47 @@ impl ReadSnapshot {
             }),
             collect_document_referenced_names,
         );
+        let referenced_name_table = std::sync::OnceLock::new();
+        if let (Some(old), Some(index)) = (old, referenced_name_index.get()) {
+            if let (Some(table), Some(old_index)) = (
+                old.referenced_name_table.get(),
+                old.referenced_name_index.get(),
+            ) {
+                if changed_paths.is_empty() {
+                    if Arc::ptr_eq(&old.pages, &pages) {
+                        let _ = referenced_name_table.set(table.clone());
+                    }
+                } else {
+                    fn side<'a>(
+                        pages: &Arc<Pages>,
+                        positions: Option<&SharedMap<String, usize>>,
+                        index: &'a SnapshotPageDerivedIndex,
+                        rel: &str,
+                    ) -> Option<(usize, &'a [String])> {
+                        let slot = *positions.unwrap_or(pages.positions.as_ref()).get(rel)?;
+                        let (entry, _) = pages
+                            .get(slot)
+                            .filter(|(entry, _)| entry.rel_path_str() == rel)?;
+                        Some((slot, index.get(&entry.path).map_or(&[][..], Vec::as_slice)))
+                    }
+                    let changes = changed_paths.iter().map(|rel| {
+                        (
+                            side(
+                                &old.pages,
+                                position_pair.map(|(before, _)| before),
+                                old_index,
+                                rel,
+                            ),
+                            side(&pages, position_pair.map(|(_, after)| after), index, rel),
+                        )
+                    });
+                    let _ =
+                        referenced_name_table.set(referenced_names::ReferencedNameTable::patched(
+                            table, changes, &pages, index,
+                        ));
+                }
+            }
+        }
         let real_page_names = Arc::new(crate::query::RealPageNames::capture(
             old.map(|old| (old.real_page_names.as_ref(), old.pages.as_ref())),
             &pages,
@@ -869,13 +946,14 @@ impl ReadSnapshot {
             pages,
             config,
             list,
-            observed_mtimes: graph.observed_page_mtimes(),
+            observed_mtimes,
             explicit_index,
             reference_candidate_index: RwLock::new(reference_candidate_index),
             cache_generation,
             block_index,
             alias_index,
             referenced_name_index,
+            referenced_name_table,
             real_page_names,
             alias_relation: std::sync::OnceLock::new(),
             link_graph: std::sync::OnceLock::new(),
@@ -887,7 +965,7 @@ impl ReadSnapshot {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
-            completion_name_keys: Arc::clone(&graph.completion_name_keys),
+            completion_name_keys,
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]
@@ -1065,7 +1143,6 @@ impl ReadSnapshot {
     }
 
     /// Whether this generation's alias relation is built (or inherited).
-    #[cfg(test)]
     pub(crate) fn alias_list_built(&self) -> bool {
         self.alias_relation.get().is_some()
     }
@@ -1561,44 +1638,8 @@ impl ReadSnapshot {
             .flat_map(|shard| shard.iter().map(|(name, _)| name.as_str()))
     }
 
-    pub(crate) fn referenced_page_names(&self) -> Vec<String> {
-        self.referenced_names
-            .get_or_init(|| {
-                let index = self.referenced_name_index.get_or_init(|| {
-                    #[cfg(test)]
-                    self.referenced_name_full_builds
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    SnapshotPageDerivedIndex::capture(
-                        None,
-                        &self.pages,
-                        &[],
-                        collect_document_referenced_names,
-                        None,
-                    )
-                });
-                let mut seen = HashMap::new();
-                for (entry, _) in self.pages.iter() {
-                    if let Some(projection) = index.get(&entry.path) {
-                        for name in projection {
-                            seen.entry(tine_core::refs::page_key(name))
-                                .or_insert_with(|| name.clone());
-                        }
-                    }
-                }
-                seen.into_values().collect()
-            })
-            .clone()
-    }
-
-    /// Completion sees the editing block's reference baseline, even when its
-    /// live text has already autosaved. Other owners keep their cached facts.
-    pub(crate) fn referenced_page_names_for_editor(
-        &self,
-        owner: &str,
-        id: &str,
-        original: &str,
-    ) -> Vec<String> {
-        let index = self.referenced_name_index.get_or_init(|| {
+    fn referenced_name_index(&self) -> &SnapshotPageDerivedIndex {
+        self.referenced_name_index.get_or_init(|| {
             #[cfg(test)]
             self.referenced_name_full_builds
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1609,19 +1650,7 @@ impl ReadSnapshot {
                 collect_document_referenced_names,
                 None,
             )
-        });
-        let mut seen = HashMap::new();
-        for (entry, doc) in self.pages.iter() {
-            let names = if entry.name == owner {
-                collect_document_referenced_names_with_baseline(doc, Some((id, original)))
-            } else {
-                index.get(&entry.path).cloned().unwrap_or_default()
-            };
-            for name in names {
-                seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
-            }
-        }
-        seen.into_values().collect()
+        })
     }
 }
 
@@ -1740,6 +1769,8 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
             add_blocks(out, &block.children);
         }
     }
+    #[cfg(test)]
+    index_probe::test_row_fault(&entry.path);
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let mut out = vec![doc
         .pre_block
@@ -2314,12 +2345,7 @@ impl SnapshotExplicitIndex {
         };
         let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
         #[cfg(test)]
-        if rows.iter().any(|(entry, _)| {
-            (TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap().iter())
-                .any(|root| entry.path.starts_with(root))
-        }) {
-            panic!("deterministic test sentinel for a full graph index build panic");
-        }
+        index_probe::test_full_build_fault(rows.iter().map(|(entry, _)| entry.path.as_path()));
         let workers = page_cache_worker_count();
         if workers <= 1 || rows.len() < 64 {
             insert(&rows);
@@ -2398,6 +2424,7 @@ pub(crate) struct LaunchObservations {
     pub(crate) announce: Vec<(PathBuf, bool, PageKind, String)>,
 }
 
+#[derive(Default)]
 struct PageCacheBuild {
     pages: Vec<ParsedPage>,
     failures: Vec<String>,
@@ -2950,9 +2977,13 @@ impl Graph {
             #[cfg(test)]
             discovery_record_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
+            certify_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_after_install_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            install_lock_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             cold_cache_reconcile_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -3546,7 +3577,7 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false, None, None) {
+                if self.install_built(built, gen0, false, None, None).is_ok() {
                     break;
                 }
             }
@@ -5652,16 +5683,18 @@ mod tests {
     fn launch_does_not_report_a_file_that_vanished_during_naming() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path());
-        assert!(graph.install_built(
-            PageCacheBuild::with_capacity(0),
-            (graph.cache_generation(), graph.held.epoch()),
-            false,
-            None,
-            Some(vec![(
-                crate::FileId::from("pages/Gone.md".to_owned()),
-                io::Error::from(io::ErrorKind::NotFound).into()
-            )])
-        ));
+        assert!(graph
+            .install_built(
+                PageCacheBuild::with_capacity(0),
+                (graph.cache_generation(), graph.held.epoch()),
+                false,
+                None,
+                Some(vec![(
+                    crate::FileId::from("pages/Gone.md".to_owned()),
+                    io::Error::from(io::ErrorKind::NotFound).into()
+                )])
+            )
+            .is_ok());
         assert!(
             graph.reported_unreadable_pages().is_empty(),
             "{:?}",

@@ -8,6 +8,7 @@ use super::*;
 /// spelling, and each entry's target is exactly what [`WholeGraph::resolve`]
 /// returns for that name: the canonical claimant, then every other file
 /// claiming the same normalized name.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InventoryEntry {
     /// Decoded file name, alias, or referenced name.
     pub name: String,
@@ -20,7 +21,24 @@ pub struct InventoryEntry {
 }
 
 /// Graph inventory entries in page-key order.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Inventory(pub Vec<InventoryEntry>);
+
+/// What one publication changed in the `All` inventory when no page file
+/// claim changed: the alias and reference-only entries of some page keys
+/// (cost-model audit 2026-11-02 row 1). A file-claimed entry never travels
+/// here: claims change only with a page created, removed or renamed, which
+/// refetches. Applying it to the previous inventory (drop every alias and
+/// reference-only entry whose key is listed, add `entries`) gives the new
+/// inventory exactly. Size O(changed keys).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct InventoryDelta {
+    /// Page keys whose alias or reference-only entry changed, ascending.
+    pub(crate) keys: Vec<String>,
+    /// Their alias or reference-only entries now, in inventory order (a key
+    /// that left the inventory, or is now only file-claimed, has none).
+    pub(crate) entries: Inventory,
+}
 
 /// Which names a [`WholeGraph::inventory`] lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,25 +185,16 @@ impl WholeGraph {
                 entries.push(entry);
             }
         }
-        let references = self.graph.referenced_page_names();
-        let reference_spelling: HashMap<_, _> = references
-            .iter()
-            .map(|name| (tine_core::refs::page_key(name), name.as_str()))
-            .collect();
-        // One entry per alias name, owners sorted by path (rev 5
-        // `Resolved::Alias`). An alias that is also a page file's name gets no
-        // entry: `resolve` prefers the file, and every entry's target must be
-        // the answer `resolve` gives for its name.
+        let references = self.graph.referenced_name_table();
         let mut alias_owners: BTreeMap<String, (String, Vec<PageId>)> = BTreeMap::new();
         for (alias, _, owner) in self.graph.page_aliases_with_owners() {
             let key = tine_core::refs::page_key(&alias);
             if page_claimed_names.contains(&key) {
                 continue;
             }
-            let spelling = reference_spelling
+            let spelling = references
                 .get(&key)
-                .copied()
-                .unwrap_or(&alias)
+                .map_or(alias.as_str(), |referrers| referrers.spelling.as_str())
                 .to_owned();
             let slot = alias_owners
                 .entry(key)
@@ -205,11 +214,11 @@ impl WholeGraph {
                 day: None,
             });
         }
-        for name in references {
-            let key = tine_core::refs::page_key(&name);
-            if claimed_names.contains(&key) || alias_names.contains(&key) {
+        for (key, referrers) in references.iter() {
+            if claimed_names.contains(key) || alias_names.contains(key) {
                 continue;
             }
+            let name = referrers.spelling.clone();
             entries.push(InventoryEntry {
                 target: self.resolve(&name, false),
                 name,
@@ -293,6 +302,64 @@ impl WholeGraph {
             })
             .collect()
     }
+}
+
+impl Snapshot {
+    /// The alias or reference-only `All` entry of page key `key` in this
+    /// generation, exactly as [`WholeGraph::inventory`] lists it: an alias
+    /// entry unless a page file claims the key, else a reference-only entry
+    /// unless any file (page or journal) claims it. O(log V + owners).
+    pub(super) fn name_entry(
+        &self,
+        table: &crate::model::referenced_names::ReferencedNameTable,
+        key: &str,
+    ) -> Option<InventoryEntry> {
+        let claimed = |journal: bool| {
+            self.claimants
+                .get(&(journal, key.to_owned()))
+                .is_some_and(|claimants| claimants.iter().any(|c| c.rel_path.is_some()))
+        };
+        if claimed(false) {
+            return None;
+        }
+        let spelling = table.get(key).map(|referrers| referrers.spelling.as_str());
+        if let Some(mut owners) = self
+            .graph
+            .alias_owner_paths(key)
+            .filter(|owners| !owners.is_empty())
+        {
+            owners.dedup();
+            return Some(InventoryEntry {
+                name: spelling.unwrap_or(key).to_owned(),
+                target: Resolved::Alias {
+                    owners: owners.into_iter().map(PageId::from).collect(),
+                },
+                is_journal: false,
+                day: None,
+            });
+        }
+        if claimed(true) {
+            return None;
+        }
+        let name = spelling?.to_owned();
+        Some(InventoryEntry {
+            target: Resolved::Absent {
+                id: proposed_page_id(&self.config.config, &name),
+            },
+            name,
+            is_journal: false,
+            day: None,
+        })
+    }
+}
+
+/// The file a page named `name` would be created as: the configured pages
+/// directory, the encoded name and the preferred format (`resolve`'s absent
+/// answer for an ordinary page).
+pub(crate) fn proposed_page_id(config: &tine_core::config::Config, name: &str) -> PageId {
+    let dir = &config.pages_dir;
+    let stem = tine_core::model::encode_page_name(name, config.file_name_format);
+    PageId::from(format!("{dir}/{stem}.{}", config.preferred_format.ext()))
 }
 
 fn sort_inventory(entries: &mut [InventoryEntry]) {

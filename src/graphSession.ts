@@ -75,3 +75,9 @@ export const [pageInventoryRev, setPageInventoryRev] = createSignal(0);
 export function bumpPageInventoryRev() {
   setPageInventoryRev((n) => n + 1);
 }
+// Bumped when a patched inventory change (no refetch) touched an alias entry,
+// so alias-group headers re-ask; `pageInventoryRev` covers every refetch.
+export const [pageAliasRev, setPageAliasRev] = createSignal(0);
+export function bumpPageAliasRev() {
+  setPageAliasRev((n) => n + 1);
+}

@@ -119,7 +119,7 @@ describe("property name/value autocomplete", () => {
       const textarea = editorIn(root);
       inputAt(textarea, "prefix\nalpha:: suffix", "prefix\nalpha::".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
-      expect(facets).toHaveBeenCalledWith(true);
+      expect(facets).toHaveBeenCalledWith(true, { keys: true });
 
       enter(textarea);
       await vi.waitFor(() => expect(textarea.value()).toBe("prefix\nalpha::  suffix"));
@@ -128,6 +128,40 @@ describe("property name/value autocomplete", () => {
 
       enter(textarea);
       await vi.waitFor(() => expect(doc.byId["property-authoring"].raw).toBe("prefix\nalpha:: one suffix"));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("fetches property keys once per completion session and values only for the chosen key (cost-model audit row 2b)", async () => {
+    const facets = vi.spyOn(backend(), "queryFacets").mockImplementation(async (_autocomplete, scope) => {
+      const all: [string, string[]][] = [["alpha", ["one", "two"]], ["beta", ["three"]]];
+      if (scope && "key" in scope) return all.filter(([key]) => key === scope.key);
+      if (scope && "keys" in scope) return all.map(([key]) => [key, []]);
+      return all;
+    });
+    loadSingle(page(""));
+    startEditing("property-authoring", 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Property authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+
+    try {
+      const textarea = editorIn(root);
+      inputAt(textarea, "a::", 1);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe('Create "a"'));
+      for (const typed of ["al::", "alp::", "alph::"]) {
+        inputAt(textarea, typed, typed.length - 2);
+        await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(`Create "${typed.slice(0, -2)}"`));
+      }
+      inputAt(textarea, "alpha::", 5);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
+      enter(textarea);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("one"));
+      // Five keystrokes of one session: one keys request (the old editor
+      // fetched every key's values on each of them), then the chosen key's
+      // values, and never every key's values.
+      expect(facets.mock.calls).toEqual([[true, { keys: true }], [true, { key: "alpha" }]]);
     } finally {
       dispose();
     }

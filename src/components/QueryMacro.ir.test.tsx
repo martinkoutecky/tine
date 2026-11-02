@@ -1693,3 +1693,53 @@ describe("item 9: a query can show pages and blocks together", () => {
     } finally { dispose(); }
   });
 });
+
+// GH #850: the gear is a toggle. A second click closes the editor the first one opened.
+describe("GH #850: the Edit gear toggles the query editor", () => {
+  const sourceFilter = {
+    anchor: "block" as const, filter: { kind: "true" as const }, diagnostics: [],
+    source: { kind: "og" as const, original: "(task TODO)", og_options: "" },
+  };
+  function arrange() {
+    load("{{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: sourceFilter, view: {} });
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+  }
+  const gear = (root: HTMLElement) => root.querySelector<HTMLButtonElement>(".qc-edit")!;
+  it("closes on the second click and reopens on the third", async () => {
+    arrange();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(gear(root)).not.toBeNull());
+      gear(root).click();
+      await vi.waitFor(() => expect(root.querySelector(".qc-panel")).not.toBeNull());
+      gear(root).click();
+      await vi.waitFor(() => expect(root.querySelector(".qc-panel")).toBeNull());
+      gear(root).click();
+      await vi.waitFor(() => expect(root.querySelector(".qc-panel")).not.toBeNull());
+    } finally { dispose(); }
+  });
+  it("also closes an editor the menu opened on another tab", async () => {
+    arrange();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await openCalmQuery(root, "View");
+      gear(root).click();
+      await vi.waitFor(() => expect(root.querySelector(".qc-panel")).toBeNull());
+    } finally { dispose(); }
+  });
+  it("opens after Done closed the editor from inside", async () => {
+    arrange();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(gear(root)).not.toBeNull());
+      gear(root).click();
+      const panel = await vi.waitFor(() => { const p = root.querySelector<HTMLElement>(".qc-panel"); expect(p).not.toBeNull(); return p!; });
+      panel.querySelector<HTMLButtonElement>(".qc-done")!.click();
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      gear(root).click();
+      await vi.waitFor(() => expect(root.querySelector(".qc-panel")).not.toBeNull());
+    } finally { dispose(); }
+  });
+});

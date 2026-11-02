@@ -1517,6 +1517,61 @@ fn v4_a_read_or_rebuild_never_indexes_a_held_page() {
     live.host.stop();
 }
 
+/// REG-PANIC-UNDECODABLE-KEEPS-CACHE: the host's publication of a page no
+/// host holds any more, with bytes no parse may take, costs that file only:
+/// it is listed and every other page keeps its cached row. It discarded the
+/// whole cache before, and with it every other file's reported state.
+#[test]
+fn a_publication_of_bytes_no_parse_may_take_costs_that_file_only() {
+    let oversized = vec![b' '; crate::model::PARSE_INPUT_MAX_BYTES as usize + 1];
+    for (tag, bytes) in [
+        ("undecodable", b"- a \xff\xfe\n".to_vec()),
+        ("oversized", oversized),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("pages")).unwrap();
+        fs::write(temp.path().join("pages/a.md"), "- a [[Target]]\n").unwrap();
+        fs::write(temp.path().join("pages/b.md"), "- b [[Target]]\n").unwrap();
+        let store = Store::open(temp.path(), Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let cached = |store: &Store| {
+            let pages = store
+                .graph
+                .peek_pages()
+                .expect("the page cache stays built");
+            let (_, doc) = (pages
+                .iter()
+                .find(|(entry, _)| entry.rel_path_str() == "pages/b.md"))
+            .expect("b stays cached");
+            Arc::clone(doc)
+        };
+        let before = cached(&store);
+        let writer = store.writer.lock().unwrap();
+        // The bytes the host read from the file, as it publishes them.
+        fs::write(temp.path().join("pages/a.md"), &bytes).unwrap();
+        let publication = Publication {
+            key: "pages/a.md".into(),
+            spelling: "pages/a.md".into(),
+            bytes: Some(Arc::from(&bytes[..])),
+            own: None,
+            stamp: None,
+        };
+        assert!(index(&store, &publication), "{tag}");
+        drop(writer);
+        let view = store.whole_graph().unwrap();
+        let listed: Vec<_> = (view.unreadable_files().iter())
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(listed, ["pages/a.md"], "{tag}");
+        assert!(
+            Arc::ptr_eq(&before, &cached(&store)),
+            "{tag}: b was read again"
+        );
+        assert_eq!(view.backlinks("Target").unwrap().len(), 1, "{tag}");
+        store.close();
+    }
+}
+
 /// H1 #3 (REVIEW-AH2-AW1-plan R6, (G)): the consumer's external
 /// publication names the page from the bytes it publishes, while the file
 /// says something else.
