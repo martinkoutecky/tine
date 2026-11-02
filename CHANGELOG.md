@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The first margin comment or reply you write in a graph that is under git, when you have not set **Your name**, now asks for a name once, so comments you share show who wrote them instead of reading "you" to everyone. The name is a Tine setting on this device, used in all graphs. Skipping is remembered for all graphs and is not asked again; the comment is written either way, and the setting stays under Settings > Editor (#841).
 ### Fixed
 
+- `tine add`, `edit`, `prop`, `move`, `delete` and the other write commands running at the same time on one page now all land, in some order, instead of most failing with "the page kept changing" (exit 6) when no `--rev` or handle had gone out of date. Commands take turns; `--rev` and block handles still refuse a page that moved, and text from the app, an editor or Syncthing is still never overwritten (#842).
 - A Search tab that is still searching now says "Searching…" instead of "Pages 0 / Blocks 0 / No matching pages"; a finished empty search still says no results (#838).
 - A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).
 - Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with "no graph loaded for window capture". Drag-and-drop onto the capture window is not supported yet (#835).
