@@ -54,7 +54,7 @@ async function stop() {
 const labels = () => browser.execute(() => [...document.querySelectorAll(".ns-view-open")].map((el) => el.title));
 const rowCount = () => browser.execute(() => document.querySelectorAll(".ns-view-row").length);
 const click = (selector, text) => browser.execute((sel, label) => {
-  const el = [...document.querySelectorAll(sel)].find((node) => label === undefined || node.textContent?.trim() === label);
+  const el = [...document.querySelectorAll(sel)].find((node) => label == null || node.textContent?.trim() === label);
   if (!(el instanceof HTMLElement)) return false;
   el.click();
   return true;
@@ -72,7 +72,8 @@ try {
   await browser.$(".ns-view").waitForExist({ timeout: 10_000 });
   assert.equal(await currentPageTitle(browser), "Namespaces");
   // Default: top-level namespaces open. Area 0..5, Other, Project are the 8 roots.
-  await browser.waitUntil(async () => (await labels()).includes("Project/Roadmap"), { timeout: 10_000 });
+  // Project sorts after the six big areas, so it is outside the first window.
+  await browser.waitUntil(async () => (await labels()).includes("Area 0/Topic 000"), { timeout: 10_000 });
   const initial = await rowCount();
   assert.ok(initial > 0 && initial < 80, `only a window of rows is drawn (${initial})`);
   assert.ok(await browser.execute(() => document.querySelector(".ns-tree") !== null), "the sidebar tree is still inline");
@@ -92,8 +93,8 @@ try {
   stage = "filter shows full paths";
   await browser.$(".all-pages-filter").setValue("notes");
   await browser.waitUntil(async () => (await labels()).join("|") === "Other/Notes|Project/Notes", { timeout: 5000 });
-  await browser.$(".all-pages-filter").setValue("");
-  await browser.waitUntil(async () => (await labels()).length > 2, { timeout: 5000 });
+  await browser.$(".all-pages-filter").setValue("project/roadmap");
+  await browser.waitUntil(async () => (await labels()).includes("Project/Roadmap"), { timeout: 5000 });
 
   stage = "open a page from the view";
   assert.ok(await browser.execute(() => {
