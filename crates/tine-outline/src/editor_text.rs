@@ -15,7 +15,13 @@ use crate::block_regions::{self, BlockRegions};
 use serde::{Deserialize, Serialize};
 
 pub use crate::property_visibility::BUILTIN_HIDDEN;
-const COMMENT_HIDDEN: [&str; 4] = ["quote", "quote-prefix", "quote-suffix", "author"];
+use crate::tine_keys::{AUTHOR, COMMENT_QUOTE, COMMENT_QUOTE_PREFIX, COMMENT_QUOTE_SUFFIX};
+const COMMENT_HIDDEN: [&str; 4] = [
+    COMMENT_QUOTE,
+    COMMENT_QUOTE_PREFIX,
+    COMMENT_QUOTE_SUFFIX,
+    AUTHOR,
+];
 
 /// The shared comment discriminator, also used by the window's `quoteSelectorOf`.
 /// The caller supplies only the block's own primary properties. An empty quote
@@ -23,7 +29,7 @@ const COMMENT_HIDDEN: [&str; 4] = ["quote", "quote-prefix", "quote-suffix", "aut
 pub fn comment_quote<'a>(
     mut properties: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> Option<&'a str> {
-    properties.find_map(|(key, value)| (property_key_norm(key) == "quote").then_some(value))
+    properties.find_map(|(key, value)| (property_key_norm(key) == COMMENT_QUOTE).then_some(value))
 }
 
 /// Which accepted primary properties the editor hides.
@@ -878,8 +884,8 @@ mod tests {
                 "id",
                 "collapsed",
                 "logseq.order-list-type",
-                "quote",
-                "author",
+                "tine.quote",
+                "tine.author",
             ] {
                 let old = if key == "id" { id } else { "old" };
                 let new = if key == "id" { id } else { "new" };
@@ -983,10 +989,10 @@ mod tests {
     #[test]
     fn gh741_logbook_canonical_restoration_checks_both_property_groups() {
         let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
-        let raw = format!("DOING x\nquote:: selected words\n{drawer}\nauthor:: Ada");
+        let raw = format!("DOING x\ntine.quote:: selected words\n{drawer}\ntine.author:: Ada");
         let out = set_text(&raw, false, "> quoted").unwrap();
         let parsed = block_regions::parse(&out, false);
-        for (key, value) in [("quote", "selected words"), ("author", "Ada")] {
+        for (key, value) in [("tine.quote", "selected words"), ("tine.author", "Ada")] {
             assert!(
                 parsed
                     .properties
@@ -1223,6 +1229,9 @@ mod tests {
         for (is_org, raw) in [
             (false, "The obstacle is the way.\nauthor:: Marcus Aurelius  \t\nquote-suffix:: after  "),
             (true, "The obstacle is the way.\n:PROPERTIES:\n:author: Marcus Aurelius  \t\n:quote-suffix: after  \n:END:"),
+            // A user's own `quote::` is not a comment (Discussion #825).
+            (false, "Book notes\nquote:: The obstacle is the way.\nauthor:: Marcus Aurelius"),
+            (true, "Book notes\n:PROPERTIES:\n:quote: The obstacle is the way.\n:author: Marcus Aurelius\n:END:"),
         ] {
             let t = split(raw, is_org, &HidePolicy::Builtin);
             assert_eq!(t.visible, raw);
@@ -1235,33 +1244,40 @@ mod tests {
     #[test]
     fn key_queries_and_projection_share_the_own_quote_discriminator() {
         for (is_org, raw, comment) in [
-            (false, "Body\nauthor:: Ada\nquote-suffix:: after", false),
+            (false, "Body\ntine.author:: Ada\ntine.quote-suffix:: after", false),
             (
                 false,
-                "Body\nQuOtE:: \nauthor:: Ada\nquote-suffix:: after",
+                "Body\ntine.QuOtE:: \ntine.author:: Ada\ntine.quote-suffix:: after",
                 true,
             ),
             (
                 true,
-                "Body\n:PROPERTIES:\n:author: Ada\n:quote-suffix: after\n:END:",
+                "Body\n:PROPERTIES:\n:tine.author: Ada\n:tine.quote-suffix: after\n:END:",
                 false,
             ),
             (
                 true,
-                "Body\n:PROPERTIES:\n:QuOtE: \n:author: Ada\n:quote-suffix: after\n:END:",
+                "Body\n:PROPERTIES:\n:tine.QuOtE: \n:tine.author: Ada\n:tine.quote-suffix: after\n:END:",
                 true,
             ),
             (
                 false,
-                "Body\nauthor:: Ada\n```\nquote:: literal\n```",
+                "Body\ntine.author:: Ada\n```\ntine.quote:: literal\n```",
                 false,
             ),
         ] {
             let regions = block_regions::parse(raw, is_org);
             for hide in [HidePolicy::Builtin, HidePolicy::SheetCell] {
+                // A sheet cell hides every `tine.*` key, comment or not
+                // (D-20261102-PNS made the comment keys `tine.*`).
+                let comment_or_cell = comment || matches!(hide, HidePolicy::SheetCell);
                 let t = split_with(raw, is_org, &regions, &hide);
                 for key in COMMENT_HIDDEN {
-                    assert_eq!(hide.hides(key, &regions), comment, "{raw:?}: {key}");
+                    assert_eq!(
+                        hide.hides(key, &regions),
+                        comment_or_cell,
+                        "{raw:?}: {key}"
+                    );
                     assert_eq!(
                         hide.hides_properties(
                             key,
@@ -1271,11 +1287,11 @@ mod tests {
                                 .filter(|p| p.primary)
                                 .map(|p| (p.key.as_str(), p.value.as_str()))
                         ),
-                        comment,
+                        comment_or_cell,
                     );
                 }
-                assert_eq!(t.hidden.contains("author"), comment);
-                assert_eq!(t.visible.contains("author"), !comment);
+                assert_eq!(t.hidden.contains("author"), comment_or_cell);
+                assert_eq!(t.visible.contains("author"), !comment_or_cell);
                 for key in BUILTIN_HIDDEN {
                     assert!(hide.hides(key, &regions));
                 }
@@ -1286,8 +1302,8 @@ mod tests {
     #[test]
     fn comment_metadata_is_hidden_and_survives_body_edits_byte_exact() {
         for (is_org, raw, hidden) in [
-            (false, "My view\nQuOtE:: selected words  \nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada Test\ncollapsed:: false", "QuOtE:: selected words  \nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada Test\ncollapsed:: false"),
-            (true, "My view\n:PROPERTIES:\n:QuOtE: selected words  \n:quote-prefix: before\n:quote-suffix: after\n:author: Ada Test\n:collapsed: false\n:END:", ":QuOtE: selected words  \n:quote-prefix: before\n:quote-suffix: after\n:author: Ada Test\n:collapsed: false"),
+            (false, "My view\ntine.QuOtE:: selected words  \ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada Test\ncollapsed:: false", "tine.QuOtE:: selected words  \ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada Test\ncollapsed:: false"),
+            (true, "My view\n:PROPERTIES:\n:tine.QuOtE: selected words  \n:tine.quote-prefix: before\n:tine.quote-suffix: after\n:tine.author: Ada Test\n:collapsed: false\n:END:", ":tine.QuOtE: selected words  \n:tine.quote-prefix: before\n:tine.quote-suffix: after\n:tine.author: Ada Test\n:collapsed: false"),
         ] {
             let t = split(raw, is_org, &HidePolicy::Builtin);
             assert_eq!(t.visible, "My view", "{raw:?}");
@@ -1301,10 +1317,13 @@ mod tests {
     #[test]
     fn handwritten_comment_properties_remain_accepted_content_on_save() {
         for (is_org, typed) in [
-            (false, "My view\nquote:: selected words\nauthor:: Ada"),
+            (
+                false,
+                "My view\ntine.quote:: selected words\ntine.author:: Ada",
+            ),
             (
                 true,
-                "My view\n:PROPERTIES:\n:quote: selected words\n:author: Ada\n:END:",
+                "My view\n:PROPERTIES:\n:tine.quote: selected words\n:tine.author: Ada\n:END:",
             ),
         ] {
             // Typing metadata by hand saves the entered bytes, just as before;
@@ -1314,9 +1333,9 @@ mod tests {
             assert!(regions
                 .properties
                 .iter()
-                .any(|p| p.key == "quote" && p.value == "selected words"));
+                .any(|p| p.key == "tine.quote" && p.value == "selected words"));
         }
-        let fenced = "```\nquote:: literal words\nauthor:: example\n```";
+        let fenced = "```\ntine.quote:: literal words\ntine.author:: example\n```";
         assert_eq!(split(fenced, false, &HidePolicy::Builtin).visible, fenced);
     }
 

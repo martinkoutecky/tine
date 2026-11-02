@@ -20,7 +20,7 @@ type Props = readonly (readonly [string, string])[];
 export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org") {
   const inThread = () => inCommentThread(node().parent, fmt());
   const commentSelector = () => (node().parent !== null ? quoteSelectorOf(properties()) : null);
-  // Your own name (Settings → Your name) is "you": null, as for a block without `author::`.
+  // Your own name (Settings → Your name) is "you": null, as for a block without `tine.author::`.
   const author = () => {
     const written = authorOf(properties());
     return written !== null && isOwnAuthor(written) ? null : written;

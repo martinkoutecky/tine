@@ -133,7 +133,7 @@ describe("favorites arrangement page", () => {
     expect(writes).toEqual(["config:A:-", "config:A|B:-"]);
     addFavoriteGroup();
     await settle();
-    expect(shape(disk.get("Favorites")!)).toEqual({ pre: "tine/favorites:: true", text: "- [[A]]\n- [[B]]\n- New group\n" });
+    expect(shape(disk.get("Favorites")!)).toEqual({ pre: "tine.favorites:: true", text: "- [[A]]\n- [[B]]\n- New group\n" });
     expect(writes.slice(2)).toEqual(["page:Favorites:create-page", "config:A|B:Favorites"]);
     expect(config).toEqual({ names: ["A", "B"], page: "Favorites" });
   });
@@ -358,7 +358,7 @@ describe("favorites arrangement page", () => {
     await settle();
     const page = disk.get("Favorites")!;
     expect(page.format).toBe("org");
-    expect(page.pre_block).toBe("#+tine/favorites: true");
+    expect(page.pre_block).toBe("#+tine.favorites: true");
     expect(page.blocks[1].raw).toBe("Work\n:PROPERTIES:\n:collapsed: true\n:END:");
     seedFavorites(config.names, config.page); // reopen: the Org page is recognised, collapse came back
     await settle();

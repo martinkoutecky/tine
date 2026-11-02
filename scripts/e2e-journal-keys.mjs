@@ -23,7 +23,7 @@ const stem = date => `${date.getFullYear()}_${String(date.getMonth() + 1).padSta
 const journalFile = path.join(graph, "journals", `${stem(now)}.md`);
 fs.writeFileSync(pageFile("S5 typing"), "- Unrelated typing target\n");
 fs.writeFileSync(pageFile("S5 dates"), "- Initial date source\n");
-fs.writeFileSync(pageFile("S5 sections"), "tine/journal-sections:: true\n\n- {{upcoming}}\n");
+fs.writeFileSync(pageFile("S5 sections"), "tine.journal-sections:: true\n\n- {{upcoming}}\n");
 fs.writeFileSync(journalFile, "- Journal typing target\n- [[S5 typing]]\n");
 const app = path.resolve(process.env.TINE_APP || "target/debug/tine");
 const port = Number(process.env.E2E_DRIVER_PORT || 4902);

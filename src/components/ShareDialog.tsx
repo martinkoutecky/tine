@@ -26,7 +26,7 @@ const LAYER_ID = "share-dialog";
 
 /** The share dialog (share step 1, SHARE-DIALOG.md §3): what to share, a review of the pages that go out, and
  *  where. Folder export reuses the query export's destination and replace flow with the reviewed request, then
- *  saves the definition (`export:: <folder>`) on the exports page, or on the query block it started from. Link
+ *  saves the definition (`tine.export:: <folder>`) on the exports page, or on the query block it started from. Link
  *  hands the reviewed request to the quick share dialog (DESIGN §3.9), offered only where quick share is on. */
 export function ShareDialog(props: { target: Accessor<ShareTarget | null> }): JSX.Element {
   return <Show when={props.target()}>{(target) => <Dialog target={target()} />}</Show>;
@@ -153,7 +153,7 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
     const asBlock = unchanged() && !!hostBlockId;
     if (where() === "link" && linkAvailable()) {
       closeShareDialog();
-      // The created share's `tine.share::` goes where a folder export's `export::` would (D-20261018-Q1).
+      // The created share's `tine.share::` goes where a folder export's `tine.export::` would (D-20261018-Q1).
       openQuickShare({ ...base, includeQueryText: includeQueryText() }, { hostBlockId: asBlock ? hostBlockId : null, macro: text });
       return;
     }

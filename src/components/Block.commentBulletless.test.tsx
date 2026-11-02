@@ -35,9 +35,9 @@ function mount(blocks: BlockDto[]): { root: HTMLDivElement; dispose: () => void 
 }
 
 const fixture = () => mount([
-  block("agent", "An agent wrote a passage worth disputing.\nauthor:: claude", [
-    block("c1", "I doubt this.\nquote:: a passage worth disputing", [
-      block("r1", "It holds, see the lemma.\nauthor:: claude", [block("r2", "Fair enough.")]),
+  block("agent", "An agent wrote a passage worth disputing.\ntine.author:: claude", [
+    block("c1", "I doubt this.\ntine.quote:: a passage worth disputing", [
+      block("r1", "It holds, see the lemma.\ntine.author:: claude", [block("r2", "Fair enough.")]),
     ]),
     block("plain", "An ordinary child."),
   ]),

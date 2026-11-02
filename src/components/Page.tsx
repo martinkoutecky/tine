@@ -5,7 +5,7 @@ import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, layoutHasMultiplePanes, layoutRoot, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -15,6 +15,7 @@ import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed } from "../changeKeys";
+import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -1186,7 +1187,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
         <Show when={!props.page.guide}>
           <CarryActions page={props.page} />
           <TagTableToggle page={props.page} />
-          <Show when={!isPublishedExport() && readPageProperty(props.page.name, "tine/exports")?.toLowerCase() === "true"}>
+          <Show when={!isPublishedExport() && hasMarker(readPageProperties(props.page.name), EXPORTS_MARKER)}>
             <QuickShareAll />
           </Show>
         </Show>
@@ -1268,7 +1269,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
           </For>
         </div>
       </Show>
-      <Show when={props.page.kind === "page" && headerProperties().some(([key, value]) => key.toLowerCase() === "tine/journal-sections" && value.trim().toLowerCase() === "true")}>
+      <Show when={props.page.kind === "page" && hasMarker(headerProperties(), JOURNAL_SECTIONS_MARKER)}>
         <JournalSectionsHeader />
       </Show>
       <Show when={props.page.guide}>

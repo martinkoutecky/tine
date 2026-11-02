@@ -507,7 +507,7 @@ mod journal_guide_tests {
         let text = include_str!("templates/journals-tasks-scheduling.md");
         for required in [
             "**Customize today's sections…**",
-            "`tine/journal-sections:: true`",
+            "`tine.journal-sections:: true`",
             "in outline order",
             "Delete the page, or set the marker to `false`, to go back to `config.edn`",
             "Tine never writes to `config.edn`",
@@ -1087,7 +1087,7 @@ mod rename_guide_tests {
             "**Settings > Editor > Your name**",
             "**quoted text changed**",
             "**Reply…**",
-            "`author:: <your name>`",
+            "`tine.author:: <your name>`",
             "the first comment or reply you write without a name asks for one once",
             "**Ctrl/Cmd+Z** restores them together",
             "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
@@ -1520,8 +1520,8 @@ mod rename_guide_tests {
             "a page marked `public:: false` and the Exports page are never shared",
             "**Include the query text** is off",
             "`published-queries/<folder>/`",
-            "`export:: <folder>`",
-            "marked `tine/exports:: true` and `public:: false`",
+            "`tine.export:: <folder>`",
+            "marked `tine.exports:: true` and `public:: false`",
             "Exports 2",
             "Share pages with a link",
             "The key is in the link, after `#`",
@@ -2287,7 +2287,7 @@ mod og_20d_guide_tests {
             vec!["handle", "fingerprint", "id::", "stale"],
             vec!["handle", "printed name", "title::", "file you read"],
             vec!["1 mib", "tine edit", "frame-too-large", "before changing"],
-            vec!["author::", "agent", "--author", "tine_author"],
+            vec!["tine.author::", "agent", "--author", "tine_author"],
             // #840: an edit keeps properties; removal has its own verb.
             vec!["tine edit", "properties stay", "tine prop remove"],
             vec!["app open", "typed", "saved first", "window", "stale"],

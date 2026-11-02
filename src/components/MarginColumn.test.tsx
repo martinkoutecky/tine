@@ -82,8 +82,8 @@ const key = (ta: EditorDriver, k: string) =>
 const commented = () => [
   block("p", "Gradient descent converges here because the step size shrinks.", [
     block("kid", "an ordinary child"),
-    block("c1", "Only if the loss is convex.\nquote:: converges here because", [block("r1", "Fair, I will add it.\nauthor:: claude")]),
-    block("c2", "Which step size?\nquote:: the step size"),
+    block("c1", "Only if the loss is convex.\ntine.quote:: converges here because", [block("r1", "Fair, I will add it.\ntine.author:: claude")]),
+    block("c2", "Which step size?\ntine.quote:: the step size"),
   ]),
   block("after", "The next block."),
 ];
@@ -143,7 +143,7 @@ describe("the margin column on a wide main pane", () => {
   });
 
   it("leaves a page without comments exactly as the plain outline renders it", () => {
-    const blocks = () => [block("a", "one", [block("b", "two")]), block("c", "three\nauthor:: claude")];
+    const blocks = () => [block("a", "one", [block("b", "two")]), block("c", "three\ntine.author:: claude")];
     const plain = mount(blocks(), 1400, () => <div class="page-section"><div class="page-blocks"><BlockList ids={pageByName(PAGE)?.roots ?? []} /></div></div>);
     const plainHtml = plain.pane.innerHTML;
     plain.dispose();
@@ -347,7 +347,7 @@ describe("editing in the margin", () => {
       const reply = docNode("c2")!.children[0];
       expect(reply).toBeDefined();
       expect(docNode(reply)!.raw).toBe("");
-      expect(docNode("c2")!.raw).toBe("Which step size?\nquote:: the step size");
+      expect(docNode("c2")!.raw).toBe("Which step size?\ntine.quote:: the step size");
       expect(editingId()).toBe(reply);
       await Promise.resolve();
       expect(editor(thread(pane, "c2")!)!.element.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(reply);
@@ -416,7 +416,7 @@ describe("measurement cost", () => {
   it("a keystroke in the outline of a 300-block page with 20 comments costs at most one measurement pass", async () => {
     const blocks: BlockDto[] = [];
     for (let i = 0; i < 300; i++) {
-      const kids = i % 15 === 0 ? [block(`c${i}`, `comment ${i}\nquote:: text ${i}`)] : [];
+      const kids = i % 15 === 0 ? [block(`c${i}`, `comment ${i}\ntine.quote:: text ${i}`)] : [];
       blocks.push(block(`b${i}`, `block text ${i} here`, kids));
     }
     const { pane, dispose } = mount(blocks);

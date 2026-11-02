@@ -4,7 +4,7 @@
 // follow renames. Membership stays in `config.edn :favorites` as the flat,
 // Logseq-readable list, projected from this tree in pre-order.
 //
-//     tine/favorites:: true
+//     tine.favorites:: true      (stable wrote tine/favorites::, still read)
 //
 //     - [[Alpha]]            <- a favorite: the bullet is exactly one link
 //     - Work                 <- a label: any other text (not a page)
@@ -17,8 +17,9 @@ import { linkPageKind } from "./pageIndex";
 import { pageIdentityKey } from "./pageIdentity";
 import { parseBlock } from "./render/parse";
 import { reference_target_name } from "./render/wasm/lsdoc_wasm.js";
+import { FAVORITES_MARKER } from "./tineKeys";
 
-export const FAVORITES_PAGE_PROPERTY = "tine/favorites";
+export const FAVORITES_PAGE_PROPERTY = FAVORITES_MARKER;
 export const DEFAULT_FAVORITES_PAGE = "Favorites";
 
 export interface FavNode {

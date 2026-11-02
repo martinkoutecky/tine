@@ -1,12 +1,13 @@
 // What shows under today's journal (OG page/today-queries, GH #605): the
-// sections page when one is marked `tine/journal-sections:: true`, else
+// sections page when one is marked `tine.journal-sections:: true`, else
 // config.edn `:default-queries` followed by the built-in agenda.
 // Policy: src/journalSections.ts.
 import { For, Match, Show, Switch, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingCurrent, captureBinding } from "../binding";
 import { graphMeta } from "../graphSession";
-import { changed, pageChangeKey } from "../changeKeys";
+import { changed, changedAny, pageChangeKey } from "../changeKeys";
+import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { bindingOwner, graphOwner, readOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { macroNameForDialect } from "../editor/queryMacroName";
@@ -105,7 +106,7 @@ export async function customizeTodaySections(): Promise<void> {
 }
 
 export function TodaySections(props: { today: string; upcoming?: JSX.Element }): JSX.Element {
-  const [pages, { refetch: refetchPages }] = createResource(() => changed("prop:tine/journal-sections"), locateSectionsPages);
+  const [pages, { refetch: refetchPages }] = createResource(() => changedAny(markerChangeKeys(JOURNAL_SECTIONS_MARKER)), locateSectionsPages);
   const [sections, { refetch }] = createResource(() => {
     const names = readOr(pages, undefined, "sections pages");
     return names && { names, revision: names.map(name => changed(pageChangeKey(name))).join("\0") };

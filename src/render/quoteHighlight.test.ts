@@ -17,10 +17,10 @@ it("tracks quote creation, reanchoring and removal without reacting to comment p
   createRoot(dispose => {
     const ranges = createQuotedSourceRanges(() => "parent", () => "md");
     expect(ranges()).toEqual([]);
-    setDoc("byId", "child", "raw", "comment\nquote:: passage");
+    setDoc("byId", "child", "raw", "comment\ntine.quote:: passage");
     expect(ranges()).toEqual([[9, 16, "child"]]);
     const previous = ranges();
-    setDoc("byId", "child", "raw", "comment with more prose\nquote:: passage");
+    setDoc("byId", "child", "raw", "comment with more prose\ntine.quote:: passage");
     expect(ranges()).toBe(previous);
     setDoc("byId", "parent", "raw", "new parent passage tail");
     expect(ranges()).toEqual([[13, 20, "child"]]);

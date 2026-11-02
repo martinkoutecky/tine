@@ -1,7 +1,8 @@
 // The exports page and export definitions (share dialog, docs/contracts/export-definitions.md).
-// An ordinary page marked `tine/exports:: true` (Org `#+tine/exports: true`) holds the definitions the
-// share dialog writes: query blocks carrying `export:: <folder>` or `tine.share:: <login>/<gist_id>`. Located by its marker through the query
-// engine (the `tine/journal-sections` pattern), so renaming it keeps it working and no config key is
+// An ordinary page marked `tine.exports:: true` (Org `#+tine.exports: true`; the `tine/exports` spelling is
+// still read, tineKeys.ts) holds the definitions the
+// share dialog writes: query blocks carrying `tine.export:: <folder>` or `tine.share:: <login>/<gist_id>`. Located by its marker through the query
+// engine (the Today's sections pattern), so renaming it keeps it working and no config key is
 // written. Created on first use as "Exports" (a free name: "Exports 2", ...) with `public:: false` too, so
 // OG Logseq's own publishing skips it, plus one overview block listing every definition. Definitions are
 // appended through the document layer's single capture writer; nothing here writes a file.
@@ -14,15 +15,16 @@ import { errorFamily } from "./errorFamily";
 import { graphMeta } from "./graphSession";
 import { graphOwner, readOwned } from "./owned";
 import { QUERY_MACRO_NAMES } from "./editor/queryMacroName";
+import { EXPORTS_MARKER, markerQuery } from "./tineKeys";
 
-export const EXPORTS_PAGE_PROPERTY = "tine/exports";
+export const EXPORTS_PAGE_PROPERTY = EXPORTS_MARKER;
 export const DEFAULT_EXPORTS_PAGE = "Exports";
 /** The destination property of a folder export (contract: `DESTINATION_KEYS`). */
-export const EXPORT_PROPERTY = "export";
+export const EXPORT_PROPERTY = "tine.export";
 /** The destination property of a quick share, `<login>/<gist_id>` without the key (contract: `DESTINATION_KEYS`). */
 export const SHARE_PROPERTY = "tine.share";
 /** The overview query, the contract's `definitions_query()` in a query macro. */
-export const EXPORTS_OVERVIEW = `{{${QUERY_MACRO_NAMES[0]} (or (property export) (property tine.share))}}`;
+export const EXPORTS_OVERVIEW = `{{${QUERY_MACRO_NAMES[0]} (or (property tine.export) (property tine.share))}}`;
 
 /** The marker pre-block in the page's own format: Org reads a Markdown `key:: value` line as body text. */
 export function exportsMarker(format: Format): string {
@@ -34,7 +36,7 @@ export function exportsMarker(format: Format): string {
 /** Names of the pages carrying the marker, from the engine's page-property index. */
 export async function locateExportsPages(): Promise<string[]> {
   const owner = graphOwner();
-  const parsed = await readOwned(owner, backend().parseQuery(`(page-property ${EXPORTS_PAGE_PROPERTY} true)`, "og"));
+  const parsed = await readOwned(owner, backend().parseQuery(markerQuery(EXPORTS_MARKER), "og"));
   if (parsed.kind === "stale") return [];
   const result = await readOwned(owner, backend().queryRun(parsed.value.query, parsed.value.view));
   return result.kind === "current" && result.value.anchor === "page" ? result.value.pages.map((page) => page.name) : [];

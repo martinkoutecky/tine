@@ -33,7 +33,7 @@
     "text": "written proof rev 8e60bbfa2fa6fa0f\nproof/1~f6soug\n"
   },
   {
-    "after": "- ONE\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: claude\n\t- child\n",
+    "after": "- ONE\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "case": "md-edit-keeps-properties",
     "command": [
       "tine",
@@ -44,16 +44,16 @@
       "$GRAPH"
     ],
     "exit": 0,
-    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: claude\n\t- child\n",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "blocks": [
-        "proof/1~zy2nhx"
+        "proof/1~qabwn5"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.md",
-      "rev": "76a5c32cb1bd8e61",
+      "rev": "9ff53a1e36372041",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -63,10 +63,10 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev 76a5c32cb1bd8e61\nproof/1~zy2nhx\n"
+    "text": "written proof rev 9ff53a1e36372041\nproof/1~qabwn5\n"
   },
   {
-    "after": "- ONE\n  status:: doing\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  author:: claude\n\t- child\n",
+    "after": "- ONE\n  status:: doing\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  tine.author:: claude\n\t- child\n",
     "case": "md-edit-names-property",
     "command": [
       "tine",
@@ -77,16 +77,16 @@
       "$GRAPH"
     ],
     "exit": 0,
-    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: claude\n\t- child\n",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "blocks": [
-        "proof/1~euwxze"
+        "proof/1~hzu4mh"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.md",
-      "rev": "ea4d2b0cedbe77a6",
+      "rev": "d2df4dda01c7a304",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -96,10 +96,10 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev ea4d2b0cedbe77a6\nproof/1~euwxze\n"
+    "text": "written proof rev d2df4dda01c7a304\nproof/1~hzu4mh\n"
   },
   {
-    "after": "- ONE\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: codex\n\t- child\n",
+    "after": "- ONE\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: codex\n\t- child\n",
     "case": "md-edit-author",
     "command": [
       "tine",
@@ -112,16 +112,16 @@
       "$GRAPH"
     ],
     "exit": 0,
-    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: claude\n\t- child\n",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "blocks": [
-        "proof/1~ewqaay"
+        "proof/1~tzt47m"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.md",
-      "rev": "b2f8e4cc1ebedd72",
+      "rev": "9eb4d8d7a77b9cd2",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -132,10 +132,10 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev b2f8e4cc1ebedd72\nproof/1~ewqaay\n"
+    "text": "written proof rev 9eb4d8d7a77b9cd2\nproof/1~tzt47m\n"
   },
   {
-    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: claude\n\t- child\n",
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "case": "md-edit-empty-author",
     "command": [
       "tine",
@@ -148,7 +148,7 @@
       "$GRAPH"
     ],
     "exit": 6,
-    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  author:: claude\n\t- child\n",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "error": {
         "code": "refused",
@@ -157,7 +157,7 @@
           "page": "pages/proof.md",
           "reason": "kernel"
         },
-        "message": "--author needs a name; `tine prop remove BLOCK author` removes one"
+        "message": "--author needs a name; `tine prop remove BLOCK tine.author` removes one"
       },
       "schema": "tine.cli/1"
     },
@@ -169,7 +169,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "tine: refused:kernel: --author needs a name; `tine prop remove BLOCK author` removes one"
+    "text": "tine: refused:kernel: --author needs a name; `tine prop remove BLOCK tine.author` removes one"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: ready\n\t- child\n- two\n- same\n- same\n",
@@ -308,7 +308,7 @@
     "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev af3d00c0c23b984e\n"
   },
   {
-    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n- new\n  author:: proof\n\t- nested\n\t  author:: proof\n",
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n- new\n  tine.author:: proof\n\t- nested\n\t  tine.author:: proof\n",
     "case": "md-add",
     "command": [
       "tine",
@@ -325,14 +325,14 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
     "json": {
       "blocks": [
-        "proof/5~nlmiyf",
-        "proof/5.1~kxe5vv"
+        "proof/5~uul3jr",
+        "proof/5.1~vxlt64"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.md",
-      "rev": "c54bfb914a71a212",
+      "rev": "b56c2caa0ab73a38",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -343,7 +343,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev c54bfb914a71a212\nproof/5~nlmiyf\nproof/5.1~kxe5vv\n"
+    "text": "written proof rev b56c2caa0ab73a38\nproof/5~uul3jr\nproof/5.1~vxlt64\n"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
@@ -704,7 +704,7 @@
     "text": "tine: refused:kernel: Invalid property edit"
   },
   {
-    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n\t- new\n\t  author:: proof\n- two\n- same\n- same\n",
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n\t- new\n\t  tine.author:: proof\n- two\n- same\n- same\n",
     "case": "md-add-under",
     "command": [
       "tine",
@@ -721,13 +721,13 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
     "json": {
       "blocks": [
-        "proof/1.2~nlmiyf"
+        "proof/1.2~uul3jr"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.md",
-      "rev": "9ccd1f475ae97d99",
+      "rev": "dafcabc6cfb501db",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -738,7 +738,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev 9ccd1f475ae97d99\nproof/1.2~nlmiyf\n"
+    "text": "written proof rev dafcabc6cfb501db\nproof/1.2~uul3jr\n"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
@@ -1087,7 +1087,7 @@
     "text": "written proof rev cb04fed9c0a797d9\nproof/1~f6soug\n"
   },
   {
-    "after": "* ONE\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: claude\n:END:\n** child\n",
+    "after": "* ONE\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "case": "org-edit-keeps-properties",
     "command": [
       "tine",
@@ -1098,16 +1098,16 @@
       "$GRAPH"
     ],
     "exit": 0,
-    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: claude\n:END:\n** child\n",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "blocks": [
-        "proof/1~zcrgzi"
+        "proof/1~cek3t2"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.org",
-      "rev": "a720d4a634517308",
+      "rev": "a1240e96cb96c134",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -1117,10 +1117,10 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev a720d4a634517308\nproof/1~zcrgzi\n"
+    "text": "written proof rev a1240e96cb96c134\nproof/1~cek3t2\n"
   },
   {
-    "after": "* ONE\n:PROPERTIES:\n:status: doing\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:author: claude\n:END:\n** child\n",
+    "after": "* ONE\n:PROPERTIES:\n:status: doing\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:tine.author: claude\n:END:\n** child\n",
     "case": "org-edit-names-property",
     "command": [
       "tine",
@@ -1131,16 +1131,16 @@
       "$GRAPH"
     ],
     "exit": 0,
-    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: claude\n:END:\n** child\n",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "blocks": [
-        "proof/1~jfvkcb"
+        "proof/1~nihbsq"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.org",
-      "rev": "6e9e5267df65d5df",
+      "rev": "d8901db1afec8a0d",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -1150,10 +1150,10 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev 6e9e5267df65d5df\nproof/1~jfvkcb\n"
+    "text": "written proof rev d8901db1afec8a0d\nproof/1~nihbsq\n"
   },
   {
-    "after": "* ONE\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: codex\n:END:\n** child\n",
+    "after": "* ONE\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: codex\n:END:\n** child\n",
     "case": "org-edit-author",
     "command": [
       "tine",
@@ -1166,16 +1166,16 @@
       "$GRAPH"
     ],
     "exit": 0,
-    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: claude\n:END:\n** child\n",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "blocks": [
-        "proof/1~zkpcem"
+        "proof/1~gnu65i"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.org",
-      "rev": "a7b8a8fda910a56f",
+      "rev": "add40fc9a2bd513b",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -1186,10 +1186,10 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev a7b8a8fda910a56f\nproof/1~zkpcem\n"
+    "text": "written proof rev add40fc9a2bd513b\nproof/1~gnu65i\n"
   },
   {
-    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: claude\n:END:\n** child\n",
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "case": "org-edit-empty-author",
     "command": [
       "tine",
@@ -1202,7 +1202,7 @@
       "$GRAPH"
     ],
     "exit": 6,
-    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:author: claude\n:END:\n** child\n",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "error": {
         "code": "refused",
@@ -1211,7 +1211,7 @@
           "page": "pages/proof.org",
           "reason": "kernel"
         },
-        "message": "--author needs a name; `tine prop remove BLOCK author` removes one"
+        "message": "--author needs a name; `tine prop remove BLOCK tine.author` removes one"
       },
       "schema": "tine.cli/1"
     },
@@ -1223,7 +1223,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "tine: refused:kernel: --author needs a name; `tine prop remove BLOCK author` removes one"
+    "text": "tine: refused:kernel: --author needs a name; `tine prop remove BLOCK tine.author` removes one"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: ready\n:END:\n** child\n* two\n* same\n* same\n",
@@ -1362,7 +1362,7 @@
     "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev 91d9a75ff352831f\n"
   },
   {
-    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n* new\n:PROPERTIES:\n:author: proof\n:END:\n** nested\n:PROPERTIES:\n:author: proof\n:END:\n",
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n* new\n:PROPERTIES:\n:tine.author: proof\n:END:\n** nested\n:PROPERTIES:\n:tine.author: proof\n:END:\n",
     "case": "org-add",
     "command": [
       "tine",
@@ -1379,14 +1379,14 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
     "json": {
       "blocks": [
-        "proof/5~7h5cff",
-        "proof/5.1~ljbpva"
+        "proof/5~miekes",
+        "proof/5.1~hifi2e"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.org",
-      "rev": "41976535131806f4",
+      "rev": "fd8901b68fe59378",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -1397,7 +1397,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev 41976535131806f4\nproof/5~7h5cff\nproof/5.1~ljbpva\n"
+    "text": "written proof rev fd8901b68fe59378\nproof/5~miekes\nproof/5.1~hifi2e\n"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
@@ -1758,7 +1758,7 @@
     "text": "tine: refused:kernel: Invalid property edit"
   },
   {
-    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n** new\n:PROPERTIES:\n:author: proof\n:END:\n* two\n* same\n* same\n",
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n** new\n:PROPERTIES:\n:tine.author: proof\n:END:\n* two\n* same\n* same\n",
     "case": "org-add-under",
     "command": [
       "tine",
@@ -1775,13 +1775,13 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
     "json": {
       "blocks": [
-        "proof/1.2~7h5cff"
+        "proof/1.2~miekes"
       ],
       "kind": "written",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.org",
-      "rev": "501e326884c4c35a",
+      "rev": "e8cfdcb95a5e4e7a",
       "schema": "tine.cli/1"
     },
     "request": {
@@ -1792,7 +1792,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev 501e326884c4c35a\nproof/1.2~7h5cff\n"
+    "text": "written proof rev e8cfdcb95a5e4e7a\nproof/1.2~miekes\n"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
