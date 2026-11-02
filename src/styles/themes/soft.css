@@ -36,6 +36,12 @@ html[data-theme="light"] {
   --done-color: var(--text-muted);
   --bullet-ring: rgba(44, 50, 47, 0.08);
   --guide-hover: rgba(44, 50, 47, 0.34);
+  --guide-hue-1: #4a73b5;
+  --guide-hue-2: #b3873a;
+  --guide-hue-3: #3a8c80;
+  --guide-hue-4: #bf6a5e;
+  --guide-hue-5: #7f69b3;
+  --guide-hue-6: #75973f;
   --match-mark-bg: rgba(214, 193, 129, 0.60);
   --on-accent: #ffffff;
   --soft-active-bg: #b9b6ae;
@@ -78,6 +84,12 @@ html[data-theme="dark"] {
   --done-color: var(--text-muted);
   --bullet-ring: rgba(225, 233, 240, 0.08);
   --guide-hover: rgba(225, 233, 240, 0.34);
+  --guide-hue-1: #7ba6e0;
+  --guide-hue-2: #d4aa5c;
+  --guide-hue-3: #5fb5a8;
+  --guide-hue-4: #e09184;
+  --guide-hue-5: #a896dc;
+  --guide-hue-6: #96bd6c;
   --match-mark-bg: rgba(116, 96, 46, 0.75);
   --on-accent: #1c1d20;
   --soft-active-bg: #55585e;

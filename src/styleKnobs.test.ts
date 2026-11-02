@@ -35,14 +35,14 @@ describe("the knob table (K1)", () => {
   });
 
   it("every shipped variable default is what the stylesheet already does (K3: an untouched knob changes nothing)", () => {
-    const css = readFileSync("src/styles/app.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
+    const css = ["app.css", "guideLevels.css"].map((file) => readFileSync(`src/styles/${file}`, "utf8")).join("\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
     for (const k of KNOBS) {
       if (k.type === "variable-select") {
-        expect(css, `app.css must read var(--tine-${k.id}, <default>) with the knob's default as the fallback`).toContain(`var(--tine-${k.id}, ${k.default})`);
+        expect(css, `the app stylesheets must read var(--tine-${k.id}, <default>) with the knob's default as the fallback`).toContain(`var(--tine-${k.id}, ${k.default})`);
       }
       if (k.type === "class-select") {
         for (const option of k.options.filter((o) => o.value !== k.default)) {
-          expect(css, `app.css has no rule for the class a non-default option adds: html.tine-${k.id}-${option.value}`).toContain(`.tine-${k.id}-${option.value}`);
+          expect(css, `the app stylesheets have no rule for the class a non-default option adds: html.tine-${k.id}-${option.value}`).toContain(`.tine-${k.id}-${option.value}`);
         }
       }
     }

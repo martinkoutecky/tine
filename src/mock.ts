@@ -25,6 +25,7 @@ import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { marginRegressionPages } from "./mockMarginPages";
+import { guideLevelRegressionPages } from "./mockGuidePages";
 import { mockAliases } from "./mockAliases";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
@@ -483,7 +484,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
         b("Source root two"),
       ],
     },
-    ...marginRegressionPages(b).map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
+    ...[...marginRegressionPages(b), ...guideLevelRegressionPages(b)].map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
   );
 }
 

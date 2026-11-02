@@ -2434,6 +2434,8 @@ export interface MessageArgs {
   "settings-available-snapshots": {};
   "settings-backup-load-failed": { "error": string | number };
   "settings-cm6-label": {};
+  "settings-color-indent-guides-by-level": {};
+  "settings-color-indent-guides-by-level-hint": {};
   "settings-conflicts-summary": { "count": number };
   "settings-could-not-apply-spellcheck-settings": {};
   "settings-could-not-load-asset-filename-format": {};
@@ -2465,6 +2467,8 @@ export interface MessageArgs {
   "settings-graph-folder-label": {};
   "settings-graph-folder-reveal": {};
   "settings-graph-folder-search-description": {};
+  "settings-guides-by-level": {};
+  "settings-guides-one-color": {};
   "settings-highest-priority-a-first-unprioritized-last": {};
   "settings-hover-preview-delay": {};
   "settings-hover-preview-delay-hint": {};
@@ -2495,6 +2499,7 @@ export interface MessageArgs {
   "settings-open-developer-tools": {};
   "settings-orphaned-assets-summary": { "count": number; "size": string | number };
   "settings-orphaned-media": {};
+  "settings-outline": {};
   "settings-page-a-z": {};
   "settings-pinyin-description": {};
   "settings-pinyin-label": {};
