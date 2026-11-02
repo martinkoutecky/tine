@@ -599,6 +599,24 @@
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"stable"
     },
+    "scripts/e2e-cm-duplicate-day.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "With journals/2026_10_26.md and journals/2026-10-26.md for one day, Settings > Backups & recovery > Duplicate journal days marks only the file the day opens (2026_10_26.md) as canonical and offers Merge on the other; a native click on Merge folds the other file's blocks into the opened file and moves it out of the graph, and the day then shows both files' blocks.",
+          "blocking": true,
+          "authority": "CM step 2 batch 2 OW-2 / PQ-1 (manager ruling 2026-11-02, Martin veto item): the duplicate-day keeper is the claimant order's owner"
+        }
+      ],
+      "acceptableVariations": [
+        "Panel wording, badge text and timing may vary while the canonical mark and the Merge offer are on the stated files."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
     "scripts/e2e-cm-date-links.mjs": {
       "contracts": [
         {
