@@ -250,8 +250,17 @@ lock. It is produced by `serve.rs` and exercised by the handover tests, not by `
 `tine add`, `tine edit`, `tine prop set|remove`, `tine move`. Every write goes through the graph's owner and
 the page host's guarded save, the path the app's own edits use: the owner first saves any text typed in a window
 holding the page, then reads the page, resolves the command's blocks against what it read, plans the new bytes,
-checks they read back as the intended outline, and writes. If the page changed in between (someone typed), it
-re-reads and re-resolves once; a second change is `stale`. Writes are never retried by the client.
+checks they read back as the intended outline, and writes. Commands writing one page through one owner take
+turns, so they never race each other: parallel writes that name no revision land, in some order, while `--rev`
+and a handle are checked against the page as it stands at that command's turn. Turns follow the order commands
+reach the line; a `--run` write reaches it only after the graph's run lock, whose waiters have no order, and
+`page rename` and `page delete` take the whole graph's turn and resolve their name in it. If something outside
+the owner's commands changed the page in between (someone typed, an editor, Syncthing), the write re-reads and
+re-resolves once; a second change is `stale`. A write still in line after 45 seconds is `refused`, reason
+`page-busy`, nothing written (other writers behind a wedged or very slow one). The 45 seconds cover the line
+only: a `--run` write's wait for the run lock, or a write that got its turn late and then ran long, can pass the
+client's 60-second reply wait, which reports `uncertain` while the owner finishes the write. A client that exits
+or is killed while its write stands in line does not cancel it: the write can land up to that wait later. Writes are never retried by the client.
 
 - **Blocks** are named by a **handle**: `PAGE/POS~FP` as a read prints it (see "The text outline"), or a block's
   `id::` UUID (graph-wide). The position is used when its fingerprint still matches; otherwise the one block on the
@@ -591,7 +600,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `owner-unsafe` | 5 | the owner namespace or endpoint path is unsafe: on a shared Windows machine another account pre-created or loosened the directory, or occupied the pipe name (a lingering predecessor name is retried for 3 s first) |
 | `owner-lock` | 5 | the owner lock call itself failed (not contention) |
 | `unsupported` | 5 | no CLI owner on this platform (iOS/Android and unshipped targets) |
-| `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or the page changed twice while the write ran. Not admitted; read again |
+| `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or something other than another command changed the page twice while the write ran. Not admitted; read again |
 | `refused` | 6 | the owner refused; `detail.reason` says why (below). Nothing changed |
 | `draft-failed` | 7 | a write was admitted but its draft could not be saved (disk full, app-data error); nothing changed |
 | `unwritten` | 8 | a write was admitted and applied in the owner, but the file is not written yet; Tine keeps trying |
@@ -658,7 +667,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `app-owner` | `tine serve --stop` to a graph the app owns |
 | `draft-namespace` | a yield whose opening app keeps its drafts elsewhere |
 | `unsaved` | the page has typed text Tine could not save; save or discard it in the app |
-| `page-busy` | other work held the page; try again |
+| `page-busy` | other work held the page, or the write waited 45 seconds behind other commands writing to it; try again |
 | `host` | the page host refused the write |
 | `no-host` | no page host could be started for the write |
 | `read-only` | the page is read-only in Tine (a Guide page, or a page that cannot round-trip) |
