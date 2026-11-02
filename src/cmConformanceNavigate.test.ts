@@ -108,20 +108,20 @@ async function runCase(c: Case): Promise<string[]> {
   }
   // Census Q4 / AL2 (batch 2): which file owns a name. The backend's answer is
   // `Store::page_named` (`owner`); the frontend must arrive at the same file.
-  // Run for real: `navigationName` (pageIndex.ts) and `formatForPage`
-  // (document/model.ts:332, an `owners[0]` pick). The other picks
-  // (router.ts:249, deepLinkNavigation.ts:123, document/host/wiring.ts:104)
-  // are inline in unexported code; they read `owners[0]` / `id` of the
-  // inventory's `ResolvedPage`, so the wire line checks the value they read.
+  // Every frontend owner pick goes through `ownerPath` (pageIndex.ts; the
+  // guard forbids indexing `owners` elsewhere): router.ts, deepLinkNavigation.ts,
+  // document/model.ts, document/host/wiring.ts, QuickSwitcher.tsx. Run for real:
+  // `ownerPath` on the inventory's `ResolvedPage`, `navigationName` and
+  // `formatForPage`.
   const model = await import("./document/model");
   for (const [name, at] of Object.entries(c.owner)) {
     for (const kind of ["page", "journal"] as const) {
       const want = at[kind];
       const target = index.resolvedTarget(name, kind);
       if (!target || target.kind === "absent") continue;
-      const first = target.kind === "existing" ? target.id : target.owners[0];
+      const first = index.ownerPath(target);
       if (first !== want) {
-        diffs.push(`frontend owner (wire) ${kind} [[${name}]]: backend opens ${want}, the inventory's first file is ${first}`);
+        diffs.push(`frontend owner ownerPath ${kind} [[${name}]]: backend opens ${want}, ownerPath gives ${first}`);
       }
     }
     const want = at.page;

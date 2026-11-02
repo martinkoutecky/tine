@@ -241,13 +241,6 @@ impl<K: Ord, V> Map<K, V> {
         }
         None
     }
-    pub(crate) fn first_entry(&self) -> Option<&(K, V)> {
-        let mut node = self.root.as_deref()?;
-        while let Some(left) = node.left.as_deref() {
-            node = left;
-        }
-        Some(node.entry.as_ref())
-    }
     pub(crate) fn first(&self) -> Option<(&K, &V)> {
         let mut node = self.root.as_deref()?;
         while let Some(left) = node.left.as_deref() {

@@ -700,6 +700,8 @@ pub struct JournalFile {
     pub name: String,
     pub path: String,
     pub preview: String,
+    /// The day's keeper: the file the day opens (the claimant order's winner).
+    /// Exactly one file of a day carries it, listed first.
     pub canonical: bool,
     /// Why this file's preview could not be read (undecodable, oversized, a
     /// disk error). The file stays listed so the day remains reviewable.

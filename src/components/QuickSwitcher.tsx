@@ -23,6 +23,7 @@ import { rankLauncherItems, recordLauncherActivation, pinyinMatchingEnabled } fr
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
+import { ownerPath } from "../pageIndex";
 import { blockDtoExternalId } from "../blockIdentity";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
@@ -441,7 +442,8 @@ export function QuickSwitcher(): JSX.Element {
       // results arrive, so any name that already resolves (a page or an alias)
       // opens its target. Only an absent name writes a file.
       if (resolved.kind !== "absent") {
-        const path = resolved.kind === "existing" ? resolved.id : resolved.owners[0];
+        const path = ownerPath(resolved);
+        if (!path) throw new Error("resolved page has no file");
         const targetResult = await readOwned(owner, backend().getPageByPath(path));
         if (targetResult.kind === "stale") return stale();
         const target = targetResult.value;

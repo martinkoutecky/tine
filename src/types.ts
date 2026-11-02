@@ -285,7 +285,7 @@ export interface JournalFile {
    *  when it shares a date with the canonical one (#21). */
   path: string;
   preview: string;
-  canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
+  canonical: boolean; // the file the day opens (claimant order) — the one to keep; exactly one per day
   /** Why the preview could not be read; the file stays listed. */
   preview_error?: string;
 }

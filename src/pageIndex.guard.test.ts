@@ -67,6 +67,18 @@ export function nameAnswererViolations(file: string, source: string): string[] {
     if (ts.isStringLiteralLike(node) && node.text === "page_inventory" && file !== "src/backend.ts") {
       report(node, "page_inventory invoked outside backend.ts");
     }
+    // CM step 2 (I-12): which file an alias opens is the backend's first owner,
+    // read through `ownerPath` in pageIndex.ts only, never by indexing `owners`.
+    const ownersList = (expr: ts.Expression) =>
+      (ts.isIdentifier(expr) && expr.text === "owners") ||
+      (ts.isPropertyAccessExpression(expr) && expr.name.text === "owners");
+    if (file !== INVENTORY_OWNER && ts.isElementAccessExpression(node) && ownersList(node.expression)) {
+      report(node, "alias owner picked by indexing `owners` (use ownerPath from pageIndex.ts)");
+    }
+    if (file !== INVENTORY_OWNER && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      ["at", "find", "shift"].includes(node.expression.name.text) && ownersList(node.expression.expression)) {
+      report(node, "alias owner picked from `owners` (use ownerPath from pageIndex.ts)");
+    }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const method = node.expression.name.text;
       if (method === "pageInventory" && file !== INVENTORY_OWNER) {
@@ -109,6 +121,17 @@ describe("page index guard (Rule 3: one answerer, frontend included)", () => {
       'await Promise.all(names.map((n) => backend().resolvePage(n, "page")));';
     expect(nameAnswererViolations("src/document/save/engine.ts", loop)).toHaveLength(2);
     expect(nameAnswererViolations("src/pageIndex.ts", "await backend().pageInventory();")).toEqual([]);
+  });
+
+  it("rejects a planted second alias-owner pick (CM step 2 OW, I-12)", () => {
+    const planted = [
+      'const path = target.kind === "alias" ? target.owners[0] : undefined;',
+      'void landAliasDraft(c, name, owners[0]);',
+      'const first = reply.owners.at(0);',
+      'const sorted = [...owners].sort()[0];',
+    ].join("\n");
+    expect(nameAnswererViolations("src/router.ts", planted)).toHaveLength(3);
+    expect(nameAnswererViolations("src/pageIndex.ts", 'return target.owners[0];')).toEqual([]);
   });
 });
 

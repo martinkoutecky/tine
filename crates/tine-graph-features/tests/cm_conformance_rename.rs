@@ -544,7 +544,8 @@ fn finish(mut diffs: Vec<Diff>, duplicate: bool, coarse_random: bool) -> Vec<Dif
 /// journal conflict list (`journal_conflicts`) sorts a day's files and the
 /// merge (`conflicts.rs`) folds the strays into `files[0]`; the day itself
 /// opens the claimant order's winner (`WholeGraph::resolve`). One question,
-/// "which file owns this day", so the two must agree. Fixture graphs with a
+/// "which file owns this day", so the two must agree; Settings reads the
+/// `canonical` flag, so it marks the keeper alone. Fixture graphs with a
 /// duplicate day only; `None` when the graph has none.
 fn duplicate_day_keepers(spec: &GraphSpec, droppers: &Droppers) -> Option<Vec<Diff>> {
     let dir = tempfile::tempdir().unwrap();
@@ -559,6 +560,20 @@ fn duplicate_day_keepers(spec: &GraphSpec, droppers: &Droppers) -> Option<Vec<Di
             Resolved::Existing { id, .. } => Some(id.as_str().to_owned()),
             _ => None,
         };
+        // Settings offers Merge into the one file flagged canonical: it must
+        // be the keeper, and only it.
+        let flagged: Vec<&str> = day
+            .files
+            .iter()
+            .filter(|f| f.canonical)
+            .map(|f| f.path.as_str())
+            .collect();
+        if flagged != keeper.as_deref().into_iter().collect::<Vec<_>>() {
+            diffs.push(Diff::new(
+                "owners: duplicate-day canonical flag is not the keeper alone",
+                format!("{}: keeper {keeper:?}, flagged {flagged:?}", day.title),
+            ));
+        }
         if keeper != opens {
             diffs.push(Diff::new(
                 "owners: duplicate-day keeper (journal_conflicts) vs the file the day opens",

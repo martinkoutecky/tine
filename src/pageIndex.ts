@@ -244,6 +244,20 @@ export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedP
   return (kind === "journal" ? current?.journals : current?.pages)?.get(pageIdentityKey(name))?.target;
 }
 
+/** The file a resolved name opens: the claimant order's owner for
+ *  `existing` (its `id`), the page an alias-only name opens for `alias` (the
+ *  backend lists owners each once in relative-path order and the first is the
+ *  owner, D-20261019-AL2/CI4), nothing for `absent`. The backend decides; this
+ *  is the frontend's one reader of that answer (CM step 2, I-12; a guard test
+ *  forbids reading `owners[0]` anywhere else). */
+export function ownerPath(
+  target: ResolvedPage | { readonly kind: "alias"; readonly owners: readonly string[] } | null | undefined,
+): string | undefined {
+  if (target?.kind === "existing") return target.id;
+  if (target?.kind === "alias") return target.owners[0];
+  return undefined;
+}
+
 /** Where a link or a named route goes: a page name and its kind. */
 export interface LinkDestination { readonly name: string; readonly kind: PageKind }
 
@@ -283,8 +297,8 @@ export function navigationName(name: string): string {
   const target = entry?.target;
   if (!target || target.kind === "absent") return name;
   if (target.kind === "alias" && entry?.link) return entry.link.name;
-  const id = target.kind === "existing" ? target.id : target.owners[0];
-  return held()?.nameById.get(id) ?? name;
+  const id = ownerPath(target);
+  return (id === undefined ? undefined : held()?.nameById.get(id)) ?? name;
 }
 
 /** Physical owner's display name, using the inventory's existing identity map. */

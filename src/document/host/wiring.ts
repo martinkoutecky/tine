@@ -31,6 +31,7 @@ import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } fr
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, setPageId } from "../model";
+import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
@@ -988,9 +989,10 @@ export function installAliasDraftRouteHandler(handler: (name: string, kind: Page
 
 function queueAliasLanding(name: string, owners: string[]): void {
   const c = host();
-  if (!c || !owners[0] || landing.has(name) || !pageByName(name) || !c.isDirty(name)) return;
+  const owner = ownerPath({ kind: "alias", owners });
+  if (!c || !owner || landing.has(name) || !pageByName(name) || !c.isDirty(name)) return;
   landing.add(name);
-  void landAliasDraft(c, name, owners[0]).finally(() => landing.delete(name));
+  void landAliasDraft(c, name, owner).finally(() => landing.delete(name));
 }
 
 /** A page with no file whose name became an alias: its text belongs to the
