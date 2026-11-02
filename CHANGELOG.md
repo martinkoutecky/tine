@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - The gear on a query block now closes the query editor when you click it again; the second click used to leave it open (#850).
 - Editing a block shown under a query result, such as a child you expanded, no longer re-runs the query while you are still typing there: the results stay as they are until you leave the block, as they already did for the result block itself. Expanded and collapsed result rows keep their state through the rerun (#851).
+- A page no longer goes missing from page links, quick switch and All Pages after you close it or Tine finishes saving it while another lookup was running. Until the next edit, a link to it could open a new empty page and a new file could take its name (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE).
 - A page with many linked references no longer keeps moving while you do nothing. With more than 80 source pages loaded, references kept reloading one another, so their text changed form and the scrollbar crept (#849).
 - Coming back to a tab or going back in history now returns to the row you were reading in Linked References, even when the references load slowly, instead of the top, the end of the scrollbar or a nearby reference (#848).
 - A block's reference count and margin comment count badges are now the same size and on the same line (#843).
