@@ -254,9 +254,10 @@ pub(crate) fn journal_ids_from_entries(
 /// Run a publication that builds the graph-wide indexes from the whole page
 /// cache (`publish`: the initial load's first publication, which sets
 /// Ready; a failed load's recovery in `refresh()`; a Settings rescan) as a
-/// containment backstop. Page parses are isolated per file before it, so a
-/// panic here is a graph-wide index stage's, and deterministic for the same
-/// bytes: it ends the load `Failed`, which `whole_graph` reports and a later
+/// containment backstop. Page parses are isolated per file, and the feed's
+/// capture narrows an index stage's panic to its rows, before it (`publish_inner`),
+/// so one that reaches here is no row's: it ends the load `Failed`, which
+/// `whole_graph` reports and a later
 /// `refresh()` retries (through this same door), instead of killing the
 /// load thread with the store still Loading (every waiter hangs) or
 /// unwinding through the writer. The caller holds the writer guard, so

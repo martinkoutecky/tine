@@ -84,22 +84,44 @@ rescan, page open or own save), so the page is listed as unreadable, a page
 open answers `StoreError::Unparseable` for it alone, and the writer lock is
 never unwound through. Such a failure retires that page's row only: the page
 cache, the other pages' rows and other reported errors stay, and nothing else
-is read again. A panic in a pure graph-wide index stage after the
-parses ends the initial cold load `Failed` (`refresh()` retries) rather than
-leaving it `Loading`; that retry and a Settings rescan rebuild the indexes
-through the same containment, so a panic that recurs there leaves the graph
-`Failed` and the writer usable. A publication that patches the indexes with
+is read again. A panic in a pure graph-wide index stage after the parses, in a
+publication that builds every index and so names no page (the initial cold
+load, a failed load's retry, a Settings rescan, a config edit), is narrowed to
+its rows (`model/index_probe.rs`, on the failure path only, under the writer:
+at most `PROBE_BUILDS` = 64 builds over halving subsets, which names one bad
+row in any graph and two up to 2^15 rows; one bad page of a generated 10k
+graph costs 28): each row that
+panics built without the rest is retired and listed unreadable, keeps its name
+and opens, and the rest publish. A panic no row reproduces, that only a
+combination of rows gives, that every one of several rows gives, that the build
+without the blamed rows still gives, or that needs more probes than the budget
+is no bad file: it ends the load `Failed` (`refresh()` retries) rather than
+leaving it `Loading`, with no page blamed or kept out and the writer usable.
+The panics a probe provokes are caught where they are thrown
+(`tine_core::diag_line::ContainedPanics`): the app keeps them for its periodic
+diagnostics flush instead of syncing its crash history once per panic. A publication that patches the indexes with
 named pages (a watcher or rescan sync, an own or host save, a page open, a
 checkpoint launch's diff) contains the same stage per page, a held page and a
 journal day's file included: each named page is patched alone to find the one
 that panics, its row is retired and listed as unreadable, and the rest publish.
-That row stays out for those bytes: reading, rescanning or republishing them
-installs and publishes nothing, so one containment is one publication. Other
-bytes install it again; a rebuilt cache forgets it. A save's guarded write has
-landed by then and stays `Saved`. Only a panic that no named page explains fails
-the graph (a checkpoint launch's diff and a config write during the load too),
-and the retry patches those files. A cold load and a Settings rescan name no
-page, so they do not contain it per page. A rename refuses while a page listed
+That row stays out for those bytes: reading or republishing them installs and
+publishes nothing, so one containment is one publication. Other bytes install
+it again; a rebuilt cache forgets it, so a Settings rescan gives every such page
+another try. A page no host holds (a held page's owner's next bytes or
+release reread it, so it costs a focus nothing) also gets three retries of the same bytes per
+revision, one per `refresh()` (window focus, rescan; never a watcher tick): a
+read, a parse and a one-row index build under the writer, which publish nothing
+unless they pass (`model/derived_contained.rs`). A panic its bytes do not explain
+therefore keeps a good page out only until the next focus, and a page that really
+panics costs nothing after its third try. A save's guarded write has landed by
+then and stays `Saved`. Only a panic that neither a named page nor a row explains
+fails the graph (a checkpoint launch's diff and a config write during the load
+too), and the retry patches those files. A held page whose owner's bytes do not
+parse or decode has no row and is listed unreadable until its owner's next bytes
+or its release (the save stays `Saved`). Bytes of a page no host holds that a
+publication may not parse (undecodable, over the size or depth cap) cost that
+file alone: its row goes and it is listed, and nothing else is read again. A
+rename refuses while a page listed
 unreadable may hold a name it renames (refusal table). A transaction whose preflight parse panics is refused
 (`transaction.rs::prepare_steps::ReadOnly`), and a host rename treats that
 page as unwritable (F3). Name lookup,
@@ -1320,7 +1342,7 @@ by I-9's typed failure paths.
 | `tine-graph-features::conflicts::resolve_duplicate_journal_day` pairing (master 9dc54e4a7) | A duplicate journal day (a date-stem file plus a title-named one, left by a journal date-format change or delivered by sync) folds only a stray of the SAME day into that day's canonical file: a stale review after sync-service delivery, an external rename or a date-format change that re-sorted the day refuses before anything is written or trashed, so the command can never merge two unrelated pages; a Markdown/Org pair of one day (malformed pairing: one body would be rewritten in the other format) is refused and offers no row choices. Past the pairing guard it is the sync-copy fold (`fold_pair`): the same revision guards, Org round-trip firewall and recoverable trash (proof `crates/tine-graph-features/tests/f8_duplicate_journal.rs`). With a page host, the duplicate-day fold is one host operation (P3): winner write and stray delete, with `moved = (winner, stray)`. After a crash, relaunch completes the stray's deletion. |
 | `tine-graph-features::conflicts::union_pre` page-property merge (og C3W W5) | Honest multi-device divergence: both devices set the same page property (or an Org drawer line) to different values and the user resolves with the page properties on "both (merge)". The copy's other pre-block lines, list members and free text are kept; a value that cannot be kept twice refuses the resolve naming the key, before anything is written or trashed, so the user chooses mine or theirs (proof `crates/tine-graph-features/tests/c3w_union_pre.rs`). |
 | `tine-graph-features::pages::rename_page_after_inventory` unreadable page (og C3W W2) | Malformed imported or sync-delivered content (non-UTF-8, over the size or outline-depth cap) in a page the rename must move or rewrite: the rename refuses naming the file, before anything is written, instead of skipping it while rewriting its referrers (proof `crates/tine-graph-features/tests/c3w_rename_unreadable.rs`). |
-| `tine-graph-features::pages_rename_plan::plan_rename` listed-unreadable referrer (REG-PANIC-RENAME-UNINDEXED-REFERRER) | Malformed imported or sync-delivered content, or a page an index stage panicked on: a file Tine could not index has no reference row, so a rename would leave its `[[Old]]` dangling with no word, and it is not safe to rewrite. The rename refuses naming the file, before anything is written, when the file holds a reference the rename rewrites; a file over the size or depth cap, or that panics the rewriter, is searched for the renamed name itself, and an unreadable one refuses. A listed file without the name blocks nothing. Recovery: repair or remove the file, then rename (proof `crates/tine-graph-features/tests/c3w_rename_unreadable.rs`). |
+| `tine-graph-features::pages_rename_plan::plan_rename` listed-unreadable referrer (REG-PANIC-RENAME-UNINDEXED-REFERRER) | Malformed imported or sync-delivered content, or a page an index stage panicked on: a file Tine could not index has no reference row, so a rename would leave its `[[Old]]` dangling with no word, and it is not safe to rewrite. The rename refuses naming the file, before anything is written, when the file holds a reference the rename rewrites; a file over the size or depth cap, or that panics the rewriter, is searched for the renamed name itself under page identity's folding (case and Unicode normal form), and an unreadable one refuses. A listed path Tine has no permission to read, a file or a folder, refuses every rename until access returns (disk error or permission state: its contents cannot be checked, and renaming anyway would leave a link in it dangling with no word once it is readable again). A listed file without the name blocks nothing. Recovery: repair, restore access to or remove the file, then rename (proof `crates/tine-graph-features/tests/c3w_rename_unreadable.rs`). |
 | `tine-store::restore` source, destination and recovery | A selected snapshot source changes type or length, a live/recovery path is retargeted, or an external writer creates the destination; refuse publication and retain displaced bytes in recovery. A whole-graph restore (og-B, ADR 0062) takes graph text only as `Area::Graph` inside the graph-text scope the snapshot recorded, and a configured-roots restore never takes `Area::Graph`: a malformed or mixed snapshot refuses before any live file moves (proof `crates/tine-store/tests/restore.rs` `graph_restore_refuses_text_outside_its_recorded_scope`). It retires only unlisted live text inside that recorded scope, into `<restore-id>/graph/`, so text a later `:hidden` edit exposed is never displaced by a snapshot that could not have held it. Power loss after the replacement is published must not lose a retired file (its only copy can be an external editor's edit newer than the safety snapshot): the recovery root, every directory created for it, and each retired entry are synced before the replacement is published, and a real directory-sync failure (disk error) stops the restore with its recovery locations reported (proof `crates/tine-store/tests/restore.rs` `restore_makes_the_recovery_tree_durable_before_publishing_replacements`). Transactions that move, trash or create into a directory they create sync every created entry the same way (`directory_durability::create_dir_all_durable`). Two inputs that would be one file at their actual destination (a snapshot taken where `Pic.edn` and `pic.edn` were two files, restored where that destination directory folds case, for example a case-insensitive external assets target under a case-sensitive graph root; on Apple volumes also Unicode normalization) refuse before any recovery area is reserved: otherwise the second copy retires the first restored file or fails after the graph changed (`refuse_destination_aliases`; proof `a_pair_aliasing_only_at_the_assets_target_refuses_before_mutation`, `the_same_pair_on_case_sensitive_destinations_restores_both`). |
 | `tine-store::publish` staged site | An external writer retargets output or stage paths or wins the destination name; refuse replacement and retain the previous site. |
 | `tine-graph-features::pages` rename, rescue, merge and delete | A referrer carrying VCS conflict markers (an external merge or sync left it mid-conflict) is skipped, not rewritten, and reported (`skipped_conflicted_referrers`; R-VCS-MARKERS). Sync or an external editor changes a revision, creates a twin, occupies a destination, or makes Org non-round-tripping; refuse the affected transaction or host operation and retain source bytes. A rescue also refuses a name already carried by a retained non-portable legacy filename (`pages/A:B.md` from OG on Linux/macOS), which OG would load as a second file for that page. Delete refuses a stale path if an external editor changed its title or replaced its claimant; confirmed file absence succeeds without writes (GH #620). A rename commits every step only in the view and config it was planned in (`Transaction::expect_view`; a rename of several pages is a host operation that carries that view and is admitted only in it, else refused `Changed`): sync or an external editor delivering a referrer or `config.edn` between plan and commit makes the attempt replan, within the existing four attempts, then `WouldBlock` (A-W1 B2; proofs `crates/tine-graph-features/src/pages_snapshot_tests.rs`, `crates/tine-store/tests/transaction_plan.rs` `a_view_bound_operation_refuses_after_a_config_delivery`). The home page in `config.edn` is written after the pages, in its own transaction: a failure there leaves the renamed pages and the home setting on the old name, and is reported. |

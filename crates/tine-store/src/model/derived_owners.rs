@@ -99,14 +99,21 @@ impl Graph {
                     self.retire_row(cache.map(Arc::make_mut), path, true);
                 } else if let Some(cache) = cache {
                     let rev = std::str::from_utf8(&bytes).ok().map(content_rev);
-                    if self.derived.disk_revs.read().unwrap().get(path) == rev.as_ref() {
+                    // Undecodable bytes have no revision and no row: still settled.
+                    if rev.is_some()
+                        && self.derived.disk_revs.read().unwrap().get(path) == rev.as_ref()
+                    {
                         return false;
                     } else {
                         let pages = Arc::make_mut(cache);
                         match self.owned_row(&key, &bytes, None) {
-                            Some(row) => self.put_row(pages, row),
-                            None => {
+                            Ok(Some(row)) => self.put_row(pages, row),
+                            Ok(None) => {
                                 self.retire_row(Some(pages), path, true);
+                            }
+                            Err(error) => {
+                                self.retire_row(Some(pages), path, true);
+                                self.list_held_row_failure(path, &error);
                             }
                         }
                     }
@@ -290,7 +297,9 @@ impl Graph {
             };
             *indexed = Some(bytes.clone());
         }
-        let unchanged = self.derived.disk_revs.read().unwrap().get(&path).cloned() == rev;
+        // Bytes with no revision (undecodable) have no row to be unchanged from.
+        let unchanged = (rev.is_some() || bytes.is_none())
+            && self.derived.disk_revs.read().unwrap().get(&path).cloned() == rev;
         if !unchanged || guard.is_none() {
             let before = self.cache_gen.load(Ordering::Acquire);
             let mut renamed = true;
