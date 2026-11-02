@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+pub(crate) mod index_probe;
 mod inline_map;
 mod launch_patch;
 mod layout_retention;
@@ -473,10 +474,18 @@ pub(crate) struct Graph {
     /// Between a name discovery's authority decision and its record.
     #[cfg(test)]
     pub(crate) discovery_record_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// In a listing's certify, between its disk rows' authority and its
+    /// owners' rows.
+    #[cfg(test)]
+    pub(crate) certify_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_install_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// In a whole-cache install, after its unlocked work, before the cache
+    /// lock and its race checks.
+    #[cfg(test)]
+    pub(crate) install_lock_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) cold_cache_reconcile_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -738,10 +747,32 @@ impl ReadSnapshot {
         old: Option<&Self>,
         changed_paths: &[String],
     ) -> Self {
+        Self::capture_rows(
+            graph.peek_pages().expect("loaded graph"),
+            graph.cache_generation(),
+            graph.observed_page_mtimes(),
+            Arc::clone(&graph.completion_name_keys),
+            config,
+            list,
+            old,
+            changed_paths,
+        )
+    }
+
+    /// [`Self::capture`] over any rows: it reads nothing else of a graph.
+    #[allow(clippy::too_many_arguments)]
+    fn capture_rows(
+        pages: Arc<Pages>,
+        cache_generation: u64,
+        observed_mtimes: Arc<SharedMap<String, std::time::SystemTime>>,
+        completion_name_keys: CompletionSessions,
+        config: Config,
+        list: Arc<EntryList>,
+        old: Option<&Self>,
+        changed_paths: &[String],
+    ) -> Self {
         #[cfg(feature = "test-faults")]
         let capture_started = std::time::Instant::now();
-        let pages = graph.peek_pages().expect("loaded graph");
-        let cache_generation = graph.cache_generation();
         // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
             // First, on the page-parse workers: it builds every block
@@ -915,7 +946,7 @@ impl ReadSnapshot {
             pages,
             config,
             list,
-            observed_mtimes: graph.observed_page_mtimes(),
+            observed_mtimes,
             explicit_index,
             reference_candidate_index: RwLock::new(reference_candidate_index),
             cache_generation,
@@ -934,7 +965,7 @@ impl ReadSnapshot {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
-            completion_name_keys: Arc::clone(&graph.completion_name_keys),
+            completion_name_keys,
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]
@@ -1721,6 +1752,8 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
             add_blocks(out, &block.children);
         }
     }
+    #[cfg(test)]
+    index_probe::test_row_fault(&entry.path);
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let mut out = vec![doc
         .pre_block
@@ -2253,12 +2286,7 @@ impl SnapshotExplicitIndex {
         };
         let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
         #[cfg(test)]
-        if rows.iter().any(|(entry, _)| {
-            (TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap().iter())
-                .any(|root| entry.path.starts_with(root))
-        }) {
-            panic!("deterministic test sentinel for a full graph index build panic");
-        }
+        index_probe::test_full_build_fault(rows.iter().map(|(entry, _)| entry.path.as_path()));
         let workers = page_cache_worker_count();
         if workers <= 1 || rows.len() < 64 {
             insert(&rows);
@@ -2337,6 +2365,7 @@ pub(crate) struct LaunchObservations {
     pub(crate) announce: Vec<(PathBuf, bool, PageKind, String)>,
 }
 
+#[derive(Default)]
 struct PageCacheBuild {
     pages: Vec<ParsedPage>,
     failures: Vec<String>,
@@ -2889,9 +2918,13 @@ impl Graph {
             #[cfg(test)]
             discovery_record_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
+            certify_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_after_install_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            install_lock_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             cold_cache_reconcile_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -3485,7 +3518,7 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false, None, None) {
+                if self.install_built(built, gen0, false, None, None).is_ok() {
                     break;
                 }
             }
@@ -5591,16 +5624,18 @@ mod tests {
     fn launch_does_not_report_a_file_that_vanished_during_naming() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path());
-        assert!(graph.install_built(
-            PageCacheBuild::with_capacity(0),
-            (graph.cache_generation(), graph.held.epoch()),
-            false,
-            None,
-            Some(vec![(
-                crate::FileId::from("pages/Gone.md".to_owned()),
-                io::Error::from(io::ErrorKind::NotFound).into()
-            )])
-        ));
+        assert!(graph
+            .install_built(
+                PageCacheBuild::with_capacity(0),
+                (graph.cache_generation(), graph.held.epoch()),
+                false,
+                None,
+                Some(vec![(
+                    crate::FileId::from("pages/Gone.md".to_owned()),
+                    io::Error::from(io::ErrorKind::NotFound).into()
+                )])
+            )
+            .is_ok());
         assert!(
             graph.reported_unreadable_pages().is_empty(),
             "{:?}",

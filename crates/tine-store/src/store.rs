@@ -159,6 +159,10 @@ pub enum Depth {
     /// unchanged; hash only files whose stamps moved. The watcher's and the
     /// window-focus rescan's depth.
     Stamps,
+    /// [`Self::Stamps`] over graph text and `config.edn` only: asset metadata
+    /// and `logseq/custom.css` are not looked at. For a planner of page
+    /// writes (rename, delete), which reads neither.
+    PageStamps,
     /// Hash every graph file, publishing the ones whose bytes differ from the
     /// recorded revision as ordinary external changes (a sync client or a
     /// restore tool can rewrite a file and put its stamp back). For a
@@ -400,6 +404,8 @@ mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
+#[cfg(test)]
+mod panic_isolation_tests;
 mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
@@ -1384,7 +1390,8 @@ impl Store {
     /// modification time and length both match the previous scan, so
     /// same-length edits with preserved timestamps can be missed. Cost O(P
     /// metadata + bytes of files detected as changed + config bytes hashed +
-    /// asset metadata), plus load wait. Unchanged-config runtime graph-text
+    /// asset metadata), plus load wait. [`Depth::PageStamps`] is the same
+    /// without the asset metadata and `custom.css`. Unchanged-config runtime graph-text
     /// walks run off-writer and retry on change. [`Depth::Bytes`] hashes
     /// every graph-text file instead: O(graph bytes). [`Depth::Rebuild`] does
     /// that and then re-reads and re-parses every file through the cold-launch
@@ -1421,10 +1428,19 @@ impl Store {
     /// are published: a subscriber that has received it has received them all.
     pub fn refresh(&self, depth: Depth) -> Result<GraphRev, LoadError> {
         match depth {
-            Depth::Stamps => self.watch.scan_refresh()?,
-            Depth::Bytes => self
-                .watch
-                .scan_refresh_with(crate::launch_diag::DiffTrigger::Bytes)?,
+            Depth::Stamps => {
+                self.watch.scan_refresh()?;
+                self.retry_contained_rows();
+            }
+            Depth::PageStamps => {
+                self.watch.scan_refresh_pages()?;
+                self.retry_contained_rows();
+            }
+            Depth::Bytes => {
+                self.watch
+                    .scan_refresh_with(crate::launch_diag::DiffTrigger::Bytes)?;
+                self.retry_contained_rows();
+            }
             Depth::Rebuild => {
                 self.watch.rebuild_all()?;
                 self.changes
