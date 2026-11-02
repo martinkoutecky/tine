@@ -38,6 +38,10 @@
       "day": null,
       "is_journal": false,
       "key": "d",
+      "link": {
+        "kind": "page",
+        "name": "C"
+      },
       "name": "D",
       "target": {
         "kind": "alias",
@@ -58,6 +62,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "A": {

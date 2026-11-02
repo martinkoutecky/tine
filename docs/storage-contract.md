@@ -788,6 +788,30 @@ paths, and every resolver opens the first (the owner rule); the stored owner
 map and its checkpoint encoding are unchanged. Proof:
 `crates/tine-store/tests/alias_groups.rs`.
 
+What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
+(`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
+the graph's journal answerer parses (`JournalFormat::parse`: the configured
+title and file-name formats plus the fixed fallbacks, D-20261102-JDL) opens that
+day's journal, else a page file claiming the name, else the alias owner. An
+alias owned by a journal opens the journal. A name nothing claims or aliases is
+a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
+exported to the frontend through wasm so the unknown-name fallback runs the same
+code). `page_inventory` entries carry the answer as an optional
+`link: {name, kind}`, sent only when it differs from the entry itself (most
+entries carry nothing). The field is in-memory and derived per read: nothing is
+persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
+delta's `rev` (a link depends on the key's alias owners, which travel in the
+delta, and on file claims, whose change refetches). The published snapshot
+(quick share generation 1, `docs/contracts/quick-share.md`) does not carry it:
+its document is frozen, so adding the answer there is a format decision still
+open (CM step 2 receipt). Proof: `crates/tine-store/tests/inventory_delta.rs`
+`a_delta_keeps_the_link_answer_fresh`, `src/cmConformanceNavigate.test.ts`.
+
+Which references name a journal day (Linked References, `[[day]]` backlink
+counts' needles) is every spelling the journal answerer accepts for that day:
+the spellings it renders plus every explicitly referenced name it parses to the
+day, read from the in-memory explicit-reference index (no stored index).
+
 Every per-page index of a generation (this relation, the explicit-reference
 index, the candidate signatures, the name keys and the rest) is patched by the
 files its publication names plus every row the page cache changed since the

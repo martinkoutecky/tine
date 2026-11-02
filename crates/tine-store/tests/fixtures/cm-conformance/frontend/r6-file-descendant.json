@@ -35,6 +35,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "old": {

@@ -146,18 +146,20 @@ fn bhkru_today_is_the_evaluation_day_not_a_day_pinned_in_the_query() {
     store.close();
 }
 
-/// Where the condition and `{{upcoming}}` answer differently, pinned so a
-/// change to either is a reviewed decision (notes: og-tql-upcoming.md).
-/// 1. A date-named ORDINARY page (`pages/Oct 30th, 2026.md`) keeps ordinary
-///    identity in Upcoming (`referenced_journal_days`); the condition reads
-///    the reference name alone. This ordinary identity is a Tine divergence:
-///    OG 0.10.9 `convert-page-if-journal-impl` treats a parseable page name as
-///    a journal regardless of its directory, so its `:block/journal-day` join
-///    also includes that page.
-/// 2. A spelling only in the configured FILENAME format counts in Upcoming
-///    (the graph's journal format); the condition reads titles first and the
-///    safe defaults (gh690: a custom filename format must not turn an
-///    ordinary reference into a journal reference).
+/// The condition and `{{upcoming}}` on date spellings, pinned so a change to
+/// either is a reviewed decision (notes: og-tql-upcoming.md).
+/// 1. They DIFFER on a date-named ORDINARY page (`pages/Oct 30th, 2026.md`):
+///    it keeps ordinary identity in Upcoming (`referenced_journal_days`); the
+///    condition reads the reference name alone. This ordinary identity is a
+///    Tine divergence: OG 0.10.9 `convert-page-if-journal-impl` treats a
+///    parseable page name as a journal regardless of its directory, so its
+///    `:block/journal-day` join also includes that page. (A different question
+///    from 2: which file owns a name; CM step 2 P2, pending Martin.)
+/// 2. They AGREE on a spelling only in the configured FILENAME format: both
+///    ask the graph's one date answerer (`Config::journal_format`, the native
+///    list; D-20261102-JDL, a deliberate OG deviation). Until CM step 2 the
+///    condition read titles and OG's defaults only (gh690), so the two
+///    disagreed here (REG-CM-QUERY-JOURNAL-FACT-FILE-FORMAT).
 #[test]
 fn bhkru_where_the_condition_and_upcoming_differ() {
     let temp = tempfile::tempdir().unwrap();
@@ -181,6 +183,7 @@ fn bhkru_where_the_condition_and_upcoming_differ() {
     assert_eq!(
         rows(&graph, "any(direct_refs, day > today)", TODAY),
         vec![
+            "filename spelling [[01.11.2026]]",
             "ordinary page named like a day [[Oct 30th, 2026]]",
             "title spelling [[Nov 2nd, 2026]]",
         ]

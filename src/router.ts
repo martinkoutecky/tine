@@ -10,7 +10,7 @@ import { revealCommentMarginFor } from "./commentMargin";
 
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
-import { navigationName, resolvedTarget } from "./pageIndex";
+import { navigationTarget, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -577,11 +577,11 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function openPageTarget(target: PageTarget, opts: { inPlace?: boolean } = {}) {
     // An exact physical owner is authoritative. Alias resolution is only valid
     // for deliberately logical targets.
-    const name = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
-      ? navigationName(target.name)
-      : target.name;
+    const { name, kind: pageKind } = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
+      ? navigationTarget(target.name)
+      : { name: target.name, kind: target.pageKind };
     navigate(
-      { kind: "page", name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) },
+      { kind: "page", name, pageKind, ...(target.path ? { path: target.path } : {}) },
       { sticky: !opts.inPlace },
     );
   }
@@ -827,10 +827,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   function openPageTargetInNewTab(target: PageTarget, foreground = false) {
-    const name = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
-      ? navigationName(target.name)
-      : target.name;
-    openInNewTab({ kind: "page", name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) }, foreground);
+    const { name, kind: pageKind } = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
+      ? navigationTarget(target.name)
+      : { name: target.name, kind: target.pageKind };
+    openInNewTab({ kind: "page", name, pageKind, ...(target.path ? { path: target.path } : {}) }, foreground);
   }
 
   function openPageInNewTab(

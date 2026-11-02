@@ -345,8 +345,13 @@ impl Format {
     }
 
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let mut cs = Vec::with_capacity(s.len());
-        cs.extend(s.chars());
+        let cs: Vec<char> = s.chars().collect();
+        self.parse_chars(&cs)
+    }
+
+    /// [`Self::parse`] over already-decoded characters, so a caller trying
+    /// several formats decodes the name once.
+    fn parse_chars(&self, cs: &[char]) -> Option<JournalDate> {
         let mut i = 0usize;
         let (mut year, mut month, mut day) = (None, None, None);
         for t in &self.toks {
@@ -359,23 +364,23 @@ impl Format {
                         i += 1;
                     }
                 }
-                Tok::Year(4) => year = Some(take_digits(&cs, &mut i, 4)? as i32),
-                Tok::Year(2) => year = Some(2000 + take_digits(&cs, &mut i, 2)? as i32),
-                Tok::Year(_) => year = Some(take_digits(&cs, &mut i, 4)? as i32),
-                Tok::MonthNum(_) => month = Some(take_digits(&cs, &mut i, 2)? as u32),
+                Tok::Year(4) => year = Some(take_digits(cs, &mut i, 4)? as i32),
+                Tok::Year(2) => year = Some(2000 + take_digits(cs, &mut i, 2)? as i32),
+                Tok::Year(_) => year = Some(take_digits(cs, &mut i, 4)? as i32),
+                Tok::MonthNum(_) => month = Some(take_digits(cs, &mut i, 2)? as u32),
                 Tok::MonthName(_) => {
-                    let (idx, len) = match_name(&cs, i, &[&MONTHS_FULL[..], &MONTHS[..]])?;
+                    let (idx, len) = match_name(cs, i, &[&MONTHS_FULL[..], &MONTHS[..]])?;
                     month = Some(idx as u32 + 1);
                     i += len;
                 }
-                Tok::DayNum(_) => day = Some(take_digits(&cs, &mut i, 2)? as u32),
+                Tok::DayNum(_) => day = Some(take_digits(cs, &mut i, 2)? as u32),
                 Tok::DayOrd => {
-                    day = Some(take_digits(&cs, &mut i, 2)? as u32);
-                    take_ordinal_suffix(&cs, &mut i)?;
+                    day = Some(take_digits(cs, &mut i, 2)? as u32);
+                    take_ordinal_suffix(cs, &mut i)?;
                 }
                 Tok::Weekday(_) => {
                     let (_, len) = match_name(
-                        &cs,
+                        cs,
                         i,
                         &[
                             &WEEKDAYS_FULL[..],
@@ -575,7 +580,12 @@ impl JournalFormat {
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_TITLE_FORMAT)
             .to_string();
-        // OG-style "just works": try the user's formats first, then safe defaults.
+        // THE list of date forms a name may be spelled in (D-20261102-JDL:
+        // Martin chose the native list). Deliberate OG deviation: OG
+        // `page-name->map` tries title formats only; Tine also reads the
+        // configured FILE-NAME format, so `[[22-10-2026]]` under
+        // `dd-MM-yyyy` is that day's journal everywhere (link, Linked
+        // References, queries, Upcoming, the frontend via wasm).
         let mut pats: Vec<String> = Vec::new();
         for p in [
             file_pat.as_str(),
@@ -606,8 +616,46 @@ impl JournalFormat {
     /// configured file and title formats, then `MMM do, yyyy`, `yyyy-MM-dd`,
     /// and `yyyy_MM_dd` in that order. `None` means no format matched.
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let s = s.trim();
-        self.parse_list.iter().find_map(|f| f.parse(s))
+        let cs: Vec<char> = s.trim().chars().collect();
+        self.parse_list.iter().find_map(|f| f.parse_chars(&cs))
+    }
+
+    /// Every rendering of `d` in the parse list, deduplicated: the spellings
+    /// of the day this format writes. Real names reached by a looser spelling
+    /// (`2026-10-2`, `October 22nd, 2026`) are found by parsing them, not here.
+    pub fn spellings(&self, d: JournalDate) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(self.parse_list.len());
+        for f in &self.parse_list {
+            let s = f.format(d);
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+        out
+    }
+
+    /// The kind of a link target no file, alias or reference claims: a
+    /// journal iff the name is a date in this format. The one rule; the
+    /// store's `link_target` and the frontend (through wasm) both call it.
+    /// A cheap necessary condition for `self.parse(name) == Some(day)`: every
+    /// accepted spelling reads the day of month and the year as contiguous
+    /// ASCII digit runs (`Format::parse`: `d`/`dd`/`do` and `yy`/`yyyy`), so
+    /// the name contains `day.day` and `day.year % 100` in decimal (a padded
+    /// run contains the unpadded digits). Lets a scan for one day's spellings
+    /// skip most names unparsed; never a replacement for [`Self::parse`].
+    pub fn may_spell_day(name: &str, day: JournalDate) -> bool {
+        Self::day_spelling_prefilter(day)(name)
+    }
+
+    /// [`Self::may_spell_day`] for one `day` over many names: the digit
+    /// needles are rendered once.
+    pub fn day_spelling_prefilter(day: JournalDate) -> impl Fn(&str) -> bool {
+        let (dom, year) = (day.day.to_string(), day.year.rem_euclid(100).to_string());
+        move |name| name.contains(dom.as_str()) && name.contains(year.as_str())
+    }
+
+    pub fn absent_link_is_journal(&self, name: &str) -> bool {
+        self.parse(name).is_some()
     }
 
     /// Display title for a date, in the user's `:journal/page-title-format`.
@@ -630,7 +678,15 @@ impl JournalFormat {
             || self
                 .file
                 .parse(stem)
-                .is_some_and(|d| self.file.format(d) == stem)
+                .is_some_and(|d| self.writes_stem(d, stem))
+    }
+
+    /// Whether `stem` is exactly the file name this format writes for `day`:
+    /// the one answer to "is this the day's preferred file" (claimant ranking).
+    /// [`Self::is_canonical_stem`] builds on it and also admits the ISO and
+    /// underscore stems, which are never strays but not the written name.
+    pub fn writes_stem(&self, day: JournalDate, stem: &str) -> bool {
+        self.file.format(day) == stem
     }
 
     /// Configured page-title format string, including unsupported literals.
@@ -938,5 +994,54 @@ mod fmt_tests {
                 "{name}"
             );
         }
+    }
+
+    /// D-20261102-JDL: the one date list includes the configured file-name
+    /// format; every spelling it renders for a day parses back to that day,
+    /// and the unknown-name link rule is that same parse.
+    #[test]
+    fn spellings_parse_back_and_the_file_name_format_counts() {
+        let fmt = JournalFormat::new(Some("dd-MM-yyyy"), Some("EEEE, dd.MM.yyyy"));
+        let day = d(2026, 10, 22);
+        let spellings = fmt.spellings(day);
+        for expected in ["22-10-2026", "Oct 22nd, 2026", "2026-10-22", "2026_10_22"] {
+            assert!(
+                spellings.iter().any(|s| s == expected),
+                "{expected} in {spellings:?}"
+            );
+        }
+        let mut unique = spellings.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), spellings.len(), "deduplicated: {spellings:?}");
+        for spelling in &spellings {
+            assert_eq!(fmt.parse(spelling), Some(day), "{spelling}");
+            assert!(fmt.absent_link_is_journal(spelling), "{spelling}");
+        }
+        assert!(!fmt.absent_link_is_journal("Launch"));
+        // The prefilter never rejects a spelling the parser accepts, padded,
+        // lenient or two-digit-year alike.
+        let lenient = JournalFormat::new(Some("d.M.yy"), None);
+        for (format, spelling, day) in [
+            (&fmt, "October 22nd, 2026", d(2026, 10, 22)),
+            (&fmt, "2026-10-22", d(2026, 10, 22)),
+            (&lenient, "5.1.5", d(2005, 1, 5)),
+            (&lenient, "05.01.05", d(2005, 1, 5)),
+            (&fmt, "2010-10-10", d(2010, 10, 10)),
+            (&lenient, "1.1.0", d(2000, 1, 1)),
+        ] {
+            assert_eq!(format.parse(spelling), Some(day), "{spelling}");
+            assert!(JournalFormat::may_spell_day(spelling, day), "{spelling}");
+        }
+        assert!(!JournalFormat::may_spell_day("Oct 23rd, 2026", day));
+        assert!(!JournalFormat::may_spell_day("Project 22", day));
+        assert!(!fmt.absent_link_is_journal("22-10"));
+        // The writer's name is the configured one only; the ISO stem is
+        // canonical (never a stray) but not the written name.
+        assert!(fmt.writes_stem(day, "22-10-2026"));
+        assert!(!fmt.writes_stem(day, "2026_10_22"));
+        assert!(fmt.is_canonical_stem("2026_10_22"));
+        assert!(fmt.is_canonical_stem("22-10-2026"));
+        assert!(!fmt.is_canonical_stem("22-10-2026 copy"));
     }
 }

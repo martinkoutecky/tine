@@ -181,6 +181,10 @@ export interface PageInventoryEntry {
   is_journal: boolean;
   day: number | null;
   target: ResolvedPage;
+  /** What a `[[name]]` link opens, when that is not this entry itself: the
+   *  store's `WholeGraph::link_target` (an alias's owner, a date spelling's
+   *  journal). Absent means the entry itself. */
+  link?: { name: string; kind: PageKind };
 }
 
 /** What one publication changed in the `page_inventory` answer when no page

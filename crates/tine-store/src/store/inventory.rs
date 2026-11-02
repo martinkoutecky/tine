@@ -18,6 +18,107 @@ pub struct InventoryEntry {
     pub is_journal: bool,
     /// Parsed journal day, if any.
     pub day: Option<Day>,
+    /// What a `[[name]]` link opens ([`WholeGraph::link_target`]), only when
+    /// that differs from this entry's own (name, kind): an alias (its owner),
+    /// a date spelling (its day's journal), an alias spelled as a date.
+    pub link: Option<LinkTarget>,
+}
+
+/// The page a link opens: its name and kind, as the router takes them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkTarget {
+    /// The name to open (a claimant's own name, or the journal title).
+    pub name: String,
+    /// A journal (else an ordinary page).
+    pub is_journal: bool,
+}
+
+/// What `[[name]]` opens: the one answer (CM step 2, census Q8), used for the
+/// inventory's `link` field ([`WholeGraph::inventory`], the publication delta)
+/// and by [`WholeGraph::link_target`].
+/// - A date by the graph's one date answerer ([`JournalFormat::parse`]): the
+///   day's journal file, else an ordinary page of exactly this name, else
+///   the owner of an alias spelled so (model rule 4, S6), else the virtual
+///   journal ([`JournalFormat::absent_link_is_journal`]).
+/// - Any other name: the ordinary page claiming it, else the first alias
+///   owner in path order, of the owner's own kind (a journal's alias opens
+///   the journal), else an absent ordinary page.
+/// O(1) claimant lookups plus O(owners); the alias relation is read only for
+/// a name no file claims.
+pub(crate) fn link_target_in(
+    claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
+    graph: &ReadSnapshot,
+    format: &JournalFormat,
+    name: &str,
+) -> LinkTarget {
+    let first = |journal: bool, name: &str| {
+        claimants
+            .get(&(journal, tine_core::refs::page_key(name)))
+            .and_then(|claimants| claimants.first())
+    };
+    let owner = || {
+        let mut owners = graph.alias_owner_paths(&tine_core::refs::page_key(name))?;
+        owners.sort();
+        owners.into_iter().find_map(|path| {
+            let slot = *graph.pages.positions.get(path.as_str())?;
+            let (entry, _) = graph.pages.get(slot)?;
+            Some(LinkTarget {
+                name: entry.name.clone(),
+                is_journal: entry.kind == PageKind::Journal,
+            })
+        })
+    };
+    let page = |entry: &PageEntry| LinkTarget {
+        name: entry.name.clone(),
+        is_journal: false,
+    };
+    if let Some(day) = format.parse(name) {
+        let title = format.title(day);
+        if let Some(journal) = first(true, &title) {
+            return LinkTarget {
+                name: journal.name.clone(),
+                is_journal: true,
+            };
+        }
+        if let Some(entry) = first(false, name) {
+            return page(entry);
+        }
+        if let Some(owner) = owner() {
+            return owner;
+        }
+        return LinkTarget {
+            name: title,
+            is_journal: format.absent_link_is_journal(name),
+        };
+    }
+    if let Some(entry) = first(false, name) {
+        return page(entry);
+    }
+    owner().unwrap_or_else(|| LinkTarget {
+        name: name.to_owned(),
+        is_journal: format.absent_link_is_journal(name),
+    })
+}
+
+/// `entry` with its `link` set when the link opens something other than the
+/// entry itself. A file-claimed name without a digit is never a date, so its
+/// link is itself: no lookup.
+fn with_link(
+    claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
+    graph: &ReadSnapshot,
+    format: &JournalFormat,
+    mut entry: InventoryEntry,
+) -> InventoryEntry {
+    if matches!(entry.target, Resolved::Existing { .. })
+        && !entry.name.bytes().any(|byte| byte.is_ascii_digit())
+    {
+        return entry;
+    }
+    let link = link_target_in(claimants, graph, format, &entry.name);
+    if link.is_journal != entry.is_journal || link.name != entry.name {
+        entry.link = Some(link);
+    }
+    entry
 }
 
 /// Graph inventory entries in page-key order.
@@ -124,6 +225,7 @@ impl WholeGraph {
                         target: self.resolve(&entry.name, entry.kind == PageKind::Journal),
                         is_journal: entry.kind == PageKind::Journal,
                         day: entry.date_key.map(Day),
+                        link: None,
                     })
                     .into_iter()
                     .collect(),
@@ -140,6 +242,7 @@ impl WholeGraph {
                             name,
                             is_journal: true,
                             day: Some(day),
+                            link: None,
                         }
                     })
                     .collect();
@@ -164,6 +267,12 @@ impl WholeGraph {
                 Arc::new(Inventory(entries))
             }
         }
+    }
+
+    /// What a `[[name]]` link opens in this view ([`link_target_in`]): the one
+    /// answer; the frontend reads it from the inventory's `link` field.
+    pub(crate) fn link_target(&self, name: &str) -> LinkTarget {
+        link_target_in(&self.claimants, &self.graph, &self.journal_format, name)
     }
 
     fn full_inventory(&self) -> Arc<Inventory> {
@@ -212,6 +321,7 @@ impl WholeGraph {
                 target: Resolved::Alias { owners },
                 is_journal: false,
                 day: None,
+                link: None,
             });
         }
         for (key, referrers) in references.iter() {
@@ -224,8 +334,13 @@ impl WholeGraph {
                 name,
                 is_journal: false,
                 day: None,
+                link: None,
             });
         }
+        let mut entries: Vec<_> = entries
+            .into_iter()
+            .map(|entry| with_link(&self.claimants, &self.graph, &self.journal_format, entry))
+            .collect();
         sort_inventory(&mut entries);
         #[cfg(feature = "test-faults")]
         crate::cost_counters::name_inventory_entries(entries.len());
@@ -265,6 +380,7 @@ impl WholeGraph {
                     name: spelling,
                     is_journal: false,
                     day: None,
+                    link: None,
                 }),
             }
         }
@@ -299,6 +415,7 @@ impl WholeGraph {
                 },
                 is_journal,
                 day: page.date_key.map(Day),
+                link: None,
             })
             .collect()
     }
@@ -329,27 +446,33 @@ impl Snapshot {
             .filter(|owners| !owners.is_empty())
         {
             owners.dedup();
-            return Some(InventoryEntry {
+            return Some(self.linked(InventoryEntry {
                 name: spelling.unwrap_or(key).to_owned(),
                 target: Resolved::Alias {
                     owners: owners.into_iter().map(PageId::from).collect(),
                 },
                 is_journal: false,
                 day: None,
-            });
+                link: None,
+            }));
         }
         if claimed(true) {
             return None;
         }
         let name = spelling?.to_owned();
-        Some(InventoryEntry {
+        Some(self.linked(InventoryEntry {
             target: Resolved::Absent {
                 id: proposed_page_id(&self.config.config, &name),
             },
             name,
             is_journal: false,
             day: None,
-        })
+            link: None,
+        }))
+    }
+
+    fn linked(&self, entry: InventoryEntry) -> InventoryEntry {
+        with_link(&self.claimants, &self.graph, &self.journal_format, entry)
     }
 }
 

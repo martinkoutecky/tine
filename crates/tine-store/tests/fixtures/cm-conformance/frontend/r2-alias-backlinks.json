@@ -16,6 +16,10 @@
       "day": null,
       "is_journal": false,
       "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
       "name": "ML",
       "target": {
         "kind": "alias",
@@ -47,6 +51,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "ML": {

@@ -12,7 +12,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use tine_core::concord_queue::{parse_vcs_marker_sides, MarkerConflictDiff};
-use tine_core::date::JournalFormat;
 use tine_core::doc::{self, Document};
 use tine_core::model::{
     decode_page_name, sync_conflict_base, Format, PageDto, PageKind, SyncConflict,
@@ -215,10 +214,7 @@ fn graph_text_title(store: &Store, file: &FileId) -> Option<(PageKind, String, S
     let stem = rel.rsplit('/').next()?.rsplit_once('.')?.0.to_owned();
     let title = |stem: &str| {
         if kind == PageKind::Journal {
-            let journal_format = JournalFormat::new(
-                config.journal_file_name_format.as_deref(),
-                config.journal_page_title_format.as_deref(),
-            );
+            let journal_format = config.journal_format();
             journal_format
                 .parse(stem)
                 .map(|day| journal_format.title(day))
@@ -649,10 +645,7 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
         PageKind::Page
     };
     let name = if kind == PageKind::Journal {
-        let fmt = JournalFormat::new(
-            config.journal_file_name_format.as_deref(),
-            config.journal_page_title_format.as_deref(),
-        );
+        let fmt = config.journal_format();
         fmt.parse(stem)
             .map(|day| fmt.title(day))
             .unwrap_or_else(|| stem.to_owned())

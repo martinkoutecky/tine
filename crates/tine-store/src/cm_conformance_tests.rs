@@ -152,7 +152,11 @@ fn run_graph(
         diffs.extend(shared::compare_reference_days(&ctx));
         frontend.lock().unwrap().insert(
             spec.name.clone(),
-            shared::frontend_case(&ctx, spec.journal_title_format.as_deref()),
+            shared::frontend_case(
+                &ctx,
+                spec.journal_title_format.as_deref(),
+                spec.journal_file_format.as_deref(),
+            ),
         );
     }
     let pairs = link_pairs(&view, &input, &mut diffs);

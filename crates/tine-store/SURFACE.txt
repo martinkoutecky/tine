@@ -346,7 +346,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 17)
+## WholeGraph: Names (ceiling: 21)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
@@ -355,6 +355,15 @@ field store::InventoryEntry.name
 field store::InventoryEntry.target
 field store::InventoryEntry.is_journal
 field store::InventoryEntry.day
+# CM step 2 (Q8, one answerer for what a link opens): `inventory` already
+# answers per name; what that name's link opens is a field on the same entry
+# (sent only when it differs from the entry), not a sibling method. No
+# InventoryScope can carry it: it is a property of every entry, and the
+# frontend routes every rendered link by it. 17 -> 21.
+field store::InventoryEntry.link
+struct store::LinkTarget
+field store::LinkTarget.name
+field store::LinkTarget.is_journal
 fn store::WholeGraph::complete_page_names
 # GH #623: the rename planner asks for the page files under one key through
 # `InventoryScope` instead of a sibling method (rule 3).
@@ -534,8 +543,8 @@ use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.
-use store::inventory::{Inventory,InventoryEntry,InventoryScope}
+use store::inventory::{Inventory,InventoryEntry,InventoryScope,LinkTarget}

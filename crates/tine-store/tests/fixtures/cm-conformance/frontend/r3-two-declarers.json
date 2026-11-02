@@ -38,6 +38,10 @@
       "day": null,
       "is_journal": false,
       "key": "shared",
+      "link": {
+        "kind": "page",
+        "name": "Alpha"
+      },
       "name": "Shared",
       "target": {
         "kind": "alias",
@@ -48,6 +52,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "Alpha": {

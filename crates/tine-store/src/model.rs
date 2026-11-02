@@ -1407,7 +1407,7 @@ impl ReadSnapshot {
         &self,
         day: tine_core::date::JournalDate,
     ) -> Option<String> {
-        let title = crate::query::journal_format(&self.config).title(day);
+        let title = self.config.journal_format().title(day);
         self.real_page_names
             .paths(&tine_core::refs::page_key(&title))
             .filter_map(|path| self.list.get_path(path))
@@ -2577,7 +2577,7 @@ fn is_date_stem_entry(entry: &PageEntry, fmt: &JournalFormat) -> bool {
         .and_then(|s| s.to_str())
         .is_some_and(|stem| {
             entry.date_key.is_some_and(|day| {
-                fmt.file_stem(tine_core::date::JournalDate::from_ordinal(day)) == stem
+                fmt.writes_stem(tine_core::date::JournalDate::from_ordinal(day), stem)
             })
         })
 }
@@ -2854,10 +2854,7 @@ impl Graph {
         // but cannot make the cached pages or their disk observations stale.
         let rebuild = crate::store::checkpoint::config_key(&self.current_config())
             != crate::store::checkpoint::config_key(&config);
-        let format = JournalFormat::new(
-            config.journal_file_name_format.as_deref(),
-            config.journal_page_title_format.as_deref(),
-        );
+        let format = config.journal_format();
         *self.live_config.write().unwrap() = Some(Arc::new(config));
         *self.live_journal_format.write().unwrap() = Some(Arc::new(format));
         if rebuild {
@@ -2985,10 +2982,7 @@ impl Graph {
             ),
             Err(error) => (Config::default(), Some(error.into())),
         };
-        let journal_format = JournalFormat::new(
-            config.journal_file_name_format.as_deref(),
-            config.journal_page_title_format.as_deref(),
-        );
+        let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, config, journal_format);
         graph.config_read_problem = problem;
         graph
@@ -3235,8 +3229,7 @@ impl Graph {
             };
             // A date-stem file is canonical; otherwise try to parse its title.
             let canonical = self.current_journal_format().is_canonical_stem(stem);
-            let date = JournalDate::from_file_stem(stem)
-                .or_else(|| self.current_journal_format().parse(stem));
+            let date = self.current_journal_format().parse(stem);
             if let Some(d) = date {
                 by_date.entry(d.ordinal_key()).or_default().push((
                     format!("{stem}.{ext}"),
@@ -3967,7 +3960,7 @@ impl SnapshotMemos {
                 Arc::new(crate::query::RealPageNames::new()),
             )
         };
-        let journal = crate::query::journal_format(graph.config());
+        let journal = graph.config().journal_format();
         let today = tine_core::date::JournalDate::today().ordinal_key();
         // Hold the derived write lock across the WHOLE prune+re-tag. This is
         // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
@@ -5241,7 +5234,14 @@ pub(crate) fn trash_dir_kind(path: &Path) -> Option<TrashEntryKind> {
     }
 }
 
-pub(crate) fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> TrashEntryKind {
+/// A flat (pre-typed-directory) trash entry keeps only its file name, so a
+/// journal is recognised by the graph's one date answerer: the stem is its
+/// day's own file name ([`JournalFormat::is_canonical_stem`]).
+pub(crate) fn classify_legacy_trash_entry(
+    path: &Path,
+    ft: fs::FileType,
+    format: &JournalFormat,
+) -> TrashEntryKind {
     if !ft.is_file() {
         return TrashEntryKind::Other;
     }
@@ -5261,7 +5261,7 @@ pub(crate) fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> Tras
         return original_path
             .file_stem()
             .and_then(|s| s.to_str())
-            .filter(|stem| tine_core::date::JournalDate::from_file_stem(stem).is_some())
+            .filter(|stem| format.is_canonical_stem(stem))
             .map(|_| TrashEntryKind::Journal)
             .unwrap_or(TrashEntryKind::Page);
     }
@@ -6232,7 +6232,7 @@ mod tests {
     ) {
         let aliases = graph.alias_edges();
         let real_pages = crate::query::real_page_names(graph);
-        let journal = crate::query::journal_format(graph.config());
+        let journal = graph.config().journal_format();
         let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {
             let mut paths = pages
                 .iter()
@@ -8471,6 +8471,31 @@ mod tests {
         assert_eq!(stats[0].1, 0, "asset trash should be empty");
         assert_eq!(stats[1].1, 1, "page trash should still be counted");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Date table row 5 (CM step 2): a flat legacy trash entry is a journal by
+    /// the graph's one date answerer, so a journal written under a custom
+    /// `:journal/file-name-format` counts as a journal (it was a page: only the
+    /// ISO/underscore stems were recognised).
+    #[test]
+    fn legacy_trash_recognises_a_configured_file_name_format_journal() {
+        let dir = scratch("legacy-trash-file-format");
+        let custom = dir.join("123-0__22-10-2026.md");
+        let iso = dir.join("123-1__2026_10_22.md");
+        let page = dir.join("123-2__Notes.md");
+        for path in [&custom, &iso, &page] {
+            fs::write(path, b"- x\n").unwrap();
+        }
+        let kind = |path: &Path, format: &JournalFormat| {
+            classify_legacy_trash_entry(path, fs::metadata(path).unwrap().file_type(), format)
+        };
+        let configured = JournalFormat::new(Some("dd-MM-yyyy"), None);
+        assert_eq!(kind(&custom, &configured), TrashEntryKind::Journal);
+        assert_eq!(kind(&iso, &configured), TrashEntryKind::Journal);
+        assert_eq!(kind(&page, &configured), TrashEntryKind::Page);
+        let default = JournalFormat::default();
+        assert_eq!(kind(&custom, &default), TrashEntryKind::Page);
         let _ = fs::remove_dir_all(&dir);
     }
 

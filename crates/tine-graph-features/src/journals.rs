@@ -425,10 +425,7 @@ pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, St
 
 fn format(store: &Store) -> JournalFormat {
     let config = store.config();
-    JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    )
+    config.journal_format()
 }
 
 /// The journals listing: every listed file, plus `name: reason` for each entry

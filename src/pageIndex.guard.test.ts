@@ -114,6 +114,6 @@ describe("page index guard (Rule 3: one answerer, frontend included)", () => {
 
 it("I-12/I-25: link existence reuses resolvedTarget (exemplar src/render/inline.tsx), never a second batch/cache", () => {
   const inline = readFileSync("src/render/inline.tsx", "utf8");
-  expect(inline).toContain('resolvedTarget(targetName(), kind())?.kind === "absent"');
+  expect(inline).toContain('resolvedTarget(link().name, kind())?.kind === "absent"');
   expect(nameAnswererViolations("src/render/inline.tsx", "backend().pageExistsBatch(names); backend().pageInventory();")).toHaveLength(2);
 });

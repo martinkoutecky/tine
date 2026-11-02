@@ -398,7 +398,7 @@ pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries}
 mod fold_save_tests;
 mod inventory;
 pub(crate) use inventory::InventoryDelta;
-pub use inventory::{Inventory, InventoryEntry, InventoryScope};
+pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
 #[cfg(test)]
@@ -1523,7 +1523,11 @@ impl Store {
                 };
                 add_trash_count(
                     &mut counts,
-                    TrashKind::from(classify_legacy_trash_entry(&entry.path(), kind)),
+                    TrashKind::from(classify_legacy_trash_entry(
+                        &entry.path(),
+                        kind,
+                        &self.graph.current_journal_format(),
+                    )),
                     bytes,
                 );
             }
@@ -1588,7 +1592,11 @@ impl Store {
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                     removed.0 += 1;
                 }
-            } else if classify_legacy_trash_entry(&entry.path(), file_type) == TrashEntryKind::Asset
+            } else if classify_legacy_trash_entry(
+                &entry.path(),
+                file_type,
+                &self.graph.current_journal_format(),
+            ) == TrashEntryKind::Asset
             {
                 let bytes = entry
                     .metadata()

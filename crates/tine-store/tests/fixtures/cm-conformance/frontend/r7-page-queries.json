@@ -5,6 +5,10 @@
       "day": null,
       "is_journal": false,
       "key": "2026-10-26",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "2026-10-26",
       "target": {
         "id": "pages/2026-10-26.md",
@@ -44,6 +48,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "2026-10-26": {

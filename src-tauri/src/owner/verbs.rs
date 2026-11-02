@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tine_core::date::{JournalDate, JournalFormat};
+use tine_core::date::JournalDate;
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_store::{Day, HostReadError, InventoryScope, PageId, Resolved, StoreError, WholeGraph};
 
@@ -457,12 +457,7 @@ pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<Journa
         return Ok(day);
     }
     let config = slot.store.config();
-    JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    )
-    .parse(date)
-    .ok_or_else(|| {
+    config.journal_format().parse(date).ok_or_else(|| {
         ErrorBody::new(
             "bad-args",
             format!("`{date}` is not a date (use YYYY-MM-DD)"),

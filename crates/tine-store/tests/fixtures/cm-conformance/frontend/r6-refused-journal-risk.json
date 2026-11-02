@@ -27,6 +27,10 @@
       "day": null,
       "is_journal": false,
       "key": "old/sub",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "old/sub",
       "target": {
         "kind": "alias",
@@ -47,6 +51,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "Oct 26th, 2026": {

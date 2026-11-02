@@ -1,31 +1,13 @@
 {
   "frontend": {
     "fixtures": {
-      "d1-file-format-links": [
-        "frontend date [[22-10-2026]]: native 2026-10-22, frontend none",
-        "frontend date [[23-10-2026]]: native 2026-10-23, frontend none",
-        "frontend date [[24-10-2026]]: native 2026-10-24, frontend none",
-        "frontend date [[25-10-2026]]: native 2026-10-25, frontend none",
-        "frontend navigate [[22-10-2026]]: model (\"journal\", \"oct 22nd, 2026\"), frontend (\"page\", \"oct 22nd, 2026\") via (page, 22-10-2026); backend (\"journal\", \"oct 22nd, 2026\")",
-        "frontend navigate [[23-10-2026]]: model (\"journal\", \"oct 23rd, 2026\"), frontend (\"page\", \"oct 23rd, 2026\") via (page, 23-10-2026); backend (\"journal\", \"oct 23rd, 2026\")",
-        "frontend navigate [[24-10-2026]]: frontend agrees with the model (\"page\", \"plan\"), backend (\"journal\", \"oct 24th, 2026\")",
-        "frontend navigate [[25-10-2026]]: model (\"journal\", \"oct 25th, 2026\"), frontend (\"page\", \"oct 25th, 2026\") via (page, 25-10-2026); backend (\"journal\", \"oct 25th, 2026\")"
-      ],
-      "d3-both-formats-alias-group": [
-        "frontend date [[22.10.2026]]: native 2026-10-22, frontend none",
-        "frontend navigate [[22.10.2026]]: model (\"journal\", \"2026_22_10\"), frontend (\"page\", \"2026_22_10\") via (page, 22.10.2026); backend (\"journal\", \"2026_22_10\")"
-      ],
       "d4-date-named-page-file-format": [
-        "frontend date [[25-10-2026]]: native 2026-10-25, frontend none",
         "frontend navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), frontend (\"journal\", \"oct 25th, 2026\") via (journal, Oct 25th, 2026); backend agrees with the frontend"
-      ],
-      "r5-journal-alias": [
-        "frontend navigate [[launch day]]: model (\"journal\", \"oct 26th, 2026\"), frontend (\"page\", \"oct 26th, 2026\") via (page, Oct 26th, 2026); backend (\"journal\", \"oct 26th, 2026\")"
-      ],
-      "r6-refused-journal-risk": [
-        "frontend navigate [[old/sub]]: model (\"journal\", \"oct 26th, 2026\"), frontend (\"page\", \"oct 26th, 2026\") via (page, Oct 26th, 2026); backend (\"journal\", \"oct 26th, 2026\")"
       ]
     }
+  },
+  "notes": {
+    "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled."
   },
   "rename": {
     "fixtures": {
@@ -945,10 +927,6 @@
     "fixtures": {
       "d1-file-format-links": [
         "backlink count of (\"journal\", \"oct 22nd, 2026\") (journals/22-10-2026.md): model 3, Tine 1 (date spelling not folded)",
-        "query \"any(direct_refs, journal = true)\": native list reads [\"22-10-2026\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "query \"any(direct_refs, journal = true)\": native list reads [\"23-10-2026\"] in block (\"pages/Notes.md\", 3) as a day, the query does not",
-        "query \"any(direct_refs, journal = true)\": native list reads [\"24-10-2026\"] in block (\"pages/Plan.md\", 0) as a day, the query does not",
-        "navigate [[24-10-2026]]: model (\"page\", \"plan\"), Tine (\"journal\", \"oct 24th, 2026\")",
         "pages: Tine has (\"page\", \"oct 22nd, 2026\"), model does not",
         "pages: Tine has (\"page\", \"oct 23rd, 2026\"), model does not",
         "pages: model has (\"journal\", \"oct 23rd, 2026\"), Tine does not",
@@ -978,9 +956,6 @@
       "d3-both-formats-alias-group": [
         "backlink count of (\"page\", \"launch\") (pages/Launch.md): model 4, Tine 1 (alias class not counted)",
         "backlink count of (\"journal\", \"2026_22_10\") (journals/22.10.2026.md): model 3, Tine 1 (date spelling not folded)",
-        "query \"any(direct_refs, journal = true)\": native list reads [\"22.10.2026\"] in block (\"pages/n.md\", 0) as a day, the query does not",
-        "Linked References of (\"page\", \"launch\"): model has block (\"pages/n.md\", 0), Tine does not",
-        "Linked References of (\"page\", \"launch\"): model has block (\"pages/n.md\", 2), Tine does not",
         "pages: Tine has (\"page\", \"2026_22_10\"), model does not",
         "pages: Tine has (\"page\", \"2026_10_11\"), model does not",
         "pages: model has (\"journal\", \"2026_10_11\"), Tine does not",
@@ -997,7 +972,6 @@
       ],
       "d4-date-named-page-file-format": [
         "backlink count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, Tine 1 (date spelling not folded)",
-        "query \"any(direct_refs, journal = true)\": native list reads [\"25-10-2026\"] in block (\"pages/x.md\", 0) as a day, the query does not",
         "Linked References of (\"page\", \"oct 25th, 2026\"): model has block (\"pages/x.md\", 1), Tine does not",
         "navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), Tine (\"journal\", \"oct 25th, 2026\")",
         "query \"[[25-10-2026]]\": model has block (\"pages/x.md\", 1), Tine does not"
@@ -1005,9 +979,6 @@
       "d5-lenient-spellings": [
         "backlink count of (\"journal\", \"oct 22nd, 2026\") (journals/2026_10_22.md): model 3, Tine 1 (date spelling not folded)",
         "backlink count of (\"journal\", \"oct 2nd, 2026\") (journals/2026_10_02.md): model 1, Tine 0 (date spelling not folded)",
-        "Linked References of (\"journal\", \"oct 22nd, 2026\"): model has block (\"pages/Notes.md\", 0), Tine does not",
-        "Linked References of (\"journal\", \"oct 22nd, 2026\"): model has block (\"pages/Notes.md\", 1), Tine does not",
-        "Linked References of (\"journal\", \"oct 2nd, 2026\"): model has block (\"pages/Notes.md\", 2), Tine does not",
         "pages: Tine has (\"page\", \"oct 22nd, 2026\"), model does not",
         "pages: Tine has (\"page\", \"oct 2nd, 2026\"), model does not",
         "query \"[[Oct 22nd, 2026]]\": model has block (\"pages/Notes.md\", 0), Tine does not",
@@ -1043,7 +1014,6 @@
       "r2-journal-in-alias-group": [
         "backlink count of (\"page\", \"launch\") (pages/Launch.md): model 3, Tine 1 (alias class not counted)",
         "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, Tine 1 (date spelling not folded)",
-        "Linked References of (\"page\", \"launch\"): model has block (\"pages/n.md\", 0), Tine does not",
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not"
       ],
       "r3-capital-sorts-first": [
@@ -1397,31 +1367,43 @@
           ]
         }
       },
-      "[duplicate claim] navigate: model journal vs Tine journal": {
-        "detail": "navigate [[2026-10-26]]: model (\"journal\", \"oct 27th, 2026\"), Tine (\"journal\", \"oct 26th, 2026\")",
+      "[duplicate claim] navigate: model journal vs Tine page": {
+        "detail": "navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), Tine (\"page\", \"a\")",
         "graph": {
           "files": {
-            "journals/2026_10_27.md": "alias:: 2026-10-26\n\n- note\n  rel:: [[A]]\n- note\n  rel:: [[2026-10-26]]\n",
-            "pages/A.md": "- TODO task [[a]]\n- #n/y tagged\n",
-            "pages/a.md": "",
-            "pages/n.md": "alias:: a\n"
+            "pages/2026-10-26.md": "title:: a\nalias:: a\n",
+            "pages/A.md": "alias:: 2026-10-26\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "refs": "n"
+                "or": [
+                  {
+                    "refs": "x"
+                  },
+                  {
+                    "refs": "x"
+                  }
+                ]
               },
-              "tine": "[[n]]"
+              "tine": "(or [[x]] [[x]])"
             },
             {
               "anchor": "page",
               "dialect": "tql",
               "q": {
-                "name": "2026-10-26"
+                "or": [
+                  {
+                    "name": "a"
+                  },
+                  {
+                    "name": "N/y"
+                  }
+                ]
               },
-              "tine": "@page and name = '2026-10-26'"
+              "tine": "@page and (name = 'a' or name = 'N/y')"
             }
           ]
         }
@@ -1850,95 +1832,6 @@
                 ]
               },
               "tine": "@page and (name = 'A' or name = 'N/y')"
-            }
-          ]
-        }
-      },
-      "linked refs: model-only, target page real, alias by link, source root of page": {
-        "detail": "Linked References of (\"page\", \"a\"): model has block (\"pages/n.md\", 1), Tine does not",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "alias:: N/y, B\n",
-            "pages/N%2Fy.md": "",
-            "pages/n%2Fy.md": "title:: A\nalias:: n/y\n\n- [[n/y]] and [[B]]\n",
-            "pages/n.md": "- #N/y tagged\n- see [[2026-10-26]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n/y"
-              },
-              "tine": "[[n/y]]"
-            }
-          ]
-        }
-      },
-      "navigate: model journal vs Tine journal (occurrence,alias-edge,date)": {
-        "detail": "navigate [[2026-10-26]]: model (\"journal\", \"oct 27th, 2026\"), Tine (\"journal\", \"oct 26th, 2026\")",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "alias:: 2026-10-26\n\n- see [[2026-10-26]]\n  - child [[B]]\n- see [[N/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "A"
-              },
-              "tine": "[[A]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "or": [
-                  {
-                    "name": "n/y"
-                  },
-                  {
-                    "name": "B"
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'n/y' or name = 'B')"
-            }
-          ]
-        }
-      },
-      "navigate: model page vs Tine journal (occurrence,alias-edge,date)": {
-        "detail": "navigate [[2026-10-26]]: model (\"page\", \"n/y\"), Tine (\"journal\", \"oct 26th, 2026\")",
-        "graph": {
-          "files": {
-            "pages/N%2Fy.md": "alias:: 2026-10-26\n\n- #2026-10-26 tagged\n- a mentioned\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "and": [
-                  {
-                    "name": "x"
-                  },
-                  {
-                    "not": {
-                      "name": "A"
-                    }
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'x' and not (name = 'A'))"
             }
           ]
         }

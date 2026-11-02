@@ -366,7 +366,7 @@ impl GraphSpec {
     }
 
     /// The graph's journal formats, as the store builds them from its config
-    /// (`query::journal_format`: `JournalFormat::new(file, title)`). The
+    /// (`Config::journal_format`: `JournalFormat::new(file, title)`). The
     /// harness's date fold, and so the model's `dateKey`, is this native
     /// parse list, the one list Martin chose (D-20261102-JDL: native list,
     /// configured file-name format included, a deliberate OG deviation).
@@ -1005,22 +1005,17 @@ fn tine_page(
     }
 }
 
-/// What a link `[[name]]` opens: the frontend's link kind (`linkPageKind`:
-/// a journal file for the day, else an ordinary file, else the day) over
-/// `WholeGraph::resolve`.
+/// What a link `[[name]]` opens: the one answer (`WholeGraph::link_target`),
+/// then the page `get_page` opens for that destination (`resolve`).
 fn navigate(view: &WholeGraph, journal: &JournalFormat, name: &str) -> Page {
-    if journal.parse(name.trim()).is_some() {
-        let as_journal = view.resolve(name, true);
-        if matches!(as_journal, Resolved::Existing { .. }) {
-            return tine_page(view, journal, &as_journal, name, true);
-        }
-        let as_page = view.resolve(name, false);
-        if matches!(as_page, Resolved::Existing { .. }) {
-            return tine_page(view, journal, &as_page, name, false);
-        }
-        return tine_page(view, journal, &as_journal, name, true);
-    }
-    tine_page(view, journal, &view.resolve(name, false), name, false)
+    let link = view.link_target(name);
+    tine_page(
+        view,
+        journal,
+        &view.resolve(&link.name, link.is_journal),
+        &link.name,
+        link.is_journal,
+    )
 }
 
 /// The wire form of a resolution (`src-tauri` `ResolvedWire`, the
@@ -1043,16 +1038,20 @@ fn resolved_wire(r: &Resolved) -> Value {
 /// Harness gap H3 closed for fixtures: what the frontend's link decision
 /// needs to run in vitest (`src/cmConformanceNavigate.test.ts`), with the
 /// answers it is compared to.
-/// - `journalTitleFormat`: what `GraphMeta.journal_page_title_format` hands
-///   `setJournalTitleFormat` (the frontend receives no file-name format);
+/// - `journalTitleFormat` / `journalFileFormat`: what GraphMeta hands
+///   `setJournalFormats`;
 /// - `inventory`: `page_inventory`'s entries, built as `src-tauri`'s
-///   `entry_wire` builds them;
+///   `entry_wire` builds them (with `link`);
 /// - `spellings`: per spelling the model answers for, the native parse's day,
 ///   the model's page and the backend's own answer (`navigate`);
 /// - `open`: per name the click path can route to (every spelling and every
 ///   inventory name), the page `get_page(name, kind)` opens for each kind
 ///   (`WholeGraph::resolve`, first alias owner, as `Store::page_named`).
-pub fn frontend_case(ctx: &Ctx, journal_title_format: Option<&str>) -> Value {
+pub fn frontend_case(
+    ctx: &Ctx,
+    journal_title_format: Option<&str>,
+    journal_file_format: Option<&str>,
+) -> Value {
     let view = ctx.view;
     let journal = &ctx.journal;
     let inventory = view.inventory(InventoryScope::All);
@@ -1060,19 +1059,31 @@ pub fn frontend_case(ctx: &Ctx, journal_title_format: Option<&str>) -> Value {
         .0
         .iter()
         .map(|e| {
-            json!({
+            let mut wire = json!({
                 "key": page_key(&e.name),
                 "name": e.name,
                 "is_journal": e.is_journal,
                 "day": e.day.map(|d| d.0),
                 "target": resolved_wire(&e.target),
-            })
+            });
+            if let Some(link) = &e.link {
+                wire["link"] = json!({
+                    "name": link.name,
+                    "kind": if link.is_journal { "journal" } else { "page" },
+                });
+            }
+            wire
         })
         .collect();
-    let mut names: BTreeSet<String> = inventory.0.iter().map(|e| e.name.clone()).collect();
+    let mut names: BTreeSet<String> = inventory
+        .0
+        .iter()
+        .flat_map(|e| std::iter::once(e.name.clone()).chain(e.link.iter().map(|l| l.name.clone())))
+        .collect();
     let mut spellings = BTreeMap::new();
     for (s, page) in ctx.model["navigate"].as_object().unwrap() {
         names.insert(s.clone());
+        names.insert(view.link_target(s).name);
         let day = journal
             .parse(s.trim())
             .map(|d| json!([d.year, d.month, d.day]));
@@ -1095,6 +1106,7 @@ pub fn frontend_case(ctx: &Ctx, journal_title_format: Option<&str>) -> Value {
         .collect();
     json!({
         "journalTitleFormat": journal_title_format,
+        "journalFileFormat": journal_file_format,
         "conflicts": ctx.conflicts,
         "inventory": entries,
         "spellings": spellings,

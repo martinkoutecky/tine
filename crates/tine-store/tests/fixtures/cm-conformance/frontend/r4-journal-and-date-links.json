@@ -5,6 +5,10 @@
       "day": null,
       "is_journal": false,
       "key": "2026-10-26",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "2026-10-26",
       "target": {
         "id": "pages/2026-10-26.md",
@@ -15,6 +19,10 @@
       "day": null,
       "is_journal": false,
       "key": "2026-10-27",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 27th, 2026"
+      },
       "name": "2026-10-27",
       "target": {
         "id": "pages/2026-10-27.md",
@@ -44,6 +52,7 @@
       }
     }
   ],
+  "journalFileFormat": null,
   "journalTitleFormat": null,
   "open": {
     "2026-10-26": {
@@ -84,6 +93,16 @@
       "page": [
         "page",
         "oct 26th, 2026"
+      ]
+    },
+    "Oct 27th, 2026": {
+      "journal": [
+        "journal",
+        "oct 27th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 27th, 2026"
       ]
     }
   },

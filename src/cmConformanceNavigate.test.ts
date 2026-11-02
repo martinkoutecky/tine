@@ -7,9 +7,9 @@
 // `page_inventory` entries in their wire shape, the title format GraphMeta hands
 // the frontend, and per spelling the model's answer. This test installs that
 // inventory in `pageIndex.ts` exactly as the app does (a mocked `page_inventory`
-// IPC), sets the title format as `graph.ts` does, and runs the click path of
-// `PageRef` (`render/inline.tsx`): `linkPageKind(name)`, then the router's
-// `openPageTarget`, which routes a page-kind link to `navigationName(name)`.
+// IPC), sets both journal formats as `graph.ts` does, and runs the click path of
+// `PageRef` (`render/inline.tsx`): `linkTarget(name)`, then the router's
+// `openPageTarget`, which routes a page-kind link to `navigationTarget(name)`.
 // The page the route opens is the backend's `get_page(name, kind)`, read from
 // the case's `open` table (Rust `WholeGraph::resolve`, first alias owner).
 //
@@ -27,6 +27,7 @@ vi.mock("./backend", () => ({ backend: () => backendMock }));
 type Page = [string, string];
 interface Case {
   journalTitleFormat: string | null;
+  journalFileFormat: string | null;
   conflicts: string[];
   inventory: PageInventoryEntry[];
   spellings: Record<string, { day: [number, number, number] | null; model: Page; backend: Page }>;
@@ -66,25 +67,27 @@ async function runCase(c: Case): Promise<string[]> {
   backendMock.pageInventory.mockReset().mockResolvedValue({ rev: "1", entries: c.inventory });
   await (await import("./render/parse")).initParser();
   const journal = await import("./journal");
-  // graph.ts: setJournalTitleFormat(meta.journal_page_title_format).
-  journal.setJournalTitleFormat(c.journalTitleFormat);
+  // graph.ts: setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format).
+  journal.setJournalFormats(c.journalTitleFormat, c.journalFileFormat);
   const index = await import("./pageIndex");
   index.installPageIndex();
   await vi.waitFor(() => expect(index.allPages()).toBeDefined());
   const diffs: string[] = [];
   const conflicts = new Set(c.conflicts);
   for (const [s, want] of Object.entries(c.spellings)) {
-    // The frontend's own "is this a journal date, which day" (journal.ts
-    // journalParts) against the native parse list.
+    // The frontend's "is this a journal date, which day" (journal.ts, the
+    // Rust answerer through wasm) against the native parse list.
     const day = journal.parseJournalTitle(s);
     if (!sameDay(day, want.day)) {
       diffs.push(`frontend date [[${s}]]: native ${showWant(want.day)}, frontend ${showDay(day)}`);
     }
     if (conflicts.has(want.model[1])) continue;
-    // PageRef: kind = linkPageKind(name); openPage(name, kind) -> the router's
-    // openPageTarget: a page-kind route opens navigationName(name).
-    const kind = index.linkPageKind(s);
-    const routed = kind === "page" ? index.navigationName(s) : s;
+    // PageRef: link = linkTarget(name); openPage(link.name, link.kind) -> the
+    // router's openPageTarget: a page-kind route opens navigationTarget(name).
+    const link = index.linkTarget(s);
+    const route = link.kind === "page" ? index.navigationTarget(link.name) : link;
+    const kind = route.kind;
+    const routed = route.name;
     const opened = c.open[routed]?.[kind];
     if (!opened) {
       diffs.push(`harness: frontend routes [[${s}]] to (${kind}, ${routed}), which the case has no answer for`);
