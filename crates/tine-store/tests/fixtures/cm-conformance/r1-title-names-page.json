@@ -1,0 +1,6 @@
+{
+ "files": {
+  "pages/file-name.md": "title:: Real Name\n\n- body\n",
+  "pages/Notes.md": "- [[real name]]\n- [[file-name]]\n"
+ }
+}

@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/ML.md": "",
+  "pages/Machine Learning.md": "alias:: ML\n\n- ml\n",
+  "pages/Notes.md": "- [[ML]]\n"
+ }
+}
