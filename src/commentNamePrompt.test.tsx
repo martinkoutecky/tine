@@ -97,19 +97,19 @@ describe("the first comment in a git graph, no name", () => {
     submit();
     expect(dialog()).toBeNull();
     expect(commentAuthorName()).toBe("Ada");
-    expect(doc.byId[children()[0]].raw).toContain("author:: Ada");
+    expect(doc.byId[children()[0]].raw).toContain("tine.author:: Ada");
     await vi.waitFor(() => expect(setApp).toHaveBeenCalledWith("comment_author_name", "Ada"));
     expect(shouldAskCommentName()).toBe(false);
   });
 
-  it("Skip writes the comment without author::, remembers the refusal on the device, and never asks again", async () => {
+  it("Skip writes the comment without tine.author::, remembers the refusal on the device, and never asks again", async () => {
     mount([block("p", TEXT)]);
     gitGraph();
     commentOnRenderedSelection(HELD);
     buttons("Skip").click();
     expect(dialog()).toBeNull();
     expect(children()).toHaveLength(1);
-    expect(doc.byId[children()[0]].raw).not.toContain("author::");
+    expect(doc.byId[children()[0]].raw).not.toContain("tine.author::");
     await vi.waitFor(() => expect(setApp).toHaveBeenCalledWith("comment_name_prompt_declined", "1"));
     commentOnRenderedSelection(HELD);
     expect(dialog()).toBeNull();
@@ -147,7 +147,7 @@ describe("the first comment in a git graph, no name", () => {
     commentOnRenderedSelection(HELD);
     expect(dialog()).toBeNull();
     expect(children()).toHaveLength(2);
-    expect(doc.byId[children()[1]].raw).toContain("author:: Ada");
+    expect(doc.byId[children()[1]].raw).toContain("tine.author:: Ada");
   });
 
   it("a block that changed while the dialog was open is refused, not mis-quoted", () => {
@@ -196,7 +196,7 @@ describe("no prompt", () => {
     resetCommentAuthorNameForTests("Ada");
     commentOnRenderedSelection(HELD);
     expect(dialog()).toBeNull();
-    expect(doc.byId[children()[0]].raw).toContain("author:: Ada");
+    expect(doc.byId[children()[0]].raw).toContain("tine.author:: Ada");
   });
 
   it("after a decline", () => {
@@ -269,11 +269,11 @@ describe("replies", () => {
     expect(doc.byId[comment].children).toHaveLength(0);
     type("Ada");
     submit();
-    expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("\nauthor:: Ada");
+    expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("\ntine.author:: Ada");
   });
 
   it("the composer keeps its draft while asking, then posts the reply with the name", () => {
-    const root = mount([block("p", TEXT, [block("c", "\nquote:: a phrase worth disputing")])], () => <CommentComposer id="c" surface="test" />);
+    const root = mount([block("p", TEXT, [block("c", "\ntine.quote:: a phrase worth disputing")])], () => <CommentComposer id="c" surface="test" />);
     gitGraph();
     const draft = root.querySelector<HTMLTextAreaElement>("textarea.comment-reply-draft")!;
     draft.dispatchEvent(new FocusEvent("focus"));
@@ -286,11 +286,11 @@ describe("replies", () => {
     submit();
     const replies = doc.byId["c"].children;
     expect(replies).toHaveLength(1);
-    expect(doc.byId[replies[0]].raw).toContain("author:: Ada");
+    expect(doc.byId[replies[0]].raw).toContain("tine.author:: Ada");
   });
 
   it("an empty reply draft asks nothing", () => {
-    const root = mount([block("p", TEXT, [block("c", "\nquote:: x")])], () => <CommentComposer id="c" surface="test" />);
+    const root = mount([block("p", TEXT, [block("c", "\ntine.quote:: x")])], () => <CommentComposer id="c" surface="test" />);
     gitGraph();
     draftSubmitEmpty(root);
     expect(dialog()).toBeNull();

@@ -71,7 +71,7 @@ export function CommentHeader(props: { id: string; author: string | null }): JSX
   </div>;
 }
 
-/** Who wrote a block: the `author::` value, or "you" for the graph owner. On a
+/** Who wrote a block: the `tine.author::` value, or "you" for the graph owner. On a
  * comment block (`handleOf` set) the chip also takes over what the bullet did:
  * it starts the block drag (the same gesture contract as the bullet), and its
  * long press opens the block menu (contextMenuPolicy). Right-click anywhere on

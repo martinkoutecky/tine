@@ -136,7 +136,7 @@ export function deleteComment(commentId: string): void {
 
 /** Enter in a comment's text, before its property lines, starts a reply: a new
  * last child (thread order = document order), and the caret moves there. A split
- * would carry the `quote::` lines into the new block and turn the comment into
+ * would carry the `tine.quote::` lines into the new block and turn the comment into
  * an ordinary block. Returns false when Enter should behave as everywhere else
  * (an ordinary block, or the caret among the property lines). The caller has
  * committed `editorText`. One parse of the editor text, only on Enter in a

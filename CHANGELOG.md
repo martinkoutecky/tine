@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- Every property Tine gives its own meaning is now named `tine.<name>`, so your own properties with the same name stay yours (Discussion #825). A child bullet with your own `quote::` no longer turns into a margin comment, and an `author::` in your book notes stays a property row instead of becoming an author chip. Margin comments now write `tine.quote::`, `tine.quote-prefix::`, `tine.quote-suffix::` and `tine.author::`; the command line's `tine add` / `tine edit --author` write `tine.author::`; folder exports record their folder as `tine.export::`; and the Favorites, Today's sections and Exports pages are marked `tine.favorites::`, `tine.journal-sections::` and `tine.exports::`. Pages marked with the older `tine/favorites::`, `tine/journal-sections::` or `tine/exports::` keep working. **If you made comments or folder exports in a 0.9 Beta**, rename their properties with find/replace: on comment blocks and their replies `quote::` → `tine.quote::`, `quote-prefix::` → `tine.quote-prefix::`, `quote-suffix::` → `tine.quote-suffix::` and `author::` → `tine.author::`; on folder-export query blocks `export::` → `tine.export::` (in Org files the same keys appear as `:quote:`, `:author:`, `:export:` …). Leave `author::` on your other blocks alone (UI-PROPNAMES-USER-QUOTE, UI-PROPNAMES-USER-AUTHOR, REG-PROPNAMES-CLI-AUTHOR, REG-PROPNAMES-STABLE-MARKERS).
+
 ### Fixed
 
 - Typing a page link in Quick Capture no longer shows the red error "Couldn't refresh the page list. The last loaded list is kept." in the capture window. Nothing was lost: the capture window asked for a list of pages it is not given, and page completion there never needed it (UI-CAPTURE-NO-PAGE-INVENTORY).

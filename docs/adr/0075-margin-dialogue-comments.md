@@ -98,3 +98,23 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   editor hiding is scoped to blocks with their own primary `quote` property.
   An ordinary quotation's `author::` remains visible and editable in its buffer;
   a page-level `author::` still shows.
+
+## Amendment 2026-11-02: comment keys are `tine.*` (D-20261102-PNS)
+
+Discussion #825 pointed out that `quote::` and `author::` collide with users'
+own properties: a child bullet with a user's `quote::` rendered as a comment
+card, and any block's `author::` row was replaced by an author chip. Martin
+decided (D-20261102-PNS) that every property with a Tine-specific meaning is
+`tine.<name>`. From this date the keys this ADR names are written and read as
+`tine.quote::`, `tine.quote-prefix::`, `tine.quote-suffix::` and
+`tine.author::` (Org: `:tine.quote:` …). The old names were Beta-only and have
+no reader: a reader for them would keep the collision. The sections above keep
+their original wording as the record of the decision then.
+
+Consequences replaced: a page opened in OG shows comments as nested bullets
+with a `tine.quote::` property; the author chip replaces only a `tine.author`
+row (comments, replies and blocks the command line added), so a user's own
+`author::` stays an ordinary property row everywhere. `tine.*` block keys are
+render-hidden like other Tine keys. The key names live in
+`crates/tine-outline/src/tine_keys.rs`; `src/tinePropertyKeys.ratchet.test.ts`
+fails if Tine writes a key that is neither `tine.*` nor OG-owned.

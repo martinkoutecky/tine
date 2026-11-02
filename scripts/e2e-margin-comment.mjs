@@ -1,12 +1,12 @@
 // Real-app journey for margin dialogue slice 1 (vision 2026-10 §3.7): on a
 // routed named page, select words in a block, click Comment, type a reply, and
-// the page file on disk holds a child bullet with the reply and `quote::`. The
+// the page file on disk holds a child bullet with the reply and `tine.quote::`. The
 // app must not reload on Ctrl+R (the webview's default for that chord). The
 // window is narrow, so the comment renders inline (the margin column is
 // scripts/e2e-margin-column.mjs). The graph is under git and no name is set, so
 // the first comment asks for "Your name" once (tine#841); the name given there
 // is a device setting, shown in Settings, and the comment and the reply written
-// with Enter both carry `author:: <name>`.
+// with Enter both carry `tine.author:: <name>`.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -42,7 +42,7 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 // A graph under git is the one that asks for a name (tine#841); autocommit stays off.
 execFileSync("git", ["-C", GRAPH, "init", "-q", "-b", "main"]);
-fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  author:: claude\n- A second block stays as it is.\n`);
+fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n`);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- open [[${PAGE_NAME}]]\n`);
@@ -118,7 +118,7 @@ try {
   await prompt.waitForExist({ timeout: 5_000, timeoutMsg: "the first comment in a git graph did not ask for a name" });
   const promptText = await prompt.getText();
   if (!/Tine setting on this device, used in all your graphs, not a setting of this graph/.test(promptText)) throw new Error(`the name dialog does not say it is a device setting: ${JSON.stringify(promptText)}`);
-  if (fs.readFileSync(PAGE_FILE, "utf8").includes("quote::")) throw new Error("the comment was written before the name was answered");
+  if (fs.readFileSync(PAGE_FILE, "utf8").includes("tine.quote::")) throw new Error("the comment was written before the name was answered");
   await browser.keys(MY_NAME);
   await browser.keys(["Enter"]);
   await prompt.waitForExist({ timeout: 5_000, reverse: true });
@@ -138,28 +138,28 @@ try {
   await browser.keys(REPLY_2);
   await browser.keys(["Escape"]);
 
-  // On disk: the reply is a child of the agent block and carries quote::.
-  const saved = await waitForFileText(PAGE_FILE, (text) => text.includes(REPLY_2) && text.includes(`quote:: ${PHRASE}`), { timeoutMs: 20_000 });
+  // On disk: the reply is a child of the agent block and carries tine.quote::.
+  const saved = await waitForFileText(PAGE_FILE, (text) => text.includes(REPLY_2) && text.includes(`tine.quote:: ${PHRASE}`), { timeoutMs: 20_000 });
   const lines = saved.split("\n");
   const replyLine = lines.findIndex((line) => line.trimStart() === `- ${REPLY}`);
   if (replyLine < 0) throw new Error(`no reply bullet in ${JSON.stringify(saved)}`);
   const indent = (line) => line.length - line.trimStart().length;
   if (indent(lines[replyLine]) === 0) throw new Error(`reply is not a child bullet: ${JSON.stringify(saved)}`);
-  if (lines[replyLine + 1]?.trim() !== `quote:: ${PHRASE}`) throw new Error(`quote:: does not follow the reply: ${JSON.stringify(saved)}`);
-  // The comment's own property lines: quote::, its context (ADR 0075, MC2), then author::.
+  if (lines[replyLine + 1]?.trim() !== `tine.quote:: ${PHRASE}`) throw new Error(`tine.quote:: does not follow the reply: ${JSON.stringify(saved)}`);
+  // The comment's own property lines: tine.quote::, its context (ADR 0075, MC2), then tine.author::.
   const props = [];
   for (let i = replyLine + 1; i < lines.length && !lines[i].trimStart().startsWith("- "); i++) props.push(lines[i].trim());
-  if (!props.some((line) => line.startsWith("quote-prefix:: "))) throw new Error(`the comment carries no quote-prefix:: (MC2): ${JSON.stringify(saved)}`);
+  if (!props.some((line) => line.startsWith("tine.quote-prefix:: "))) throw new Error(`the comment carries no tine.quote-prefix:: (MC2): ${JSON.stringify(saved)}`);
   // Your name: the comment carries it, and so does the reply written with Enter.
-  if (props[props.length - 1] !== `author:: ${MY_NAME}`) throw new Error(`the comment does not carry author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
+  if (props[props.length - 1] !== `tine.author:: ${MY_NAME}`) throw new Error(`the comment does not carry tine.author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
   const secondReply = lines.findIndex((line) => line.trimStart() === `- ${REPLY_2}`);
-  if (secondReply < 0 || indent(lines[secondReply]) <= indent(lines[replyLine]) || lines[secondReply + 1]?.trim() !== `author:: ${MY_NAME}`) {
-    throw new Error(`the reply does not nest under the comment with author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
+  if (secondReply < 0 || indent(lines[secondReply]) <= indent(lines[replyLine]) || lines[secondReply + 1]?.trim() !== `tine.author:: ${MY_NAME}`) {
+    throw new Error(`the reply does not nest under the comment with tine.author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
   }
   const agentLine = lines.findIndex((line) => line.startsWith(`- An agent wrote ${PHRASE}`));
   const secondLine = lines.findIndex((line) => line.startsWith("- A second block"));
   if (!(agentLine < replyLine && replyLine < secondLine)) throw new Error(`reply is not under the agent block: ${JSON.stringify(saved)}`);
-  if (!saved.includes(`- An agent wrote ${PHRASE} in this paragraph.\n  author:: claude\n`)) {
+  if (!saved.includes(`- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n`)) {
     throw new Error(`the commented block changed on disk: ${JSON.stringify(saved)}`);
   }
 
@@ -200,7 +200,7 @@ try {
   const drafted = await waitForFileText(PAGE_FILE, text => text.includes("A draft reply"), { timeoutMs: 20_000 });
   const draftLines = drafted.split("\n");
   const draftAt = draftLines.findIndex(line => line.trim() === "- A draft reply");
-  if (draftAt < 0 || draftLines[draftAt + 1]?.trim() !== `author:: ${MY_NAME}`) throw new Error("draft submission lost the configured author");
+  if (draftAt < 0 || draftLines[draftAt + 1]?.trim() !== `tine.author:: ${MY_NAME}`) throw new Error("draft submission lost the configured author");
   await browser.setWindowSize(1600, 1000);
   await browser.$(".margin-thread .comment-card").waitForExist({ timeout: 5000 });
   const content = await browser.$(".comment-card > .block-main .block-content");
@@ -214,7 +214,7 @@ try {
   await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor") && document.activeElement.value === ""), { timeout: 5000 });
   await browser.keys("A quoted child");
   await browser.keys(["Escape"]);
-  await waitForFileText(PAGE_FILE, text => text.includes("A quoted child") && text.includes("quote:: I"), { timeoutMs: 20_000 });
+  await waitForFileText(PAGE_FILE, text => text.includes("A quoted child") && text.includes("tine.quote:: I"), { timeoutMs: 20_000 });
   if ((await browser.$$(".margin-thread")).length !== 1) throw new Error("Ctrl+R in a comment created a separate thread");
   if (await browser.execute(() => window.__marginE2E) !== "alive") throw new Error("Ctrl+R in a comment reloaded the app");
   await browser.$(".comment-card").moveTo();
@@ -226,7 +226,7 @@ try {
   await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor") && document.activeElement.value === ""), { timeout: 5000 });
   await browser.keys("A nested draft remark");
   await browser.keys(["Escape"]);
-  await waitForFileText(PAGE_FILE, text => text.includes("A draft worth thought") && text.includes("A nested draft remark") && text.includes("quote:: draft"), { timeoutMs: 20_000 });
+  await waitForFileText(PAGE_FILE, text => text.includes("A draft worth thought") && text.includes("A nested draft remark") && text.includes("tine.quote:: draft"), { timeoutMs: 20_000 });
   if (await browser.execute(() => window.__marginE2E) !== "alive") throw new Error("Ctrl+R in a nonempty draft reloaded the app");
   const problems = await browser.execute(marginFirstLineProblems);
   if (problems.length) throw new Error(problems.join("; "));

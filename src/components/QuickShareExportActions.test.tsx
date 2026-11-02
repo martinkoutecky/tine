@@ -31,7 +31,7 @@ async function mount(keyHere = true, value = `octo/${GIST}`, matches = true) {
 
 it.each([true, false])("offers Re-export only for folder definitions and opens review with the recorded leaf (folder: %s)", async folder => {
   loadSingle({ name: "Exports", title: "Exports", kind: "page", pre_block: null,
-    blocks: [{ id: "folder-definition", raw: MACRO, properties: folder ? [["export", "original-leaf"]] : [], collapsed: false, children: [] }] });
+    blocks: [{ id: "folder-definition", raw: MACRO, properties: folder ? [["tine.export", "original-leaf"]] : [], collapsed: false, children: [] }] });
   const request = { argument: "@page", dialect: "tql" as const, properties: [], name: "Renamed title" };
   const publish = vi.spyOn(backend(), "publishQuery");
   const root = document.createElement("div"); document.body.append(root);

@@ -4,7 +4,7 @@ beforeAll(initParser);
 import { render } from "solid-js/web";
 import type { BlockDto, PageDto } from "../types";
 
-// GH #605: a page marked `tine/journal-sections:: true` decides what shows under
+// GH #605: a page marked `tine.journal-sections:: true` (or the stable `tine/journal-sections::`) decides what shows under
 // today's journal; with none, config.edn `:default-queries` and the agenda show
 // as before. The query renderers and the block-macro detection are stubbed:
 // this pins which sections are chosen and in what order, not query execution.
@@ -325,7 +325,7 @@ describe("today's sections (GH #605)", () => {
     h.pages.set("Journal sections", { name: "Journal sections", kind: "page", title: "Journal sections", pre_block: null, blocks: [block("mine")] });
     await customizeTodaySections();
     expect(h.created.map((p) => p.name)).toEqual(["Journal sections 2"]);
-    expect(h.created[0].pre_block).toBe("tine/journal-sections:: true");
+    expect(h.created[0].pre_block).toBe("tine.journal-sections:: true");
     expect(h.created[0].blocks.slice(1).map((b) => b.raw)).toEqual(["#+BEGIN_QUERY\n{:query (task NOW)}\n#+END_QUERY", "{{tine-query agenda tql}}"]);
     expect(h.opened).toEqual(["Journal sections 2"]);
   });
@@ -333,7 +333,7 @@ describe("today's sections (GH #605)", () => {
   it("Customize in an Org graph writes the Org marker and omits a disabled agenda", async () => {
     setGraphMeta(meta({ preferred_format: "org", disable_scheduled_and_deadline_query: true } as Partial<GraphMeta>));
     await customizeTodaySections();
-    expect(h.created[0].pre_block).toBe("#+tine/journal-sections: true");
+    expect(h.created[0].pre_block).toBe("#+tine.journal-sections: true");
     expect(h.created[0].blocks.slice(1).map((b) => b.raw)).toEqual(["#+BEGIN_QUERY\n{:query (task NOW)}\n#+END_QUERY"]);
   });
 });

@@ -9,7 +9,7 @@ import { pushToast } from "./toasts";
 import { dbg } from "./debug";
 
 // Ask for "Your name" once (D-20261101-CN, tine#841). Someone who never set it
-// writes no `author::`, and such a comment reads "you" on every device, also to
+// writes no `tine.author::`, and such a comment reads "you" on every device, also to
 // the people who did not write it. In a graph shared through git that hides who
 // wrote what, and the setting is easy to miss. So the first margin comment or
 // reply in a git graph, with no name set, opens a small dialog first.
@@ -18,7 +18,7 @@ import { dbg } from "./debug";
 // graph. Declining, by the Skip button, Escape or a click outside, is remembered
 // on the device the same way, so the person is never asked again; Settings keeps
 // the field. The comment is never lost to the prompt: it is created after the
-// dialog closes, with the name when one was given and without `author::` when not.
+// dialog closes, with the name when one was given and without `tine.author::` when not.
 //
 // No prompt beats a wrong prompt: nothing is asked until the name and the
 // declined flag have loaded from the device settings and the graph has answered

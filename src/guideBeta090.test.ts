@@ -7,10 +7,10 @@ it("the 0.9 Beta Guide explains creating ordinary comment blocks from the CLI", 
   const cli = guide("command-line");
   for (const detail of [
     "tine add \"My comment\" --under BLOCK",
-    "quote::",
-    "quote-prefix::",
-    "quote-suffix::",
-    "tine prop set COMMENT quote \"quoted words\"",
+    "tine.quote::",
+    "tine.quote-prefix::",
+    "tine.quote-suffix::",
+    "tine prop set COMMENT tine.quote \"quoted words\"",
     "--author NAME",
     "[[Features/Tips & shortcuts]]",
   ]) expect(cli).toContain(detail);

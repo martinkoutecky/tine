@@ -996,26 +996,26 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 config.logbook.with_second_support,
                 now_parts(),
             );
-            block.raw = match author_property.as_deref().map(str::trim) {
-                None => transitioned,
-                // Malformed input: an empty name would write `author:: ` over
-                // the real one, and removal has its own verb.
-                Some("") => {
-                    return Err(kernel_refused(
+            block.raw =
+                match author_property.as_deref().map(str::trim) {
+                    None => transitioned,
+                    // Malformed input: an empty name would write `tine.author:: ` over
+                    // the real one, and removal has its own verb.
+                    Some("") => return Err(kernel_refused(
                         page,
-                        "--author needs a name; `tine prop remove BLOCK author` removes one".into(),
-                    ))
-                }
-                Some(name) => tine_core::block_regions::edit(
-                    &transitioned,
-                    org,
-                    tine_core::block_regions::Edit::Property {
-                        key: "author".into(),
-                        value: Some(name.into()),
-                    },
-                )
-                .map_err(|e| kernel_refused(page, e))?,
-            };
+                        "--author needs a name; `tine prop remove BLOCK tine.author` removes one"
+                            .into(),
+                    )),
+                    Some(name) => tine_core::block_regions::edit(
+                        &transitioned,
+                        org,
+                        tine_core::block_regions::Edit::Property {
+                            key: tine_core::tine_keys::AUTHOR.into(),
+                            value: Some(name.into()),
+                        },
+                    )
+                    .map_err(|e| kernel_refused(page, e))?,
+                };
             Ok(Planned {
                 doc: next,
                 changed: vec![path],

@@ -26,7 +26,7 @@ fn page_create_rename_delete_and_lazy_reference_helpers() {
     assert_eq!(embed["text"], format!("{{{{embed (({uuid}))}}}}"));
     assert!(!std::fs::read_to_string(graph.root.join("pages/a.md"))
         .unwrap()
-        .contains("author::"));
+        .contains("tine.author::"));
     let renamed = verb(&slot, "page.rename", json!({"old":"a", "new":"A"})).unwrap();
     assert_eq!(renamed["report"]["outcome"], "renamed");
     assert!(graph.root.join("pages/A.md").exists());
@@ -184,7 +184,7 @@ fn org_helpers_stamp_a_drawer_once_and_preserve_existing_authorship() {
         &graph,
         &[(
             "pages/Org.org",
-            "* target\n:PROPERTIES:\n:author: Martin\n:END:\nbody\n",
+            "* target\n:PROPERTIES:\n:tine.author: Martin\n:END:\nbody\n",
         )],
     );
     let slot = graph.slot();
@@ -194,7 +194,7 @@ fn org_helpers_stamp_a_drawer_once_and_preserve_existing_authorship() {
     let second = verb(&slot, "ref", json!({"handle":first["uuid"]})).unwrap();
     assert_eq!(first["uuid"], second["uuid"]);
     let text = std::fs::read_to_string(graph.root.join("pages/Org.org")).unwrap();
-    assert!(text.contains(":author: Martin"));
+    assert!(text.contains(":tine.author: Martin"));
     assert_eq!(text.to_lowercase().matches(":id:").count(), 1);
     assert!(!text.contains("id::"));
 }

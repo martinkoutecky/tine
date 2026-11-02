@@ -63,7 +63,7 @@ try {
       stale: [...document.querySelectorAll(".comment-quote.stale")].map((el) => el.textContent),
       chips: [...document.querySelectorAll(".author-chip")].map((el) => el.textContent),
       hiddenRows: [...document.querySelectorAll(".block-property-key")].map((el) => el.textContent)
-        .filter((key) => ["quote", "quote-prefix", "quote-suffix", "author"].includes(key ?? "")),
+        .filter((key) => ["tine.quote", "tine.quote-prefix", "tine.quote-suffix", "tine.author"].includes(key ?? "")),
       overflow: document.documentElement.scrollWidth > window.innerWidth,
     }));
     console.log(JSON.stringify({ case: testCase.name, ...facts }));
