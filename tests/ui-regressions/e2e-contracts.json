@@ -599,6 +599,23 @@
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"stable"
     },
+    "scripts/e2e-cm-date-links.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With :journal/file-name-format dd-MM-yyyy, clicking a rendered [[22-10-2026]] opens the Oct 22nd, 2026 journal with its body, and clicking a link to a journal's alias opens that journal with its body; navigation creates no page file and changes no bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing and title decoration may vary while the routed page is the journal and shows its body."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
     "scripts/e2e-gh623-link-navigation.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
