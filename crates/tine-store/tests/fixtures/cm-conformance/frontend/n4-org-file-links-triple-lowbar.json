@@ -1,0 +1,190 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a.b",
+      "name": "a.b",
+      "target": {
+        "id": "pages/a.b.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ab",
+      "name": "ab",
+      "target": {
+        "id": "pages/ab.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "note",
+      "name": "note",
+      "target": {
+        "id": "pages/note.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ten",
+      "name": "ten",
+      "target": {
+        "id": "pages/ten.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ten/child",
+      "name": "Ten/Child",
+      "target": {
+        "id": "pages/Ten___Child.org",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Ten": {
+      "journal": [
+        "journal",
+        "ten"
+      ],
+      "page": [
+        "page",
+        "ten"
+      ]
+    },
+    "Ten/Child": {
+      "journal": [
+        "journal",
+        "ten/child"
+      ],
+      "page": [
+        "page",
+        "ten/child"
+      ]
+    },
+    "a.b": {
+      "journal": [
+        "journal",
+        "a.b"
+      ],
+      "page": [
+        "page",
+        "a.b"
+      ]
+    },
+    "ab": {
+      "journal": [
+        "journal",
+        "ab"
+      ],
+      "page": [
+        "page",
+        "ab"
+      ]
+    },
+    "note": {
+      "journal": [
+        "journal",
+        "note"
+      ],
+      "page": [
+        "page",
+        "note"
+      ]
+    },
+    "ten": {
+      "journal": [
+        "journal",
+        "ten"
+      ],
+      "page": [
+        "page",
+        "ten"
+      ]
+    }
+  },
+  "spellings": {
+    "Ten": {
+      "backend": [
+        "page",
+        "ten"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ten"
+      ]
+    },
+    "Ten/Child": {
+      "backend": [
+        "page",
+        "ten/child"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ten/child"
+      ]
+    },
+    "a.b": {
+      "backend": [
+        "page",
+        "a.b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a.b"
+      ]
+    },
+    "ab": {
+      "backend": [
+        "page",
+        "ab"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ab"
+      ]
+    },
+    "note": {
+      "backend": [
+        "page",
+        "note"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "note"
+      ]
+    },
+    "ten": {
+      "backend": [
+        "page",
+        "ten"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ten"
+      ]
+    }
+  }
+}

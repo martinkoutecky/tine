@@ -1,0 +1,107 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "custom name",
+      "name": "Custom Name",
+      "target": {
+        "id": "pages/custom.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "linker",
+      "name": "linker",
+      "target": {
+        "id": "pages/linker.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "shown title",
+      "name": "Shown Title",
+      "target": {
+        "id": "pages/stem-name.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Custom Name": {
+      "journal": [
+        "journal",
+        "custom name"
+      ],
+      "page": [
+        "page",
+        "custom name"
+      ]
+    },
+    "Shown Title": {
+      "journal": [
+        "journal",
+        "shown title"
+      ],
+      "page": [
+        "page",
+        "shown title"
+      ]
+    },
+    "linker": {
+      "journal": [
+        "journal",
+        "linker"
+      ],
+      "page": [
+        "page",
+        "linker"
+      ]
+    }
+  },
+  "spellings": {
+    "Custom Name": {
+      "backend": [
+        "page",
+        "custom name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "custom name"
+      ]
+    },
+    "Shown Title": {
+      "backend": [
+        "page",
+        "shown title"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "shown title"
+      ]
+    },
+    "linker": {
+      "backend": [
+        "page",
+        "linker"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "linker"
+      ]
+    }
+  }
+}

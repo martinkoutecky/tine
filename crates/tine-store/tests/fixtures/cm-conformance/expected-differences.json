@@ -1,16 +1,104 @@
 {
+  "conflictNames": {
+    "fixtures": {
+      "n5-title-differs-from-stem": [
+        "pages/caps.md: merged/reverted PageDto name \"caps\", answer \"Caps Title\"",
+        "pages/o.org: merged/reverted PageDto name \"o\", answer \"Org Title\"",
+        "pages/stem-name.md: merged/reverted PageDto name \"stem-name\", answer \"Shown Title\"",
+        "pages/caps.md: merged/reverted PageDto title \"caps\", answer \"Caps Title\"",
+        "pages/o.org: merged/reverted PageDto title \"o\", answer \"Org Title\"",
+        "pages/stem-name.md: merged/reverted PageDto title \"stem-name\", answer \"Shown Title\""
+      ],
+      "n6-title-rename": [
+        "pages/custom.md: merged/reverted PageDto name \"custom\", answer \"Custom Name\"",
+        "pages/stem-name.md: merged/reverted PageDto name \"stem-name\", answer \"Shown Title\"",
+        "pages/custom.md: merged/reverted PageDto title \"custom\", answer \"Custom Name\"",
+        "pages/stem-name.md: merged/reverted PageDto title \"stem-name\", answer \"Shown Title\""
+      ],
+      "n7-sync-conflict-names": [
+        "pages/foo.md: merged/reverted PageDto name \"foo\", answer \"Bar\"",
+        "pages/foo.md: merged/reverted PageDto title \"foo\", answer \"Bar\"",
+        "pages/foo.sync-conflict-20261101-120000-ABCDEFG.md: base name \"foo\", pages/foo.md is named Some(\"Bar\")"
+      ],
+      "q1-duplicate-claim": [
+        "pages/other.md: merged/reverted PageDto name \"other\", answer \"foo\"",
+        "pages/other.md: merged/reverted PageDto title \"other\", answer \"foo\""
+      ],
+      "r1-title-names-page": [
+        "pages/file-name.md: merged/reverted PageDto name \"file-name\", answer \"Real Name\"",
+        "pages/file-name.md: merged/reverted PageDto title \"file-name\", answer \"Real Name\""
+      ]
+    },
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
+  },
   "frontend": {
     "fixtures": {
       "d4-date-named-page-file-format": [
         "frontend navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), frontend (\"journal\", \"oct 25th, 2026\") via (journal, Oct 25th, 2026); backend agrees with the frontend"
+      ],
+      "n5-title-differs-from-stem": [
+        "frontend navigate [[Release day]]: model (\"journal\", \"release day\"), frontend (\"page\", \"release day\") via (page, Release day); backend agrees with the frontend"
       ]
     }
+  },
+  "frontendNames": {
+    "fixtures": {
+      "n3-org-file-links-legacy": [
+        "frontend file link: pageRefsInText reads [\"Ten/Child\"] in pages/note.org (\"see [[file:./Ten___Child.org][ten]]\"), pages/Ten___Child.org is named \"Ten___Child\"",
+        "frontend file link: pageRefsInText reads [\"a.b\"] in pages/note.org (\"and [[file:./a.b.org][ab]]\"), pages/a.b.org is named \"a/b\""
+      ]
+    }
+  },
+  "names": {
+    "fixtures": {
+      "n1-legacy-codec": [
+        "pages/50%25 of 100%.md: OG names it \"50%25 of 100%\", Tine Some(\"50% of 100%\")",
+        "pages/contents.md: OG names it \"Contents\", Tine Some(\"contents\")"
+      ],
+      "n2-triple-lowbar-codec": [
+        "pages/___lead.md: OG names it \"lead\", Tine Some(\"/lead\")",
+        "pages/bad%E9.md: OG names it \"bad%E9\", Tine Some(\"bad�\")",
+        "pages/caf%C3%A9.md: OG names it \"caf%C3%A9\", Tine Some(\"café\")",
+        "pages/x______y.md: OG names it \"x/y\", Tine Some(\"x//y\")"
+      ],
+      "n3-org-file-links-legacy": [
+        "pages/note.org: [[file:./Ten___Child.org]] decodes to Some(\"Ten/Child\") (filename candidates), pages/Ten___Child.org is named \"Ten___Child\"",
+        "pages/note.org: [[file:./a.b.org]] decodes to Some(\"a.b\") (filename candidates), pages/a.b.org is named \"a/b\""
+      ],
+      "n5-title-differs-from-stem": [
+        "journals/2026_10_27.md: OG names it \"Release day\", Tine Some(\"Oct 27th, 2026\")",
+        "pages/caps.md: launch walk \"caps\", answer Some(\"Caps Title\")",
+        "pages/o.org: launch walk \"o\", answer Some(\"Org Title\")",
+        "pages/stem-name.md: launch walk \"stem-name\", answer Some(\"Shown Title\")"
+      ],
+      "n6-title-rename": [
+        "pages/custom.md: launch walk \"custom\", answer Some(\"Custom Name\")",
+        "pages/stem-name.md: launch walk \"stem-name\", answer Some(\"Shown Title\")"
+      ],
+      "n7-sync-conflict-names": [
+        "pages/foo.sync-conflict-20261101-120000-ABCDEFG.md: base name \"foo\", pages/foo.md is named Some(\"Bar\")",
+        "pages/foo.md: launch walk \"foo\", answer Some(\"Bar\")"
+      ],
+      "q1-duplicate-claim": [
+        "pages/other.md: launch walk \"other\", answer Some(\"foo\")"
+      ],
+      "r1-title-names-page": [
+        "pages/file-name.md: launch walk \"file-name\", answer Some(\"Real Name\")"
+      ]
+    },
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
   },
   "notes": {
     "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled."
   },
   "rename": {
     "fixtures": {
+      "n6-title-rename: Custom Name -> custom": [],
+      "n6-title-rename: Shown Title -> Renamed": [],
       "r6-case-only: Foo -> foo": [
         "rename \"Foo\" -> \"foo\": model refuses (base guard) (journal risks []), Tine performs (Renamed)"
       ],
@@ -986,6 +1074,28 @@
         "query \"[[October 22nd, 2026]]\": model has block (\"pages/Notes.md\", 1), Tine does not",
         "query \"[[October 22nd, 2026]]\": model has block (\"pages/Notes.md\", 3), Tine does not",
         "query \"[[October 22nd, 2026]]\": model has block (\"journals/2026_10_22.md\", 0), Tine does not"
+      ],
+      "n1-legacy-codec": [
+        "pages: model has (\"page\", \"a\"), Tine does not"
+      ],
+      "n2-triple-lowbar-codec": [
+        "pages: model has (\"page\", \"\"), Tine does not",
+        "pages: model has (\"page\", \"a\"), Tine does not",
+        "pages: model has (\"page\", \"x\"), Tine does not"
+      ],
+      "n3-org-file-links-legacy": [
+        "pages: model has (\"page\", \"a\"), Tine does not"
+      ],
+      "n4-org-file-links-triple-lowbar": [],
+      "n5-title-differs-from-stem": [
+        "navigate [[Release day]]: model (\"journal\", \"release day\"), Tine (\"page\", \"release day\")",
+        "owner of (\"journal\", \"release day\"): model journals/2026_10_27.md, Tine None",
+        "pages: Tine has (\"page\", \"release day\"), model does not",
+        "pages: model has (\"journal\", \"release day\"), Tine does not"
+      ],
+      "n6-title-rename": [],
+      "n7-sync-conflict-names": [
+        "pages: model has (\"page\", \"a\"), Tine does not"
       ],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [

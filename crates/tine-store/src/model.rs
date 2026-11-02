@@ -38,6 +38,10 @@ pub(crate) mod shape_stats;
 mod transaction_publish;
 #[cfg(test)]
 use page_identity::effective_page_name;
+// Conceptual model conformance (census Q2): the harness runs the launch
+// walk's provisional names against the answered ones.
+#[cfg(test)]
+pub(crate) use page_identity::launch_listing_walk;
 pub(crate) use page_identity::{configured_hidden, portable_component};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,

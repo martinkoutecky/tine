@@ -1,0 +1,371 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a.b",
+      "name": "a.b",
+      "target": {
+        "id": "pages/a.b.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b",
+      "name": "a/b",
+      "target": {
+        "id": "pages/a___b.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "bad�",
+      "name": "bad�",
+      "target": {
+        "id": "pages/bad%E9.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "café",
+      "name": "café",
+      "target": {
+        "id": "pages/caf%C3%A9.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "lead",
+      "name": "/lead",
+      "target": {
+        "id": "pages/___lead.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "links",
+      "name": "links",
+      "target": {
+        "id": "pages/links.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x//y",
+      "name": "x//y",
+      "target": {
+        "id": "pages/x______y.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x/y",
+      "name": "x/y",
+      "target": {
+        "id": "pages/x___y.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "": {
+      "journal": [
+        "journal",
+        ""
+      ],
+      "page": [
+        "page",
+        ""
+      ]
+    },
+    "/lead": {
+      "journal": [
+        "journal",
+        "lead"
+      ],
+      "page": [
+        "page",
+        "lead"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "a.b": {
+      "journal": [
+        "journal",
+        "a.b"
+      ],
+      "page": [
+        "page",
+        "a.b"
+      ]
+    },
+    "a/b": {
+      "journal": [
+        "journal",
+        "a/b"
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    "bad�": {
+      "journal": [
+        "journal",
+        "bad�"
+      ],
+      "page": [
+        "page",
+        "bad�"
+      ]
+    },
+    "café": {
+      "journal": [
+        "journal",
+        "café"
+      ],
+      "page": [
+        "page",
+        "café"
+      ]
+    },
+    "lead": {
+      "journal": [
+        "journal",
+        "lead"
+      ],
+      "page": [
+        "page",
+        "lead"
+      ]
+    },
+    "links": {
+      "journal": [
+        "journal",
+        "links"
+      ],
+      "page": [
+        "page",
+        "links"
+      ]
+    },
+    "x": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    },
+    "x/": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    },
+    "x//y": {
+      "journal": [
+        "journal",
+        "x//y"
+      ],
+      "page": [
+        "page",
+        "x//y"
+      ]
+    },
+    "x/y": {
+      "journal": [
+        "journal",
+        "x/y"
+      ],
+      "page": [
+        "page",
+        "x/y"
+      ]
+    }
+  },
+  "spellings": {
+    "": {
+      "backend": [
+        "page",
+        ""
+      ],
+      "day": null,
+      "model": [
+        "page",
+        ""
+      ]
+    },
+    "/lead": {
+      "backend": [
+        "page",
+        "lead"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "lead"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "a.b": {
+      "backend": [
+        "page",
+        "a.b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a.b"
+      ]
+    },
+    "a/b": {
+      "backend": [
+        "page",
+        "a/b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a/b"
+      ]
+    },
+    "bad�": {
+      "backend": [
+        "page",
+        "bad�"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "bad�"
+      ]
+    },
+    "café": {
+      "backend": [
+        "page",
+        "café"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "café"
+      ]
+    },
+    "lead": {
+      "backend": [
+        "page",
+        "lead"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "lead"
+      ]
+    },
+    "links": {
+      "backend": [
+        "page",
+        "links"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "links"
+      ]
+    },
+    "x": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    },
+    "x/": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    },
+    "x//y": {
+      "backend": [
+        "page",
+        "x//y"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x//y"
+      ]
+    },
+    "x/y": {
+      "backend": [
+        "page",
+        "x/y"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x/y"
+      ]
+    }
+  }
+}

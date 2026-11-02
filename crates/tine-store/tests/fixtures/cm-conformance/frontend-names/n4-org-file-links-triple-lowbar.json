@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "links": [
+    {
+      "name": "Ten/Child",
+      "path": "pages/note.org",
+      "raw": "see [[file:./Ten___Child.org][ten]]",
+      "target": "pages/Ten___Child.org"
+    },
+    {
+      "name": "a.b",
+      "path": "pages/note.org",
+      "raw": "and [[file:./a.b.org][ab]]",
+      "target": "pages/a.b.org"
+    }
+  ]
+}

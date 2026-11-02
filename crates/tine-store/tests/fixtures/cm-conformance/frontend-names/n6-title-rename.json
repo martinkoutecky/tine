@@ -1,0 +1,19 @@
+{
+  "files": [
+    {
+      "format": "md",
+      "name": "Custom Name",
+      "path": "pages/custom.md",
+      "preBlock": "title:: Custom Name",
+      "title": "Custom Name"
+    },
+    {
+      "format": "md",
+      "name": "Shown Title",
+      "path": "pages/stem-name.md",
+      "preBlock": "title:: Shown Title",
+      "title": "Shown Title"
+    }
+  ],
+  "links": []
+}

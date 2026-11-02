@@ -1,0 +1,12 @@
+{
+  "files": [
+    {
+      "format": "md",
+      "name": "b",
+      "path": "pages/b.md",
+      "preBlock": "alias:: c",
+      "title": null
+    }
+  ],
+  "links": []
+}

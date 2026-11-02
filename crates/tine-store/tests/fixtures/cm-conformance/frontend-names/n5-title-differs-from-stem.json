@@ -1,0 +1,26 @@
+{
+  "files": [
+    {
+      "format": "md",
+      "name": "Caps Title",
+      "path": "pages/caps.md",
+      "preBlock": "Title:: Caps Title",
+      "title": "Caps Title"
+    },
+    {
+      "format": "org",
+      "name": "Org Title",
+      "path": "pages/o.org",
+      "preBlock": "#+title: Org Title",
+      "title": "Org Title"
+    },
+    {
+      "format": "md",
+      "name": "Shown Title",
+      "path": "pages/stem-name.md",
+      "preBlock": "title:: Shown Title",
+      "title": "Shown Title"
+    }
+  ],
+  "links": []
+}
