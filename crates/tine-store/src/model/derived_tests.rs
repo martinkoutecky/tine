@@ -641,7 +641,7 @@ fn a_name_walk_during_a_release_keeps_the_released_page() {
             wrong.push(format!("{reader}: the page list lost the page"));
         }
         // A new file claiming the name is the page's twin.
-        let twin = temp.path().join("pages/renamed.md");
+        let twin = store.graph.root.join("pages/renamed.md");
         let dto = (store.graph.page_dto_for_bytes(&twin, b"- twin\n"))
             .unwrap()
             .unwrap();
