@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphEpoch, pageInventoryRev } from "../graphSession";
+import { graphEpoch, pageAliasRev, pageInventoryRev } from "../graphSession";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { resolvedTarget } from "../pageIndex";
 import { pageIdentityKey } from "../pageIdentity";
@@ -31,7 +31,7 @@ export function AliasGroupHeader(props: {
 }): JSX.Element {
   const owners = {};
   const [answer] = createResource(
-    () => props.inGraph && `${props.name}\0${graphEpoch()}\0${pageInventoryRev()}`,
+    () => props.inGraph && `${props.name}\0${graphEpoch()}\0${pageInventoryRev()}\0${pageAliasRev()}`,
     async () => {
       const owner = latestOwner(owners, "alias-group", graphOwner());
       const result = await readOwned(owner, backend().pageAliasGroup(props.name));

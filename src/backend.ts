@@ -78,7 +78,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export type { Backend } from "./backendInterface";
-import type { Backend, ConfirmOptions } from "./backendInterface";
+import type { Backend, ConfirmOptions, FacetScope } from "./backendInterface";
 
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
@@ -511,10 +511,10 @@ class TauriBackend implements Backend {
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
   }
-  queryFacets(autocomplete = false) {
+  queryFacets(autocomplete = false, scope?: FacetScope) {
     return this.call<[string, string[]][]>(
       "query_facets",
-      autocomplete ? { autocomplete: true } : undefined,
+      autocomplete ? (scope ? { autocomplete: true, scope } : { autocomplete: true }) : undefined,
     );
   }
   pageIcons(names: string[]) {

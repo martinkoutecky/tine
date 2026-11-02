@@ -26,6 +26,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
+pub(crate) mod referenced_names;
 pub(crate) mod write_target;
 #[cfg(test)]
 pub(crate) use write_target::assert_checked_target;
@@ -549,6 +550,10 @@ pub(crate) struct ReadSnapshot {
     block_index: std::sync::OnceLock<SnapshotBlockIndex>,
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
+    /// Graph-wide referenced names by page key, derived from
+    /// `referenced_name_index` on first use and patched per generation
+    /// (`referenced_names.rs`). In memory only.
+    referenced_name_table: std::sync::OnceLock<referenced_names::ReferencedNameTable>,
     real_page_names: Arc<crate::query::RealPageNames>,
     /// The alias relation: edge index, owner paths and alias list in one
     /// persistent value. Built on first use by one walk; a later generation
@@ -851,6 +856,47 @@ impl ReadSnapshot {
             }),
             collect_document_referenced_names,
         );
+        let referenced_name_table = std::sync::OnceLock::new();
+        if let (Some(old), Some(index)) = (old, referenced_name_index.get()) {
+            if let (Some(table), Some(old_index)) = (
+                old.referenced_name_table.get(),
+                old.referenced_name_index.get(),
+            ) {
+                if changed_paths.is_empty() {
+                    if Arc::ptr_eq(&old.pages, &pages) {
+                        let _ = referenced_name_table.set(table.clone());
+                    }
+                } else {
+                    fn side<'a>(
+                        pages: &Arc<Pages>,
+                        positions: Option<&SharedMap<String, usize>>,
+                        index: &'a SnapshotPageDerivedIndex,
+                        rel: &str,
+                    ) -> Option<(usize, &'a [String])> {
+                        let slot = *positions.unwrap_or(pages.positions.as_ref()).get(rel)?;
+                        let (entry, _) = pages
+                            .get(slot)
+                            .filter(|(entry, _)| entry.rel_path_str() == rel)?;
+                        Some((slot, index.get(&entry.path).map_or(&[][..], Vec::as_slice)))
+                    }
+                    let changes = changed_paths.iter().map(|rel| {
+                        (
+                            side(
+                                &old.pages,
+                                position_pair.map(|(before, _)| before),
+                                old_index,
+                                rel,
+                            ),
+                            side(&pages, position_pair.map(|(_, after)| after), index, rel),
+                        )
+                    });
+                    let _ =
+                        referenced_name_table.set(referenced_names::ReferencedNameTable::patched(
+                            table, changes, &pages, index,
+                        ));
+                }
+            }
+        }
         let real_page_names = Arc::new(crate::query::RealPageNames::capture(
             old.map(|old| (old.real_page_names.as_ref(), old.pages.as_ref())),
             &pages,
@@ -876,6 +922,7 @@ impl ReadSnapshot {
             block_index,
             alias_index,
             referenced_name_index,
+            referenced_name_table,
             real_page_names,
             alias_relation: std::sync::OnceLock::new(),
             link_graph: std::sync::OnceLock::new(),
@@ -1065,7 +1112,6 @@ impl ReadSnapshot {
     }
 
     /// Whether this generation's alias relation is built (or inherited).
-    #[cfg(test)]
     pub(crate) fn alias_list_built(&self) -> bool {
         self.alias_relation.get().is_some()
     }
@@ -1544,44 +1590,8 @@ impl ReadSnapshot {
             .flat_map(|shard| shard.iter().map(|(name, _)| name.as_str()))
     }
 
-    pub(crate) fn referenced_page_names(&self) -> Vec<String> {
-        self.referenced_names
-            .get_or_init(|| {
-                let index = self.referenced_name_index.get_or_init(|| {
-                    #[cfg(test)]
-                    self.referenced_name_full_builds
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    SnapshotPageDerivedIndex::capture(
-                        None,
-                        &self.pages,
-                        &[],
-                        collect_document_referenced_names,
-                        None,
-                    )
-                });
-                let mut seen = HashMap::new();
-                for (entry, _) in self.pages.iter() {
-                    if let Some(projection) = index.get(&entry.path) {
-                        for name in projection {
-                            seen.entry(tine_core::refs::page_key(name))
-                                .or_insert_with(|| name.clone());
-                        }
-                    }
-                }
-                seen.into_values().collect()
-            })
-            .clone()
-    }
-
-    /// Completion sees the editing block's reference baseline, even when its
-    /// live text has already autosaved. Other owners keep their cached facts.
-    pub(crate) fn referenced_page_names_for_editor(
-        &self,
-        owner: &str,
-        id: &str,
-        original: &str,
-    ) -> Vec<String> {
-        let index = self.referenced_name_index.get_or_init(|| {
+    fn referenced_name_index(&self) -> &SnapshotPageDerivedIndex {
+        self.referenced_name_index.get_or_init(|| {
             #[cfg(test)]
             self.referenced_name_full_builds
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1592,19 +1602,7 @@ impl ReadSnapshot {
                 collect_document_referenced_names,
                 None,
             )
-        });
-        let mut seen = HashMap::new();
-        for (entry, doc) in self.pages.iter() {
-            let names = if entry.name == owner {
-                collect_document_referenced_names_with_baseline(doc, Some((id, original)))
-            } else {
-                index.get(&entry.path).cloned().unwrap_or_default()
-            };
-            for name in names {
-                seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
-            }
-        }
-        seen.into_values().collect()
+        })
     }
 }
 

@@ -102,6 +102,36 @@ pub(super) fn resolve_name(view: WholeGraph, name: &str, journal: bool) -> Resol
     view.resolve(name, journal).into()
 }
 
+fn entry_wire(entry: &tine_store::InventoryEntry) -> PageInventoryEntryWire {
+    PageInventoryEntryWire {
+        key: tine_core::refs::page_key(&entry.name),
+        name: entry.name.clone(),
+        is_journal: entry.is_journal,
+        day: entry.day.map(|day| day.0),
+        target: ResolvedWire::from(&entry.target),
+    }
+}
+
+/// The wire form of one publication's inventory delta (cost-model audit
+/// 2026-11-02, row 1): the page keys whose alias and reference-only entries
+/// the window drops, and the entries it adds in their place, in the same
+/// entry shape as `page_inventory_wire`. Claimed (file) entries never travel
+/// here: a claim change publishes no delta and the window refetches.
+#[derive(Serialize)]
+pub(crate) struct InventoryDeltaWire {
+    keys: Vec<String>,
+    entries: Vec<PageInventoryEntryWire>,
+}
+
+pub(crate) fn inventory_delta_wire(
+    (keys, entries): (&[String], &tine_store::Inventory),
+) -> InventoryDeltaWire {
+    InventoryDeltaWire {
+        keys: keys.to_vec(),
+        entries: entries.0.iter().map(entry_wire).collect(),
+    }
+}
+
 pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
     let rev = view.rev();
     PageInventoryWire {
@@ -110,13 +140,7 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
             .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
-            .map(|entry| PageInventoryEntryWire {
-                key: tine_core::refs::page_key(&entry.name),
-                name: entry.name.clone(),
-                is_journal: entry.is_journal,
-                day: entry.day.map(|day| day.0),
-                target: ResolvedWire::from(&entry.target),
-            })
+            .map(entry_wire)
             .collect(),
         unreadable: view
             .unreadable_files()
@@ -311,6 +335,174 @@ mod inventory_adapter_tests {
             median(after_save.clone()),
             after_save.iter().max().unwrap(),
         );
+    }
+
+    /// Cost probe for the og-perf-names lane (D-20261102-PERF rows 1 and 2),
+    /// not a gate. Run on a COPY of a generated graph:
+    /// `TINE_NAMES_PROBE=<dir> cargo test --release -p tine og_perf_names_probe
+    /// -- --ignored --nocapture`. Types `[[<existing page>]]` into a block one
+    /// character per save (each autopaired intermediate `[[prefix]]` is a new
+    /// name, the last one an existing page) and reports what the window pays
+    /// per save: full inventory refetches (count, bytes, time) or deltas
+    /// (count, bytes). Then the `[[` completion and the property-name
+    /// completion per keystroke.
+    #[test]
+    #[ignore]
+    fn og_perf_names_probe() {
+        let root = std::path::PathBuf::from(
+            std::env::var("TINE_NAMES_PROBE").expect("TINE_NAMES_PROBE=<graph copy>"),
+        );
+        let (store, _, _) =
+            tine_store::Store::open(&root, tine_store::OpenOptions::default()).unwrap();
+        let refetch = |store: &tine_store::Store| {
+            let start = std::time::Instant::now();
+            let bytes =
+                serde_json::to_vec(&page_inventory_wire(&store.whole_graph().unwrap())).unwrap();
+            (start.elapsed(), bytes.len())
+        };
+        let median = |mut runs: Vec<std::time::Duration>| {
+            runs.sort();
+            runs[runs.len() / 2]
+        };
+        let wire = page_inventory_wire(&store.whole_graph().unwrap());
+        let (target, existing) = {
+            let mut target = None;
+            let mut existing = None;
+            for entry in &wire.entries {
+                if let ResolvedWire::Existing { id, .. } = &entry.target {
+                    if entry.is_journal || !id.ends_with(".md") {
+                        continue;
+                    }
+                    if existing.is_none()
+                        && entry.name.is_ascii()
+                        && entry.name.len() >= 10
+                        && !entry.name.contains('/')
+                    {
+                        existing = Some(entry.name.clone());
+                    } else if target.is_none() {
+                        let id = PageId::from(id.clone());
+                        if let Ok(read) = store.page(&id) {
+                            if read.read_only.is_none() && !read.doc.blocks.is_empty() {
+                                target = Some(id);
+                            }
+                        }
+                    }
+                }
+            }
+            (
+                target.expect("a Markdown page"),
+                existing.expect("a page name"),
+            )
+        };
+        let store = std::sync::Arc::new(store);
+        let app = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
+        let sub = store.subscribe();
+        let original = store.page(&target).unwrap().doc.blocks[0].raw.clone();
+        let (mut saves, mut changed, mut refetches, mut deltas) = (0, 0, 0, 0);
+        let (mut refetch_bytes, mut delta_bytes) = (0usize, 0usize);
+        let mut refetch_time = std::time::Duration::ZERO;
+        for k in 1..=existing.len() {
+            let read = store.page(&target).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = format!("{original} [[{}]]", &existing[..k]);
+            test_host_writer::save_on(
+                &host,
+                &store,
+                tine_store::EditKind::ReplacePage,
+                &target,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+            .expect("probe save");
+            saves += 1;
+            while let Some(change) = sub.try_recv().unwrap() {
+                let answers = serde_json::to_value(&change).unwrap();
+                if answers["inventoryChanged"] != true {
+                    continue;
+                }
+                changed += 1;
+                match probe_inventory_delta(&change) {
+                    Some(bytes) => {
+                        deltas += 1;
+                        delta_bytes += bytes;
+                    }
+                    None => {
+                        let (time, bytes) = refetch(&store);
+                        refetches += 1;
+                        refetch_bytes += bytes;
+                        refetch_time += time;
+                    }
+                }
+            }
+        }
+        println!(
+            "typing [[{existing}]]: saves={saves} inventory_changed={changed} full_refetches={refetches} refetch_bytes={refetch_bytes} refetch_time={refetch_time:?} deltas={deltas} delta_bytes={delta_bytes}"
+        );
+        let read = store.page(&target).unwrap();
+        let (page, block) = (
+            store
+                .whole_graph()
+                .unwrap()
+                .inventory(tine_store::InventoryScope::File(&target))
+                .0[0]
+                .name
+                .clone(),
+            read.doc.blocks[0].id.clone(),
+        );
+        let raw = read.doc.blocks[0].raw.clone();
+        let mut per_keystroke = Vec::new();
+        for k in 1..=6 {
+            let view = store.whole_graph().unwrap();
+            let start = std::time::Instant::now();
+            let hits = view.complete_page_names(
+                &existing[..k],
+                20,
+                Some((&page, &block, &raw)),
+                false,
+                None,
+            );
+            per_keystroke.push(start.elapsed());
+            assert!(!hits.is_empty());
+        }
+        let property = (0..6)
+            .map(|_| {
+                let view = store.whole_graph().unwrap();
+                let start = std::time::Instant::now();
+                let bytes = probe_property_names(&view);
+                (start.elapsed(), bytes)
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "[[ completion per keystroke: median={:?} max={:?}; property-name completion per trigger: median={:?} bytes={}",
+            median(per_keystroke.clone()),
+            per_keystroke.iter().max().unwrap(),
+            median(property.iter().map(|(time, _)| *time).collect()),
+            property[0].1,
+        );
+        drop(host);
+    }
+
+    /// Delta bytes the window receives instead of a refetch (`None`: refetch).
+    fn probe_inventory_delta(change: &tine_store::Change) -> Option<usize> {
+        change.inventory_delta().map(|delta| {
+            serde_json::to_vec(&inventory_delta_wire(delta))
+                .unwrap()
+                .len()
+        })
+    }
+
+    /// One property-name completion session's key fetch: IPC payload bytes
+    /// (the window fetches keys once per trigger session, values per chosen
+    /// key; before, the full facets on every trigger update).
+    fn probe_property_names(view: &WholeGraph) -> usize {
+        serde_json::to_vec(
+            &view
+                .property_facets(tine_store::FacetPolicy::CompletionKeys)
+                .unwrap(),
+        )
+        .unwrap()
+        .len()
     }
 
     /// Existing files beat a colliding alias (v0.6.5 `load_named`): the wire has

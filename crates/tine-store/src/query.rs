@@ -1773,6 +1773,39 @@ pub(crate) fn autocomplete_property_facets_bounded(
     max_items: usize,
     max_bytes: usize,
 ) -> (Vec<(String, Vec<String>)>, bool) {
+    autocomplete_property_facets_scoped(graph, AutocompleteFacets::All, max_items, max_bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test probe: pages the autocomplete facet walk visited on this thread.
+    pub(crate) static PROPERTY_FACET_PAGE_WALKS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Which part of the autocomplete facets a caller needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AutocompleteFacets<'a> {
+    /// Every visible key with its values.
+    All,
+    /// Visible keys only, each with an empty value list: the property-name
+    /// menu. No value is parsed.
+    Keys,
+    /// The one visible key (normalized as the keys list spells it) with its
+    /// values: the property-value menu for the chosen key.
+    ValuesOf(&'a str),
+}
+
+/// [`autocomplete_property_facets_bounded`] limited to `scope`. The same walk
+/// and the same answers for what it returns; `Keys` skips every value parse,
+/// `ValuesOf` parses only that key's values. The item and byte budgets charge
+/// only what the scope returns.
+pub(crate) fn autocomplete_property_facets_scoped(
+    graph: &ReadSnapshot,
+    scope: AutocompleteFacets<'_>,
+    max_items: usize,
+    max_bytes: usize,
+) -> (Vec<(String, Vec<String>)>, bool) {
     use std::collections::{BTreeMap, BTreeSet, HashSet};
 
     let hidden: HashSet<String> = OG_AUTOCOMPLETE_HIDDEN_PROPS
@@ -1827,8 +1860,18 @@ pub(crate) fn autocomplete_property_facets_bounded(
         // OG `get-property-values`: a value holding several page refs offers
         // each ref, never the joined string (GH #737). The parser decides.
         let mut offer_value = |entry: &PageEntry, key: String, value: String| {
-            if hidden.contains(&property_key_norm(&key)) {
+            let norm = property_key_norm(&key);
+            if hidden.contains(&norm) {
                 return;
+            }
+            match scope {
+                AutocompleteFacets::All => {}
+                AutocompleteFacets::Keys => {
+                    offer(key, String::new());
+                    return;
+                }
+                AutocompleteFacets::ValuesOf(wanted) if norm != wanted => return,
+                AutocompleteFacets::ValuesOf(_) => {}
             }
             for completion in tine_core::query::atom::property_value_completions(
                 &key,
@@ -1844,6 +1887,8 @@ pub(crate) fn autocomplete_property_facets_bounded(
         };
 
         for (entry, doc) in pages {
+            #[cfg(test)]
+            PROPERTY_FACET_PAGE_WALKS.with(|walks| walks.set(walks.get() + 1));
             for (key, value) in page_facets(doc).0 {
                 offer_value(entry, key, value);
                 if exceeded.get() {

@@ -249,7 +249,7 @@ pub struct Change {
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     pages: Vec<(FileId, PageKind, String)>,
-    answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
+    answers: Answers,
     /// The watcher batch that produced this publication, for latency
     /// receipts (GH #337 diagnosis); `None` for every other publisher.
     pub watch: Option<WatchBatch>,
@@ -271,7 +271,34 @@ pub struct WatchBatch {
     pub event_paths: usize,
 }
 
+/// One publication's derived answers: inventory changed, final changed-target
+/// block-reference counts, the change summary, and the inventory delta when
+/// the change is expressible as one (`None` with `inventory_changed`: refetch).
+type Answers = (
+    bool,
+    BTreeMap<String, usize>,
+    change_summary::ChangeSummary,
+    Option<Arc<InventoryDelta>>,
+);
+
 impl Change {
+    /// The `All` inventory entries this publication changed, when it changed
+    /// only alias and reference-only names (a name entering or leaving the
+    /// graph-wide set, an alias owner set): the page keys whose alias and
+    /// reference-only entries to drop, and the entries to add in their place
+    /// (a key that left has none). Applied to the previous answer it gives
+    /// this publication's answer exactly; the window patches its names with
+    /// it instead of rereading the inventory. `None` when the inventory did
+    /// not change, or changed so that it must be reread: a page created,
+    /// removed or renamed, a config or unreadable-set change, or a session
+    /// that had not yet read an inventory or completed a name. O(1).
+    pub fn inventory_delta(&self) -> Option<(&[String], &Inventory)> {
+        self.answers
+            .3
+            .as_deref()
+            .map(|delta| (delta.keys.as_slice(), &delta.entries))
+    }
+
     /// The parsed graph page altered by an external observation or an external
     /// writer whose bytes survived transaction undo, using its effective
     /// `title::`-aware name (the old name for a removal). Own writes
@@ -346,7 +373,7 @@ struct Snapshot {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
-    answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
+    answers: Answers,
     /// This publication only folded or unfolded blocks (GH #623 item 3).
     folds_only: bool,
 }
@@ -361,6 +388,7 @@ pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries}
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
+pub(crate) use inventory::InventoryDelta;
 pub use inventory::{Inventory, InventoryEntry, InventoryScope};
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
@@ -2266,6 +2294,7 @@ pub struct PageRead {
 }
 
 /// Result of resolving a page name or journal day in one snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resolved {
     /// One or more files claim the name. The canonical file comes first;
     /// removing it can reveal another claimant with different content. In the
@@ -2611,6 +2640,14 @@ pub enum FacetPolicy {
     /// property settings and trimmed values. Returns up to 2,000 items or
     /// 2 MiB without a truncation indicator.
     Truncated,
+    /// The property-name completion menu: `Truncated`'s keys, each with no
+    /// values, the truncation budget charged to keys alone. One walk and no
+    /// value parse (cost-model audit 2026-11-02 row 2b).
+    CompletionKeys,
+    /// The property-value completion menu for one key as `CompletionKeys`
+    /// spells it: at most one row, `Truncated`'s values for that key, the
+    /// budget charged to them alone. One walk parsing only that key.
+    CompletionValues(String),
 }
 
 /// One stable published graph view. Clone is O(1); answers use captured
@@ -2823,10 +2860,8 @@ impl WholeGraph {
                 id: proposed_journal_id(config, stem),
             };
         }
-        let dir = &config.pages_dir;
-        let stem = tine_core::model::encode_page_name(name, config.file_name_format);
         Resolved::Absent {
-            id: PageId::from(format!("{dir}/{stem}.{}", config.preferred_format.ext())),
+            id: inventory::proposed_page_id(config, name),
         }
     }
 
@@ -3240,6 +3275,25 @@ impl WholeGraph {
                 AUTOCOMPLETE_FACET_MAX_BYTES,
             )
             .0),
+            FacetPolicy::CompletionKeys => Ok(crate::query::autocomplete_property_facets_scoped(
+                &self.graph,
+                crate::query::AutocompleteFacets::Keys,
+                AUTOCOMPLETE_FACET_MAX_ITEMS,
+                AUTOCOMPLETE_FACET_MAX_BYTES,
+            )
+            .0),
+            FacetPolicy::CompletionValues(key) => {
+                Ok(crate::query::autocomplete_property_facets_scoped(
+                    &self.graph,
+                    crate::query::AutocompleteFacets::ValuesOf(&key),
+                    AUTOCOMPLETE_FACET_MAX_ITEMS,
+                    AUTOCOMPLETE_FACET_MAX_BYTES,
+                )
+                .0
+                .into_iter()
+                .filter(|(candidate, _)| *candidate == key)
+                .collect())
+            }
         }
     }
 

@@ -29,6 +29,13 @@ impl RealPageNames {
             .into_iter()
             .flat_map(|bucket| bucket.iter().map(|(path, _)| path))
     }
+    /// Every physical owner of this normalized name with its effective name.
+    pub(crate) fn owners(&self, key: &str) -> impl Iterator<Item = (&std::path::PathBuf, &String)> {
+        self.claimants
+            .get(key)
+            .into_iter()
+            .flat_map(|bucket| bucket.iter())
+    }
     fn update(&mut self, entry: &PageEntry, added: bool) {
         let key = refs::page_key(&entry.name);
         let mut bucket = self.claimants.get(&key).cloned().unwrap_or_default();

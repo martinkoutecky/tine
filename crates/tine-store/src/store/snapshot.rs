@@ -394,7 +394,8 @@ impl Snapshot {
             answers: Default::default(),
             folds_only,
         };
-        let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let (inventory, delta, counts) =
+            snapshot.answer_changes(old, &changed_paths, name_set_changed);
         let summary = snapshot.change_summary(
             old,
             &changed_paths,
@@ -404,7 +405,7 @@ impl Snapshot {
             &targets.unlinked,
             &targets.queries,
         );
-        snapshot.answers = (inventory, counts, summary);
+        snapshot.answers = (inventory, counts, summary, delta);
         snapshot
     }
 }
