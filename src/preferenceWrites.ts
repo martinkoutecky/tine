@@ -85,6 +85,8 @@ export function seedPreference<T>(read: () => T): void {
 
 /** Load a device preference only while its callback revision and optional view
  * owner remain current. A current failure toasts; a stale completion is inert.
+ * The returned promise settles once the load has landed, gone stale or failed,
+ * for a caller that must not act on the default before then (it never rejects).
  * O(1) frontend work plus the supplied backend read. */
 export function loadPreference<T, U>(
   read: () => T,
@@ -93,10 +95,10 @@ export function loadPreference<T, U>(
   decode: (value: U) => T,
   label: string,
   live: () => boolean = () => true,
-): void {
+): Promise<void> {
   const revision = preferenceRevision(read);
   const owner = () => live() && preferenceReadCurrent(read, revision);
-  void readOwned(owner, load()).then((result) => {
+  return readOwned(owner, load()).then((result) => {
     if (result.kind === "stale") return;
     apply(decode(result.value));
     seedPreference(read);

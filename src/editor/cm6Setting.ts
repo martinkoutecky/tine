@@ -18,9 +18,12 @@ export function setCm6EditorEnabled(on: boolean): void {
     next => backend().setAppBool(KEY, next), "CodeMirror editor");
 }
 
-/** Stable builds neither read nor write this experimental preference. */
-export function initCm6EditorSetting(): void {
-  if (!cm6EditorAvailable) return;
-  loadPreference(enabled, setEnabled,
+/** Stable builds neither read nor write this experimental preference. The
+ * promise settles once the stored choice has landed (or failed to load): an
+ * editor mounted earlier keeps the default, so a window that mounts one before
+ * its first user edit (Quick Capture) waits for this. */
+export function initCm6EditorSetting(): Promise<void> {
+  if (!cm6EditorAvailable) return Promise.resolve();
+  return loadPreference(enabled, setEnabled,
     () => backend().getAppBool(KEY, false), value => value, "CodeMirror editor");
 }

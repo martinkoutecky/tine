@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-cm6-setting-restart.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"With the CodeMirror experiment switched on in Settings and the app quit and relaunched, the first block edit on a routed page and in the right sidebar mounts the CodeMirror editor, and a Quick Capture opened by the global-shortcut handoff shows the CodeMirror editor with the caret in it, with no off/on in Settings.","blocking":false,"authority":"Martin report 2026-11-02 (development build)"}],
+      "acceptableVariations": ["Timing, window geometry and the exact CodeMirror markup may vary while the editor kind and the caret location agree."],
+      "nonRequirements": ["No typing or saving in the editors, no platform other than Linux WebKitGTK, no burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-set-depth.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A bound Set depth 2 on a folded block opens it and its child and folds the grandchild in the file, leaving a folded great-grandchild's own fold unchanged; a bound Set depth 0 then folds the block. With a high :ref/default-open-blocks-level in config.edn every row of a linked reference shows, and the referencing page's file is unchanged.","blocking":false,"authority":"GH #794; GH #793; D-20261101-L5"}],
       "acceptableVariations": ["Selection styling, animation, save latency and the exact reference-section layout may vary while the saved collapsed properties and visible rows agree."],

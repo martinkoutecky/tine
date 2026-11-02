@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- In the development build, Quick Capture now opens the CodeMirror editor right after a restart when the experiment is switched on in Settings. Before, it kept the plain text box until the next restart, although Settings showed the experiment on (the main window already followed the setting).
 - **Creating a page, the first save of a day's journal and starring a favourite no longer reread the whole graph.** A page create, delete or rename used to list every folder again and open every page file for its title; it now updates the page list and the journal days with the names it changed (REG-PERF-CREATE-PATCHES-NAMES). A `config.edn` change that leaves the settings the indexes read alone, such as a favourite, the start of the week or a journal template, no longer rebuilds every index, and when it comes from another device it no longer rescans every file; a change to `:hidden`, the journals or pages folder, file name formats and the other build settings still rebuilds as before (REG-PERF-CONFIG-SETTINGS-NO-REBUILD).
 - The gear on a query block now closes the query editor when you click it again; the second click used to leave it open (#850).
 - Editing a block shown under a query result, such as a child you expanded, no longer re-runs the query while you are still typing there: the results stay as they are until you leave the block, as they already did for the result block itself. Expanded and collapsed result rows keep their state through the rerun (#851).

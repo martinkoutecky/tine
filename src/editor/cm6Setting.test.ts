@@ -52,3 +52,22 @@ it("stable refuses stored and programmatic opt-ins without preference IO", async
   expect(env.get).not.toHaveBeenCalled();
   expect(env.set).not.toHaveBeenCalled();
 });
+
+it("settles only after the stored choice has landed, so a window that mounts an editor first can wait for it", async () => {
+  env.channel = "beta";
+  let finish!: (value: boolean) => void;
+  env.get.mockReturnValue(new Promise<boolean>(resolve => { finish = resolve; }));
+  const setting = await import("./cm6Setting");
+  let landed = false;
+  const loading = setting.initCm6EditorSetting().then(() => { landed = true; });
+  await tick();
+  expect(landed).toBe(false);
+  expect(setting.cm6EditorEnabled()).toBe(false);
+  finish(true);
+  await loading;
+  expect(setting.cm6EditorEnabled()).toBe(true);
+
+  env.get.mockRejectedValue(new Error("unreadable"));
+  await setting.initCm6EditorSetting();
+  expect(setting.cm6EditorEnabled()).toBe(true);
+});
