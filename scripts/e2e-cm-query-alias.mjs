@@ -26,7 +26,9 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph,
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
 const mlFile = path.join(graph, "pages/Machine Learning.md");
 const queriesFile = path.join(graph, "pages/Queries.md");
-fs.writeFileSync(mlFile, "alias:: ML\n\n- intro\n");
+// The alias lives in the page's first block (Logseq's page-properties block), which the app
+// renders and edits as a block.
+fs.writeFileSync(mlFile, "- alias:: ML\n- intro\n");
 fs.writeFileSync(path.join(graph, "pages/Notes.md"), "- also [[Machine Learning]]\n- unrelated line\n");
 fs.writeFileSync(queriesFile, "- placeholder\n");
 fs.writeFileSync(path.join(graph, "journals", "2026_11_03.md"), "- journal\n");
@@ -88,8 +90,10 @@ try {
 
   stage = "open Machine Learning beside the query";
   assert.ok(await browser.execute(() => {
-    const link = [...document.querySelectorAll(".main-content .query-block a.page-ref, .main-content .query-block .page-ref")]
-      .find((el) => el.textContent?.trim() === "Machine Learning");
+    // The link's text keeps its brackets (`[[Machine Learning]]`); its data-ref
+    // is the page identity key.
+    const link = [...document.querySelectorAll(".main-content .query-block a.page-ref[data-ref]")]
+      .find((el) => el.getAttribute("data-ref") === "machine learning");
     if (!(link instanceof HTMLElement)) return false;
     link.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, button: 0 }));
     return true;
@@ -98,13 +102,13 @@ try {
 
   stage = "edit the alias away: the mounted query drops the block";
   await replaceFirstBlock(".right-sidebar", "alias:: AI");
-  await waitForFileText(mlFile, (text) => text.startsWith("alias:: AI"), { timeoutMs: 15_000 });
+  await waitForFileText(mlFile, (text) => /^(- )?alias:: AI\n/.test(text), { timeoutMs: 15_000 });
   await browser.waitUntil(async () => !(await queryShows("also")), { timeout: 30_000,
     timeoutMsg: "the [[ML]] query still lists `also [[Machine Learning]]` after ML stopped being an alias" });
 
   stage = "restore the alias: the mounted query lists the block again";
   await replaceFirstBlock(".right-sidebar", "alias:: ML");
-  await waitForFileText(mlFile, (text) => text.startsWith("alias:: ML"), { timeoutMs: 15_000 });
+  await waitForFileText(mlFile, (text) => /^(- )?alias:: ML\n/.test(text), { timeoutMs: 15_000 });
   await browser.waitUntil(() => queryShows("also"), { timeout: 30_000,
     timeoutMsg: "the [[ML]] query did not list `also [[Machine Learning]]` again after the alias came back" });
 
