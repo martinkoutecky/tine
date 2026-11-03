@@ -142,14 +142,16 @@ fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() 
     let _ = fs::remove_dir_all(&root);
 }
 
-/// Declared limit (manager ruling 2026-11-03; follow-up batch: the evidence
-/// reads Markdown prose before the first bullet as the first block, as OG
-/// does). Tine's reference answer does not count a link in that prose, so a
-/// rename leaves it as written on every page: one holding only prose, one
-/// whose blocks also link the page, and one held open in a window. When the
-/// evidence counts it, this test flips.
+/// CM step 2 batch 8 (`REG-CM-PREAMBLE-PROSE-REFERENCES`; flips batch 6's
+/// declared limit): prose before the first bullet is the page's first block,
+/// as in OG (graph-parser `with-pre-block-if-exists`; `rename-update-refs!`
+/// walks `:block/_refs`, which holds the pre-block), so a rename rewrites a
+/// link there on every page: one holding only prose, one whose blocks also
+/// link the page, one held open in a window, one with page properties above
+/// the prose (they are rewritten as properties), and an Org page's text
+/// before its first heading. A link in a fenced code block there stays.
 #[test]
-fn a_link_in_prose_before_the_first_bullet_is_left_on_every_page() {
+fn a_link_in_prose_before_the_first_bullet_is_rewritten_on_every_page() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[
         ("pages/Target.md", "- target\n"),
@@ -159,6 +161,14 @@ fn a_link_in_prose_before_the_first_bullet_is_left_on_every_page() {
             "[[Target]] in prose\n\n- [[Target]] in a block\n",
         ),
         ("pages/Held.md", "[[Target]] held\n\n- [[Target]] block\n"),
+        (
+            "pages/Props.md",
+            "tags:: [[Target]]\n\nsee #Target and [[Target]]\n\n```\n[[Target]]\n```\n\n- body\n",
+        ),
+        (
+            "pages/OrgProse.org",
+            "#+title: OrgProse\n\nsee [[Target]] here\n* heading\n",
+        ),
     ]);
     hosted(&store, |host| {
         let window = serde_json::to_value(host.window_reloaded()).unwrap();
@@ -173,14 +183,22 @@ fn a_link_in_prose_before_the_first_bullet_is_left_on_every_page() {
     })
     .unwrap();
     let read = |rel: &str| fs::read_to_string(root.join(rel)).unwrap();
-    assert_eq!(read("pages/Prose.md"), "[[Target]] in prose\n");
+    assert_eq!(read("pages/Prose.md"), "[[Renamed]] in prose\n");
     assert_eq!(
         read("pages/Mixed.md"),
-        "[[Target]] in prose\n\n- [[Renamed]] in a block\n"
+        "[[Renamed]] in prose\n\n- [[Renamed]] in a block\n"
     );
     assert_eq!(
         read("pages/Held.md"),
-        "[[Target]] held\n\n- [[Renamed]] block\n"
+        "[[Renamed]] held\n\n- [[Renamed]] block\n"
+    );
+    assert_eq!(
+        read("pages/Props.md"),
+        "tags:: [[Renamed]]\n\nsee #Renamed and [[Renamed]]\n\n```\n[[Target]]\n```\n\n- body\n"
+    );
+    assert_eq!(
+        read("pages/OrgProse.org"),
+        "#+title: OrgProse\n\nsee [[Renamed]] here\n* heading\n"
     );
     let _ = fs::remove_dir_all(&root);
 }
