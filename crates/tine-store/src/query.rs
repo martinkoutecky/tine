@@ -554,6 +554,93 @@ pub(crate) fn referenced_day_keys<'a>(
         .collect()
 }
 
+/// The panel's resolver for many targets of one snapshot: the reads
+/// [`graph_equivalent_page_names_with`] needs, gathered once, so a bulk
+/// driver resolves each target as the Linked References panel does without a
+/// per-target scan. The one setup the link table (`LinkGraph::build`) and the
+/// All pages counter (`page_counts::referring_block_counts`) share.
+///
+/// Built in O(P + R) for P listed pages and R explicit reference names; holds
+/// one name per journal day and the referenced day spellings, dropped with
+/// it (nothing cached past the caller, D-10).
+///
+/// The day's journal is the FIRST journal page of the day in page-list order.
+/// This agrees with batch 2's duplicate-day keeper: the snapshot's page list
+/// is built from `dedup_journal_days` (claimant order `compare_page_claimants`,
+/// launch build and incremental upsert alike), so it holds one journal per day,
+/// the keeper, and "first" has nothing to choose between. It would disagree
+/// only if the list ever held two journals of one day: then this pick follows
+/// list order, not the claimant order. The panel itself asks
+/// `ReadSnapshot::reference_journal_name` (claimants of the day's title key),
+/// which over the same deduplicated list names the same page.
+pub(crate) struct PanelResolver {
+    real: RealPageOwners,
+    edges: std::sync::Arc<AliasEdges>,
+    format: JournalFormat,
+    first_journal: std::collections::HashMap<i64, String>,
+    referenced_by_day: std::collections::HashMap<i64, Vec<String>>,
+}
+
+impl PanelResolver {
+    pub(crate) fn new(graph: &ReadSnapshot) -> Self {
+        let format = graph.config().journal_format();
+        // The panel's `find` over the page list, once: the FIRST journal page
+        // of each day in page-list order.
+        let mut first_journal = std::collections::HashMap::new();
+        for entry in graph.page_list_arc().iter() {
+            if entry.kind == PageKind::Journal {
+                if let Some(day) = format.parse(&entry.name) {
+                    first_journal
+                        .entry(day.ordinal_key())
+                        .or_insert_with(|| entry.name.clone());
+                }
+            }
+        }
+        // Referenced names by the day they denote (the one date answerer),
+        // once: what `referenced_day_keys` finds per target.
+        let mut referenced_by_day: std::collections::HashMap<i64, Vec<String>> =
+            std::collections::HashMap::new();
+        for name in graph.explicit_reference_names() {
+            if let Some(day) = eval::reference_day(name, &format) {
+                referenced_by_day
+                    .entry(day)
+                    .or_default()
+                    .push(name.to_owned());
+            }
+        }
+        PanelResolver {
+            real: real_page_names(graph),
+            edges: graph.alias_edges(),
+            format,
+            first_journal,
+            referenced_by_day,
+        }
+    }
+
+    /// The graph's journal format, as the resolver reads dates.
+    pub(crate) fn format(&self) -> &JournalFormat {
+        &self.format
+    }
+
+    /// `(canonical, names, self_page)` for `target`, exactly
+    /// [`graph_equivalent_page_names`] with `explicit` set.
+    pub(crate) fn resolve(&self, target: &str) -> (String, Vec<String>, String) {
+        graph_equivalent_page_names_with(
+            &self.real,
+            &self.edges,
+            &self.format,
+            target,
+            |day| self.first_journal.get(&day.ordinal_key()).cloned(),
+            |day| {
+                self.referenced_by_day
+                    .get(&day.ordinal_key())
+                    .cloned()
+                    .unwrap_or_default()
+            },
+        )
+    }
+}
+
 /// [`graph_equivalent_page_names`] with its graph reads supplied: the real
 /// page names, the alias relation, the journal format, the FIRST journal
 /// page (page-list order) of a day, and the referenced keys that denote a day.

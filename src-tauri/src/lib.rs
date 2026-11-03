@@ -88,6 +88,9 @@ mod startup_window_order_tests;
 mod state;
 mod tray;
 mod watcher;
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod webview2_args;
 mod workspace_windows;
 mod youtube_identity;
 use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
@@ -195,59 +198,6 @@ fn apply_mobile_drawer_e2e_window_policy(
     } else {
         false
     }
-}
-
-// Wry normally supplies these arguments itself. Once a window config provides
-// `additional_browser_args`, it replaces that default rather than extending it.
-#[cfg(any(target_os = "windows", test))]
-const WRY_WINDOWS_DEFAULT_BROWSER_ARGS: &str =
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
-
-#[cfg(any(target_os = "windows", test))]
-fn merged_windows_webdriver_args(
-    configured: Option<&str>,
-    automation_enabled: bool,
-    inherited: Option<&str>,
-) -> Option<String> {
-    let inherited = inherited.map(str::trim).filter(|value| !value.is_empty())?;
-    if !automation_enabled {
-        return None;
-    }
-    Some(format!(
-        "{} {inherited}",
-        configured.unwrap_or(WRY_WINDOWS_DEFAULT_BROWSER_ARGS)
-    ))
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn apply_windows_webdriver_window_policy(
-    windows: &mut [tauri::utils::config::WindowConfig],
-    automation_enabled: bool,
-    inherited: Option<&str>,
-) -> usize {
-    let mut changed = 0;
-    for window in windows {
-        if let Some(arguments) = merged_windows_webdriver_args(
-            window.additional_browser_args.as_deref(),
-            automation_enabled,
-            inherited,
-        ) {
-            window.additional_browser_args = Some(arguments);
-            changed += 1;
-        }
-    }
-    changed
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_webdriver_args_from_env(configured: Option<&str>) -> Option<String> {
-    merged_windows_webdriver_args(
-        configured,
-        std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true"),
-        std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
-            .ok()
-            .as_deref(),
-    )
 }
 
 /// Xlib's thread mode is process-global and must be selected before the first
@@ -728,16 +678,9 @@ pub fn run() {
     // GH #719: a portable Windows instance keeps every app directory, and so
     // the WebView2 user data, in `tine-data` beside the exe (portable.rs).
     portable::apply(context.config_mut());
+    // GH #804: every Windows window gets wry's defaults plus sRGB (webview2_args.rs).
     #[cfg(target_os = "windows")]
-    {
-        let automation_enabled = std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true");
-        let inherited = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
-        apply_windows_webdriver_window_policy(
-            &mut context.config_mut().app.windows,
-            automation_enabled,
-            inherited.as_deref(),
-        );
-    }
+    webview2_args::apply_to_config_windows(&mut context.config_mut().app.windows);
     let deny_main_window_state_restore = apply_mobile_drawer_e2e_window_policy(
         &mut context.config_mut().app.windows,
         force_mobile_drawers,
@@ -1327,10 +1270,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod mobile_drawer_policy_tests {
-    use super::{
-        apply_mobile_drawer_e2e_window_policy, apply_windows_webdriver_window_policy,
-        merged_windows_webdriver_args, WRY_WINDOWS_DEFAULT_BROWSER_ARGS,
-    };
+    use super::apply_mobile_drawer_e2e_window_policy;
 
     #[test]
     fn production_policy_does_not_mutate_the_real_window_config() {
@@ -1380,53 +1320,6 @@ mod mobile_drawer_policy_tests {
             windows.iter().find(|window| window.label == "neighbor"),
             Some(&neighbor)
         );
-    }
-
-    #[test]
-    fn webdriver_arguments_are_inert_without_explicit_automation() {
-        assert_eq!(
-            merged_windows_webdriver_args(None, false, Some("--remote-debugging-port=9222")),
-            None
-        );
-        assert_eq!(merged_windows_webdriver_args(None, true, Some("  ")), None);
-    }
-
-    #[test]
-    fn webdriver_arguments_preserve_wry_defaults_and_configured_values() {
-        assert_eq!(
-            merged_windows_webdriver_args(None, true, Some("--remote-debugging-port=9222")),
-            Some(format!(
-                "{WRY_WINDOWS_DEFAULT_BROWSER_ARGS} --remote-debugging-port=9222"
-            ))
-        );
-        assert_eq!(
-            merged_windows_webdriver_args(
-                Some("--disable-gpu"),
-                true,
-                Some("--remote-debugging-port=9222")
-            ),
-            Some("--disable-gpu --remote-debugging-port=9222".into())
-        );
-    }
-
-    #[test]
-    fn webdriver_policy_updates_every_configured_window_only_in_automation() {
-        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
-        let windows = &mut context.config_mut().app.windows;
-        assert!(windows.len() >= 2);
-        let window_count = windows.len();
-        assert_eq!(
-            apply_windows_webdriver_window_policy(
-                windows,
-                true,
-                Some("--remote-debugging-port=9222")
-            ),
-            window_count
-        );
-        assert!(windows.iter().all(|window| window
-            .additional_browser_args
-            .as_deref()
-            .is_some_and(|args| args.contains("--remote-debugging-port=9222"))));
     }
 }
 
