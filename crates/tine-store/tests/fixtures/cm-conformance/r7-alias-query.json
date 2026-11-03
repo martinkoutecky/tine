@@ -1,0 +1,20 @@
+{
+  "files": {
+    "pages/Machine Learning.md": "alias:: ML\n\n- intro\n",
+    "pages/notes.md": "- reading about [[ML]]\n- also [[Machine Learning]]\n- nothing\n"
+  },
+  "queries": [
+    {
+      "anchor": "block",
+      "q": {
+        "refs": "Machine Learning"
+      }
+    },
+    {
+      "anchor": "block",
+      "q": {
+        "refs": "ML"
+      }
+    }
+  ]
+}

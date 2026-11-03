@@ -1,0 +1,13 @@
+{
+  "files": {
+    "pages/a.md": "- ay\n",
+    "pages/b.md": "alias:: c\n\n- bee\n",
+    "pages/p.md": "- see [[a]]\n"
+  },
+  "renames": [
+    {
+      "old": "a",
+      "new": "c"
+    }
+  ]
+}

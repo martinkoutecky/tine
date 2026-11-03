@@ -22,22 +22,19 @@ import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
 import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
-import { parseJournalWith } from "./journal";
+import { parseJournalDayIn } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { marginRegressionPages } from "./mockMarginPages";
 import { guideLevelRegressionPages } from "./mockGuidePages";
 import { mockAliases } from "./mockAliases";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
- * host's permissive/non-portable Date string parser. Keep the same explicit
- * patterns the fixture can emit so pagination remains deterministic in every
- * browser/runtime. */
+ * host's permissive/non-portable Date string parser. The mock graph's formats
+ * (file `dd-MM-yyyy`, title `EEEE, dd-MM-yyyy`) through the one Rust date
+ * answerer; its list is those two plus `MMM do, yyyy`, ISO and underscore. */
 function mockJournalDayKey(name: string): number | null {
-  for (const format of ["MMM do, yyyy", "EEEE, dd-MM-yyyy", "yyyy-MM-dd", "dd-MM-yyyy", "yyyy_MM_dd"]) {
-    const parsed = parseJournalWith(name, format);
-    if (parsed) return parsed.y * 10_000 + parsed.m * 100 + parsed.d;
-  }
-  return null;
+  const parsed = parseJournalDayIn(name, "dd-MM-yyyy", "EEEE, dd-MM-yyyy");
+  return parsed ? parsed.y * 10_000 + parsed.m * 100 + parsed.d : null;
 }
 
 function pageRefs(raw: string): string[] {

@@ -24,7 +24,7 @@ import { exitPaneSelect } from "./paneSelect";
 import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
-import { navigationName } from "./pageIndex";
+import { navigationTarget } from "./pageIndex";
 import { forgetDeletedFavorite, renameFavorite } from "./favorites";
 import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 
@@ -1110,7 +1110,7 @@ export function openPageInSidebar(
     : targetOrName;
   pageKind = kind;
   path = targetPath;
-  if (pageKind === "page" && !path) name = navigationName(name);
+  if (pageKind === "page" && !path) ({ name, kind: pageKind } = navigationTarget(name));
   setRightSidebarOpen(true);
   // The working set is intentionally name-keyed. A duplicate physical file with
   // the same logical page name therefore replaces that one live sidebar slot;

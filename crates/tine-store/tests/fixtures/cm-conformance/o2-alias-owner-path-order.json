@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/a b.md": "alias:: shared\n\n- owner a b\n",
+  "pages/a/x.md": "alias:: shared\n\n- owner x in folder a\n",
+  "pages/Notes.md": "- [[shared]]\n"
+ }
+}

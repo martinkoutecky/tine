@@ -162,7 +162,9 @@ fn image(entries: &[InventoryEntry]) -> BTreeMap<(bool, String, String), String>
                     tine_core::refs::page_key(&entry.name),
                     entry.name.clone(),
                 ),
-                format!("{:?} {:?}", entry.target, entry.day),
+                // `link` is part of the answer the window holds: a delta that
+                // left it stale would route a link to the wrong page.
+                format!("{:?} {:?} {:?}", entry.target, entry.day, entry.link),
             )
         })
         .collect()
@@ -347,6 +349,64 @@ fn deltas_track_aliases_spellings_journals_and_namespaces() {
     }
     // Removing B's references leaves C's spelling.
     assert_patch(&store, "pages/B.md", "nothing");
+    store.close();
+}
+
+/// The `link` answer (what `[[name]]` opens, `WholeGraph::link_target`)
+/// travels in the delta and equals a fresh read after every alias edit: a
+/// journal's alias opens the journal (D-F2), and an alias spelled as a day with
+/// no journal file opens its owner page (S6).
+#[test]
+fn a_delta_keeps_the_link_answer_fresh() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/A.md", "- [[Launch]] [[Jun 28th, 2026]]\n"),
+        ("pages/Owner.md", "- owner\n"),
+        ("journals/2026_06_27.md", "- day\n"),
+    ]);
+    // What the window routes by: the entry's `link`, else the entry itself.
+    let link = |store: &Store, name: &str| {
+        let key = tine_core::refs::page_key(name);
+        let inventory = store.whole_graph().unwrap().inventory(InventoryScope::All);
+        let entry = inventory
+            .0
+            .iter()
+            .find(|entry| tine_core::refs::page_key(&entry.name) == key)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .clone();
+        entry.link.unwrap_or(crate::LinkTarget {
+            name: entry.name,
+            is_journal: entry.is_journal,
+        })
+    };
+    let pre = |text: Option<&'static str>| {
+        move |doc: &mut tine_core::model::PageDto| doc.pre_block = text.map(str::to_owned)
+    };
+    let steps: [(&str, Option<&'static str>); 4] = [
+        ("journals/2026_06_27.md", Some("alias:: Launch")),
+        ("pages/Owner.md", Some("alias:: [[Jun 28th, 2026]]")),
+        ("journals/2026_06_27.md", None),
+        ("pages/Owner.md", None),
+    ];
+    for (step, (id, text)) in steps.into_iter().enumerate() {
+        let mut held = inventory(&store);
+        let (changed, deltas) = save(&store, id, pre(text));
+        assert!(changed, "step {step}: an alias edit moves the inventory");
+        for delta in deltas.expect("an alias edit is a delta") {
+            apply(&mut held, &delta);
+        }
+        assert_eq!(held, inventory(&store), "step {step}: patched equals fresh");
+        let (launch, day) = (link(&store, "Launch"), link(&store, "Jun 28th, 2026"));
+        match step {
+            0 => assert!(
+                launch.is_journal && launch.name == "Jun 27th, 2026",
+                "{launch:?}"
+            ),
+            1 => assert!(!day.is_journal && day.name == "Owner", "{day:?}"),
+            2 => assert!(!launch.is_journal && launch.name == "Launch", "{launch:?}"),
+            _ => assert!(day.is_journal && day.name == "Jun 28th, 2026", "{day:?}"),
+        }
+    }
     store.close();
 }
 

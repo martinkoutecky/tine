@@ -38,7 +38,7 @@ pub(crate) mod shape_stats;
 mod transaction_publish;
 #[cfg(test)]
 use page_identity::effective_page_name;
-pub(crate) use page_identity::{configured_hidden, portable_component};
+pub(crate) use page_identity::{claim_lookup, configured_hidden, portable_component};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
@@ -66,9 +66,7 @@ use tine_core::model::{
     PageDto, PageEntry, PageKind, ReferenceKind,
 };
 #[cfg(test)]
-use tine_core::model::{
-    sync_conflict_base, BlockDto, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
-};
+use tine_core::model::{sync_conflict_base, BlockDto, GraphMeta, RefGroup, SyncConflict};
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
@@ -719,6 +717,11 @@ impl ReadSnapshot {
     /// resolve costs O(owners of the key), not a pass over every alias.
     pub(crate) fn alias_owner_paths(&self, key: &str) -> Option<Vec<String>> {
         self.alias_relation().owner_paths(key)
+    }
+
+    /// The relative path of the page alias-only `key` opens (AL2/CI4).
+    pub(crate) fn alias_owner_path(&self, key: &str) -> Option<String> {
+        self.alias_relation().owner_path(key).cloned()
     }
 
     /// The least spelling a page declared alias `key` with (the relation keeps
@@ -1401,13 +1404,21 @@ impl ReadSnapshot {
     pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
         Some(Arc::clone(&self.real_page_names))
     }
+    /// The real-name table ranked by the claimant order (OW-1).
+    pub(crate) fn real_page_owners(&self) -> crate::query::RealPageOwners {
+        crate::query::RealPageOwners::new(
+            Arc::clone(&self.real_page_names),
+            Arc::clone(&self.list),
+            &self.config,
+        )
+    }
     /// Journal entries are named by the configured date title (page_identity's
     /// listed_entry). Probe only claimants of that name, not every journal.
     pub(crate) fn reference_journal_name(
         &self,
         day: tine_core::date::JournalDate,
     ) -> Option<String> {
-        let title = crate::query::journal_format(&self.config).title(day);
+        let title = self.config.journal_format().title(day);
         self.real_page_names
             .paths(&tine_core::refs::page_key(&title))
             .filter_map(|path| self.list.get_path(path))
@@ -2577,7 +2588,7 @@ fn is_date_stem_entry(entry: &PageEntry, fmt: &JournalFormat) -> bool {
         .and_then(|s| s.to_str())
         .is_some_and(|stem| {
             entry.date_key.is_some_and(|day| {
-                fmt.file_stem(tine_core::date::JournalDate::from_ordinal(day)) == stem
+                fmt.writes_stem(tine_core::date::JournalDate::from_ordinal(day), stem)
             })
         })
 }
@@ -2854,10 +2865,7 @@ impl Graph {
         // but cannot make the cached pages or their disk observations stale.
         let rebuild = crate::store::checkpoint::config_key(&self.current_config())
             != crate::store::checkpoint::config_key(&config);
-        let format = JournalFormat::new(
-            config.journal_file_name_format.as_deref(),
-            config.journal_page_title_format.as_deref(),
-        );
+        let format = config.journal_format();
         *self.live_config.write().unwrap() = Some(Arc::new(config));
         *self.live_journal_format.write().unwrap() = Some(Arc::new(format));
         if rebuild {
@@ -2985,10 +2993,7 @@ impl Graph {
             ),
             Err(error) => (Config::default(), Some(error.into())),
         };
-        let journal_format = JournalFormat::new(
-            config.journal_file_name_format.as_deref(),
-            config.journal_page_title_format.as_deref(),
-        );
+        let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, config, journal_format);
         graph.config_read_problem = problem;
         graph
@@ -3196,7 +3201,7 @@ impl Graph {
         // A day with more than one file (e.g. a leftover title-named duplicate of
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
-        // via journal_conflicts() for reconciliation.
+        // via tine_graph_features::journals::journal_conflicts for reconciliation.
         let mut js = dedup_journal_days(
             raw,
             &self.current_journal_format(),
@@ -3215,82 +3220,6 @@ impl Graph {
             .into_iter()
             .filter(|entry| entry.date_key.is_some_and(|day| day <= cutoff))
             .collect()
-    }
-
-    /// Journal days that resolve to more than one file — the migration leaves these
-    /// alone (it never clobbers), so they're reported for the user to reconcile.
-    /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
-    #[cfg(test)]
-    pub fn journal_conflicts(&self) -> Vec<JournalConflict> {
-        let dir = self.journals_path();
-        let mut by_date: std::collections::BTreeMap<i64, Vec<(String, PathBuf, bool)>> =
-            std::collections::BTreeMap::new();
-        walk_page_files(&dir, |p| {
-            let ext = match p.extension().and_then(|x| x.to_str()) {
-                Some(x @ ("md" | "org")) => x.to_string(),
-                _ => return,
-            };
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
-                return;
-            };
-            // A date-stem file is canonical; otherwise try to parse its title.
-            let canonical = self.current_journal_format().is_canonical_stem(stem);
-            let date = JournalDate::from_file_stem(stem)
-                .or_else(|| self.current_journal_format().parse(stem));
-            if let Some(d) = date {
-                by_date.entry(d.ordinal_key()).or_default().push((
-                    format!("{stem}.{ext}"),
-                    p,
-                    canonical,
-                ));
-            }
-        });
-        let mut out = Vec::new();
-        for (key, files) in by_date {
-            if files.len() < 2 {
-                continue;
-            }
-            let date = JournalDate::from_ordinal(key);
-            let mut jfiles: Vec<JournalFile> = files
-                .into_iter()
-                .map(|(name, path, canonical)| {
-                    let preview = read_parse_input(&path)
-                        .ok()
-                        .and_then(|c| {
-                            c.lines()
-                                .map(|l| {
-                                    l.trim_start_matches(|ch| {
-                                        ch == '*' || ch == '-' || ch == ' ' || ch == '\t'
-                                    })
-                                    .trim()
-                                    .to_string()
-                                })
-                                .find(|l| !l.is_empty())
-                        })
-                        .map(|l| l.chars().take(80).collect::<String>())
-                        .unwrap_or_default();
-                    let rel = self.rel_path(&path);
-                    JournalFile {
-                        name,
-                        path: rel,
-                        preview,
-                        canonical,
-                        preview_error: None,
-                    }
-                })
-                .collect();
-            // Canonical first (the keeper), then alphabetical.
-            jfiles.sort_by(|a, b| {
-                b.canonical
-                    .cmp(&a.canonical)
-                    .then_with(|| a.name.cmp(&b.name))
-            });
-            out.push(JournalConflict {
-                title: self.current_journal_format().title(date),
-                files: jfiles,
-            });
-        }
-        out
     }
 
     /// Sync-tool conflict copies (`*.sync-conflict-*`, Dropbox `(conflicted copy)`)
@@ -3964,10 +3893,10 @@ impl SnapshotMemos {
         } else {
             (
                 Arc::new(crate::query::AliasEdges::default()),
-                Arc::new(crate::query::RealPageNames::new()),
+                crate::query::RealPageOwners::empty(graph.config()),
             )
         };
-        let journal = crate::query::journal_format(graph.config());
+        let journal = graph.config().journal_format();
         let today = tine_core::date::JournalDate::today().ordinal_key();
         // Hold the derived write lock across the WHOLE prune+re-tag. This is
         // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
@@ -5241,7 +5170,14 @@ pub(crate) fn trash_dir_kind(path: &Path) -> Option<TrashEntryKind> {
     }
 }
 
-pub(crate) fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> TrashEntryKind {
+/// A flat (pre-typed-directory) trash entry keeps only its file name, so a
+/// journal is recognised by the graph's one date answerer: the stem is its
+/// day's own file name ([`JournalFormat::is_canonical_stem`]).
+pub(crate) fn classify_legacy_trash_entry(
+    path: &Path,
+    ft: fs::FileType,
+    format: &JournalFormat,
+) -> TrashEntryKind {
     if !ft.is_file() {
         return TrashEntryKind::Other;
     }
@@ -5261,7 +5197,7 @@ pub(crate) fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> Tras
         return original_path
             .file_stem()
             .and_then(|s| s.to_str())
-            .filter(|stem| tine_core::date::JournalDate::from_file_stem(stem).is_some())
+            .filter(|stem| format.is_canonical_stem(stem))
             .map(|_| TrashEntryKind::Journal)
             .unwrap_or(TrashEntryKind::Page);
     }
@@ -6232,7 +6168,7 @@ mod tests {
     ) {
         let aliases = graph.alias_edges();
         let real_pages = crate::query::real_page_names(graph);
-        let journal = crate::query::journal_format(graph.config());
+        let journal = graph.config().journal_format();
         let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {
             let mut paths = pages
                 .iter()
@@ -7595,83 +7531,6 @@ mod tests {
     }
 
     #[test]
-    fn journal_conflicts_reports_duplicate_days() {
-        let dir = scratch("journal-conflicts");
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
-        )
-        .unwrap();
-        // Same day, two files (canonical stem + title-named) — a conflict.
-        fs::write(
-            dir.join("journals").join("2026_06_26.org"),
-            "* canonical content\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.join("journals").join("Friday, 26-06-2026.org"),
-            "* stray content\n",
-        )
-        .unwrap();
-        // A clean day with one file — not a conflict.
-        fs::write(dir.join("journals").join("2026_06_24.org"), "* fine\n").unwrap();
-
-        let conflicts = Graph::open(&dir).journal_conflicts();
-        assert_eq!(
-            conflicts.len(),
-            1,
-            "exactly one conflicted day: {conflicts:?}"
-        );
-        let c = &conflicts[0];
-        assert_eq!(c.title, "Friday, 26-06-2026");
-        assert_eq!(c.files.len(), 2);
-        // Canonical (date-stem) file sorts first and is flagged; preview is the body line.
-        assert_eq!(c.files[0].name, "2026_06_26.org");
-        assert!(c.files[0].canonical);
-        assert_eq!(c.files[0].preview, "canonical content");
-        assert!(!c.files[1].canonical);
-        assert_eq!(c.files[1].name, "Friday, 26-06-2026.org");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn journal_conflicts_reports_nested_duplicate_days() {
-        let dir = scratch("journal-conflicts-nested");
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
-        )
-        .unwrap();
-        fs::create_dir_all(dir.join("journals").join("archive")).unwrap();
-        fs::write(
-            dir.join("journals").join("archive").join("2026_06_26.org"),
-            "* canonical nested\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.join("journals")
-                .join("archive")
-                .join("Friday, 26-06-2026.org"),
-            "* stray nested\n",
-        )
-        .unwrap();
-
-        let conflicts = Graph::open(&dir).journal_conflicts();
-        assert_eq!(
-            conflicts.len(),
-            1,
-            "nested duplicate day is surfaced: {conflicts:?}"
-        );
-        let files = &conflicts[0].files;
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0].path, "journals/archive/2026_06_26.org");
-        assert_eq!(files[1].path, "journals/archive/Friday, 26-06-2026.org");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn list_sync_conflicts_reports_nested_conflict_copy() {
         let dir = scratch("sync-conflicts-nested");
         fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
@@ -8471,6 +8330,31 @@ mod tests {
         assert_eq!(stats[0].1, 0, "asset trash should be empty");
         assert_eq!(stats[1].1, 1, "page trash should still be counted");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Date table row 5 (CM step 2): a flat legacy trash entry is a journal by
+    /// the graph's one date answerer, so a journal written under a custom
+    /// `:journal/file-name-format` counts as a journal (it was a page: only the
+    /// ISO/underscore stems were recognised).
+    #[test]
+    fn legacy_trash_recognises_a_configured_file_name_format_journal() {
+        let dir = scratch("legacy-trash-file-format");
+        let custom = dir.join("123-0__22-10-2026.md");
+        let iso = dir.join("123-1__2026_10_22.md");
+        let page = dir.join("123-2__Notes.md");
+        for path in [&custom, &iso, &page] {
+            fs::write(path, b"- x\n").unwrap();
+        }
+        let kind = |path: &Path, format: &JournalFormat| {
+            classify_legacy_trash_entry(path, fs::metadata(path).unwrap().file_type(), format)
+        };
+        let configured = JournalFormat::new(Some("dd-MM-yyyy"), None);
+        assert_eq!(kind(&custom, &configured), TrashEntryKind::Journal);
+        assert_eq!(kind(&iso, &configured), TrashEntryKind::Journal);
+        assert_eq!(kind(&page, &configured), TrashEntryKind::Page);
+        let default = JournalFormat::default();
+        assert_eq!(kind(&custom, &default), TrashEntryKind::Page);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -11906,28 +11790,6 @@ mod tests {
         );
         drop(host);
         store.close();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn journal_conflicts_expose_a_routable_path_per_file() {
-        let dir = dup_day_graph("conflictpath");
-        let g = Graph::open(&dir);
-        let conflicts = g.journal_conflicts();
-        assert_eq!(conflicts.len(), 1, "one duplicated day");
-        let files = &conflicts[0].files;
-        assert_eq!(files.len(), 2);
-        // Canonical first; both carry a graph-root-relative, resolvable path.
-        assert!(files[0].canonical);
-        assert_eq!(files[0].path, "journals/2026_06_26.org");
-        assert_eq!(files[1].path, "journals/Friday, 26-06-2026.org");
-        for f in files {
-            assert!(
-                g.resolve_rel(&f.path).is_some(),
-                "conflict path resolves: {}",
-                f.path
-            );
-        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

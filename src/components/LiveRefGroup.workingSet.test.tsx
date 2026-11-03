@@ -39,6 +39,7 @@ describe("GH #849: linked references over more pages than the working set holds"
     let isNear = (_: Element) => true;
     vi.stubGlobal("IntersectionObserver", class {
       observe(target: Element) {
+        this.targets.add(target);
         near.set(target, isNear(target));
         queueMicrotask(() => { if (near.has(target)) this.deliver(target, isNear(target)); });
       }
@@ -46,12 +47,15 @@ describe("GH #849: linked references over more pages than the working set holds"
         callbacks.add((element, value) => { if (this.observed.has(element)) this.deliver(element, value); });
       }
       observed = new Set<Element>();
+      // Disconnecting one observer forgets only its own targets, as in browsers:
+      // block bodies use their own observer, released once every body has mounted.
+      targets = new Set<Element>();
       deliver(target: Element, isIntersecting: boolean) {
         this.observed.add(target);
         this.callback([{ target, isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
       }
-      unobserve(target: Element) { near.delete(target); this.observed.delete(target); }
-      disconnect() { near.clear(); this.observed.clear(); }
+      unobserve(target: Element) { near.delete(target); this.observed.delete(target); this.targets.delete(target); }
+      disconnect() { for (const target of this.targets) near.delete(target); this.targets.clear(); this.observed.clear(); }
     });
     const groups: RefGroup[] = Array.from({ length: count }, (_, i) => ({ page: name(i), kind: "page", blocks: [row(i)] } as unknown as RefGroup));
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);

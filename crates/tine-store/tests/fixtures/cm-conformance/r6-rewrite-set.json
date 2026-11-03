@@ -1,0 +1,12 @@
+{
+  "files": {
+    "pages/Tasks.md": "- tasks page\n",
+    "pages/ref.md": "alias:: Tasks\n\n- [[Tasks]] link\n- #Tasks tag\n- {{embed [[Tasks]]}}\n- note\n  Tasks:: value\n- other\n  rel:: [[Tasks]]\n- {{query [[Tasks]]}}\n- {{query (page \"Tasks\")}}\n- TODO [#A] keep\n"
+  },
+  "renames": [
+    {
+      "old": "Tasks",
+      "new": "Chores"
+    }
+  ]
+}

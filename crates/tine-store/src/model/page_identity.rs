@@ -86,6 +86,41 @@ impl Graph {
     }
 }
 
+/// Which name claims answer a lookup of `name`: a journal is claimed by its
+/// day's title (any accepted spelling parses to it), and a date name no
+/// journal claims falls back to an ordinary page of the requested name.
+/// The one rule behind `WholeGraph::resolve` and the file-listing answer
+/// `Store::page_named_from_files` (I-12).
+pub(crate) struct ClaimLookup<'a> {
+    /// The name the claimants of the requested kind are looked up by.
+    pub(crate) name: std::borrow::Cow<'a, str>,
+    /// An ordinary page name to try when no claimant of `name` exists.
+    pub(crate) page_fallback: Option<&'a str>,
+}
+
+pub(crate) fn claim_lookup<'a>(
+    format: &tine_core::date::JournalFormat,
+    name: &'a str,
+    kind: PageKind,
+) -> ClaimLookup<'a> {
+    if kind != PageKind::Journal {
+        return ClaimLookup {
+            name: name.into(),
+            page_fallback: None,
+        };
+    }
+    match format.parse(name) {
+        Some(day) => ClaimLookup {
+            name: format.title(day).into(),
+            page_fallback: Some(name),
+        },
+        None => ClaimLookup {
+            name: name.into(),
+            page_fallback: None,
+        },
+    }
+}
+
 /// The same claimant ordering for cold direct reads, journal open and snapshots.
 pub(super) fn page_claimants(graph: &Graph, entries: &[PageEntry]) -> ClaimantMap {
     let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();

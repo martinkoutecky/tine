@@ -7,7 +7,7 @@ import { msg } from "./i18n";
 // for a missing page.
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
-import { allPages, linkPageKind, resolvedTarget } from "./pageIndex";
+import { allPages, linkTarget, resolvedTarget } from "./pageIndex";
 import { pageIdentityKey } from "./ui";
 import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
@@ -33,7 +33,8 @@ export function journalsReplacementHome(): string | null {
   const name = configuredHomePage();
   if (!name) return null;
   if (allPages() === undefined) return name;
-  const target = resolvedTarget(name, linkPageKind(name));
+  const link = linkTarget(name);
+  const target = resolvedTarget(link.name, link.kind);
   return target && target.kind !== "absent" ? name : null;
 }
 
@@ -74,8 +75,8 @@ export async function openConfiguredHomePage(): Promise<HomeOutcome> {
   try {
     // A journal-titled home (OG resolves any page entity) opens that journal;
     // the classifier is the one `[[links]]` and favorites use.
-    const kind = linkPageKind(name);
-    const read = await readOwned(owner, backend().getPage(name, kind));
+    const link = linkTarget(name);
+    const read = await readOwned(owner, backend().getPage(link.name, link.kind));
     if (read.kind === "stale") return "stale";
     if (!read.value) return "unresolved";
     router.openPage(read.value.name, read.value.kind, { inPlace: true });

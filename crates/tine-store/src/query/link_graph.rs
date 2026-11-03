@@ -39,10 +39,7 @@ use tine_core::query::ir::{Leaf, NearDir, Quant, Rel};
 use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
-use super::{
-    graph_equivalent_page_names_with, journal_format, page_property_block_with_config,
-    real_page_names,
-};
+use super::{graph_equivalent_page_names_with, page_property_block_with_config, real_page_names};
 use crate::model::ReadSnapshot;
 
 /// A page without a file that some page links to: the panel exists for it, so
@@ -79,7 +76,7 @@ impl LinkGraph {
     /// The table, or `None` once `cancelled` reports true.
     pub(crate) fn build(graph: &ReadSnapshot, cancelled: &dyn Fn() -> bool) -> Option<LinkGraph> {
         let config = graph.config();
-        let format = journal_format(config);
+        let format = config.journal_format();
         let real = real_page_names(graph);
         let edges = graph.alias_edges();
         // The panel's `find` over the page list, once: the FIRST journal page
@@ -94,10 +91,31 @@ impl LinkGraph {
                 }
             }
         }
+        // Referenced names by the day they denote (the one date answerer),
+        // once per build: what `referenced_day_keys` finds per target.
+        let mut referenced_by_day: HashMap<i64, Vec<String>> = HashMap::new();
+        for name in graph.explicit_reference_names() {
+            if let Some(day) = super::eval::reference_day(name, &format) {
+                referenced_by_day
+                    .entry(day)
+                    .or_default()
+                    .push(name.to_owned());
+            }
+        }
         let resolve = |target: &str| {
-            graph_equivalent_page_names_with(&real, &edges, &format, target, |day| {
-                first_journal.get(&day.ordinal_key()).cloned()
-            })
+            graph_equivalent_page_names_with(
+                &real,
+                &edges,
+                &format,
+                target,
+                |day| first_journal.get(&day.ordinal_key()).cloned(),
+                |day| {
+                    referenced_by_day
+                        .get(&day.ordinal_key())
+                        .cloned()
+                        .unwrap_or_default()
+                },
+            )
         };
         let favorites = config
             .favorites_page

@@ -1,0 +1,145 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "file-name",
+      "name": "file-name",
+      "target": {
+        "id": "pages/file-name.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "real name",
+      "name": "Real Name",
+      "target": {
+        "id": "pages/file-name.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Real Name": {
+      "journal": [
+        "journal",
+        "real name"
+      ],
+      "page": [
+        "page",
+        "real name"
+      ]
+    },
+    "file-name": {
+      "journal": [
+        "journal",
+        "file-name"
+      ],
+      "page": [
+        "page",
+        "file-name"
+      ]
+    },
+    "real name": {
+      "journal": [
+        "journal",
+        "real name"
+      ],
+      "page": [
+        "page",
+        "real name"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Real Name": {
+      "journal": null,
+      "page": "pages/file-name.md"
+    },
+    "file-name": {
+      "journal": null,
+      "page": null
+    },
+    "real name": {
+      "journal": null,
+      "page": "pages/file-name.md"
+    }
+  },
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Real Name": {
+      "backend": [
+        "page",
+        "real name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "real name"
+      ]
+    },
+    "file-name": {
+      "backend": [
+        "page",
+        "file-name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "file-name"
+      ]
+    },
+    "real name": {
+      "backend": [
+        "page",
+        "real name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "real name"
+      ]
+    }
+  }
+}

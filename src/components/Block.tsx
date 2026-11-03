@@ -156,7 +156,7 @@ import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, 
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
-import { cm6EditorEnabled } from "../editor/cm6Setting";
+import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
 import { applySheetViewSlashAction } from "./block/sheetViewSlash";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
 
@@ -508,7 +508,24 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 
+/** The longest an editor waits for the stored editor choice before it mounts with
+ * the current value; a backend that never answers must not stop all editing. */
+const CM6_SETTING_WAIT_MS = 5000;
+
+/** The editor engine is chosen once, as an editor mounts. While the stored
+ * choice is still being read, wait for it (a block clicked right after launch on
+ * a big graph, or while another window's change is being re-read), so the first
+ * edit gets the engine Settings shows. Already mounted editors are never swapped. */
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
+  if (!untrack(cm6EditorLoading)) return <EditorEngine {...props} />;
+  const [ready, setReady] = createSignal(false);
+  const timer = setTimeout(() => setReady(true), CM6_SETTING_WAIT_MS);
+  onCleanup(() => clearTimeout(timer));
+  createEffect(() => { if (!cm6EditorLoading()) setReady(true); });
+  return <Show when={ready()}><EditorEngine {...props} /></Show>;
+}
+
+function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   if (cm6EditorEnabled()) return <Cm6BlockEditor id={props.id} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)} propertySession={props.propertySession} />;
   const propertySession = props.propertySession ?? propertyEditorSession();
   propertySession.begin();

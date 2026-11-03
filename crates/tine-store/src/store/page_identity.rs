@@ -30,24 +30,15 @@ impl Store {
         name: &str,
         kind: PageKind,
     ) -> Result<Option<PageRead>, StoreError> {
-        let lookup = if kind == PageKind::Journal {
-            self.graph
-                .current_journal_format()
-                .parse(name)
-                .map(|date| self.graph.current_journal_format().title(date))
-                .unwrap_or_else(|| name.to_owned())
-        } else {
-            name.to_owned()
-        };
+        // The ready view's lookup rule, without reclassifying the file.
+        let lookup = crate::model::claim_lookup(&self.graph.current_journal_format(), name, kind);
         let entry = self
             .graph
-            .find_entry_named_file_first(&lookup, kind)
+            .find_entry_named_file_first(&lookup.name, kind)
             .or_else(|| {
-                // Match ready-view link resolution without reclassifying the file.
-                (kind == PageKind::Journal
-                    && self.graph.current_journal_format().parse(name).is_some())
-                .then(|| self.graph.find_entry_named_file_first(name, PageKind::Page))
-                .flatten()
+                lookup
+                    .page_fallback
+                    .and_then(|name| self.graph.find_entry_named_file_first(name, PageKind::Page))
             });
         let Some(entry) = entry else {
             return Ok(None);

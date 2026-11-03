@@ -31,7 +31,7 @@ import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
-import { linkPageKind, resolvedTarget } from "../pageIndex";
+import { linkTarget, resolvedTarget, type LinkDestination } from "../pageIndex";
 import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "../components/PageIcon";
@@ -359,12 +359,14 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
-  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : linkPageKind(targetName()));
+  // What the link opens: the store's answer (`linkTarget`), never re-derived.
+  const link = (): LinkDestination => (isGuidePageName(targetName()) ? { name: targetName(), kind: "page" } : linkTarget(targetName()));
+  const kind = (): PageKind => link().kind;
   // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
   // link signals a blank destination. Tags are exempt: a tag whose page has no
   // file is ordinary Logseq usage, and dimming them would mark most tags in a
   // normal graph. I-12/I-25: existence comes from the page index only.
-  const missing = () => !props.tag && !isGuidePageName(targetName()) && resolvedTarget(targetName(), kind())?.kind === "absent";
+  const missing = () => !props.tag && !isGuidePageName(targetName()) && resolvedTarget(link().name, kind())?.kind === "absent";
   const open = (e: MouseEvent) => {
     if (longPress.consumeClick(e)) {
       e.preventDefault();
@@ -374,16 +376,16 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     e.stopPropagation();
     // Shared modified-click contract (linkGesture.ts, GH #283/#438).
     const dest = internalLinkDest(e);
-    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(targetName(), kind());
+    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(link().name, kind());
     else if (dest === "background") openBackgroundTab();
     else if (dest === "pane")
-      openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
-    else openPage(targetName(), kind());
+      openRouteInOtherPane({ kind: "page", name: link().name, pageKind: kind() }, pane?.paneId ?? focusedPaneId());
+    else openPage(link().name, kind());
   };
   // A background tab belongs to the pane that was already active, not
   // necessarily the pane containing this link (GH #87): the pane tracker keeps
   // the active pane across a middle-button press (ui.ts installPaneTracker).
-  const openBackgroundTab = () => openPageInNewTab(targetName(), kind());
+  const openBackgroundTab = () => openPageInNewTab(link().name, kind());
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:

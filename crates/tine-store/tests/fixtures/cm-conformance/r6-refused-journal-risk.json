@@ -1,0 +1,13 @@
+{
+  "files": {
+    "pages/old.md": "- old page\n",
+    "pages/p.md": "- see [[old/sub]]\n",
+    "journals/2026_10_26.md": "alias:: old/sub\n\n- day\n"
+  },
+  "renames": [
+    {
+      "old": "old",
+      "new": "new"
+    }
+  ]
+}

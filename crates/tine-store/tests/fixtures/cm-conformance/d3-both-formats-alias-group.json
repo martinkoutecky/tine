@@ -1,0 +1,17 @@
+{
+  "config": {
+    "journalTitleFormat": "yyyy_dd_MM",
+    "journalFileFormat": "dd.MM.yyyy"
+  },
+  "files": {
+    "journals/22.10.2026.md": "alias:: Launch\n\n- day\n",
+    "pages/Launch.md": "- launch page\n",
+    "pages/n.md": "- file form [[22.10.2026]]\n- title form [[2026_22_10]]\n- default title [[Oct 22nd, 2026]]\n- two lists, two days [[2026_10_11]]\n"
+  },
+  "queries": [
+    {"anchor": "block", "q": {"refs": "Launch"}},
+    {"anchor": "block", "q": {"refs": "22.10.2026"}},
+    {"anchor": "page", "q": {"name": "Launch"}},
+    {"anchor": "page", "q": {"name": "22.10.2026"}}
+  ]
+}

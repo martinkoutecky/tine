@@ -1,0 +1,34 @@
+{
+  "files": {
+    "pages/A.md": "- see [[B]]\n- on [[2026-10-26]]\n",
+    "journals/2026_10_26.md": "- day\n"
+  },
+  "queries": [
+    {
+      "anchor": "page",
+      "q": {
+        "name": "B"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "2026-10-26"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "a"
+      }
+    },
+    {
+      "anchor": "block",
+      "q": {
+        "page": {
+          "name": "2026-10-26"
+        }
+      }
+    }
+  ]
+}

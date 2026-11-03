@@ -35,7 +35,7 @@ export function createNearBlockMount(props: { blockId?: string }, latch: "captur
         if (id != null) renderedBlocks.add(id);
         setNear(true);
       }, undefined, false, entry, 1200);
-    });
+    }, "above");
   }
   onCleanup(() => { mounted = false; if (element) unobserveNear(element); });
   observe.near = () => near() || printingOutline();

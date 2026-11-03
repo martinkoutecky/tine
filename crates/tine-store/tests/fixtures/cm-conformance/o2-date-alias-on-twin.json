@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/2026-10-26.md": "title:: a\nalias:: a\n",
+  "pages/A.md": "alias:: 2026-10-26\n",
+  "pages/Notes.md": "- [[2026-10-26]]\n"
+ }
+}

@@ -1,0 +1,85 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "q",
+      "name": "q",
+      "target": {
+        "id": "pages/q.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x",
+      "name": "x",
+      "target": {
+        "id": "pages/x.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "q": {
+      "journal": [
+        "journal",
+        "q"
+      ],
+      "page": [
+        "page",
+        "q"
+      ]
+    },
+    "x": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  },
+  "owner": {
+    "q": {
+      "journal": null,
+      "page": "pages/q.md"
+    },
+    "x": {
+      "journal": null,
+      "page": "pages/x.md"
+    }
+  },
+  "spellings": {
+    "q": {
+      "backend": [
+        "page",
+        "q"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "q"
+      ]
+    },
+    "x": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    }
+  }
+}

@@ -74,3 +74,8 @@ it("the Guide says Quick Capture takes pasted images as graph assets (GH #835)",
   expect(capture).toContain("`assets` folder");
   expect(capture).toContain("Dragging files onto the capture box is not supported yet");
 });
+
+it("the Guide teaches the Quick Capture config.edn keys (GH #832, #833)", () => {
+  const capture = guide("quick-capture");
+  for (const detail of [":quick-capture-options {:default-page \"Inbox\"}", ":insert-today? true", ":redirect-page? true", ":quick-capture-templates {:text \"**{time}** {text}\"}", "`{time}` is the capture time", "with no timestamp", "named `quick capture`"]) expect(capture).toContain(detail);
+});
