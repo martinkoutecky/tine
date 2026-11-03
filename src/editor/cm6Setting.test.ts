@@ -10,7 +10,12 @@ vi.mock("../backend", () => ({ backend: () => ({ getAppBool: env.get, setAppBool
 vi.mock("../toasts", () => ({ pushToast: env.toast }));
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
-afterEach(() => { vi.resetModules(); vi.clearAllMocks(); env.handlers.length = 0; });
+// A Beta module registers its change listener after a dynamic import; under a loaded
+// suite that can land after the next test began, so wait for it before resetting.
+afterEach(async () => {
+  if (env.channel === "beta") await vi.waitFor(() => expect(env.handlers.length).toBeGreaterThan(0), { timeout: 10_000 });
+  vi.resetModules(); vi.clearAllMocks(); env.handlers.length = 0;
+});
 
 it("defaults off in Beta, loads the device opt-in and rolls back a failed save", async () => {
   env.channel = "beta";
@@ -90,15 +95,14 @@ it("a choice made in another window reaches this one, and this window's own choi
   // Another window turned it on and wrote the file.
   env.get.mockResolvedValue(true);
   env.handlers[0]({ payload: { origin: "another-window" } });
-  await tick();
-  expect(setting.cm6EditorEnabled()).toBe(true);
+  await vi.waitFor(() => expect(setting.cm6EditorEnabled()).toBe(true));
 
   // This window's own change is announced once the file is written, with its origin,
   // and its own echo does not trigger a re-read.
   setting.setCm6EditorEnabled(false);
-  await tick();
+  // The announcement also goes through a dynamic import, so it can take more than a tick.
+  await vi.waitFor(() => expect(env.emit).toHaveBeenCalledWith("cm6-editor-setting-changed", { origin: expect.any(String) }));
   expect(env.set).toHaveBeenCalledWith("experimental_cm6_editor", false);
-  expect(env.emit).toHaveBeenCalledWith("cm6-editor-setting-changed", { origin: expect.any(String) });
   const origin = env.emit.mock.calls[0][1].origin;
   const reads = env.get.mock.calls.length;
   env.handlers[0]({ payload: { origin } });
