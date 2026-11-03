@@ -162,6 +162,12 @@ impl ReferencedNameTable {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &KeyReferrers)> {
         self.keys.iter().map(|(key, referrers)| (key, referrers))
     }
+
+    /// The keys at least `from` with their referrers, in key order. O(log V)
+    /// to start.
+    pub(crate) fn iter_from(&self, from: &str) -> impl Iterator<Item = (&String, &KeyReferrers)> {
+        self.keys.iter_from(from)
+    }
 }
 
 /// The table and its readers (moved beside the table to keep `model.rs`
@@ -213,21 +219,39 @@ impl ReadSnapshot {
     /// (`store::inventory::link_target_in`, so the inventory entry carries a
     /// `link`), so it is not a page of its own, and All pages, which lists
     /// absent entries without a `link`, does not list it either.
-    /// O(V log P) for V referenced names; nothing is built beyond the
-    /// resident table.
+    /// Namespace parents (`namespace_parents.rs`: a seed key no reference
+    /// names directly) are listed by the same rules, in key order with the
+    /// rest: they are the fileless pages `inventory(All)` lists with
+    /// `namespace_parent` set.
+    /// O(V log P + F) for V referenced names and F file claims; nothing is
+    /// built beyond the resident table.
     pub(crate) fn reference_only_page_names(&self) -> Vec<&str> {
         let format = self.config.journal_format();
-        self.referenced_name_table()
+        let table = self.referenced_name_table();
+        let listed = |key: &str, spelling: &str| {
+            self.real_page_names.owners(key).next().is_none()
+                && self
+                    .alias_owner_paths(key)
+                    .is_none_or(|owners| owners.is_empty())
+                && !format.absent_link_is_journal(spelling)
+        };
+        let mut names: Vec<(&str, &str)> = table
             .iter()
-            .filter(|(key, referrers)| {
-                self.real_page_names.owners(key).next().is_none()
-                    && self
-                        .alias_owner_paths(key)
-                        .is_none_or(|owners| owners.is_empty())
-                    && !format.absent_link_is_journal(&referrers.spelling)
-            })
-            .map(|(_, referrers)| referrers.spelling.as_str())
-            .collect()
+            .filter(|(key, referrers)| listed(key, &referrers.spelling))
+            .map(|(key, referrers)| (key.as_str(), referrers.spelling.as_str()))
+            .collect();
+        let seeds = self.namespace_seeds(table);
+        let before = names.len();
+        names.extend(
+            seeds
+                .iter()
+                .filter(|(key, spelling)| table.get(key).is_none() && listed(key, spelling))
+                .map(|(key, spelling)| (key.as_str(), *spelling)),
+        );
+        if names.len() > before {
+            names.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        }
+        names.into_iter().map(|(_, spelling)| spelling).collect()
     }
 
     pub(crate) fn referenced_page_names(&self) -> Vec<String> {

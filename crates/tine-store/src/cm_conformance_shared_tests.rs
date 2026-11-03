@@ -1179,6 +1179,9 @@ pub fn frontend_case(
                     "kind": if link.is_journal { "journal" } else { "page" },
                 });
             }
+            if e.namespace_parent {
+                wire["namespace_parent"] = json!(true);
+            }
             wire
         })
         .collect();

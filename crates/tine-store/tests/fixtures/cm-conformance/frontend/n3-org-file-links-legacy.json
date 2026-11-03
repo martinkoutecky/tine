@@ -53,6 +53,10 @@
     ],
     [
       [
+        "a",
+        0
+      ],
+      [
         "ab",
         1
       ],
@@ -63,6 +67,17 @@
     ]
   ],
   "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
+      }
+    },
     {
       "day": null,
       "is_journal": false,
@@ -121,6 +136,7 @@
   "journalTitleFormat": null,
   "keyOf": {
     "Ten___Child": "ten___child",
+    "a": "a",
     "a/b": "a/b",
     "ab": "ab",
     "note": "note",

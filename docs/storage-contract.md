@@ -1641,6 +1641,26 @@ inherited by later generations through per-page patches, never persisted or
 checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
 `crates/tine-store/tests/inventory_delta.rs`, `src/pageIndex.test.ts`).
 
+Namespace parents have one answerer, `model/namespace_parents.rs` (conceptual
+model rule 1, CM3-3; CM step 2 batch 10). A name `n/y` makes `n` a page: every
+proper `/`-prefix of a non-blank page file's name (journals and twins included;
+a blank file supplies its own page only, as OG's `extract` skips blank content)
+and of every referenced name is a page, unless a file claims it, a page aliases
+it or a reference names it directly. `page_inventory` lists each as an absent
+entry with `namespace_parent: true` (sent only when true), spelled by the least
+prefix spelling of its seeds so the whole answer and an `inventoryDelta`'s
+one-key answer agree. The delta carries a parent's key whenever a changed
+reference name lies under it, so a live edit that adds or removes its last
+child updates it. A parent opens itself (`Absent`, no `link`), is listed in All
+pages and in page queries' page sets (`reference_only_page_names`), and its
+Linked References are the blocks under it by the namespace closure of
+references (Q6, `namespace_refs`), unchanged. Nothing is persisted: it is
+derived per read from the claims and the in-memory referenced-name table.
+Proof: `crates/tine-store/tests/inventory_delta.rs`, the conformance harness
+(`cm_conformance_tests.rs`, `src/cmConformanceNamespaces.test.ts`). The
+frontend's namespace views (sidebar tree, Namespaces, `{{namespace}}`,
+Hierarchy) nest the listed names by `/` and add no level of their own.
+
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's
 Store, pinned to the native binding generation. A weak reference to the slot's

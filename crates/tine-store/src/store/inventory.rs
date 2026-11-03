@@ -22,6 +22,12 @@ pub struct InventoryEntry {
     /// that differs from this entry's own (name, kind): an alias (its owner),
     /// a date spelling (its day's journal), an alias spelled as a date.
     pub link: Option<LinkTarget>,
+    /// Listed only because a listed name lies under it: `n` for a page file
+    /// or a reference named `n/y` (model rule 1, SPEC §3.2; OG creates these
+    /// pages). Such an entry has no file, no alias and no direct reference;
+    /// its target is the absent page its name would create. Views that show
+    /// a namespace tree read it instead of re-deriving prefixes.
+    pub namespace_parent: bool,
 }
 
 /// The page a link opens: its name and kind, as the router takes them.
@@ -225,6 +231,7 @@ impl WholeGraph {
                         is_journal: entry.kind == PageKind::Journal,
                         day: entry.date_key.map(Day),
                         link: None,
+                        namespace_parent: false,
                     })
                     .into_iter()
                     .collect(),
@@ -242,6 +249,7 @@ impl WholeGraph {
                             is_journal: true,
                             day: Some(day),
                             link: None,
+                            namespace_parent: false,
                         }
                     })
                     .collect();
@@ -324,6 +332,7 @@ impl WholeGraph {
                 is_journal: false,
                 day: None,
                 link: None,
+                namespace_parent: false,
             });
         }
         for (key, referrers) in references.iter() {
@@ -337,6 +346,25 @@ impl WholeGraph {
                 is_journal: false,
                 day: None,
                 link: None,
+                namespace_parent: false,
+            });
+        }
+        // Namespace parents: seed keys no file claims, no page declares as an
+        // alias and no reference names (`model::namespace_parents`).
+        for (key, spelling) in self.graph.namespace_seeds(references) {
+            if claimed_names.contains(&key)
+                || alias_names.contains(&key)
+                || references.get(&key).is_some()
+            {
+                continue;
+            }
+            entries.push(InventoryEntry {
+                target: self.resolve(spelling, false),
+                name: spelling.to_owned(),
+                is_journal: false,
+                day: None,
+                link: None,
+                namespace_parent: true,
             });
         }
         let mut entries: Vec<_> = entries
@@ -383,6 +411,7 @@ impl WholeGraph {
                     is_journal: false,
                     day: None,
                     link: None,
+                    namespace_parent: false,
                 }),
             }
         }
@@ -418,16 +447,20 @@ impl WholeGraph {
                 is_journal,
                 day: page.date_key.map(Day),
                 link: None,
+                namespace_parent: false,
             })
             .collect()
     }
 }
 
 impl Snapshot {
-    /// The alias or reference-only `All` entry of page key `key` in this
-    /// generation, exactly as [`WholeGraph::inventory`] lists it: an alias
-    /// entry unless a page file claims the key, else a reference-only entry
-    /// unless any file (page or journal) claims it. O(log V + owners).
+    /// The alias, reference-only or namespace-parent `All` entry of page key
+    /// `key` in this generation, exactly as [`WholeGraph::inventory`] lists
+    /// it: an alias entry unless a page file claims the key, else a
+    /// reference-only entry unless any file (page or journal) claims it,
+    /// else a namespace parent when a listed name lies under it.
+    /// O(log V + owners), plus the names whose key starts with `key` when no
+    /// reference names it.
     pub(super) fn name_entry(
         &self,
         table: &crate::model::referenced_names::ReferencedNameTable,
@@ -455,12 +488,18 @@ impl Snapshot {
                 is_journal: false,
                 day: None,
                 link: None,
+                namespace_parent: false,
             }));
         }
         if claimed(true) {
             return None;
         }
-        let name = spelling?.to_owned();
+        // A key no reference names may still be a namespace parent.
+        let (name, namespace_parent) = match spelling {
+            Some(spelling) => (spelling, false),
+            None => (self.graph.namespace_seed(table, key)?, true),
+        };
+        let name = name.to_owned();
         Some(self.linked(InventoryEntry {
             target: Resolved::Absent {
                 id: proposed_page_id(&self.config.config, &name),
@@ -469,6 +508,7 @@ impl Snapshot {
             is_journal: false,
             day: None,
             link: None,
+            namespace_parent,
         }))
     }
 

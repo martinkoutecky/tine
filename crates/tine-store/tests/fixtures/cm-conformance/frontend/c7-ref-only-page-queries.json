@@ -76,6 +76,10 @@
         1
       ],
       [
+        "proj",
+        1
+      ],
+      [
         "proj/sub",
         1
       ],
@@ -110,6 +114,17 @@
     {
       "day": null,
       "is_journal": false,
+      "key": "proj",
+      "name": "proj",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/proj.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
       "key": "proj/sub",
       "name": "proj/sub",
       "target": {
@@ -134,6 +149,7 @@
     "A": "a",
     "B": "b",
     "TODO": "todo",
+    "proj": "proj",
     "proj/sub": "proj/sub"
   },
   "open": {

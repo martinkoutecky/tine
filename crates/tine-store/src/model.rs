@@ -24,6 +24,7 @@ pub(crate) mod index_oracle_tests;
 mod line_endings;
 #[cfg(test)]
 mod md_fidelity_corpus_tests;
+pub(crate) mod namespace_parents;
 mod page_icons;
 mod page_identity;
 mod page_parse;

@@ -63,8 +63,20 @@
     ],
     [
       [
+        "a",
+        1
+      ],
+      [
+        "a/b",
+        1
+      ],
+      [
         "a/b/c",
         1
+      ],
+      [
+        "n",
+        0
       ]
     ]
   ],
@@ -72,10 +84,43 @@
     {
       "day": null,
       "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b",
+      "name": "a/b",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a%2Fb.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
       "key": "a/b/c",
       "name": "a/b/c",
       "target": {
         "id": "pages/a%2Fb%2Fc.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n",
+      "name": "n",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/n.md",
         "kind": "absent"
       }
     },
@@ -106,7 +151,10 @@
   "journalTitleFormat": null,
   "keyOf": {
     "Notes": "notes",
+    "a": "a",
+    "a/b": "a/b",
     "a/b/c": "a/b/c",
+    "n": "n",
     "n/y": "n/y"
   },
   "open": {
