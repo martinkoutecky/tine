@@ -1322,7 +1322,8 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
-.nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; }
+/* GH #704: `font: inherit` resets the size; keep the section headings' 11px. */
+.nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; font-size: 11px; cursor: pointer; }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
 .nav-toggle-caret,
 .graph-switch-caret,

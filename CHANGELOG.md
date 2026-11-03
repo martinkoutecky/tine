@@ -14,6 +14,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Macros in `config.edn` named with keywords, as Logseq writes them (`:macros {:bar "..."}`), now work like `"bar"` names. Before, `{{bar 5}}` stayed raw text, and every macro listed after the first keyword name was ignored as well (GH #854, REG-GH854-CONFIG-MACRO-KEYWORD-NAMES).
+- A journal section shown under today's journal now sorts and groups by the View settings saved on its block on the sections page (GH #855, UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES).
+- **Review** on the "changed on disk while you were editing" banner now shows the page's review of your edits against the disk version, also when the page is already open and scrolled down. Before, it did nothing there (GH #858, UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER).
+- On Windows, images no longer look washed out next to other image viewers: Tine's windows now draw colours in sRGB (GH #804, REG-GH804-WINDOWS-WEBVIEW-SRGB).
+- The left sidebar's "All pages" heading is the same size as the other section headings (GH #704, UI-GH704-SIDEBAR-HEADINGS-ONE-SIZE).
 - Typing a page link in Quick Capture no longer shows the red error "Couldn't refresh the page list. The last loaded list is kept." in the capture window. Nothing was lost: the capture window asked for a list of pages it is not given, and page completion there never needed it (UI-CAPTURE-NO-PAGE-INVENTORY).
 
 ## [0.9.0-beta.5] - 2026-11-02
