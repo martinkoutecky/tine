@@ -45,6 +45,7 @@ mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;
 mod i18n_shell;
+mod identity_follow;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
 #[cfg(target_os = "linux")]
@@ -94,15 +95,15 @@ use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
     edit_asset_external, edit_custom_css, empty_asset_trash, export_query_subtrees,
-    follow_page_identity, get_backlink_filter_context, get_backlinks, get_page, get_page_by_path,
-    get_unlinked_refs, guide_pages, import_asset, import_native_capture, journal_content_days,
-    journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
-    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_graph_file,
-    open_page_file, open_pdf, page_alias_group, page_icons, page_inventory, page_modified,
-    page_print_html, preview_block, query_facets, quick_switch, read_asset, read_asset_range,
-    read_custom_css, read_highlights, read_journal_file, read_local_image, read_text_file,
-    register_unlinked_reference, rename_file_to_page, rename_page, resolve_block, resolve_blocks,
-    resolve_page, run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
+    get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
+    guide_pages, import_asset, import_native_capture, journal_content_days, journal_feed_page,
+    list_journal_conflicts, list_journal_filename_migrations, list_orphan_assets, list_templates,
+    load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
+    page_alias_group, page_icons, page_inventory, page_modified, page_print_html, preview_block,
+    query_facets, quick_switch, read_asset, read_asset_range, read_custom_css, read_highlights,
+    read_journal_file, read_local_image, read_text_file, register_unlinked_reference,
+    rename_file_to_page, rename_page, resolve_block, resolve_blocks, resolve_page,
+    run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
     set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
     set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
     set_show_brackets, set_start_of_week, set_timetracking_enabled, stat_asset, stream_asset_path,
@@ -1100,7 +1101,7 @@ pub fn run() {
             block_ref_counts,
             block_referrers,
             rename_page,
-            follow_page_identity,
+            identity_follow::follow_page_identity,
             publish_query_plan,
             publish_query,
             quick_share::quick_share_prepare,

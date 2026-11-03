@@ -63,6 +63,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
     let other_sources = [
         include_str!("graph.rs"),
         include_str!("page_commands.rs"),
+        include_str!("identity_follow.rs"),
         include_str!("commands/concord.rs"),
         include_str!("backup.rs"),
         include_str!("backup/restore.rs"),

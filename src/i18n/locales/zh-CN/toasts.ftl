@@ -220,6 +220,8 @@ selection-merge-refused = 无法合并这些块
 
 graph-rewrite-rename-failed = 重命名失败：{ $error }
 
+graph-rewrite-config-skipped = “{ $page }”已重命名，但 config.edn 未更改（{ $reason }），因此其中的首页和收藏可能仍指向旧页面。
+
 history-undo-history-for-this-page-was-discarded-the = 此页面的撤销历史已丢弃：这些编辑后，页面曾被重新加载
 
 history-redo-skipped-a-block-with-the-same-id = 已跳过重做：相同 id 的块现已存在

@@ -75,6 +75,7 @@ feedNames
 finishPageHeaderEdit
 flushAll
 flushPage
+followPageIdentity  # why: a title:: name change moves home and favorites through the rename's Rust config step (FAV-RETITLE, I-12); batch-cm-favorites
 formatForBlock
 formatForPage
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
