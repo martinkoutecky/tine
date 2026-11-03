@@ -1115,7 +1115,7 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 39] = [
+    let cases: [(&str, String, bool); 42] = [
         (
             "default_journal_queries",
             format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
@@ -1257,6 +1257,21 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         (
             "quick_capture_template_media",
             format!("{BASE} :quick-capture-templates {{:media \"{{url}}\"}}"),
+            false,
+        ),
+        (
+            "quick_capture_default_page",
+            format!("{BASE} :quick-capture-options {{:default-page \"Inbox\"}}"),
+            false,
+        ),
+        (
+            "quick_capture_insert_today",
+            format!("{BASE} :quick-capture-options {{:insert-today? true}}"),
+            false,
+        ),
+        (
+            "quick_capture_redirect_page",
+            format!("{BASE} :quick-capture-options {{:redirect-page? true}}"),
             false,
         ),
         (

@@ -19,10 +19,17 @@ import { markDirty, flushPage, baseRevFor } from "../host/wiring";
  *  edit of today's journal into a conflict. Loads — or, if the day has no file
  *  yet, synthesizes — the journal first; never clobbers in-progress edits and
  *  refuses (false, with a message) when another file holding today's name has
- *  unsaved input (`admitPageFile`). Returns whether the write reached disk. */
-export async function appendToTodayJournal(markdown: string, inserted?: (name: string) => void): Promise<boolean> {
+ *  unsaved input (`admitPageFile`). `shape` rewrites the parsed outline before
+ *  it is inserted (the configured Quick Capture template). Returns whether the
+ *  write reached disk. */
+export async function appendToTodayJournal(
+  markdown: string,
+  inserted?: (name: string) => void,
+  shape?: (nodes: OutlineNode[]) => OutlineNode[],
+): Promise<boolean> {
   const name = journalTitle(appNow());
-  return captureOutlineInto(name, "journal", parseOutline(markdown), () => inserted?.(name));
+  const nodes = parseOutline(markdown);
+  return captureOutlineInto(name, "journal", shape ? shape(nodes) : nodes, () => inserted?.(name));
 }
 
 /** Append `markdown` at the END of journal `day` exactly (never a recomputed
@@ -57,10 +64,16 @@ export async function appendToJournalDay(
  *  branch of the journal-top capture bar. Same single-writer guarantees as
  *  {@link appendToTodayJournal}: routes through the live store + immediate flush,
  *  so it can't race a main-view edit of the same page into a conflict. */
-export async function captureToPage(title: string, markdown: string, inserted?: (name: string) => void): Promise<boolean> {
+export async function captureToPage(
+  title: string,
+  markdown: string,
+  inserted?: (name: string) => void,
+  shape?: (nodes: OutlineNode[]) => OutlineNode[],
+): Promise<boolean> {
   const name = title.trim();
   if (!name) return false;
-  return captureOutlineInto(name, "page", parseOutline(markdown), () => inserted?.(name));
+  const nodes = parseOutline(markdown);
+  return captureOutlineInto(name, "page", shape ? shape(nodes) : nodes, () => inserted?.(name));
 }
 
 /** Append ONE query block (`query` macro text plus its `key:: value` properties,

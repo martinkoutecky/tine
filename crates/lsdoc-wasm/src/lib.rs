@@ -775,6 +775,42 @@ pub fn parse_journal_format_json(text: &str, pattern: &str) -> String {
     })
 }
 
+thread_local! {
+    static JOURNAL_FORMAT: std::cell::RefCell<Option<(String, String, date::JournalFormat)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The graph's journal date answerer for (file, title) format strings ("" =
+/// default), cached for the last pair: the frontend asks with one graph's
+/// formats at a time.
+fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&date::JournalFormat) -> T) -> T {
+    JOURNAL_FORMAT.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if !matches!(&*cell, Some((cf, ct, _)) if cf == file && ct == title) {
+            *cell = Some((
+                file.to_owned(),
+                title.to_owned(),
+                date::JournalFormat::new(Some(file), Some(title)),
+            ));
+        }
+        f(&cell.as_ref().unwrap().2)
+    })
+}
+
+/// Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+/// (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+#[wasm_bindgen]
+pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> String {
+    with_journal_format(file_format, title_format, |format| {
+        serde_json::to_string(&format.parse(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+    })
+}
+
+/// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+#[wasm_bindgen]
+pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str) -> bool {
+    with_journal_format(file_format, title_format, |format| format.absent_link_is_journal(name))
+}
+
 /// Native date formatter over explicit civil parts; same bounded format cache.
 #[wasm_bindgen]
 pub fn format_journal_date(year: i32, month: u32, day: u32, pattern: &str) -> String {

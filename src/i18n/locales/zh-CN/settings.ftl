@@ -143,6 +143,16 @@ settings-shaded-box = 带背景的框
 
 settings-accent-line-and-dot-only = 仅强调线和圆点
 
+settings-outline = 大纲
+
+settings-color-indent-guides-by-level = 按层级为缩进线着色
+
+settings-color-indent-guides-by-level-hint = 让每一层嵌套的竖向缩进线使用各自的柔和颜色，便于在很长的页面中沿着某一层级向下阅读。不会额外绘制任何内容。颜色每六层循环一次。
+
+settings-guides-by-level = 每层一种柔和颜色
+
+settings-guides-one-color = 所有层级使用同一颜色
+
 settings-links = 链接
 
 settings-links-to-the-web-or-a-file = 网页或文件链接

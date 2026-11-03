@@ -181,6 +181,10 @@ export interface PageInventoryEntry {
   is_journal: boolean;
   day: number | null;
   target: ResolvedPage;
+  /** What a `[[name]]` link opens, when that is not this entry itself: the
+   *  store's `WholeGraph::link_target` (an alias's owner, a date spelling's
+   *  journal). Absent means the entry itself. */
+  link?: { name: string; kind: PageKind };
 }
 
 /** What one publication changed in the `page_inventory` answer when no page
@@ -281,7 +285,7 @@ export interface JournalFile {
    *  when it shares a date with the canonical one (#21). */
   path: string;
   preview: string;
-  canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
+  canonical: boolean; // the file the day opens (claimant order) — the one to keep; exactly one per day
   /** Why the preview could not be read; the file stays listed. */
   preview_error?: string;
 }
@@ -590,6 +594,12 @@ export interface GraphMeta {
   quick_capture_template_text?: string | null;
   /** OG `:quick-capture-templates {:media "…"}`; null/absent = OG default (shareShape.ts). */
   quick_capture_template_media?: string | null;
+  /** OG `:quick-capture-options {:default-page "…"}`: where a Quick Capture without a title goes. */
+  quick_capture_default_page?: string | null;
+  /** OG `:quick-capture-options {:insert-today? true}`: untitled captures go to today's journal, ahead of the default page. */
+  quick_capture_insert_today?: boolean;
+  /** OG `:quick-capture-options {:redirect-page? true}`: open the page a capture landed on. */
+  quick_capture_redirect_page?: boolean;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")

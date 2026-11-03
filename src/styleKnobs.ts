@@ -71,6 +71,20 @@ export const KNOBS: readonly StyleKnob[] = [
       { label: msg("settings-accent-line-and-dot-only"), value: "accent" },
     ],
   },
+  { id: "knobs-outline", type: "heading", level: 2, title: msg("settings-outline") },
+  {
+    // GH #856. Default "level" = today's new look (no class); "single" adds the class
+    // `tine-guide-colors-single`, which app.css answers with the old one-color guide.
+    id: "guide-colors",
+    type: "class-select",
+    title: msg("settings-color-indent-guides-by-level"),
+    description: msg("settings-color-indent-guides-by-level-hint"),
+    default: "level",
+    options: [
+      { label: msg("settings-guides-by-level"), value: "level" },
+      { label: msg("settings-guides-one-color"), value: "single" },
+    ],
+  },
   { id: "knobs-links", type: "heading", level: 2, title: msg("settings-links") },
   {
     id: "external-link-underline",

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-cm6-setting-restart.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"With the CodeMirror experiment switched on in Settings and the app quit and relaunched, the first block edit on a routed page and in the right sidebar mounts the CodeMirror editor, and a Quick Capture opened by the global-shortcut handoff shows the CodeMirror editor with the caret in it, with no off/on in Settings. The app is killed with SIGKILL before the relaunch, as after a crash. With a second window on another graph open, switching CodeMirror off in either window changes the next edit in the other window with no restart, and switching it back on does the same. A block opened while this window is still reading the stored choice (a slow reply) waits for it and gets the stored editor, not the default.","blocking":false,"authority":"Martin report 2026-11-02 (development build)"}],
+      "acceptableVariations": ["Timing, window geometry and the exact CodeMirror markup may vary while the editor kind and the caret location agree."],
+      "nonRequirements": ["No typing or saving in the editors, no platform other than Linux WebKitGTK, no burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-set-depth.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A bound Set depth 2 on a folded block opens it and its child and folds the grandchild in the file, leaving a folded great-grandchild's own fold unchanged; a bound Set depth 0 then folds the block. With a high :ref/default-open-blocks-level in config.edn every row of a linked reference shows, and the referencing page's file is unchanged.","blocking":false,"authority":"GH #794; GH #793; D-20261101-L5"}],
       "acceptableVariations": ["Selection styling, animation, save latency and the exact reference-section layout may vary while the saved collapsed properties and visible rows agree."],
@@ -599,6 +605,41 @@
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"stable"
     },
+    "scripts/e2e-cm-duplicate-day.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "With journals/2026_10_26.md and journals/2026-10-26.md for one day, Settings > Backups & recovery > Duplicate journal days marks only the file the day opens (2026_10_26.md) as canonical and offers Merge on the other; a native click on Merge folds the other file's blocks into the opened file and moves it out of the graph, and the day then shows both files' blocks.",
+          "blocking": true,
+          "authority": "CM step 2 batch 2 OW-2 / PQ-1 (manager ruling 2026-11-02, Martin veto item): the duplicate-day keeper is the claimant order's owner"
+        }
+      ],
+      "acceptableVariations": [
+        "Panel wording, badge text and timing may vary while the canonical mark and the Merge offer are on the stated files."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
+    "scripts/e2e-cm-date-links.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With :journal/file-name-format dd-MM-yyyy, clicking a rendered [[22-10-2026]] opens the Oct 22nd, 2026 journal with its body, and clicking a link to a journal's alias opens that journal with its body; navigation creates no page file and changes no bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing and title decoration may vary while the routed page is the journal and shows its body."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
     "scripts/e2e-gh623-link-navigation.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
@@ -712,7 +753,7 @@
       "stability": "stable"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

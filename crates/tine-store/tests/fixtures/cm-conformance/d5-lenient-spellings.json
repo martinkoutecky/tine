@@ -1,0 +1,11 @@
+{
+  "files": {
+    "journals/2026_10_22.md": "- day\n",
+    "journals/2026_10_02.md": "- early day\n",
+    "pages/Notes.md": "- full month [[October 22nd, 2026]]\n- wrong suffix [[Oct 22st, 2026]]\n- one-digit day [[2026-10-2]]\n- lower case [[oct 22nd, 2026]]\n"
+  },
+  "queries": [
+    {"anchor": "block", "q": {"refs": "Oct 22nd, 2026"}},
+    {"anchor": "block", "q": {"refs": "October 22nd, 2026"}}
+  ]
+}

@@ -95,6 +95,18 @@ html[data-theme="light"] {
   --border-color: #e2e2e2;
   --guide-color: rgba(46, 27, 5, 0.12);
   --guide-hover: rgba(46, 27, 5, 0.28);
+  /* GH #856: indent guides take a muted hue per nesting level, cycling every six
+     levels. `--guide-hue-N` is the hue (opaque); `--guide-level-N` is what the line
+     paints: the hue at `--guide-level-strength` laid over the theme's own `--guide-color`, so the line
+     keeps the theme's tone and rough strength. Set either family in custom.css (on
+     :root) to restyle; set all six `--guide-level-N` to one color to flatten. */
+  --guide-hue-1: #4a7fd4;
+  --guide-hue-2: #c8922a;
+  --guide-hue-3: #2e9d8f;
+  --guide-hue-4: #d2645a;
+  --guide-hue-5: #8a6bc8;
+  --guide-hue-6: #7aa83c;
+  --guide-level-strength: 48%;
 
   --bullet-color: #adadad;
   --bullet-ring: rgba(0, 0, 0, 0.08);
@@ -136,6 +148,13 @@ html[data-theme="dark"] {
   --border-color: #34363c;
   --guide-color: rgba(255, 255, 255, 0.10);
   --guide-hover: rgba(255, 255, 255, 0.26);
+  --guide-hue-1: #6ca2f0;
+  --guide-hue-2: #e0b04e;
+  --guide-hue-3: #4cc0b0;
+  --guide-hue-4: #ef8a7c;
+  --guide-hue-5: #b595ec;
+  --guide-hue-6: #9ccc5f;
+  --guide-level-strength: 50%;
 
   --bullet-color: #6f7177;
   --bullet-ring: rgba(255, 255, 255, 0.10);

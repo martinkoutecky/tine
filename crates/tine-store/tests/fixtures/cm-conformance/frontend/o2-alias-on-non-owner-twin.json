@@ -1,0 +1,130 @@
+{
+  "conflicts": [
+    "a"
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "target": {
+        "id": "pages/a.md",
+        "kind": "existing",
+        "others": [
+          "pages/b.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "zed",
+      "link": {
+        "kind": "page",
+        "name": "a"
+      },
+      "name": "zed",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/b.md"
+        ]
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "zed": {
+      "journal": [
+        "journal",
+        "zed"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "a": {
+      "journal": null,
+      "page": "pages/a.md"
+    },
+    "zed": {
+      "journal": null,
+      "page": "pages/b.md"
+    }
+  },
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "zed": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "zed"
+      ]
+    }
+  }
+}

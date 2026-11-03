@@ -2,6 +2,11 @@
 /* eslint-disable */
 
 /**
+ * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+ */
+export function absent_link_is_journal(name: string, file_format: string, title_format: string): boolean;
+
+/**
  * Parser-boundary negative-only prefilter; true still needs drawer ownership.
  */
 export function block_may_have_logbook(raw: string): boolean;
@@ -81,6 +86,12 @@ export function is_query_macro_name(name: string): boolean;
  * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
  */
 export function is_render_hidden_prop(key: string, user_hidden: string[], pre_block: boolean): boolean;
+
+/**
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+ * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ */
+export function journal_day_json(name: string, file_format: string, title_format: string): string;
 
 /**
  * The message of the most recent panic in this instance ("" if none). A trapped
@@ -306,6 +317,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
@@ -322,6 +334,7 @@ export interface InitOutput {
     readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];

@@ -1,0 +1,7 @@
+{
+  "files": {
+    "pages/Machine Learning.md": "alias:: ML\n",
+    "pages/notes.md": "- [[ML]] notes\n",
+    "journals/2026_10_26.md": "- [[Machine Learning]] today\n"
+  }
+}

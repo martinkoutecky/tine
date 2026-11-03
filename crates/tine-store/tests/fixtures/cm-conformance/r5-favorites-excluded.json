@@ -1,0 +1,8 @@
+{
+  "favoritesPage": "Favs",
+  "files": {
+    "pages/Favs.md": "- [[A]]\n",
+    "pages/x.md": "- [[A]]\n",
+    "pages/A.md": "- own [[A]]\n"
+  }
+}

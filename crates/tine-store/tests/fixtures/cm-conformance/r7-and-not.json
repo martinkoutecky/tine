@@ -1,0 +1,22 @@
+{
+  "files": {
+    "pages/notes.md": "- [[A]] only\n- [[A]] and [[B]]\n- [[B]] only\n- [[A]] parent\n  - child [[B]]\n"
+  },
+  "queries": [
+    {
+      "anchor": "block",
+      "q": {
+        "and": [
+          {
+            "refs": "A"
+          },
+          {
+            "not": {
+              "refs": "B"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

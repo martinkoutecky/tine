@@ -1,0 +1,54 @@
+/* GH #856: each indent guide takes the color of its nesting level, in pure CSS (no
+   depth in JS, no signal per block). The six level colors rotate down the tree: a
+   `.block-children-container` copies the colors its parent guide handed down into
+   `--gl-mN`, and its `.block-children` hands them on shifted by one (`--gl-cN` =
+   `--gl-m(N+1)`) and paints with the first copy. Two names on two elements, because a
+   custom property cannot be defined from its own inherited value. Only blocks that
+   have children pay (12 declarations on each of two elements); a leaf block adds
+   nothing. A foreign outline (embed, Linked References, query result, block
+   references) starts again at level 1 where it begins: `.live-ref-group`,
+   `.embed-block`. Every override of the guide (document mode, embed accent,
+   comment threads, thread lines) sets `border-inline-start-color` and still wins:
+   this only changes the value the base rule reads. The knob "Color indent guides by
+   level" off adds `tine-guide-colors-single` to <html>, which paints `--guide-color`. */
+:root {
+  --guide-level-1: color-mix(in srgb, var(--guide-hue-1) var(--guide-level-strength, 48%), var(--guide-color));
+  --guide-level-2: color-mix(in srgb, var(--guide-hue-2) var(--guide-level-strength, 48%), var(--guide-color));
+  --guide-level-3: color-mix(in srgb, var(--guide-hue-3) var(--guide-level-strength, 48%), var(--guide-color));
+  --guide-level-4: color-mix(in srgb, var(--guide-hue-4) var(--guide-level-strength, 48%), var(--guide-color));
+  --guide-level-5: color-mix(in srgb, var(--guide-hue-5) var(--guide-level-strength, 48%), var(--guide-color));
+  --guide-level-6: color-mix(in srgb, var(--guide-hue-6) var(--guide-level-strength, 48%), var(--guide-color));
+}
+:root, .live-ref-group, .embed-block {
+  --gl-c1: var(--guide-level-1);
+  --gl-c2: var(--guide-level-2);
+  --gl-c3: var(--guide-level-3);
+  --gl-c4: var(--guide-level-4);
+  --gl-c5: var(--guide-level-5);
+  --gl-c6: var(--guide-level-6);
+}
+.block-children-container {
+  --gl-m1: var(--gl-c1);
+  --gl-m2: var(--gl-c2);
+  --gl-m3: var(--gl-c3);
+  --gl-m4: var(--gl-c4);
+  --gl-m5: var(--gl-c5);
+  --gl-m6: var(--gl-c6);
+}
+.block-children {
+  --guide-line: var(--gl-m1);
+  --gl-c1: var(--gl-m2);
+  --gl-c2: var(--gl-m3);
+  --gl-c3: var(--gl-m4);
+  --gl-c4: var(--gl-m5);
+  --gl-c5: var(--gl-m6);
+  --gl-c6: var(--gl-m1);
+}
+html.tine-guide-colors-single .block-children {
+  --guide-line: var(--guide-color);
+}
+/* Hover keeps its hue: the level color stepped up toward the hover color. */
+html:not(.tine-guide-colors-single) .block-children-left-border:not(:disabled):hover + .block-children,
+html:not(.tine-guide-colors-single) .block-children-left-border:not(:disabled):focus-visible + .block-children {
+  border-inline-start-color: color-mix(in srgb, var(--gl-m1) 55%, var(--guide-hover));
+}

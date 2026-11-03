@@ -1944,6 +1944,9 @@ mod customize_look_guide_tests {
             "**Embedded blocks**",
             "**Links to the web or a file**",
             "**Links to pages that do not exist yet**",
+            // GH #856: indent guides colored by nesting level, with their off switch.
+            "**Color indent guides by level**",
+            "--guide-hue-1",
             "style.knobs.v1",
             // Discussion #714: the transient toggle class for theme animations.
             "`just-toggled`",

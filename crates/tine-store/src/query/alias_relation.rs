@@ -266,19 +266,25 @@ impl AliasRelation {
         Arc::clone(&self.edges)
     }
 
-    /// Relative paths of the pages declaring `key`, once per declaration, in
-    /// plain text order of the relative path: the owner rule
-    /// (D-20261019-AL2), the order the name inventory lists owners in, so
-    /// the first owner is the same for every resolver. (The map's own order
-    /// compares paths folder by folder: `a/x.md` before `a b.md`.)
+    /// Relative paths of the pages declaring `key`, each page once, in plain
+    /// text order of the relative path: the owner rule (D-20261019-AL2/CI4,
+    /// SPEC §4.3), so the first is [`Self::owner_path`] for every resolver.
+    /// (The map's own order compares paths folder by folder: `a/x.md` before
+    /// `a b.md`.)
     pub(crate) fn owner_paths(&self, key: &str) -> Option<Vec<String>> {
         let by_path = self.owners.get(key)?;
-        let mut paths: Vec<String> = by_path
-            .values()
-            .flat_map(|(rel, n)| std::iter::repeat_n(rel.clone(), *n as usize))
-            .collect();
+        let mut paths: Vec<String> = by_path.values().map(|(rel, _)| rel.clone()).collect();
         paths.sort();
+        paths.dedup();
         Some(paths)
+    }
+
+    /// The page an alias-only `key` opens: the declarer with the least
+    /// relative path (D-20261019-AL2/CI4). The one answer for every Rust
+    /// resolver (`resolve`, `link_target`, `page_named` through `resolve`).
+    /// O(declarers of the key).
+    pub(crate) fn owner_path(&self, key: &str) -> Option<&String> {
+        self.owners.get(key)?.values().map(|(rel, _)| rel).min()
     }
 
     /// Absolute paths of the pages declaring `key` (keys of the per-page

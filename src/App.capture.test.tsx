@@ -8,6 +8,8 @@ import { answerOpensFromDocument } from "./document/host/documentHost.test.suppo
 import { journalTitle, appNow } from "./journal";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { mainPaneRouter, route } from "./router";
+import { setGraphMeta } from "./graphSession";
+import type { GraphMeta } from "./types";
 
 import { initParser } from "./render/parse";
 beforeAll(() => initParser());
@@ -19,7 +21,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
 
-afterEach(() => { resetStore(); vi.restoreAllMocks(); h.ack.mockClear(); });
+afterEach(() => { setGraphMeta(null); resetStore(); vi.restoreAllMocks(); h.ack.mockClear(); });
 
 it.each(["Destination", ""])("L9-08: retries a landed capture without inserting twice (title %s)", async (title) => {
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
@@ -173,4 +175,70 @@ it("preserves the existing one-shot capture path for an idless delivery", async 
   expect(pageByName(page.name)!.roots.map(id => doc.byId[id].raw)).toContain("one shot");
   expect(h.ack).not.toHaveBeenCalled();
   dispose();
+});
+
+/** GH #832 / #833: OG's `:quick-capture-options` and `:quick-capture-templates`. */
+async function receiveConfigured(meta: Partial<GraphMeta>, payload: { title?: string; text: string }, pages: string[]) {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  setGraphMeta({ preferred_format: "md", ...meta } as GraphMeta);
+  for (const name of pages) {
+    loadSingle({ name, kind: "page", title: name, id: `pages/${name}.md`, rev: "before", pre_block: null, blocks: [] });
+  }
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name, kind) => ({ name, kind, title: name, id: `pages/${name}.md`, rev: "before", pre_block: null, blocks: [] }));
+  vi.spyOn(backend(), "pageWait").mockResolvedValue(true);
+  const dispose = await installQuickCaptureReceiver();
+  await h.receive!({ payload: { id: `cfg-${Math.random()}`, target: "main", bindingGeneration: 11, ...payload } });
+  dispose();
+}
+const rootsOf = (name: string) => pageByName(name)!.roots.map(id => doc.byId[id].raw);
+
+it("GH #832: an untitled capture goes to the configured default page", async () => {
+  await receiveConfigured({ quick_capture_default_page: "Inbox" }, { text: "- idea" }, ["Inbox"]);
+  expect(rootsOf("Inbox")).toEqual(["idea"]);
+  expect(pageByName(journalTitle(appNow()))).toBeUndefined();
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", expect.objectContaining({ ok: true }));
+});
+
+it("GH #832: a typed title beats the default page; insert-today? beats it for an untitled capture", async () => {
+  await receiveConfigured({ quick_capture_default_page: "Inbox" }, { title: "Typed", text: "- one" }, ["Inbox", "Typed"]);
+  expect(rootsOf("Typed")).toEqual(["one"]);
+  expect(rootsOf("Inbox")).toEqual([]);
+  resetStore();
+  const today = journalTitle(appNow());
+  vi.restoreAllMocks();
+  await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_insert_today: true }, { text: "- two" }, ["Inbox"]);
+  expect(rootsOf(today)).toEqual(["two"]);
+  expect(rootsOf("Inbox")).toEqual([]);
+});
+
+it("GH #833: the configured text template stamps the captured entry", async () => {
+  await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_template_text: "[{time}] {text}" }, { text: "- Follow up with client\n- second" }, ["Inbox"]);
+  const [first, second] = rootsOf("Inbox");
+  expect(first).toMatch(/^\[\d{2}:\d{2}\] Follow up with client$/);
+  expect(second).toBe("second");
+});
+
+it("with no options a capture lands in today's journal, untemplated, and does not navigate", async () => {
+  const today = journalTitle(appNow());
+  mainPaneRouter.openPage("Elsewhere");
+  const before = route();
+  await receiveConfigured({}, { text: "- plain" }, []);
+  expect(rootsOf(today)).toEqual(["plain"]);
+  expect(route()).toEqual(before);
+});
+
+it("a capture saves when the system language is not a language tag (Linux LANG=C)", async () => {
+  // WebKitGTK under LANG=C reports navigator.language "C", which Intl rejects.
+  vi.spyOn(navigator, "language", "get").mockReturnValue("C");
+  const today = journalTitle(appNow());
+  await receiveConfigured({}, { text: "- under C" }, []);
+  expect(rootsOf(today)).toEqual(["under C"]);
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", expect.objectContaining({ ok: true }));
+});
+
+it("GH #832: redirect-page? opens the page the capture landed on", async () => {
+  mainPaneRouter.openPage("Elsewhere");
+  await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_redirect_page: true }, { text: "- go" }, ["Inbox"]);
+  expect(route()).toMatchObject({ kind: "page", name: "Inbox" });
 });

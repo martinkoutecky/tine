@@ -1,0 +1,127 @@
+{
+  "conflicts": [
+    "foo"
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo",
+      "name": "Foo",
+      "target": {
+        "id": "pages/Foo.md",
+        "kind": "existing",
+        "others": [
+          "pages/other.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo",
+      "name": "foo",
+      "target": {
+        "id": "pages/Foo.md",
+        "kind": "existing",
+        "others": [
+          "pages/other.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Foo": {
+      "journal": [
+        "journal",
+        "foo"
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "foo": {
+      "journal": [
+        "journal",
+        "foo"
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    }
+  },
+  "owner": {
+    "Foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    }
+  },
+  "spellings": {
+    "Foo": {
+      "backend": [
+        "page",
+        "foo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "foo": {
+      "backend": [
+        "page",
+        "foo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo"
+      ]
+    }
+  }
+}

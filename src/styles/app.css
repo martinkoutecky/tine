@@ -3834,7 +3834,7 @@ html[data-system-insets="native-viewport"] {
    container's left edge, so margin-left:-3px puts the border there; padding-left
    then pushes the children content back to its indented position. */
 .block-children {
-  border-inline-start: 1px solid var(--guide-color);
+  border-inline-start: 1px solid var(--guide-line, var(--guide-color));
   margin-inline-start: -3px;
   padding-inline-start: 3px;
 }
