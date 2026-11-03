@@ -16,7 +16,8 @@ use tine_core::query_plan::{
     QueryExplanation, QueryHasMore, QueryHit, TextField, TextMatchMode,
 };
 use tine_core::refs;
-use tine_core::search_query::{canonical_fold, identity_fold, literal_fold, Matcher, Term};
+use tine_core::refs::page_key;
+use tine_core::search_query::{canonical_fold, literal_fold, Matcher, Term};
 
 const MAX_EVIDENCE_SPANS: usize = 32;
 
@@ -247,7 +248,7 @@ impl QueryPlan {
             branches,
             diagnostics,
             page_scope: None,
-            page_exact: (!query.trim().is_empty()).then(|| identity_fold(query.trim())),
+            page_exact: (!query.trim().is_empty()).then(|| page_key(query)),
             regexes,
             words: Vec::new(),
             fragments: Vec::new(),
@@ -322,7 +323,7 @@ impl QueryPlan {
             }],
             diagnostics: Vec::new(),
             page_scope: None,
-            page_exact: Some(identity_fold(&value)),
+            page_exact: Some(page_key(&value)),
             regexes: HashMap::new(),
             words: Vec::new(),
             fragments: Vec::new(),

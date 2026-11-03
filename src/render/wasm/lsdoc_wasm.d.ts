@@ -87,6 +87,13 @@ export function hide_policy_hides(policy: string, key: string, properties: strin
 export function install_panic_hook(): void;
 
 /**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ */
+export function is_editable_linkable_built_in(key: string): boolean;
+
+/**
  * OG built-ins excluded from default query-table property columns.
  */
 export function is_og_built_in_property(key: string): boolean;
@@ -163,6 +170,15 @@ export function outline_max_depth(): number;
  * the window can send only those (DESIGN §5.3, §8).
  */
 export function outline_reads_json(verb: string): string;
+
+/**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ */
+export function page_alias_spellings(pre_block: string | null | undefined, first_root: string | null | undefined, is_org: boolean): string[];
 
 /**
  * The native file-format answer, including mixed-case Org extensions.
@@ -359,6 +375,7 @@ export interface InitOutput {
     readonly hidden_from_all_pages: (a: number, b: number) => number;
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
+    readonly is_editable_linkable_built_in: (a: number, b: number) => number;
     readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -376,6 +393,7 @@ export interface InitOutput {
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
     readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
+    readonly page_alias_spellings: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];

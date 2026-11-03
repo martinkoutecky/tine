@@ -739,3 +739,285 @@ fn file_name_answerers() {
         "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::file_name_answerers",
     );
 }
+
+/// Census Q1 ("the page-name key"): the answerer `tine_core::page_identity::
+/// page_key` against every other fold that decides page identity, on a corpus
+/// of tricky names (non-ASCII case, NFD, edge whitespace, boundary slashes,
+/// final sigma, dotted I, ß, compatibility forms). No bridge needed.
+///
+/// The model has no executable key: SPEC §2.1 leaves `key` a given function
+/// with law K1 (`key (spell k) = k`) and names "trim, boundary-slash,
+/// lowercase, NFC" as the intended instance. So `page_key` is compared with
+/// (a) that intended instance, transcribed from OG `page-name-sanity-lc`
+/// (`graph_parser/util.cljs:162`: lower-case, `remove-boundary-slashes`,
+/// NFC) plus Tine's decided trim, and (b) K1 with `spell = id` (is a key its
+/// own key?). The second computers are compared as partitions: a pair of
+/// names one fold calls the same page and the other does not.
+///
+/// Folds that are inline in production code are restated here in one line
+/// each, with their sites (page search's exact match and completion dedup call
+/// `page_key` since census Q1; tine-search `identity_fold` is gone). Store-level
+/// probes run the real `[[` completion (`complete_page_names`) on a graph
+/// whose references spell one page several ways.
+///
+/// Differences: part `keys` of `expected-differences.json`; the corpus with
+/// each name's `page_key` goes to `frontend-keys/corpus.json` for
+/// `src/cmConformanceKeys.test.ts`. `CM_REFRESH=1` rewrites both.
+#[test]
+fn key_answerers() {
+    use unicode_normalization::UnicodeNormalization;
+    const CORPUS: &[&str] = &[
+        "Über",
+        "über",
+        "U\u{308}ber",
+        "u\u{308}ber",
+        "ÜBER",
+        " Über ",
+        "Über/",
+        "/Über",
+        "/Über/",
+        "//Über//",
+        "Foo",
+        "foo",
+        " Foo",
+        "Foo ",
+        "/Foo",
+        "Foo/",
+        "/Foo/",
+        "//Foo//",
+        "/ Foo /",
+        "\u{3000}Foo",
+        "Foo\u{a0}",
+        "Foo/Bar",
+        "foo/bar/",
+        "ΟΔΟΣ",
+        "οδος",
+        "οδοσ",
+        "İstanbul",
+        "i\u{307}stanbul",
+        "istanbul",
+        "Straße",
+        "STRASSE",
+        "strasse",
+        "ǅemal",
+        "ǆemal",
+        "Ｔｉｎｅ",
+        "tine",
+        "\u{212B}",
+        "\u{C5}",
+        "\u{E5}",
+        "A\u{30A}",
+    ];
+    fn strip_boundary(s: &str) -> &str {
+        let s = s.strip_prefix('/').unwrap_or(s);
+        s.strip_suffix('/').unwrap_or(s)
+    }
+    // (name, fold, sites). Each is the production expression, restated. Only
+    // declared different questions remain (census Q1): the LIKE pattern fold
+    // (its differences are expected, a pattern is not a name) and the
+    // `:inputs` literal (must stay difference-free). Page search and publish
+    // call `page_key` and are no longer listed.
+    type Fold = fn(&str) -> String;
+    let folds: &[(&str, Fold, &str)] = &[
+        (
+            "like_fold",
+            |s| s.to_lowercase().nfc().collect(),
+            "query/eval.rs CmpOp::Like page-name pattern (declared pattern text)",
+        ),
+        (
+            "inputs_then_key",
+            |s| page_key(&s.to_lowercase()),
+            "core query/advanced_patterns.rs :inputs [[page]] lowercase, then Attr::Name page_key",
+        ),
+    ];
+    let keys: Vec<String> = CORPUS.iter().map(|s| page_key(s)).collect();
+    let mut section = Section::default();
+    let mut diffs = Vec::new();
+    for (i, s) in CORPUS.iter().enumerate() {
+        let intended: String = strip_boundary(&s.trim().to_lowercase()).nfc().collect();
+        if keys[i] != intended {
+            diffs.push(format!(
+                "page_key vs SPEC §2.1 intended instance (OG page-name-sanity-lc + trim): {s:?} -> {:?}, intended {intended:?}",
+                keys[i]
+            ));
+        }
+        let again = page_key(&keys[i]);
+        if again != keys[i] {
+            diffs.push(format!(
+                "page_key is not idempotent (K1 with spell = id): {s:?} -> {:?} -> {again:?}",
+                keys[i]
+            ));
+        }
+        // entry_identity::fold_leaf is a declared coarser filter: it must
+        // never split what page_key joins.
+        for (j, t) in CORPUS.iter().enumerate().skip(i + 1) {
+            if keys[i] == keys[j]
+                && crate::model::entry_identity::fold_leaf(std::ffi::OsStr::new(s))
+                    != crate::model::entry_identity::fold_leaf(std::ffi::OsStr::new(t))
+            {
+                diffs.push(format!("fold_leaf splits a page_key class: {s:?} / {t:?}"));
+            }
+        }
+    }
+    for (name, fold, _sites) in folds {
+        let folded: Vec<String> = CORPUS.iter().map(|s| fold(s)).collect();
+        for i in 0..CORPUS.len() {
+            for j in i + 1..CORPUS.len() {
+                let by_key = keys[i] == keys[j];
+                let by_fold = folded[i] == folded[j];
+                if by_key != by_fold {
+                    diffs.push(format!(
+                        "{name}: {:?} / {:?}: page_key {}, {name} {}",
+                        CORPUS[i],
+                        CORPUS[j],
+                        if by_key { "same" } else { "different" },
+                        if by_fold { "same" } else { "different" },
+                    ));
+                }
+            }
+        }
+    }
+    section.fixtures.insert("corpus".into(), diffs);
+
+    // Probe: `[[` completion over a graph whose references spell existing
+    // pages in other forms. One row per page identity is the contract
+    // (`query_plan/pages.rs`: "a physical page wins over an alias with the
+    // same identity"); a second row for the same page_key is a phantom.
+    let dir = tempfile::tempdir().unwrap();
+    for (rel, text) in [
+        ("pages/Foo.md", "- foo\n"),
+        ("pages/Über.md", "- über\n"),
+        (
+            "pages/r.md",
+            "- [[Foo/]] [[/Foo]] [[ Foo ]] [[U\u{308}ber]] [[Über/]]\n",
+        ),
+    ] {
+        let path = dir.path().join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    let mut probe = Vec::new();
+    for query in ["foo", "Foo/", "/Foo", "über", "U\u{308}ber"] {
+        let rows = view.complete_page_names(query, 20, None, false, None);
+        let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (entry, class) in &rows {
+            by_key
+                .entry(page_key(&entry.name))
+                .or_default()
+                .push(format!("{:?} {class:?}", entry.name));
+        }
+        for (key, names) in by_key {
+            if names.len() > 1 {
+                probe.push(format!(
+                    "completion {query:?}: {} rows for one page (key {key:?}): {names:?}",
+                    names.len()
+                ));
+            }
+        }
+        let wanted = page_key(query);
+        if let Some((entry, class)) = rows.iter().find(|(e, _)| page_key(&e.name) == wanted) {
+            if *class != tine_core::query_plan::ObjectiveMatchClass::Exact {
+                probe.push(format!(
+                    "completion {query:?}: the page with the same page_key ({:?}) is ranked {class:?}, not Exact",
+                    entry.name
+                ));
+            }
+        }
+    }
+    section.fixtures.insert("completion".into(), probe);
+    drop(view);
+    drop(store);
+
+    let corpus = json!(CORPUS
+        .iter()
+        .zip(&keys)
+        .map(|(s, k)| json!({"name": s, "key": k}))
+        .collect::<Vec<_>>());
+    check_frontend_cases(
+        "frontend-keys",
+        BTreeMap::from([("corpus".to_owned(), corpus)]),
+        "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::key_answerers, \
+         then CM_REFRESH=1 npx vitest run src/cmConformanceKeys.test.ts",
+    );
+    shared::check_expected(
+        env!("CARGO_MANIFEST_DIR"),
+        "keys",
+        &section,
+        "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::key_answerers",
+    );
+}
+
+/// Census Q7 (the alias rule), the page header's alias list: the frontend's
+/// `render/block.ts aliasNamesOf` re-derives a page's declared aliases from
+/// the properties it reads (Page.tsx: `pageHeaderProperties`, every pre-block
+/// and properties-only first-root line; RightSidebar.tsx:
+/// `readPageProperties`, first line per key). This writes, per header shape,
+/// the `PageDto` the frontend loads (pre-block and first root) and the store's
+/// answer (`document_alias_spellings`), for `src/cmConformanceKeys.test.ts`;
+/// it also asserts the store resolves each declared spelling to the page.
+/// `CM_REFRESH=1` rewrites `frontend-aliases/headers.json`.
+#[test]
+fn alias_header_cases() {
+    const HEADERS: &[(&str, &str)] = &[
+        ("pages/h1.md", "alias:: A1, B1\n\n- body\n"),
+        ("pages/h2.md", "aliases:: A2\n\n- body\n"),
+        ("pages/h3.md", "alias:: A3\nalias:: B3\n\n- body\n"),
+        ("pages/h4.md", "alias:: \"A4, B4\"\n\n- body\n"),
+        ("pages/h5.md", "- alias:: A5\n- body\n"),
+        ("pages/h6.md", "alias:: A6\n\n- alias:: B6\n- body\n"),
+        ("pages/h7.md", "Alias:: A7\n\n- body\n"),
+        ("pages/h8.md", "alias:: [[A8]], #B8\n\n- body\n"),
+        ("pages/h9.md", "alias:: A9\naliases:: B9\n\n- body\n"),
+        ("pages/o1.org", "#+ALIAS: OA1\n\n* body\n"),
+        (
+            "pages/o2.org",
+            ":PROPERTIES:\n:alias: OA2\n:END:\n\n* body\n",
+        ),
+        ("pages/o3.org", "#+ALIASES: OA3\n\n* body\n"),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    for (rel, text) in HEADERS {
+        let path = dir.path().join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    let mut cases = Vec::new();
+    for (rel, text) in HEADERS {
+        let read = store.page(&crate::PageId::from(*rel)).unwrap();
+        let declared = document_alias_spellings(&shared::parse_file(rel, text));
+        let mut resolves = BTreeMap::new();
+        for alias in &declared {
+            let to = match view.resolve(alias, false) {
+                crate::Resolved::Existing { id, .. } => Some(id.as_str().to_owned()),
+                crate::Resolved::Alias { owners } => {
+                    owners.first().map(|id| id.as_str().to_owned())
+                }
+                crate::Resolved::Absent { .. } => None,
+            };
+            resolves.insert(alias.clone(), to);
+        }
+        assert!(
+            resolves.values().all(|to| to.as_deref() == Some(*rel)),
+            "{rel}: the store declares {declared:?} but resolves {resolves:?}"
+        );
+        cases.push(json!({
+            "path": rel,
+            "format": if rel.ends_with(".org") { "org" } else { "md" },
+            "preBlock": read.doc.pre_block,
+            "firstRoot": read.doc.blocks.first().map(|b| b.raw.clone()),
+            "declared": declared,
+        }));
+    }
+    drop(view);
+    drop(store);
+    check_frontend_cases(
+        "frontend-aliases",
+        BTreeMap::from([("headers".to_owned(), json!(cases))]),
+        "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::alias_header_cases, \
+         then CM_REFRESH=1 npx vitest run src/cmConformanceKeys.test.ts",
+    );
+}

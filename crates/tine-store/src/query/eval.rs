@@ -1065,6 +1065,9 @@ fn eval_page_name(op: CmpOp, value: &Value, page_name: &str, ctx: &EvalCtx) -> b
         CmpOp::NotEq => text.is_some_and(|text| key != refs::page_key(text)),
         CmpOp::StartsWith => text.is_some_and(|text| key.starts_with(&page_prefix_key(text))),
         // A LIKE pattern keeps its boundary slashes: they are pattern text.
+        // Declared different question (I-12, census Q1): this folds a PATTERN
+        // to match against the page_key, it does not name a page, so it keeps
+        // edge whitespace and slashes that page_key would strip.
         CmpOp::Like => text.is_some_and(|text| {
             ctx.cache
                 .like(&key, &text.to_lowercase().nfc().collect::<String>())

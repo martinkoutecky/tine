@@ -7,6 +7,10 @@ use tine_outline::editor_text::property_key_norm;
 // `logseq.graph-parser.property/editable-built-in-properties` at 6e7afa8eb.
 // Keep source spellings here; `property_key_norm` supplies Tine's canonical
 // property identity (including underscore -> dash).
+// A different list from `query::atom::is_editable_linkable_built_in` (census
+// Q7, I-12): this is every editable built-in, which OG hides from property
+// pages; `alias`, `aliases` and `tags` are in both because OG lists them in
+// both. Which keys declare aliases is `tine-store` `query::is_alias_key`.
 pub(super) const OG_EDITABLE_BUILT_IN_PROPERTIES: &[&str] = &[
     "title",
     "icon",

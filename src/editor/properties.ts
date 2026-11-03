@@ -114,7 +114,7 @@ export function pageHeaderBadLine(raw: string): { line: number; text: string } |
  *  (SheetTable / key pages write them as page properties), so a first bullet
  *  holding only those is a legitimate page header. Intentional difference from
  *  OG: OG never authors `tine.*` (Martin, D-20261018-H210). Mirror of Rust
- *  `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store model.rs, which carries the OG
+ *  `BLOCK_SCOPED_PROPERTY_KEYS` (tine-core page_header.rs, which carries the OG
  *  provenance for the rest); `src/i12PageHeader.test.ts` keeps them equal. */
 export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
   "id",
@@ -138,7 +138,7 @@ export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
 ];
 
 /** The ONE predicate for "this first root's raw is a page header" (Rust twin:
- * `is_page_header_candidate`, model.rs). Display (`firstPropertiesId`, Block),
+ * `is_page_header_candidate`, tine-core page_header.rs). Display (`firstPropertiesId`, Block),
  * edit (`pagePropertyParts`, `beginPageHeaderEdit`, `setRaw` title intent) and
  * save-time promotion (`isPromotablePageHeaderRoot`) all call it, so a block
  * cannot be hidden as the header in one place and edited as ordinary text in

@@ -92,7 +92,7 @@ fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>, config: &Config
     }
 }
 
-/// Keys the store treats as block-scoped (`model::BLOCK_SCOPED_PROPERTY_KEYS`,
+/// Keys the store treats as block-scoped (`tine_core::page_header::BLOCK_SCOPED_PROPERTY_KEYS`,
 /// copied): a first root holding one of them is never the page header.
 const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
     "id",

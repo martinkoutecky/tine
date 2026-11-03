@@ -106,6 +106,19 @@ pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
+#[path = "../../tine-core/src/page_header.rs"]
+mod page_header;
+
+/// The alias spellings a page declares (census Q7): the store's own answer,
+/// `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+/// properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+/// one spelling per page identity). The page header's alias list shows this.
+/// O(header bytes).
+#[wasm_bindgen]
+pub fn page_alias_spellings(pre_block: Option<String>, first_root: Option<String>, is_org: bool) -> Vec<String> {
+    page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
+}
+
 #[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
 mod og_built_in;
 
@@ -118,6 +131,14 @@ mod og_built_in;
 #[path = "../../tine-core/src/query/atom/parse_config.rs"]
 mod parse_config;
 use parse_config::{reference_parsing_suppressed, separated_by_commas, ParseConfig};
+
+/// OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+/// `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+/// frontend's fallback when the graph's `linkable_property_keys` is absent.
+#[wasm_bindgen]
+pub fn is_editable_linkable_built_in(key: &str) -> bool {
+    parse_config::is_editable_linkable_built_in(key)
+}
 use tine_outline::editor_text::property_key_norm;
 use tine_outline::lsdoc_block_parse::parse_inline_bounded;
 #[allow(dead_code)]

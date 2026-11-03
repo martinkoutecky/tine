@@ -27,8 +27,8 @@ pub(crate) mod page_counts;
 pub(crate) mod page_properties;
 #[cfg(test)]
 mod sample_seed_tests;
+use page_properties::page_document_is_org;
 pub(crate) use page_properties::page_facets;
-use page_properties::{page_document_is_org, page_property_lines};
 pub(crate) use tine_core::page_properties::page_property_raw;
 
 #[derive(Debug, Clone)]
@@ -361,14 +361,6 @@ fn collect_bounded(
     }
 }
 
-/// True when a block's raw text is only page-header properties (OG treats such
-/// a FIRST block as the page-properties (pre-)block). One answerer: the parser's
-/// page header, minus the block-scoped exemption (GH #210/#540): the shared
-/// `model::is_page_header_candidate`, the same answerer save-time promotion uses.
-fn is_properties_only(raw: &str) -> bool {
-    crate::model::is_page_header_candidate(raw.trim_end_matches(['\n', '\r']))
-}
-
 /// Map of `alias::` → canonical page name (original case). The alias key is
 /// normalized for lookup. Page-level `alias::` comes from the page pre-block
 /// (Logseq's on-disk file convention) OR — when the user typed it as the first
@@ -390,58 +382,33 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
-/// The text a page's own properties, aliases included, are read from: the
-/// pre-block when the page has one, else a properties-only FIRST root (the
-/// page-properties block in OG, written back as a pre-block on save there;
-/// GH #62), else none. The one header rule of the alias answer
-/// ([`document_alias_spellings`]); a merge reads both pages' aliases and
-/// writes the united header through it (REG-CM-MERGE-LOSES-ALIASES).
+/// The text a page's own properties are read from: the one header rule,
+/// `tine_core::page_header::page_header_text` (pre-block, else a
+/// properties-only first root). Kept as the store's name for it; the merge
+/// asks it here.
 pub fn page_header_text<'a>(
     pre_block: Option<&'a str>,
     first_root: Option<&'a str>,
 ) -> Option<&'a str> {
-    match pre_block {
-        Some(pre) => Some(pre),
-        None => first_root.filter(|raw| is_properties_only(raw)),
-    }
+    tine_core::page_header::page_header_text(pre_block, first_root)
 }
 
-/// True for a page-header property key that declares aliases: `alias` and
-/// `aliases`, in any case. OG reads only `alias::` as an alias
-/// (`graph_parser/extract.cljc`, `(:alias properties)`) and `aliases::` only as
-/// a reference-valued key; Tine and the conceptual model read both (named OG
-/// difference, D-20261018-M2, K-Q1 2026-11-03). The alias answer and the merge
-/// both ask this.
+/// Whether a page-header key declares aliases (`alias`, `aliases`; a named
+/// OG difference): `tine_core::page_header::is_alias_key`.
 pub fn is_alias_key(key: &str) -> bool {
-    let key = property_key_norm(key);
-    key == "alias" || key == "aliases"
+    tine_core::page_header::is_alias_key(key)
 }
 
 /// Authored spellings for display/insertion. Identity consumers use
 /// `document_aliases` or `page_key`; case-only edits must refresh this projection.
+/// The answer is `tine_core::page_header::page_alias_spellings`, the same code
+/// the frontend's page header runs through wasm.
 pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
-    let alias_text = page_header_text(doc.pre_block.as_deref(), doc.roots.first().map(|b| b.raw()));
-    let Some(text) = alias_text else {
-        return Vec::new();
-    };
-    let mut aliases = Vec::new();
-    for (k, v) in page_property_lines(text, page_document_is_org(doc)) {
-        if is_alias_key(&k) {
-            let trimmed = v.trim();
-            if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-                continue;
-            }
-            aliases.extend(tine_core::property_refs::linkable_names(
-                &v,
-                page_document_is_org(doc),
-            ));
-        }
-    }
-    // Collapse duplicate identities while retaining a deterministic spelling.
-    aliases.sort_unstable();
-    let mut seen = std::collections::HashSet::new();
-    aliases.retain(|alias| seen.insert(refs::page_key(alias)));
-    aliases
+    tine_core::page_header::page_alias_spellings(
+        doc.pre_block.as_deref(),
+        doc.roots.first().map(|b| b.raw()),
+        page_document_is_org(doc),
+    )
 }
 
 #[cfg(test)]
@@ -1300,10 +1267,7 @@ fn backlink_filter_entry(
         // property boundary and explicit reference tokens are parser-owned;
         // top-level plain text supplies the additional comma-separated names.
         for (key, value) in projection.properties() {
-            if !(key.eq_ignore_ascii_case("tags")
-                || key.eq_ignore_ascii_case("alias")
-                || key.eq_ignore_ascii_case("aliases"))
-            {
+            if !tine_core::query::atom::is_editable_linkable_built_in(key) {
                 continue;
             }
             let quoted = value.trim();

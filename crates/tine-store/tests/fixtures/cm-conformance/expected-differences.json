@@ -1,4 +1,10 @@
 {
+  "aliasMerge": {
+    "fixtures": {},
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
+  },
   "conflictNames": {
     "fixtures": {},
     "harnessSkipped": [],
@@ -507,6 +513,66 @@
       ]
     }
   },
+  "frontendKeys": {
+    "fixtures": {
+      "corpus": [
+        "guide.ts key (declared: Guide titles are a separate namespace): \" Foo\" / \"/Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \" Foo\" / \"/Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \" Foo\" / \"Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \" Über \" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \" Über \" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \" Über \" / \"Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Foo\" / \"/Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Foo\" / \"Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Foo\" / \"Foo \": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Foo\" / \"　Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Foo/\" / \"Foo \": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Foo/\" / \"　Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"/Über\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo \" / \"/Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo \" / \"/Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo \" / \"Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo\" / \"/Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo\" / \"/Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo\" / \"Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo/\" / \"/Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo/\" / \"Foo \": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo/\" / \"　Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Foo/Bar\" / \"foo/bar/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \" Über \": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"ÜBER\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"foo\" / \"/Foo\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"foo\" / \"/Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"foo\" / \"Foo/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \" Über \": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"ÜBER\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Å\" / \"Å\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"ÜBER\" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"ÜBER\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"ÜBER\" / \"Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über\" / \"Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über/\" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Über/\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"å\" / \"Å\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"/Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"/Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"Über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"über\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"Über/\": page_key same, fold different",
+        "guide.ts key (declared: Guide titles are a separate namespace): \"Å\" / \"Å\": page_key same, fold different"
+      ]
+    }
+  },
   "frontendNames": {
     "fixtures": {
       "n4-org-file-links-triple-lowbar": [
@@ -517,6 +583,94 @@
   },
   "frontendRefs": {
     "fixtures": {}
+  },
+  "keys": {
+    "fixtures": {
+      "completion": [],
+      "corpus": [
+        "page_key is not idempotent (K1 with spell = id): \"//Über//\" -> \"/über/\" -> \"über\"",
+        "page_key is not idempotent (K1 with spell = id): \"//Foo//\" -> \"/foo/\" -> \"foo\"",
+        "page_key is not idempotent (K1 with spell = id): \"/ Foo /\" -> \" foo \" -> \"foo\"",
+        "like_fold: \"Über\" / \" Über \": page_key same, like_fold different",
+        "like_fold: \"Über\" / \"Über/\": page_key same, like_fold different",
+        "like_fold: \"Über\" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \"Über\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"über\" / \" Über \": page_key same, like_fold different",
+        "like_fold: \"über\" / \"Über/\": page_key same, like_fold different",
+        "like_fold: \"über\" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \"über\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"U\\u{308}ber\" / \" Über \": page_key same, like_fold different",
+        "like_fold: \"U\\u{308}ber\" / \"Über/\": page_key same, like_fold different",
+        "like_fold: \"U\\u{308}ber\" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \"U\\u{308}ber\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"u\\u{308}ber\" / \" Über \": page_key same, like_fold different",
+        "like_fold: \"u\\u{308}ber\" / \"Über/\": page_key same, like_fold different",
+        "like_fold: \"u\\u{308}ber\" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \"u\\u{308}ber\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"ÜBER\" / \" Über \": page_key same, like_fold different",
+        "like_fold: \"ÜBER\" / \"Über/\": page_key same, like_fold different",
+        "like_fold: \"ÜBER\" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \"ÜBER\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \" Über \" / \"Über/\": page_key same, like_fold different",
+        "like_fold: \" Über \" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \" Über \" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"Über/\" / \"/Über\": page_key same, like_fold different",
+        "like_fold: \"Über/\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"/Über\" / \"/Über/\": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \" Foo\": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \"Foo \": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \"/Foo\": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \"Foo/\": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \"/Foo/\": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \"Foo\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"foo\" / \" Foo\": page_key same, like_fold different",
+        "like_fold: \"foo\" / \"Foo \": page_key same, like_fold different",
+        "like_fold: \"foo\" / \"/Foo\": page_key same, like_fold different",
+        "like_fold: \"foo\" / \"Foo/\": page_key same, like_fold different",
+        "like_fold: \"foo\" / \"/Foo/\": page_key same, like_fold different",
+        "like_fold: \"foo\" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \"foo\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \" Foo\" / \"Foo \": page_key same, like_fold different",
+        "like_fold: \" Foo\" / \"/Foo\": page_key same, like_fold different",
+        "like_fold: \" Foo\" / \"Foo/\": page_key same, like_fold different",
+        "like_fold: \" Foo\" / \"/Foo/\": page_key same, like_fold different",
+        "like_fold: \" Foo\" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \" Foo\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"Foo \" / \"/Foo\": page_key same, like_fold different",
+        "like_fold: \"Foo \" / \"Foo/\": page_key same, like_fold different",
+        "like_fold: \"Foo \" / \"/Foo/\": page_key same, like_fold different",
+        "like_fold: \"Foo \" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \"Foo \" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"/Foo\" / \"Foo/\": page_key same, like_fold different",
+        "like_fold: \"/Foo\" / \"/Foo/\": page_key same, like_fold different",
+        "like_fold: \"/Foo\" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \"/Foo\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"Foo/\" / \"/Foo/\": page_key same, like_fold different",
+        "like_fold: \"Foo/\" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \"Foo/\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"/Foo/\" / \"\\u{3000}Foo\": page_key same, like_fold different",
+        "like_fold: \"/Foo/\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"\\u{3000}Foo\" / \"Foo\\u{a0}\": page_key same, like_fold different",
+        "like_fold: \"Foo/Bar\" / \"foo/bar/\": page_key same, like_fold different"
+      ]
+    },
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
+  },
+  "keysPublish": {
+    "fixtures": {
+      "duplicate-claim": [
+        "ascii (pages/Abc.md, pages/abc.md): refused: query result has an ambiguous page owner",
+        "non-ascii (pages/Über.md, pages/über.md): refused: query result has an ambiguous page owner",
+        "nfd (pages/über.md, pages/über.md): refused: query result has an ambiguous page owner"
+      ],
+      "home-name": []
+    },
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
   },
   "names": {
     "fixtures": {

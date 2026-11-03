@@ -6,30 +6,7 @@ use std::collections::HashMap;
 
 use crate::doc::{DocBlock, Document};
 
-/// Page properties owned by lsdoc, including Org directives and head drawers.
-/// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
-pub fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    property_lines_in(&crate::block_regions::parse_document(text, is_org), is_org)
-}
-
-fn property_lines_in(
-    regions: &crate::block_regions::BlockRegions,
-    is_org: bool,
-) -> Vec<(String, String)> {
-    regions
-        .page_properties()
-        .map(|p| {
-            (
-                if is_org {
-                    p.key.to_ascii_lowercase()
-                } else {
-                    p.key.clone()
-                },
-                p.value.clone(),
-            )
-        })
-        .collect()
-}
+pub use crate::page_header::page_property_lines;
 
 /// The first root carries the format; an empty document's parser-owned Org
 /// metadata distinguishes an Org drawer/directive preamble from Markdown.
@@ -140,7 +117,10 @@ pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range
 pub fn pre_block_parts(pre: &str, is_org: bool) -> (String, Option<std::ops::Range<usize>>) {
     let regions = crate::block_regions::parse_document(pre, is_org);
     (
-        raw_from_lines(&property_lines_in(&regions, is_org), is_org),
+        raw_from_lines(
+            &crate::page_header::page_property_lines_in(&regions, is_org),
+            is_org,
+        ),
         preamble_range_in(pre, is_org, &regions),
     )
 }

@@ -1,6 +1,6 @@
 import { msg, rawText } from "../../i18n";
 import type { PageDto } from "../../types";
-import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
+import { ordered_list_glyph, page_alias_spellings } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
@@ -132,6 +132,21 @@ export function readPageProperties(pageName: string): [string, string][] {
   if (!page) return [];
   const seen = new Set<string>();
   return pageHeaderProperties(page).filter(([key]) => !seen.has(key.toLowerCase()) && !!seen.add(key.toLowerCase()));
+}
+
+/** The alias spellings this loaded page declares, as the page header lists
+ *  them: the store's own answer (`page_alias_spellings`, the wasm build of
+ *  tine-core `page_header::page_alias_spellings`, census Q7: the pre-block, else
+ *  a properties-only first root; `alias::` and `aliases::`, every line; quoted
+ *  values skipped), over the live text: a marked header draft
+ *  (`beginPageHeaderEdit`) is the whole header, as it will be saved. The main
+ *  pane and the right sidebar both show this. Reactive. O(header bytes). */
+export function pageAliasNames(page: ReadonlyFeedPage): string[] {
+  if (!parserReady()) return [];
+  const isOrg = page.format === "org";
+  const first = page.roots.length ? doc.byId[page.roots[0]] : undefined;
+  if (first?.originatedFromPageHeader) return page_alias_spellings(withoutLeadingBlankLines(first.raw), undefined, isOrg);
+  return page_alias_spellings(page.preBlock || undefined, first?.raw, isOrg);
 }
 
 /** Value of page property `key` (case-insensitive) as {@link readPageProperties}
