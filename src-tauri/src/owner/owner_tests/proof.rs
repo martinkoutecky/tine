@@ -407,9 +407,9 @@ fn write_transcript_corpus() {
                 "* a\n*** skipped level\n".to_string()
             } else if name.starts_with("edit-") {
                 if org {
-                    format!("* one\n:PROPERTIES:\n:id: {UUID}\n:status: done\n:author: claude\n:END:\n** child\n")
+                    format!("* one\n:PROPERTIES:\n:id: {UUID}\n:status: done\n:tine.author: claude\n:END:\n** child\n")
                 } else {
-                    format!("- one\n  id:: {UUID}\n  status:: done\n  author:: claude\n\t- child\n")
+                    format!("- one\n  id:: {UUID}\n  status:: done\n  tine.author:: claude\n\t- child\n")
                 }
             } else {
                 input.clone()
@@ -578,7 +578,7 @@ fn generated(verb_name: &str) {
                     json!({"handle": handle})
                 }
                 "add" => {
-                    expected.push(if org {"* added\n:PROPERTIES:\n:author: proof\n:END:\n** nested\n:PROPERTIES:\n:author: proof\n:END:\n".into()} else {"- added\n  author:: proof\n\t- nested\n\t  author:: proof\n".into()});
+                    expected.push(if org {"* added\n:PROPERTIES:\n:tine.author: proof\n:END:\n** nested\n:PROPERTIES:\n:tine.author: proof\n:END:\n".into()} else {"- added\n  tine.author:: proof\n\t- nested\n\t  tine.author:: proof\n".into()});
                     json!({"page": "proof", "content": if org {"* added\n** nested"} else {"- added\n\t- nested"}, "author": "proof"})
                 }
                 _ => unreachable!(),

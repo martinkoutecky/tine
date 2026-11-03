@@ -81,7 +81,7 @@ describe("a page created on an Org graph edits as Org", () => {
     await flushPage("Journal sections");
     const saved = lastSubmitted(submit, "Journal sections");
     expect(saved.blocks[0]!.raw).toContain(":PROPERTIES:\n:id: abc\n:END:");
-    expect(saved.pre_block).toBe("#+foo: bar\n#+tine/journal-sections: true");
+    expect(saved.pre_block).toBe("#+foo: bar\n#+tine.journal-sections: true");
   });
 
   it("a page already shown as an empty placeholder (a link to a page with no file) is created as Org", async () => {

@@ -84,7 +84,7 @@ export function queryBlockRaw(query: string, properties: ReadonlyArray<readonly 
 
 /** The Favorites arrangement page (family 22), written whole through
  *  `createPage`. `marker` is the verbatim pre-block text (the caller picks
- *  `tine/favorites:: true` or, in Org, `#+tine/favorites: true`). Collapse
+ *  `tine.favorites:: true` or, in Org, `#+tine.favorites: true`). Collapse
  *  persists in the raw in the page's own format (`collapsed:: true` / an Org
  *  `:PROPERTIES:` drawer), since the save path writes raw only. */
 export function favoritesArrangementPage(name: string, marker: string, blocks: BlockDto[], format: Format): PageDto {

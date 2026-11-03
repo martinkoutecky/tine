@@ -15,11 +15,11 @@ import { For, Show, createSignal, createEffect, onCleanup, onMount } from "solid
 import { initParser } from "./render/parse";
 import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
-import { initCm6EditorSetting } from "./editor/cm6Setting";
+import { cm6EditorEnabled, initCm6EditorSetting } from "./editor/cm6Setting";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
-import { startEditing } from "./editorController";
+import { endEdit, startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
 import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
@@ -51,15 +51,25 @@ import "@fontsource-variable/noto-emoji/wght.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
 import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
 import { installMiddleClickPasteGuard } from "./middleClickPaste";
+import { withoutPageInventory } from "./pageIndex";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/capture.css";
 
+// The capture WebView is granted no graph-wide read (no graph slot).
+withoutPageInventory();
 installEditableEmojiPlatform();
 installTextareaPrimarySelectionGuard();
 installMiddleClickPasteGuard();
 
 const SCRATCH = CAPTURE_SCRATCH_NAME;
+
+/** The live scratch-block editor, whichever engine mounted it: the textarea, or
+ * the CodeMirror content element when the experimental editor is on. O(1). */
+function captureEditor(within = ""): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`.capture-shell ${within} textarea, .capture-shell ${within} [data-cm6-editor]`);
+}
+const captureEditorIsCm6 = () => !!document.querySelector(".capture-shell [data-cm6-editor]");
 
 // Pretty-print a binding string ("mod+shift+enter") for a hint ("Ctrl-Shift-Enter").
 // "mod" is Ctrl on Linux/Windows (Cmd on macOS — but this app targets Linux).
@@ -120,9 +130,10 @@ function Capture() {
   // the window is actually shown (the *first editing* textarea — capture starts
   // with the caret in the first/only block).
   const refit = () => {
-    const ta = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
+    const ta = captureEditor();
     if (!ta) return;
     ta.focus();
+    if (!(ta instanceof HTMLTextAreaElement)) return; // CodeMirror sizes itself
     ta.style.height = "auto";
     ta.style.height = `${ta.scrollHeight}px`;
   };
@@ -134,7 +145,7 @@ function Capture() {
   const resumeScratchEditor = () => {
     const root = roots()[0];
     if (!root) return;
-    if (!document.querySelector(".capture-shell .page-blocks textarea")) {
+    if (!captureEditor(".page-blocks")) {
       startEditing(root, docNode(root)?.raw.length ?? 0, null);
     }
     // Solid mounts the real Editor synchronously from startEditing; defer the
@@ -220,7 +231,7 @@ function Capture() {
     const owner = latestOwner(captureScope, "activation", () => captureAlive);
     const tryActivate = (attempt: number) => {
       if (!owner()) return;
-      const editor = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
+      const editor = captureEditor();
       if (editor) {
         refit();
         void activateNativeWindow();
@@ -255,9 +266,12 @@ function Capture() {
   // re-shown, so stale reads cannot activate an older lifecycle.
   const refreshPolicyThenResettleAndActivate = async () => {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
-    initCm6EditorSetting();
-    const result = await readOwned(owner, Promise.all([initLinkDefault(), backend().bindCaptureGraph()]));
+    const result = await readOwned(owner, Promise.all([initCm6EditorSetting(), initLinkDefault(), backend().bindCaptureGraph()]));
     if (result.kind === "stale") return;
+    // The editor opened at startup (before the stored CodeMirror choice was
+    // read) or before a Settings change: end that session so the activation
+    // below opens the editor kind the setting names.
+    if (captureEditorIsCm6() !== cm6EditorEnabled()) endEdit("blur");
     resettleAndActivate();
   };
   const blurGate = createCaptureBlurGate();

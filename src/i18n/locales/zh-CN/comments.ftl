@@ -1,7 +1,7 @@
 ## Margin dialogue: comments on a passage (Ctrl/Cmd+R)
 comment-on-whole-block = 针对整个块
 comment-quote-changed = 引用的文字已更改
-# $author (string): the value of the block's author:: property.
+# $author (string): the value of the block's tine.author:: property.
 comment-written-by = 作者：{ $author }
 comment-written-by-you = 作者：你
 comment-author-you = 你
@@ -23,7 +23,7 @@ comment-stale-write-what = 该评论
 
 ## Settings → Editing: the name your comments carry
 comment-name-label = 你的名字
-comment-name-hint = 你在页边写的批注和回复会以此名字保存为 <code>author::</code>，这样与他人共享的图谱就能看出谁写了什么。留空则不写作者；此时你自己的批注显示为“你”。保存在本设备上，不写入图谱。
+comment-name-hint = 你在页边写的批注和回复会以此名字保存为 <code>tine.author::</code>，这样与他人共享的图谱就能看出谁写了什么。留空则不写作者；此时你自己的批注显示为“你”。保存在本设备上，不写入图谱。
 comment-name-placeholder = 你的名字
 
 ## 在 git 图谱中第一次批注或回复前的一次性“你的名字”提问 (tine#841)

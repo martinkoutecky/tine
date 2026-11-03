@@ -11,10 +11,10 @@ const sliceOf = (raw: string, anchor: ReturnType<typeof anchorQuote>) =>
 
 describe("margin comment anchor (vision §3.7)", () => {
   it("anchors a unique quote and needs no context", () => {
-    const parent = "Agent's paragraph text that has a phrase worth disputing.\nauthor:: claude";
+    const parent = "Agent's paragraph text that has a phrase worth disputing.\ntine.author:: claude";
     const at = parent.indexOf("a phrase");
     const selector = quoteSelectorFor(parent, at, at + "a phrase worth disputing".length, parent);
-    expect(selector).toEqual({ quote: "a phrase worth disputing", prefix: "Agent's paragraph text that has", suffix: ". author:: claude" });
+    expect(selector).toEqual({ quote: "a phrase worth disputing", prefix: "Agent's paragraph text that has", suffix: ". tine.author:: claude" });
     expect(sliceOf(parent, anchorQuote(parent, selector))).toBe("a phrase worth disputing");
   });
 
@@ -89,29 +89,41 @@ describe("margin comment anchor (vision §3.7)", () => {
 });
 
 describe("margin comment format", () => {
-  it("is a comment iff it has quote:: and a parent block", () => {
-    expect(isCommentBlock([["quote", "x"]], true)).toBe(true);
-    expect(isCommentBlock([["quote", ""]], true)).toBe(true);
-    expect(isCommentBlock([["quote", "x"]], false)).toBe(false);
-    expect(isCommentBlock([["author", "claude"]], true)).toBe(false);
+  it("is a comment iff it has tine.quote:: and a parent block", () => {
+    expect(isCommentBlock([["tine.quote", "x"]], true)).toBe(true);
+    expect(isCommentBlock([["tine.quote", ""]], true)).toBe(true);
+    expect(isCommentBlock([["tine.quote", "x"]], false)).toBe(false);
+    expect(isCommentBlock([["tine.author", "claude"]], true)).toBe(false);
     expect(isCommentBlock([], true)).toBe(false);
-    expect(authorOf([["Author", " claude "]])).toBe("claude");
-    expect(authorOf([["author", ""]])).toBeNull();
-    expect(quoteSelectorOf([["quote", "q"], ["quote-prefix", "p"], ["quote_suffix", "s"]]))
+    expect(authorOf([["Tine.Author", " claude "]])).toBe("claude");
+    expect(authorOf([["tine.author", ""]])).toBeNull();
+    expect(quoteSelectorOf([["tine.quote", "q"], ["tine.quote-prefix", "p"], ["tine.quote_suffix", "s"]]))
       .toEqual({ quote: "q", prefix: "p", suffix: "s" });
-    expect(isCommentPresentationKey("author", false)).toBe(true);
-    expect(isCommentPresentationKey("quote", false)).toBe(false);
-    expect(isCommentPresentationKey("quote-prefix", true)).toBe(true);
+    expect(isCommentPresentationKey("tine.author", false)).toBe(true);
+    expect(isCommentPresentationKey("tine.quote", false)).toBe(false);
+    expect(isCommentPresentationKey("tine.quote-prefix", true)).toBe(true);
     expect(isCommentPresentationKey("status", true)).toBe(false);
   });
 
+  it("a user's own quote:: and author:: are ordinary properties (Discussion #825, D-20261102-PNS)", () => {
+    // Book notes: `quote::` on a child bullet is not a margin comment, and
+    // `author::` is not attribution. The Beta-only bare keys have no reader.
+    expect(isCommentBlock([["quote", "The obstacle is the way."]], true)).toBe(false);
+    expect(quoteSelectorOf([["quote", "x"], ["quote-prefix", "p"]])).toBeNull();
+    expect(authorOf([["author", "Marcus Aurelius"]])).toBeNull();
+    for (const key of ["author", "quote", "quote-prefix", "quote-suffix"]) {
+      expect(isCommentPresentationKey(key, false)).toBe(false);
+      expect(isCommentPresentationKey(key, true)).toBe(false);
+    }
+  });
+
   it("writes quote, prefix and suffix in that order under an empty first line", () => {
-    expect(commentRaw({ quote: "a phrase", prefix: null, suffix: null }, "md")).toBe("\nquote:: a phrase");
+    expect(commentRaw({ quote: "a phrase", prefix: null, suffix: null }, "md")).toBe("\ntine.quote:: a phrase");
     expect(commentRaw({ quote: "the cat", prefix: "sat; then", suffix: "ran" }, "md"))
-      .toBe("\nquote:: the cat\nquote-prefix:: sat; then\nquote-suffix:: ran");
-    expect(commentRaw({ quote: "", prefix: null, suffix: null }, "md")).toBe("\nquote:: ");
+      .toBe("\ntine.quote:: the cat\ntine.quote-prefix:: sat; then\ntine.quote-suffix:: ran");
+    expect(commentRaw({ quote: "", prefix: null, suffix: null }, "md")).toBe("\ntine.quote:: ");
     const org = commentRaw({ quote: "a, b", prefix: null, suffix: null }, "org");
-    expect(facetsOf(org, "org").properties).toEqual([["quote", "a, b"]]);
+    expect(facetsOf(org, "org").properties).toEqual([["tine.quote", "a, b"]]);
   });
 
   const AWKWARD = [

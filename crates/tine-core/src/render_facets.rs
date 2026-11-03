@@ -45,15 +45,17 @@ pub fn is_render_hidden_prop(key: &str, user_hidden: &[String]) -> bool {
 
 /// Page pre-blocks hide title/icon/filters but show editable table/view keys.
 /// Tine additionally surfaces aliases in AliasGroupHeader and hides its page
-/// markers. Unlike OG's empty-properties-order fallthrough, filtering always
+/// markers (the exports marker in either spelling, through the one alias table
+/// `tine_keys::canonical_key`). Unlike OG's empty-properties-order fallthrough, filtering always
 /// applies, including to properties created by external tools.
 pub fn is_render_hidden_page_prop(key: &str, user_hidden: &[String]) -> bool {
-    let key = normalize(key);
+    let key = tine_outline::tine_keys::canonical_key(key);
     RENDER_HIDDEN.contains(&key.as_str())
         || matches!(
             key.as_str(),
-            "title" | "icon" | "filters" | "alias" | "tine.tag-table" | "tine/exports"
+            "title" | "icon" | "filters" | "alias" | "tine.tag-table"
         )
+        || key == tine_outline::tine_keys::EXPORTS_MARKER
         || user_hidden.iter().any(|hidden| normalize(hidden) == key)
 }
 

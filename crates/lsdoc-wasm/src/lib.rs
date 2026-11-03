@@ -541,6 +541,14 @@ pub fn comment_quote(properties: &str) -> Result<Option<String>, JsValue> {
         .map(str::to_owned))
 }
 
+/// Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+/// the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+/// window reads the stable `tine/…` markers exactly as the backend does.
+#[wasm_bindgen]
+pub fn tine_key_aliases() -> String {
+    serde_json::to_string(tine_outline::tine_keys::LEGACY_KEY_ALIASES).unwrap()
+}
+
 /// The kernel's outline depth cap (twin 4).
 #[wasm_bindgen]
 pub fn outline_max_depth() -> usize {

@@ -69,7 +69,7 @@ it.each([[true, "page"], [false, "page"], [true, "block"], [false, "block"]] as 
   if (!enabled) vi.mocked(backend().quickShareList).mockResolvedValue({ enabled: false, account: null, error: null, shares: [] });
   const run = vi.mocked(backend().queryRun);
   run.mockResolvedValue({ anchor: "block", exceeded: false, groups: [{ page: "Project", kind: "page", blocks: [
-    { id: "folder", raw: "{{tine-query @page}}", properties: [["export", "saved-leaf"]], children: [] },
+    { id: "folder", raw: "{{tine-query @page}}", properties: [["tine.export", "saved-leaf"]], children: [] },
     { id: "second", raw: "{{tine-query @page}}", properties: [["tine.share", "octo/second"]], children: [] },
   ] }] } as never);
   const plan = vi.spyOn(backend(), "publishQueryPlan").mockResolvedValue({ anchor, rowCount: 1,

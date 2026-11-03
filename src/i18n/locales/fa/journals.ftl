@@ -1,7 +1,7 @@
 journal-sections-customize = سفارشی‌سازی بخش‌های امروز…
 journal-sections-explanation = این صفحه تعیین می‌کند چه چیزی همراه روزنوشت امروز نمایش داده شود: بلوک‌های پرس‌وجو، دستور کار، { "{{upcoming}}" }.
 journal-sections-create-failed = صفحهٔ «{ $page }» ساخته نشد: { $error }
-journal-sections-ambiguous = چند صفحه با tine/journal-sections مشخص شده‌اند؛ از «{ $page }» استفاده می‌شود. موارد دیگر: { $others }.
+journal-sections-ambiguous = چند صفحه با tine.journal-sections مشخص شده‌اند؛ از «{ $page }» استفاده می‌شود. موارد دیگر: { $others }.
 journal-config-diagnostic = config.edn: { $message }
 journal-query-error = { $title }: { $error }
 journal-query-untitled = پرس‌وجو

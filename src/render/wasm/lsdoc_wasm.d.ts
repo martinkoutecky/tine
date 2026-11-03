@@ -309,6 +309,13 @@ export function split_linkable_property(value: string): string[];
  */
 export function task_checkbox_state(marker: string): boolean | undefined;
 
+/**
+ * Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+ * the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+ * window reads the stable `tine/…` markers exactly as the backend does.
+ */
+export function tine_key_aliases(): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -369,6 +376,7 @@ export interface InitOutput {
     readonly search_substring_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly split_linkable_property: (a: number, b: number) => [number, number];
     readonly task_checkbox_state: (a: number, b: number) => number;
+    readonly tine_key_aliases: () => [number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

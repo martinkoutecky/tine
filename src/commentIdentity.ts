@@ -3,10 +3,10 @@ import { backend } from "./backend";
 import { loadPreference, seedPreference, writePreference } from "./preferenceWrites";
 
 // "Your name" (margin dialogue, D-20261017-LD1): the name a comment or reply you
-// write carries as `author::`, so a graph shared through git shows who wrote
+// write carries as `tine.author::`, so a graph shared through git shows who wrote
 // what. A device preference in tine-settings.json (generic app_string backend),
-// never in the graph. Unset: no `author::` is written and your own comments
-// render as "you", as before. A comment whose `author::` equals the name is
+// never in the graph. Unset: no `tine.author::` is written and your own comments
+// render as "you", as before. A comment whose `tine.author::` equals the name is
 // yours and renders as "you" too.
 
 const KEY = "comment_author_name";
@@ -29,7 +29,7 @@ export function normalizeAuthorName(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_LENGTH).trim();
 }
 
-/** True when `author` (a block's `author::` value) is the configured name, compared
+/** True when `author` (a block's `tine.author::` value) is the configured name, compared
  * ignoring case. False when no name is set. Reactive. */
 export function isOwnAuthor(author: string): boolean {
   const own = nameSig();

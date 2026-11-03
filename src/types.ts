@@ -594,6 +594,12 @@ export interface GraphMeta {
   quick_capture_template_text?: string | null;
   /** OG `:quick-capture-templates {:media "…"}`; null/absent = OG default (shareShape.ts). */
   quick_capture_template_media?: string | null;
+  /** OG `:quick-capture-options {:default-page "…"}`: where a Quick Capture without a title goes. */
+  quick_capture_default_page?: string | null;
+  /** OG `:quick-capture-options {:insert-today? true}`: untitled captures go to today's journal, ahead of the default page. */
+  quick_capture_insert_today?: boolean;
+  /** OG `:quick-capture-options {:redirect-page? true}`: open the page a capture landed on. */
+  quick_capture_redirect_page?: boolean;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   /** :file/name-format; absent (older backend) = "legacy", the graph default. */

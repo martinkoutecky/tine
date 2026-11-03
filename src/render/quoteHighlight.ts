@@ -1,6 +1,6 @@
 // The parent-side half of margin comments (vision §3.7): the source byte ranges
 // of the passages its comment children quote, so the inline renderer can mark
-// them. Derived at render time from the children's `quote::` and the parent's
+// them. Derived at render time from the children's `tine.quote::` and the parent's
 // current raw text; nothing is stored.
 
 import { createContext, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js";

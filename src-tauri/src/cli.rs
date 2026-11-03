@@ -150,7 +150,7 @@ enum Command {
         #[command(flatten)]
         read: ReadArgs,
     },
-    /// Replace a block's text. Its properties (id::, status::, author::) and
+    /// Replace a block's text. Its properties (id::, status::, tine.author::) and
     /// children are kept; a property named in the new text replaces the kept one.
     /// Supplying a LOGBOOK drawer requires --rev from the read; otherwise
     /// reread and pass --rev (refused:revision-required).
@@ -318,7 +318,7 @@ struct WriteArgs {
     #[arg(long, value_name = "RUN", env = "TINE_RUN")]
     run: Option<String>,
     /// Author on created blocks and on the run's commits (default: agent). With
-    /// `edit`, the flag (not the variable) also sets the block's author::.
+    /// `edit`, the flag (not the variable) also sets the block's tine.author::.
     #[arg(long, env = "TINE_AUTHOR")]
     author: Option<String>,
 }
@@ -651,7 +651,7 @@ fn doctor(path: &Path) -> Result<(), String> {
 
 /// Whether `tine edit` was given `--author` itself. An agent's session-wide
 /// `TINE_AUTHOR` names its commits; it must not stamp every block it edits, or
-/// overwrite the `author::` a person's block already has (#840).
+/// overwrite the `tine.author::` a person's block already has (#840).
 fn edit_author_is_a_flag<I, T>(argv: I) -> bool
 where
     I: IntoIterator<Item = T>,

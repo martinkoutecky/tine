@@ -1,5 +1,6 @@
 // Today's sections page (GH #605, design 2026-10-14): an ordinary page marked
-// `tine/journal-sections:: true` defines what Tine shows under today's journal.
+// `tine.journal-sections:: true` (stable: `tine/journal-sections`, read through
+// the alias table in tineKeys.ts) defines what Tine shows under today's journal.
 // If the page exists it wins; otherwise config.edn `:default-queries` and the
 // built-in agenda render exactly as before. Precedence, not synchronisation:
 // Tine never writes `:default-queries` back, and the page is seeded from it once,
@@ -10,8 +11,9 @@ import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
 import { graphOwner, readOwned } from "./owned";
 import { journalSectionsPage } from "./document";
+import { JOURNAL_SECTIONS_MARKER, markerQuery } from "./tineKeys";
 
-export const JOURNAL_SECTIONS_PROPERTY = "tine/journal-sections";
+export const JOURNAL_SECTIONS_PROPERTY = JOURNAL_SECTIONS_MARKER;
 export const DEFAULT_JOURNAL_SECTIONS_PAGE = "Journal sections";
 
 /** The marker pre-block in the page's own format: Org reads a Markdown
@@ -23,7 +25,7 @@ export const sectionsMarker = (format: Format) =>
  *  index (one evaluation, memoized per snapshot). */
 export async function locateSectionsPages(): Promise<string[]> {
   const owner = graphOwner();
-  const parsed = await readOwned(owner, backend().parseQuery(`(page-property ${JOURNAL_SECTIONS_PROPERTY} true)`, "og"));
+  const parsed = await readOwned(owner, backend().parseQuery(markerQuery(JOURNAL_SECTIONS_MARKER), "og"));
   if (parsed.kind === "stale") return [];
   const result = await readOwned(owner, backend().queryRun(parsed.value.query, parsed.value.view));
   return result.kind === "current" && result.value.anchor === "page" ? result.value.pages.map((page) => page.name) : [];

@@ -4,7 +4,7 @@ journal-sections-explanation = This page controls what shows with today's journa
 # $page (string): the page Tine tried to create; $error (string): why it failed.
 journal-sections-create-failed = Couldn't create the page "{ $page }": { $error }
 # $page (string): the sections page in use; $others (string): the other marked pages, comma-separated.
-journal-sections-ambiguous = Several pages are marked tine/journal-sections; using "{ $page }". Also marked: { $others }.
+journal-sections-ambiguous = Several pages are marked tine.journal-sections; using "{ $page }". Also marked: { $others }.
 # $message (string): a config.edn diagnostic, in English from the config reader.
 journal-config-diagnostic = config.edn: { $message }
 # $title (string): the query's title; $error (string): why it failed.

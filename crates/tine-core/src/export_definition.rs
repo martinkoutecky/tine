@@ -1,5 +1,5 @@
 //! Export definitions (`docs/contracts/export-definitions.md`): an ordinary
-//! query block that carries a destination property, `export::` (a folder) or
+//! query block that carries a destination property, `tine.export::` (a folder) or
 //! `tine.share::` (a quick share). The one answer to "is this block an export
 //! definition", and the rename of the page names its query selects.
 //!
@@ -34,7 +34,7 @@ use crate::query::macro_text::{
 };
 
 /// The destination properties that make a query block an export definition.
-pub const DESTINATION_KEYS: [&str; 2] = ["export", "tine.share"];
+pub const DESTINATION_KEYS: [&str; 2] = [crate::tine_keys::EXPORT, "tine.share"];
 
 /// The OG-dialect query listing every export definition block: the exports
 /// page's overview query, and how a rename finds the pages that hold one.
@@ -304,11 +304,11 @@ mod tests {
 
     #[test]
     fn a_rename_rewrites_the_selector_of_a_markdown_definition_only() {
-        let text = "- {{tine-query @page name = 'Project'}}\n  export:: project-site\n\
+        let text = "- {{tine-query @page name = 'Project'}}\n  tine.export:: project-site\n\
                     - {{tine-query @page name = 'Project'}}\n";
         assert_eq!(
             rename(text, false, "Project", "Project archive"),
-            "- {{tine-query @page name = 'Project archive'}}\n  export:: project-site\n\
+            "- {{tine-query @page name = 'Project archive'}}\n  tine.export:: project-site\n\
              - {{tine-query @page name = 'Project'}}\n",
             "the second block is an ordinary query: OG's rename leaves it, and so does Tine"
         );
@@ -318,10 +318,10 @@ mod tests {
     fn a_rename_rewrites_near_seeds_and_link_elements_of_a_definition() {
         // docs/contracts/tql-links-near.md "Renames": seeds and element
         // conditions are ordinary `name` comparisons.
-        let text = "- {{tine-query @page and near(name in ('Project', 'Notes'), 2) and not name = 'Project' or any(links, name = 'project')}}\n  export:: project-site\n";
+        let text = "- {{tine-query @page and near(name in ('Project', 'Notes'), 2) and not name = 'Project' or any(links, name = 'project')}}\n  tine.export:: project-site\n";
         assert_eq!(
             rename(text, false, "Project", "Project archive"),
-            "- {{tine-query @page and near(name in ('Project archive', 'Notes'), 2) and not name = 'Project archive' or any(links, name = 'Project archive')}}\n  export:: project-site\n"
+            "- {{tine-query @page and near(name in ('Project archive', 'Notes'), 2) and not name = 'Project archive' or any(links, name = 'Project archive')}}\n  tine.export:: project-site\n"
         );
     }
 
@@ -340,44 +340,44 @@ mod tests {
     fn every_page_name_comparison_follows_and_nothing_else_does() {
         let text = "- {{tine-query @page (name = 'project' or name in ('Notes', 'Project')) \
                     and name != 'PROJECT' and name like 'Project%' and prop('owner') = 'Project'}}\n  \
-                    export:: x\n\
+                    tine.export:: x\n\
                     - {{tine-query @block page.name = 'Project' and content = 'Project'}}\n  \
-                    export:: y\n";
+                    tine.export:: y\n";
         assert_eq!(
             rename(text, false, "Project", "Project archive"),
             "- {{tine-query @page (name = 'Project archive' or name in ('Notes', 'Project archive')) \
              and name != 'Project archive' and name like 'Project%' and prop('owner') = 'Project'}}\n  \
-             export:: x\n\
+             tine.export:: x\n\
              - {{tine-query @block page.name = 'Project archive' and content = 'Project'}}\n  \
-             export:: y\n"
+             tine.export:: y\n"
         );
     }
 
     #[test]
     fn a_new_name_is_quoted_for_tql_and_options_stay_verbatim() {
-        let text = "- {{tine-query @page name = 'Project' {:title \"Mine\"}}}\n  export:: x\n";
+        let text = "- {{tine-query @page name = 'Project' {:title \"Mine\"}}}\n  tine.export:: x\n";
         assert_eq!(
             rename(text, false, "Project", "O'Brien"),
-            "- {{tine-query @page name = 'O''Brien' {:title \"Mine\"}}}\n  export:: x\n"
+            "- {{tine-query @page name = 'O''Brien' {:title \"Mine\"}}}\n  tine.export:: x\n"
         );
     }
 
     #[test]
     fn og_syntax_and_unwritable_names_are_left_as_they_were() {
         // `{{query}}` is OG's syntax, which OG's rename does not rewrite (D-18).
-        let og = "- {{query (page \"Project\")}}\n  export:: x\n";
+        let og = "- {{query (page \"Project\")}}\n  tine.export:: x\n";
         assert_eq!(rename(og, false, "Project", "Project archive"), og);
         // A `}` cannot sit inside a query macro (`macro_safe`): the macro stays.
-        let tql = "- {{tine-query @page name = 'Project'}}\n  export:: x\n";
+        let tql = "- {{tine-query @page name = 'Project'}}\n  tine.export:: x\n";
         assert_eq!(rename(tql, false, "Project", "a}b"), tql);
     }
 
     #[test]
     fn a_crlf_definition_is_rewritten_in_place() {
-        let text = "- {{tine-query @page name = 'Project'}}\r\n  export:: x\r\n";
+        let text = "- {{tine-query @page name = 'Project'}}\r\n  tine.export:: x\r\n";
         assert_eq!(
             rename(text, false, "Project", "Renamed"),
-            "- {{tine-query @page name = 'Renamed'}}\r\n  export:: x\r\n"
+            "- {{tine-query @page name = 'Renamed'}}\r\n  tine.export:: x\r\n"
         );
     }
 
@@ -385,7 +385,7 @@ mod tests {
     fn the_definitions_query_lists_both_destination_properties() {
         assert_eq!(
             super::definitions_query(),
-            "(or (property export) (property tine.share))"
+            "(or (property tine.export) (property tine.share))"
         );
     }
 }

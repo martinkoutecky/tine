@@ -51,6 +51,7 @@ dynamic keys are outside this core inventory.
 | `appearance` | `settings-search-start-minimized-to-tray` | Start minimized to tray | Basic | Visible workflow, accessibility, permission or safety choice. |
 | `appearance` | `settings-embed-breadcrumbs` | Block embed breadcrumbs | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `settings-embedded-blocks` | Embedded blocks | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
+| `appearance` | `settings-color-indent-guides-by-level` | Color indent guides by level | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `settings-links-to-the-web-or-a-file` | Links to the web or a file | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `appearance` | `settings-links-to-pages-that-do-not-exist` | Links to pages that do not exist yet | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 

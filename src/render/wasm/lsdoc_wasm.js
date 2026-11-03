@@ -1178,6 +1178,25 @@ function __tine_raw_task_checkbox_state(marker) {
     const ret = wasm.task_checkbox_state(ptr0, len0);
     return ret === 0xFFFFFF ? undefined : ret !== 0;
 }
+
+/**
+ * Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+ * the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+ * window reads the stable `tine/…` markers exactly as the backend does.
+ * @returns {string}
+ */
+function __tine_raw_tine_key_aliases() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.tine_key_aliases();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -1591,3 +1610,4 @@ export const search_spans_json = __tineGuard("search_spans_json", __tine_raw_sea
 export const search_substring_spans_json = __tineGuard("search_substring_spans_json", __tine_raw_search_substring_spans_json);
 export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);
 export const task_checkbox_state = __tineGuard("task_checkbox_state", __tine_raw_task_checkbox_state);
+export const tine_key_aliases = __tineGuard("tine_key_aliases", __tine_raw_tine_key_aliases);

@@ -865,6 +865,12 @@ pub struct GraphMeta {
     pub quick_capture_template_text: Option<String>,
     /// OG `:quick-capture-templates {:media …}`; `None` = the OG default.
     pub quick_capture_template_media: Option<String>,
+    /// OG `:quick-capture-options {:default-page …}`; `None` = none configured.
+    pub quick_capture_default_page: Option<String>,
+    /// OG `:quick-capture-options {:insert-today? …}`; only a literal `true`.
+    pub quick_capture_insert_today: bool,
+    /// OG `:quick-capture-options {:redirect-page? …}`; only a literal `true`.
+    pub quick_capture_redirect_page: bool,
     /// Effective journal title format (`:journal/page-title-format`, default
     /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
     pub journal_page_title_format: String,
@@ -1005,6 +1011,9 @@ impl GraphMeta {
                 .clone(),
             quick_capture_template_text: config.quick_capture_template_text.clone(),
             quick_capture_template_media: config.quick_capture_template_media.clone(),
+            quick_capture_default_page: config.quick_capture_default_page.clone(),
+            quick_capture_insert_today: config.quick_capture_insert_today,
+            quick_capture_redirect_page: config.quick_capture_redirect_page,
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
             file_name_format: match config.file_name_format {

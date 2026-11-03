@@ -11,7 +11,9 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = process.env.MARGIN_BASELINE === "1";
-const OUT = path.join(ROOT, "artifacts/margin-polish", process.env.MARGIN_RUN || (BASELINE ? "baseline" : "candidate"));
+// E2E_MARGIN_POLISH_OUT puts the graph outside a git work tree: under the repo's
+// artifacts/ the graph sits in git, so the first comment asks for a name (GH #841).
+const OUT = process.env.E2E_MARGIN_POLISH_OUT || path.join(ROOT, "artifacts/margin-polish", process.env.MARGIN_RUN || (BASELINE ? "baseline" : "candidate"));
 const GRAPH = path.join(OUT, "graph");
 const PAGE = "Margin Polish";
 const FILE = path.join(GRAPH, "pages", `${PAGE}.md`);
@@ -24,7 +26,7 @@ fs.mkdirSync(OUT, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(OUT, "xdg", dir), { recursive: true });
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
-fs.writeFileSync(FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  author:: claude\n- An independent block.\n  - Keep this remark\n    quote:: independent\n    author:: Ada Test  \t\n`);
+fs.writeFileSync(FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- An independent block.\n  - Keep this remark\n    tine.quote:: independent\n    tine.author:: Ada Test  \t\n`);
 const now = new Date();
 const day = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 const JOURNAL = path.join(GRAPH, "journals", `${day}.md`);
@@ -115,7 +117,7 @@ try {
   await openPageByName(browser, PAGE);
   await editText(PHRASE);
   await shot("00-ordinary-author-editor");
-  check(await browser.execute(() => document.querySelector("textarea.block-editor").value.includes("author:: claude")), "An ordinary block's author property is missing from the editor");
+  check(await browser.execute(() => document.querySelector("textarea.block-editor").value.includes("tine.author:: claude")), "An ordinary block's author property is missing from the editor");
   await select(PHRASE);
   await shot("01-selection-toolbar");
   const toolbar = await browser.$('[data-selection-action="comment"]').isExisting();
@@ -129,15 +131,15 @@ try {
   await readyEditor();
   await type(COMMENT);
   await shot("02-comment-editor");
-  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("quote::")), "Quote metadata is visible while editing");
+  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("tine.quote::")), "Quote metadata is visible while editing");
   await leave();
-  await persisted(COMMENT, `quote:: ${PHRASE}`);
+  await persisted(COMMENT, `tine.quote:: ${PHRASE}`);
   await browser.$(".margin-column .comment-card").waitForExist({ timeout: 5000 });
   await shot("03-margin-card");
   check(await browser.execute((phrase) => document.querySelector(".page-blocks .comment-quote-anchor")?.textContent === phrase, PHRASE), "Passage is not marked");
   await editText(COMMENT);
   await shot("04-reopened-comment");
-  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("quote::")), "Reopening exposes quote metadata");
+  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("tine.quote::")), "Reopening exposes quote metadata");
   await leave();
   const replyId = await browser.execute((text) => {
     const row = [...document.querySelectorAll(".block-content")].find(el => el.textContent.includes(text))?.closest(".comment-card");
@@ -161,7 +163,7 @@ try {
   await editText(REPLY); await select("this evidence");
   await browser.execute(() => { window.__marginPolishAlive = true; });
   await browser.keys(["Control", "r"]);
-  await type(NESTED); await leave(); await persisted(NESTED, "quote:: this evidence");
+  await type(NESTED); await leave(); await persisted(NESTED, "tine.quote:: this evidence");
   check(await browser.execute(() => window.__marginPolishAlive === true), "Ctrl+R reloaded the app");
   await shot("06-quoted-reply");
   const overlap = await browser.execute(() => [...document.querySelectorAll(".comment-in-thread")].some(row => {
@@ -217,18 +219,18 @@ try {
   await openPageByName(browser, PAGE);
   await editText(PHRASE); await select(PHRASE);
   await browser.keys("a revised claim"); await leave();
-  await persisted("a revised claim", `quote:: ${PHRASE}`, COMMENT);
+  await persisted("a revised claim", `tine.quote:: ${PHRASE}`, COMMENT);
   await browser.$(".comment-quote.stale").waitForExist({ timeout: 5000 });
   await shot("12-stale-quote");
   await editText("Keep this remark"); await select("remark");
   await browser.keys("revised remark"); await leave();
   const editedBytes = await persisted("Keep this revised remark");
   await shot("12b-preserved-metadata");
-  check(editedBytes.includes("author:: Ada Test  \t"), "Saving a comment trimmed bytes from its final hidden metadata line");
+  check(editedBytes.includes("tine.author:: Ada Test  \t"), "Saving a comment trimmed bytes from its final hidden metadata line");
   await openJournals(browser);
   await editText("A journal passage"); await select("journal passage");
   await browser.keys(["Control", "r"]); await type("A journal remark"); await leave();
-  const journalBytes = await waitForFileText(JOURNAL, text => text.includes("A journal remark") && text.includes("quote:: journal passage"), { timeoutMs: 20_000 });
+  const journalBytes = await waitForFileText(JOURNAL, text => text.includes("A journal remark") && text.includes("tine.quote:: journal passage"), { timeoutMs: 20_000 });
   await shot("13-journal-comment");
   const bytes = fs.readFileSync(FILE);
   await browser.refresh();
@@ -245,10 +247,10 @@ try {
     await type("A hand note");
     await browser.keys(["Shift", "Enter"]);
     // Individual native key commands release duplicate ':' keys reliably.
-    for (const character of "quote:: revised remark") await browser.keys(character);
+    for (const character of "tine.quote:: revised remark") await browser.keys(character);
     await shot("15-handwritten-quote-draft");
-    check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note\nquote:: revised remark"), "Handwritten quote was hidden before the active edit session finished");
-    await leave(); await persisted("A hand note", "quote:: revised remark");
+    check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note\ntine.quote:: revised remark"), "Handwritten quote was hidden before the active edit session finished");
+    await leave(); await persisted("A hand note", "tine.quote:: revised remark");
     await editText("A hand note");
     check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note"), "Handwritten quote did not save its value and reopen hidden");
     await shot("16-handwritten-quote-hidden");

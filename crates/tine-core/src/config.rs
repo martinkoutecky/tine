@@ -109,6 +109,17 @@ pub struct Config {
     /// `:quick-capture-templates {:media "…"}` — OG's template for one shared
     /// image or file (`frontend.mobile.intent/embed-asset-file`).
     pub quick_capture_template_media: Option<String>,
+    /// `:quick-capture-options {:default-page "Name"}` — OG's page a capture
+    /// goes to when none is named (`frontend.quick-capture/quick-capture`).
+    /// Only a non-blank string directly inside the top-level map counts.
+    pub quick_capture_default_page: Option<String>,
+    /// `:quick-capture-options {:insert-today? true}` — a capture without a
+    /// named page goes to today's journal, ahead of `:default-page`. Only the
+    /// literal `true` counts; anything else keeps OG's `false`.
+    pub quick_capture_insert_today: bool,
+    /// `:quick-capture-options {:redirect-page? true}` — after a capture the
+    /// app opens the page it landed on. Only the literal `true` counts.
+    pub quick_capture_redirect_page: bool,
     /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
     /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
     /// flat membership list Logseq reads.
@@ -254,6 +265,9 @@ impl Default for Config {
             mobile_gestures_disabled_in_block_with_tags: Vec::new(),
             quick_capture_template_text: None,
             quick_capture_template_media: None,
+            quick_capture_default_page: None,
+            quick_capture_insert_today: false,
+            quick_capture_redirect_page: false,
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
@@ -351,6 +365,13 @@ impl Config {
             nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
         cfg.quick_capture_template_text = nested_string(edn, ":quick-capture-templates", ":text");
         cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
+        cfg.quick_capture_default_page =
+            nested_string(edn, ":quick-capture-options", ":default-page")
+                .filter(|name| !name.trim().is_empty());
+        cfg.quick_capture_insert_today =
+            nested_true(edn, ":quick-capture-options", ":insert-today?");
+        cfg.quick_capture_redirect_page =
+            nested_true(edn, ":quick-capture-options", ":redirect-page?");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         let file_format = string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
@@ -1010,6 +1031,28 @@ fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
     (edn.as_bytes().get(vfrom) == Some(&b'"'))
         .then(|| read_string_at(edn, vfrom))
         .flatten()
+}
+
+/// Whether a direct boolean entry in a direct root settings map is the literal
+/// `true` (followed by a delimiter, so `trueish` is not). A nested extension
+/// map cannot shadow either key; any other value is `false`.
+fn nested_true(edn: &str, outer: &str, inner: &str) -> bool {
+    let Some(key) = read_keyword(edn, outer) else {
+        return false;
+    };
+    let Some((open, close)) = balanced_map_at(edn, skip_blank(edn, key + outer.len())) else {
+        return false;
+    };
+    let Some(irel) = find_keyword_at_map_level(&edn[open + 1..close], inner) else {
+        return false;
+    };
+    let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
+    let value = &edn[vfrom..close];
+    value.strip_prefix("true").is_some_and(|rest| {
+        rest.chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || matches!(c, ',' | ';' | '}' | ']' | ')'))
+    })
 }
 
 /// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
@@ -2039,5 +2082,69 @@ mod quick_capture_template_tests {
         assert_eq!(config.quick_capture_template_text, None);
         let config = Config::parse(r#"{:quick-capture-templates {:text :not-a-string}}"#);
         assert_eq!(config.quick_capture_template_text, None);
+    }
+}
+
+#[cfg(test)]
+mod quick_capture_options_tests {
+    use super::*;
+
+    /// OG `:quick-capture-options` (`frontend.quick-capture/quick-capture`):
+    /// absent keys keep OG's defaults (no default page, both flags `false`).
+    #[test]
+    fn reads_the_three_options_and_defaults_the_rest() {
+        let config = Config::parse("{}");
+        assert_eq!(config.quick_capture_default_page, None);
+        assert!(!config.quick_capture_insert_today);
+        assert!(!config.quick_capture_redirect_page);
+        let config = Config::parse(
+            r#"{:quick-capture-options {:default-page "Inbox" :insert-today? true :redirect-page? true}}"#,
+        );
+        assert_eq!(config.quick_capture_default_page.as_deref(), Some("Inbox"));
+        assert!(config.quick_capture_insert_today);
+        assert!(config.quick_capture_redirect_page);
+        let config = Config::parse(r#"{:quick-capture-options {:default-page "Inbox"}}"#);
+        assert!(!config.quick_capture_insert_today && !config.quick_capture_redirect_page);
+    }
+
+    /// A wrong shape never panics and never enables anything: a flag is on only
+    /// for the literal `true`, a page only for a non-blank string, and a nested
+    /// extension map cannot shadow the key.
+    #[test]
+    fn a_malformed_value_keeps_todays_behaviour() {
+        for edn in [
+            r#"{:quick-capture-options {:default-page :Inbox}}"#,
+            r#"{:quick-capture-options {:default-page "  "}}"#,
+            r#"{:quick-capture-options {:default-page ""}}"#,
+            r#"{:quick-capture-options {:default-page 42}}"#,
+            r#"{:quick-capture-options "Inbox"}"#,
+            r#"{:quick-capture-options {:default-page "Inbox""#,
+            r#"{:other {:quick-capture-options {:default-page "Inbox"}}}"#,
+            r#"{:quick-capture-options {:nested {:default-page "Inbox"}}}"#,
+        ] {
+            assert_eq!(Config::parse(edn).quick_capture_default_page, None, "{edn}");
+        }
+        for edn in [
+            r#"{:quick-capture-options {:insert-today? "true" :redirect-page? "true"}}"#,
+            r#"{:quick-capture-options {:insert-today? trueish :redirect-page? 1}}"#,
+            r#"{:quick-capture-options {:insert-today? nil :redirect-page? false}}"#,
+            r#"{:quick-capture-options {:insert-today?"#,
+            r#"{:other {:quick-capture-options {:insert-today? true :redirect-page? true}}}"#,
+            r#"{:quick-capture-options {:nested {:insert-today? true}}}"#,
+            r#"{:quick-capture-options true}"#,
+        ] {
+            let config = Config::parse(edn);
+            assert!(!config.quick_capture_insert_today, "{edn}");
+            assert!(!config.quick_capture_redirect_page, "{edn}");
+        }
+    }
+
+    #[test]
+    fn a_flag_followed_by_the_next_entry_or_the_map_end_counts() {
+        let config =
+            Config::parse(r#"{:quick-capture-options {:insert-today? true,:redirect-page? true}}"#);
+        assert!(config.quick_capture_insert_today && config.quick_capture_redirect_page);
+        let config = Config::parse(r#"{:quick-capture-options {:redirect-page? true}}"#);
+        assert!(config.quick_capture_redirect_page);
     }
 }
