@@ -354,7 +354,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 22)
+## WholeGraph: Names (ceiling: 23)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
@@ -370,6 +370,11 @@ field store::InventoryEntry.day
 # frontend routes every rendered link by it. 17 -> 21, and 22 for the
 # test-faults-gated per-name oracle below.
 field store::InventoryEntry.link
+# CM step 2 batch 10 (S8, model rule 1): a namespace parent `n` of a listed
+# name `n/y` is an inventory entry like any reference-only name; why it exists
+# is a flag on the same entry (sent only when true), not a sibling method or
+# scope: every entry carries it and the namespace views nest by it. 22 -> 23.
+field store::InventoryEntry.namespace_parent
 struct store::LinkTarget
 field store::LinkTarget.name
 field store::LinkTarget.is_journal

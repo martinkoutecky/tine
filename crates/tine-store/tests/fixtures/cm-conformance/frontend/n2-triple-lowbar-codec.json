@@ -130,12 +130,31 @@
     ],
     [
       [
+        "a",
+        1
+      ],
+      [
+        "x",
+        1
+      ],
+      [
         "x/y",
         1
       ]
     ]
   ],
   "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
+      }
+    },
     {
       "day": null,
       "is_journal": false,
@@ -205,6 +224,17 @@
     {
       "day": null,
       "is_journal": false,
+      "key": "x",
+      "name": "x",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/x.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
       "key": "x//y",
       "name": "x//y",
       "target": {
@@ -228,11 +258,13 @@
   "journalTitleFormat": null,
   "keyOf": {
     "/lead": "lead",
+    "a": "a",
     "a.b": "a.b",
     "a/b": "a/b",
     "bad�": "bad�",
     "café": "café",
     "links": "links",
+    "x": "x",
     "x//y": "x//y",
     "x/y": "x/y"
   },

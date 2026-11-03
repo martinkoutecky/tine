@@ -149,6 +149,37 @@ fn page_named_path(
     }
 }
 
+/// Census Q5 item 3 (CM step 2, batch 10): the namespace parents have one
+/// rule (`model::namespace_parents`) read two ways, the whole-graph pass
+/// (`inventory(All)`, page queries, All Pages' counts) and the one-key range
+/// read (the publication's inventory delta). They must agree on every key the
+/// graph spells and every prefix of one; the bridge comparison then checks the
+/// whole-graph answer against the model's pages (S8).
+fn compare_namespace_parent_answers(view: &crate::WholeGraph) -> Vec<Diff> {
+    let graph = &view.graph;
+    let table = graph.referenced_name_table();
+    let whole = graph.namespace_seeds(table);
+    let mut keys: BTreeSet<String> = whole.keys().cloned().collect();
+    for entry in &view.inventory(crate::InventoryScope::All).0 {
+        let key = page_key(&entry.name);
+        for (_, prefix) in crate::model::namespace_parents::parent_prefixes(&key) {
+            keys.insert(prefix);
+        }
+        keys.insert(key);
+    }
+    keys.into_iter()
+        .filter_map(|key| {
+            let one = graph.namespace_seed(table, &key);
+            (one != whole.get(&key).copied()).then(|| {
+                Diff::new(
+                    "namespace parents: the one-key answer differs from the whole-graph answer",
+                    format!("{key:?}: whole {:?}, one key {one:?}", whole.get(&key)),
+                )
+            })
+        })
+        .collect()
+}
+
 /// Census Q4 and AL2 (CM step 2, batch 2): every computer of "which file owns
 /// this name" against the one rule. The model cannot judge twins (its order
 /// on conflicted claimants is O1's fallback, path order), so the reference is
@@ -456,6 +487,7 @@ fn run_graph(
         ));
     }
     let _ = fs::remove_file(&hold);
+    diffs.extend(compare_namespace_parent_answers(&view));
     if !spec.name.starts_with("random-") {
         diffs.extend(shared::compare_reference_days(&ctx));
         let mut case = shared::frontend_case(

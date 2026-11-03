@@ -87,6 +87,17 @@ impl RealPageNames {
             .into_iter()
             .flat_map(|bucket| bucket.iter())
     }
+    /// Every claim `(key, path, effective name)` whose key is at least
+    /// `from`, in key order and path order within a key (`""` lists all).
+    /// O(log K) to start, then O(1) amortized per claim.
+    pub(crate) fn claims_from<'a>(
+        &'a self,
+        from: &str,
+    ) -> impl Iterator<Item = (&'a String, &'a std::path::PathBuf, &'a String)> + 'a {
+        self.claimants
+            .iter_from(from)
+            .flat_map(|(key, bucket)| bucket.iter().map(move |(path, name)| (key, path, name)))
+    }
     fn update(&mut self, entry: &PageEntry, added: bool) {
         let key = refs::page_key(&entry.name);
         let mut bucket = self.claimants.get(&key).cloned().unwrap_or_default();

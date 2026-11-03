@@ -106,7 +106,12 @@
         1
       ]
     ],
-    []
+    [
+      [
+        "a",
+        1
+      ]
+    ]
   ],
   "inventory": [
     {
@@ -118,6 +123,17 @@
         "id": "pages/50%25 of 100%.md",
         "kind": "existing",
         "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
       }
     },
     {
@@ -182,6 +198,7 @@
     "50% of 100%": "50% of 100%",
     "Contents": "contents",
     "Ten___Child": "ten___child",
+    "a": "a",
     "a/b": "a/b",
     "café": "café",
     "links": "links"

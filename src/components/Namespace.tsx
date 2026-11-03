@@ -10,6 +10,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
+import { allPageNameKeys } from "../pageIndex";
 import { EmojiText } from "../render/emoji";
 import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
@@ -69,39 +70,63 @@ export interface NsNode {
   seg: string;
   full: string;
   children: NsNode[];
-  /** True when the name list holds this exact name (a page, alias or referenced name);
-   *  false for a level that exists only as the prefix of longer names. */
-  listed?: boolean;
 }
 
-/** Build a nested namespace tree from page names containing `/`. Intermediate
- *  segments become nodes even if they have no file of their own. */
-export function buildNamespaceTree(names: string[]): NsNode[] {
-  const roots: NsNode[] = [];
-  const byFull = new Map<string, NsNode>();
-  const plain: string[] = [];
+/** The namespace tree of the inventory's names (CM step 2 batch 10, model rule 1):
+ *  every node is a listed name, nested under the longest proper `/`-prefix of it
+ *  that the list also holds. The backend lists every namespace parent
+ *  (`InventoryEntry.namespace_parent`), so no level is synthesized here; a name
+ *  whose prefixes are not listed (only an empty-key prefix, as in `/x`) is a top
+ *  node. `seg` is the part of the name below its parent. Names with no `/` and no
+ *  listed name below them are not namespaces and have no node. O(names x length)
+ *  when the list holds each name's immediate prefix, as the inventory does. */
+export function buildNamespaceTree(names: readonly string[]): NsNode[] {
+  // Every name with `/` is a node. A name without `/` can only be a first
+  // segment, so only first-segment keys are wanted from plain names.
+  const nodes = new Map<string, NsNode>();
+  const slashed: [NsNode, string[]][] = [];
+  const wanted = new Set<string>();
   for (const name of names) {
-    if (!name.includes("/")) { plain.push(name); continue; }
-    let level = roots;
-    let prefix = "";
-    let node: NsNode | undefined;
-    for (const seg of name.split("/")) {
-      prefix = prefix ? `${prefix}/${seg}` : seg;
-      const key = pageIdentityKey(prefix);
-      node = byFull.get(key);
-      if (!node) {
-        node = { seg, full: prefix, children: [] };
-        byFull.set(key, node);
-        level.push(node);
-      }
-      level = node.children;
-    }
-    if (node) node.listed = true;
+    if (!name.includes("/")) continue;
+    const key = pageIdentityKey(name);
+    if (nodes.has(key)) continue;
+    const node: NsNode = { seg: name, full: name, children: [] };
+    nodes.set(key, node);
+    const segs = name.split("/");
+    slashed.push([node, segs]);
+    wanted.add(pageIdentityKey(segs[0]));
   }
-  // A top-level node is also a listed name when a plain (slash-free) name has its identity.
-  if (roots.length && plain.length) {
-    const plainKeys = new Set(plain.map((name) => pageIdentityKey(name)));
-    for (const root of roots) if (plainKeys.has(pageIdentityKey(root.full))) root.listed = true;
+  // `allPageNames()` already holds every name's key (`allPageNameKeys`); any
+  // other list pays one key call per plain name.
+  const known = allPageNameKeys(names);
+  names.forEach((name, at) => {
+    if (name.includes("/")) return;
+    const key = known?.[at] ?? pageIdentityKey(name);
+    if (wanted.has(key) && !nodes.has(key)) nodes.set(key, { seg: name, full: name, children: [] });
+  });
+  // Each node's parent is its longest listed proper prefix, probed longest
+  // first: the inventory lists the immediate prefix, so that is one key call per
+  // name. (Probing every prefix of every name was O(names x depth x length):
+  // quadratic in depth for a deep imported namespace.)
+  const roots: NsNode[] = [];
+  const placed = new Set<NsNode>();
+  for (const [node, segs] of slashed) {
+    let parent: NsNode | undefined;
+    let depth = segs.length - 1;
+    for (; depth > 0; depth--) {
+      const candidate = nodes.get(pageIdentityKey(segs.slice(0, depth).join("/")));
+      if (candidate && candidate !== node) { parent = candidate; break; }
+    }
+    node.seg = parent ? segs.slice(depth).join("/") : node.full;
+    if (parent) {
+      parent.children.push(node);
+      if (!placed.has(parent) && !parent.full.includes("/")) {
+        placed.add(parent);
+        roots.push(parent);
+      }
+    } else {
+      roots.push(node);
+    }
   }
   const pending = [roots];
   while (pending.length) {
@@ -121,7 +146,7 @@ const treeOfNames = new WeakMap<readonly string[], NsNode[]>();
 export function namespaceTreeFor(names: readonly string[]): NsNode[] {
   let tree = treeOfNames.get(names);
   if (!tree) {
-    tree = buildNamespaceTree(names as string[]);
+    tree = buildNamespaceTree(names);
     treeOfNames.set(names, tree);
   }
   return tree;
@@ -221,21 +246,18 @@ function NsMacroNode(props: { node: NsNode; depth: number }): JSX.Element {
   );
 }
 
-/** The node of namespace `root` in the tree of `names`, with its segments
- *  descended by identity, or null when nothing lies below it. Its `full` keeps
- *  the spelling of the listed names. Cost O(names x depth). */
-function namespaceNode(names: string[], root: string): NsNode | null {
-  let level = buildNamespaceTree(names);
-  let node: NsNode | undefined;
-  let prefix = "";
-  for (const seg of root.split("/").filter(Boolean)) {
-    prefix = prefix ? `${prefix}/${seg}` : seg;
-    const key = pageIdentityKey(prefix);
-    node = level.find((candidate) => pageIdentityKey(candidate.full) === key);
-    if (!node) return null;
-    level = node.children;
+/** The node of namespace `root` in the tree of `names` (the inventory's names;
+ *  see `buildNamespaceTree`), or null when the list does not hold `root` or
+ *  nothing lies below it. Cost O(names x depth). */
+export function namespaceNode(names: readonly string[], root: string): NsNode | null {
+  const key = pageIdentityKey(root);
+  const pending = [...buildNamespaceTree(names)];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (pageIdentityKey(node.full) === key) return node.children.length ? node : null;
+    pending.push(...node.children);
   }
-  return node ?? null;
+  return null;
 }
 
 /** `{{namespace X}}` — the full nested descendant tree of namespace `X`, each
@@ -245,8 +267,12 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   // inventory (src/pages.ts). Icons use the shared reactive batched lookup,
   // including unsaved loaded-page edits and publications for unloaded pages.
   const treeData = createMemo(() => {
-    const prefix = `${pageIdentityKey(props.root)}/`;
-    const names = allPageNames().filter((n) => pageIdentityKey(n).startsWith(prefix));
+    const key = pageIdentityKey(props.root);
+    const prefix = `${key}/`;
+    const names = allPageNames().filter((n) => {
+      const nameKey = pageIdentityKey(n);
+      return nameKey === key || nameKey.startsWith(prefix);
+    });
     const node = namespaceNode(names, props.root);
     return { tree: node ? [node] : [] };
   });
@@ -285,33 +311,28 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   );
 }
 
-/** Breadcrumb rows for OG's "Hierarchy" section of page `name`: ONE row per
- *  descendant namespace LEVEL, each row the segment list of a cumulative path.
- *  Levels are synthesized from descendant page NAMES (every prefix below `name`),
- *  so an intermediate namespace with no file of its own still gets a row — matching
- *  OG, where creating `a/b/c` makes page entities for `a/b` and `a`, so its
- *  `get-namespace-pages` returns a row for each level (not just the deepest leaf).
- *  A namespaced leaf with no descendants → one row: its parent namespace path. */
-export function namespaceHierarchyRows(allNames: string[], name: string): string[][] {
-  const pSegs = name.split("/");
+/** Breadcrumb rows for OG's "Hierarchy" section of page `name`: one row per
+ *  listed name below it (the inventory lists every namespace parent, so an
+ *  intermediate level with no file of its own has its row, as in OG, where
+ *  `a/b/c` makes page entities for `a/b` and `a` and `get-namespace-pages`
+ *  returns each), as that name's segments, in key order. Nothing is synthesized
+ *  from a descendant's spelling. A namespaced leaf with nothing below it gets
+ *  one row: its own parent path, the segments of its own name (as
+ *  `NamespaceCrumb` shows them; declared: a split of the page's own name, not a
+ *  page set). O(names), and no key call per name for an `allPageNames()` list. */
+export function namespaceHierarchyRows(allNames: readonly string[], name: string): string[][] {
   const prefix = `${pageIdentityKey(name)}/`;
-  const byLower = new Map<string, string[]>(); // cumulative-path (lc) → original segs
-  for (const n of allNames) {
-    if (!pageIdentityKey(n).startsWith(prefix)) continue;
-    const segs = n.split("/");
-    for (let k = pSegs.length + 1; k <= segs.length; k++) {
-      const sub = segs.slice(0, k);
-      const key = pageIdentityKey(sub.join("/"));
-      if (!byLower.has(key)) byLower.set(key, sub);
-    }
+  const known = allPageNameKeys(allNames);
+  const below: [string, string[]][] = [];
+  allNames.forEach((n, at) => {
+    if (!n.includes("/")) return;
+    const key = known?.[at] ?? pageIdentityKey(n);
+    if (key.startsWith(prefix)) below.push([key, n.split("/")]);
+  });
+  if (below.length) {
+    return below.sort((a, b) => a[0].localeCompare(b[0])).map(([, segs]) => segs);
   }
-  if (byLower.size) {
-    return [...byLower.values()].sort((a, b) =>
-      pageIdentityKey(a.join("/")).localeCompare(pageIdentityKey(b.join("/")))
-    );
-  }
-  // Namespaced leaf with no descendants → the parent namespace's path.
-  if (name.includes("/")) return [pSegs.slice(0, -1)];
+  if (name.includes("/")) return [name.split("/").slice(0, -1)];
   return [];
 }
 

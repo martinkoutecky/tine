@@ -101,9 +101,10 @@ fn assert_fresh(root: &Path, store: Arc<Store>, what: &str, restart: bool) -> Ar
         .filter(|(_, target)| !target.starts_with("Absent"))
         .map(|((_, key, _), _)| key)
         .collect();
+    // Namespace parents are absent too, but come from no reference.
     let absent: Vec<&String> = live
         .iter()
-        .filter(|(_, target)| target.starts_with("Absent"))
+        .filter(|(_, target)| target.starts_with("Absent") && !target.ends_with(" parent"))
         .map(|((_, key, _), _)| key)
         .collect();
     let expected: Vec<&String> = walk.keys().filter(|key| !listed.contains(key)).collect();
@@ -163,8 +164,19 @@ fn image(entries: &[InventoryEntry]) -> BTreeMap<(bool, String, String), String>
                     entry.name.clone(),
                 ),
                 // `link` is part of the answer the window holds: a delta that
-                // left it stale would route a link to the wrong page.
-                format!("{:?} {:?} {:?}", entry.target, entry.day, entry.link),
+                // left it stale would route a link to the wrong page; so is
+                // why a fileless entry exists (a namespace parent).
+                format!(
+                    "{:?} {:?} {:?}{}",
+                    entry.target,
+                    entry.day,
+                    entry.link,
+                    if entry.namespace_parent {
+                        " parent"
+                    } else {
+                        ""
+                    }
+                ),
             )
         })
         .collect()
@@ -349,6 +361,120 @@ fn deltas_track_aliases_spellings_journals_and_namespaces() {
     }
     // Removing B's references leaves C's spelling.
     assert_patch(&store, "pages/B.md", "nothing");
+    store.close();
+}
+
+/// The namespace parents `inventory(All)` lists (model rule 1, SPEC §3.2,
+/// CM3-3; conformance S8): (name, flag) of every fileless, non-alias entry.
+fn fileless(store: &Store) -> Vec<(String, bool)> {
+    store
+        .whole_graph()
+        .unwrap()
+        .inventory(InventoryScope::All)
+        .0
+        .iter()
+        .filter(|entry| matches!(entry.target, crate::Resolved::Absent { .. }))
+        .map(|entry| (entry.name.clone(), entry.namespace_parent))
+        .collect()
+}
+
+/// CM step 2 batch 10 (S8): `n/y` makes `n` a page, from a page file's name
+/// (title or file name, journals too) and from a reference, at every level;
+/// a blank file supplies its own page only (OG `extract` skips blank
+/// content); a parent some file claims, some page declares as an alias or
+/// some reference names is listed as that, not as a parent.
+#[test]
+fn namespace_parents_are_listed_pages() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/x.md", "title:: Work/Plan\n- body\n"),
+        ("pages/Notes.md", "- [[Area/Sub/Leaf]] [[topic]]\n"),
+        ("pages/Empty%2FChild.md", ""),
+        ("pages/Owned%2FChild.md", "- c\n"),
+        ("pages/Owned.md", "- the parent has its own file\n"),
+        (
+            "pages/Holder.md",
+            "alias:: Nick\n- [[nick/sub]] [[Topic/Sub]]\n",
+        ),
+    ]);
+    let mut listed = fileless(&store);
+    listed.sort();
+    assert_eq!(
+        listed,
+        [
+            ("Area".to_owned(), true),
+            ("Area/Sub".to_owned(), true),
+            ("Area/Sub/Leaf".to_owned(), false),
+            ("Topic/Sub".to_owned(), false),
+            ("Work".to_owned(), true),
+            ("nick/sub".to_owned(), false),
+            ("topic".to_owned(), false),
+        ]
+    );
+    // The answer page queries and All Pages' counts read lists them too.
+    let view = store.whole_graph().unwrap();
+    let mut names = view.graph.reference_only_page_names();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "Area",
+            "Area/Sub",
+            "Area/Sub/Leaf",
+            "Topic/Sub",
+            "Work",
+            "nick/sub",
+            "topic"
+        ]
+    );
+    // `[[Work]]` opens the parent page itself.
+    assert_eq!(
+        view.link_target("work"),
+        crate::LinkTarget {
+            name: "work".to_owned(),
+            is_journal: false
+        }
+    );
+    store.close();
+}
+
+/// A live edit that names the first child of a namespace lists its parents,
+/// one that removes the last child drops them, and a parent's spelling
+/// follows its children: all as a delta, equal to a fresh read.
+#[test]
+fn deltas_track_namespace_parents() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/A.md", "- start\n"),
+        ("pages/B.md", "- [[team/child]]\n"),
+        ("pages/Docs%2FGuide.md", "- guide\n"),
+    ]);
+    let parents = |store: &Store| -> Vec<String> {
+        let mut names: Vec<String> = fileless(store)
+            .into_iter()
+            .filter(|(_, parent)| *parent)
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(parents(&store), ["Docs", "team"]);
+    let id = "pages/A.md";
+    assert_patch(&store, id, "[[Proj/Sub/Leaf]]");
+    assert_eq!(parents(&store), ["Docs", "Proj", "Proj/Sub", "team"]);
+    // A second spelling: the least one names the parent.
+    assert_patch(&store, id, "[[Proj/Sub/Leaf]] [[TEAM/other]]");
+    assert_eq!(parents(&store), ["Docs", "Proj", "Proj/Sub", "TEAM"]);
+    // Naming a parent directly makes it an ordinary reference-only page.
+    assert_patch(&store, id, "[[Proj/Sub/Leaf]] [[Proj]]");
+    assert_eq!(parents(&store), ["Docs", "Proj/Sub", "team"]);
+    // A child under a file-supplied parent, then the last reference child
+    // goes: the file still supplies its parent.
+    assert_patch(&store, id, "[[docs/faq]]");
+    assert_patch(&store, id, "plain");
+    assert_eq!(parents(&store), ["Docs", "team"]);
+    assert_patch(&store, "pages/B.md", "plain");
+    assert_eq!(parents(&store), ["Docs"]);
     store.close();
 }
 

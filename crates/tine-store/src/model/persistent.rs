@@ -256,6 +256,24 @@ impl<K: Ord, V> Map<K, V> {
     pub(crate) fn values(&self) -> impl Iterator<Item = &V> {
         self.iter().map(|(_, v)| v)
     }
+    /// The entries whose key is at least `key`, in key order: O(log N) to
+    /// start, then O(1) amortized per entry.
+    pub(crate) fn iter_from<Q: Ord + ?Sized>(&self, key: &Q) -> Iter<'_, K, V>
+    where
+        K: Borrow<Q>,
+    {
+        let mut it = Iter { stack: Vec::new() };
+        let mut node = self.root.as_deref();
+        while let Some(n) = node {
+            if key.cmp(n.entry.0.borrow()) == Ordering::Greater {
+                node = n.right.as_deref();
+            } else {
+                it.stack.push(n);
+                node = n.left.as_deref();
+            }
+        }
+        it
+    }
 }
 pub(crate) struct Iter<'a, K, V> {
     stack: Vec<&'a Node<K, V>>,
@@ -616,6 +634,13 @@ mod tests {
             assert_eq!(
                 old.iter().collect::<Vec<_>>(),
                 expected.iter().collect::<Vec<_>>()
+            );
+        }
+        for from in [0, 1, 128, 256, 257, 300] {
+            assert_eq!(
+                tree.iter_from(&from).collect::<Vec<_>>(),
+                oracle.range(from..).collect::<Vec<_>>(),
+                "iter_from({from})"
             );
         }
         let bulk: Map<_, _> = [(1, 2), (1, 3), (0, 4)].into_iter().collect();

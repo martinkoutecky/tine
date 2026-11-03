@@ -114,7 +114,29 @@ try {
   await stop();
   await start();
   await browser.$(".ns-view").waitForExist({ timeout: 20_000 });
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "sidebar entry, windowed tree, expand/collapse all, sizes, path filter, open page, restart", graph }, null, 2));
+
+  // CM step 2 batch 10 (UI-CM-NAMESPACE-PARENTS): "Other" has no file, only the
+  // page Other/Notes below it; it is a page (model rule 1, OG), so All pages
+  // lists it and it opens itself.
+  stage = "All pages lists a namespace parent that has no file";
+  if (!await browser.$(".nav-all-pages-open").isExisting()) {
+    await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find((header) => header.textContent?.includes("ALL PAGES"))?.click());
+  }
+  await browser.$(".nav-all-pages-open").waitForExist({ timeout: 15_000 });
+  await browser.$(".nav-all-pages-open").click();
+  await browser.$(".all-pages-row").waitForExist({ timeout: 15_000 });
+  await browser.$(".all-pages-filter").setValue("other");
+  const allPagesTitles = () => browser.execute(() => [...document.querySelectorAll(".all-pages-row .all-pages-open")].map((el) => el.textContent?.trim()));
+  await browser.waitUntil(async () => (await allPagesTitles()).includes("Other"), { timeout: 10_000, timeoutMsg: "All pages has no row for the namespace parent Other" });
+  assert.ok((await allPagesTitles()).includes("Other/Notes"));
+  assert.ok(await browser.execute(() => {
+    const el = [...document.querySelectorAll(".all-pages-open")].find((node) => node.textContent?.trim() === "Other");
+    if (!(el instanceof HTMLElement)) return false;
+    el.click();
+    return true;
+  }));
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Other", { timeout: 10_000 });
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "sidebar entry, windowed tree, expand/collapse all, sizes, path filter, open page, restart, All pages lists and opens a fileless namespace parent", graph }, null, 2));
   console.log(`PASS Namespaces view. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

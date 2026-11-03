@@ -82,9 +82,25 @@
         1
       ]
     ],
-    []
+    [
+      [
+        "a",
+        1
+      ]
+    ]
   ],
   "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
+      }
+    },
     {
       "day": null,
       "is_journal": false,
@@ -135,6 +151,7 @@
   "keyOf": {
     "Bar": "bar",
     "Oct 26th, 2026": "oct 26th, 2026",
+    "a": "a",
     "a/b": "a/b",
     "linker": "linker"
   },

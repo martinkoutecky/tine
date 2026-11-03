@@ -99,15 +99,23 @@ impl Snapshot {
             keys.extend(aliases_before.symmetric_difference(&aliases_after).cloned());
             // A page that moved slot can change which page spells a key.
             let moved = old.graph.pages.positions.get(path) != self.graph.pages.positions.get(path);
-            keys.extend(
-                references_before
-                    .iter()
-                    .chain(references_after.iter())
-                    .filter(|(key, _)| {
-                        moved || references_before.get(*key) != references_after.get(*key)
-                    })
-                    .map(|(key, _)| key.clone()),
-            );
+            // A changed name also changes its namespace parents' entries
+            // (`model::namespace_parents`): a parent appears with its first
+            // child, goes with its last, and can change spelling.
+            for (key, name) in references_before
+                .iter()
+                .chain(references_after.iter())
+                .filter(|(key, _)| {
+                    moved || references_before.get(*key) != references_after.get(*key)
+                })
+            {
+                keys.insert(key.clone());
+                if name.contains('/') {
+                    keys.extend(
+                        crate::model::namespace_parents::parent_prefixes(name).map(|(_, key)| key),
+                    );
+                }
+            }
         }
         own_names_changed |= !keys.is_empty();
         // The delta reads only what both generations already hold: the name

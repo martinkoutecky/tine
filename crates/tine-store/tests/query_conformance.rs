@@ -682,7 +682,12 @@ fn the_page_anchor_returns_page_rows() {
         "@page and name like 'proj%'",
         QueryDialect::Tql,
     );
-    assert_eq!(page_names(&result).len(), 1, "{:?}", result.rows);
+    // `Proj` is the namespace parent of `Proj/Sub`: a page (conceptual model
+    // rule 1, CM3-3; OG creates its page entity), so page queries see it
+    // (CM step 2 batch 10, CM-REFONLY).
+    let mut names = page_names(&result);
+    names.sort();
+    assert_eq!(names, vec!["Proj", "Proj/Sub"], "{:?}", result.rows);
 }
 
 /// GH #619 c6: a `page` hop read from a page row is that row (the OG parser's
