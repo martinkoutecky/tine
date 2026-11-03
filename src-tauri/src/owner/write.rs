@@ -20,7 +20,7 @@ use tine_store::{
 };
 
 use super::endpoint::busy;
-use super::verbs::{internal, resolve_page, whole_graph, Diag};
+use super::verbs::{internal, resolve_write_page, whole_graph, Diag};
 use super::wire::{ok, ErrorBody};
 use crate::state::GraphSlot;
 
@@ -290,14 +290,16 @@ pub(crate) fn resolve_on(
 }
 
 /// The page a handle writes: its own page, or the page holding the `id::`.
+/// A page name several files claim refuses (`verbs::resolve_write_page`,
+/// CLI-DUPNAME), also when an `id::` names a block on such a page.
 pub(super) fn handle_page(slot: &GraphSlot, handle: &Handle) -> Result<PageId, ErrorBody> {
     let graph = whole_graph(slot)?;
     match handle {
-        Handle::At { page, .. } => resolve_page(&graph, page),
+        Handle::At { page, .. } => resolve_write_page(&graph, page),
         // Graph-wide: an id on two pages is `ambiguous`, never the first match
         // (review 5 B1; design §2).
         Handle::Uuid(uuid) => match graph.block_pages(uuid).as_slice() {
-            [page] => resolve_page(&graph, page),
+            [page] => resolve_write_page(&graph, page),
             [] => Err(ErrorBody::new(
                 "not-found",
                 format!("no block has id:: {uuid}"),

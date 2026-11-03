@@ -6,7 +6,7 @@ use tine_core::block_regions::{self, Edit};
 use tine_core::model::{Format, PageDto};
 use tine_store::{EditKind, HostReadError, PageId, PageOperation, Resolved};
 
-use super::verbs::{parse, resolve_page, whole_graph};
+use super::verbs::{parse, resolve_write_page, whole_graph, write_claimant};
 use super::wire::{ok, ErrorBody};
 use super::write::{self, apply_refused, host_failed, refused, store_refused, Planned};
 use crate::state::GraphSlot;
@@ -28,41 +28,15 @@ fn name_valid(name: &str) -> Result<(), ErrorBody> {
     }
 }
 
-/// Unlike a read's preferred claimant, a mutation must not choose among twins.
+/// Unlike a read's preferred claimant, a mutation must not choose among twins
+/// (`verbs::write_claimant`, CLI-DUPNAME).
 fn unique_page(slot: &GraphSlot, name: &str) -> Result<PageId, ErrorBody> {
-    match unique_source(slot, name)? {
-        Some(page) => Ok(page),
-        None => resolve_page(&whole_graph(slot)?, name),
-    }
+    resolve_write_page(&whole_graph(slot)?, name)
 }
 
 /// A rename can also start from a reference-only name or fileless namespace.
 fn unique_source(slot: &GraphSlot, name: &str) -> Result<Option<PageId>, ErrorBody> {
-    let graph = whole_graph(slot)?;
-    let check = |resolved| match resolved {
-        Resolved::Existing { id, mut others } => {
-            others.insert(0, id);
-            others
-        }
-        Resolved::Alias { owners } => owners,
-        Resolved::Absent { .. } => Vec::new(),
-    };
-    let mut candidates = check(graph.resolve(name, false));
-    if candidates.is_empty() {
-        candidates = check(graph.resolve(name, true));
-    }
-    if candidates.len() > 1 {
-        let mut body = ErrorBody::new(
-            "ambiguous",
-            "several files claim this page; nothing changed",
-            false,
-        );
-        body.detail = Some(
-            json!({"admitted":false,"candidates": candidates.iter().map(PageId::as_str).collect::<Vec<_>>()}),
-        );
-        return Err(body);
-    }
-    Ok(candidates.pop())
+    write_claimant(&whole_graph(slot)?, name)
 }
 
 pub(super) fn create_named_page(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
