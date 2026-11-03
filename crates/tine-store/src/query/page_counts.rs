@@ -5,8 +5,8 @@
 //! 1. per block, the distinct literal targets `visit_reference_targets` yields
 //!    (the panel's rule, `property_page_key_enabled` included);
 //! 2. each distinct target folded once to the panel it opens, through the
-//!    panel's own resolver (`graph_equivalent_page_names_with`, the setup the
-//!    link table uses); the fold table is a local of this one computation and
+//!    panel's own resolver (`query::PanelResolver`, the one setup the link
+//!    table shares); the fold table is a local of this one computation and
 //!    is dropped with it, not a cache (D-10);
 //! 3. per block, the folded panels deduplicated, the source page's own panel
 //!    and the Favorites arrangement page skipped
@@ -25,56 +25,18 @@
 use std::collections::HashMap;
 
 use tine_core::doc::DocBlock;
-use tine_core::model::PageKind;
 use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
-use super::{graph_equivalent_page_names_with, page_property_block_with_config, real_page_names};
+use super::{page_property_block_with_config, PanelResolver};
 use crate::model::ReadSnapshot;
 
 /// Referring blocks per panel, by the panel's canonical page key. A key that
 /// is absent has no referring block.
 pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u32> {
     let config = graph.config();
-    let format = config.journal_format();
-    let real = real_page_names(graph);
-    let edges = graph.alias_edges();
-    // The panel's `find` over the page list: the FIRST journal page of each
-    // day in page-list order (as `LinkGraph::build`).
-    let mut first_journal: HashMap<i64, String> = HashMap::new();
-    for entry in graph.page_list_arc().iter() {
-        if entry.kind == PageKind::Journal {
-            if let Some(day) = format.parse(&entry.name) {
-                first_journal
-                    .entry(day.ordinal_key())
-                    .or_insert_with(|| entry.name.clone());
-            }
-        }
-    }
-    let mut referenced_by_day: HashMap<i64, Vec<String>> = HashMap::new();
-    for name in graph.explicit_reference_names() {
-        if let Some(day) = super::eval::reference_day(name, &format) {
-            referenced_by_day
-                .entry(day)
-                .or_default()
-                .push(name.to_owned());
-        }
-    }
-    let resolve = |target: &str| {
-        graph_equivalent_page_names_with(
-            &real,
-            &edges,
-            &format,
-            target,
-            |day| first_journal.get(&day.ordinal_key()).cloned(),
-            |day| {
-                referenced_by_day
-                    .get(&day.ordinal_key())
-                    .cloned()
-                    .unwrap_or_default()
-            },
-        )
-    };
+    let resolver = PanelResolver::new(graph);
+    let resolve = |target: &str| resolver.resolve(target);
     let favorites = config
         .favorites_page
         .as_deref()
