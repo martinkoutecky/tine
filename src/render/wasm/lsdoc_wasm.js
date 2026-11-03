@@ -656,6 +656,28 @@ function __tine_raw_outline_reads_json(verb) {
 }
 
 /**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ * @param {string | null | undefined} pre_block
+ * @param {string | null | undefined} first_root
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_page_alias_spellings(pre_block, first_root, is_org) {
+    var ptr0 = isLikeNone(pre_block) ? 0 : passStringToWasm0(pre_block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(first_root) ? 0 : passStringToWasm0(first_root, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.page_alias_spellings(ptr0, len0, ptr1, len1, is_org);
+    var v3 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
  * The native file-format answer, including mixed-case Org extensions.
  * @param {string} path
  * @returns {string}
@@ -1618,6 +1640,7 @@ export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_o
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
 export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
+export const page_alias_spellings = __tineGuard("page_alias_spellings", __tine_raw_page_alias_spellings);
 export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);

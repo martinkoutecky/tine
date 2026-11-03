@@ -5,7 +5,7 @@ import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, layoutHasMultiplePanes, layoutRoot, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -40,7 +40,7 @@ import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { aliasNamesOf, visibleBody, isRenderHiddenPageProp } from "../render/block";
+import { visibleBody, isRenderHiddenPageProp } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
@@ -1257,7 +1257,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       </div>
       <AliasGroupHeader
         name={props.page.name}
-        declared={aliasNamesOf(headerProperties(), props.page.format)}
+        declared={pageAliasNames(props.page)}
         inGraph={!props.page.guide}
         onEdit={editPageHeader}
       />

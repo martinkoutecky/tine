@@ -1,23 +1,6 @@
 {
   "aliasMerge": {
-    "fixtures": {
-      "aliases-into-aliases": [
-        "merge: \"Former\" no longer names the survivor (now None); survivor file \"aliases:: Kept\\n\\n- kept\\n- aliases:: Former\\n- moved\\n\"",
-        "rename-merge: \"Former\" no longer names the survivor (now None); survivor file \"aliases:: Kept\\n\\n- kept\\n- aliases:: Former\\n- moved\\n\""
-      ],
-      "org-aliases-into-aliases": [
-        "merge: \"Former\" no longer names the survivor (now None); survivor file \"#+ALIASES: Kept\\n* kept\\n* #+ALIASES: Former\\n* moved\\n\"",
-        "rename-merge: \"Former\" no longer names the survivor (now None); survivor file \"#+ALIASES: Kept\\n* kept\\n* #+ALIASES: Former\\n* moved\\n\""
-      ],
-      "source-first-block-header": [
-        "merge: \"Former\" no longer names the survivor (now None); survivor file \"- kept\\n- alias:: Former\\n- moved\\n\"",
-        "rename-merge: \"Former\" no longer names the survivor (now None); survivor file \"- kept\\n- alias:: Former\\n- moved\\n\""
-      ],
-      "survivor-first-block-header": [
-        "merge: \"Kept\" no longer names the survivor (now None); survivor file \"alias:: Former\\n\\n- alias:: Kept\\n- kept\\n- moved\\n\"",
-        "rename-merge: \"Kept\" no longer names the survivor (now None); survivor file \"alias:: Former\\n\\n- alias:: Kept\\n- kept\\n- moved\\n\""
-      ]
-    },
+    "fixtures": {},
     "harnessSkipped": [],
     "random": {},
     "randomGraphs": 0
@@ -587,10 +570,6 @@
         "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"über\": page_key same, fold different",
         "guide.ts key (declared: Guide titles are a separate namespace): \"über\" / \"Über/\": page_key same, fold different",
         "guide.ts key (declared: Guide titles are a separate namespace): \"Å\" / \"Å\": page_key same, fold different"
-      ],
-      "headers": [
-        "Page.tsx header: pages/h6.md shows aliases [\"a6\",\"b6\"], the store declares [\"a6\"]",
-        "RightSidebar.tsx header: pages/h3.md shows aliases [\"a3\"], the store declares [\"a3\",\"b3\"]"
       ]
     }
   },

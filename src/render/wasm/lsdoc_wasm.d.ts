@@ -164,6 +164,15 @@ export function outline_max_depth(): number;
 export function outline_reads_json(verb: string): string;
 
 /**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ */
+export function page_alias_spellings(pre_block: string | null | undefined, first_root: string | null | undefined, is_org: boolean): string[];
+
+/**
  * The native file-format answer, including mixed-case Org extensions.
  */
 export function page_file_format(path: string): string;
@@ -367,6 +376,7 @@ export interface InitOutput {
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
     readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
+    readonly page_alias_spellings: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];

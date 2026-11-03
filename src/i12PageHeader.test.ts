@@ -52,7 +52,7 @@ describe("I-12 JS and Rust page-header save boundary", () => {
   });
 
   it("keeps the block-scoped property list identical to the Rust promotion rule (GH #540)", () => {
-    const rust = readFileSync("crates/tine-store/src/model.rs", "utf8");
+    const rust = readFileSync("crates/tine-core/src/page_header.rs", "utf8");
     const body = /BLOCK_SCOPED_PROPERTY_KEYS: &\[&str\] = &\[([^\]]*)\]/.exec(rust)?.[1] ?? "";
     const rustKeys = [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
     expect(rustKeys.length).toBeGreaterThan(0);

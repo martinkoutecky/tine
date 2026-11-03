@@ -5,7 +5,7 @@
 use crate::config::FileNameFormat;
 
 #[path = "page_identity.rs"]
-mod page_identity;
+pub(crate) mod page_identity;
 pub use page_identity::page_key;
 
 /// Comparison form for page identity. NFC composition requires allocation; this

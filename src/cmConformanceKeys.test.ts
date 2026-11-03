@@ -15,10 +15,9 @@
 //   restated in one line each with their site (`guide.ts key`);
 // - the real `orderAcItems` (`[[` completion's Enter policy): typing a spelling
 //   of an existing page must make that page the default, not "Create";
-// - the page header's alias list: `render/block.ts aliasNamesOf` over the
-//   properties Page.tsx reads (`pageHeaderProperties`: the pre-block, then a
-//   properties-only first root, restated from `pagePropertyParts`) and over
-//   what RightSidebar.tsx reads (`readPageProperties`: first line per key).
+// - the page header's alias list: `document/edits/properties.ts pageAliasNames`
+//   (what Page.tsx and RightSidebar.tsx show; the wasm build of the store's
+//   `page_header::page_alias_spellings`) on each header shape loaded as a page.
 //
 // Differences are compared with the `frontendKeys` part of
 // `expected-differences.json`; `CM_REFRESH=1` rewrites that part.
@@ -29,8 +28,8 @@ import { initParser } from "./render/parse";
 import { pageIdentityKey } from "./pageIdentity";
 import { keyOf } from "./seen/displayed";
 import { orderAcItems } from "./editor/autocomplete";
-import { aliasNamesOf } from "./render/block";
-import { isPropertiesOnly, pagePropertyEntries } from "./editor/properties";
+import { pageAliasNames, pageByName } from "./document";
+import { loadSingle, resetStore } from "./document/workingSet";
 
 const FIXTURES = path.resolve(__dirname, "../crates/tine-store/tests/fixtures/cm-conformance");
 const EXPECTED = path.join(FIXTURES, "expected-differences.json");
@@ -89,33 +88,22 @@ function corpusDiffs(corpus: Named[]): string[] {
   return diffs.sort();
 }
 
-/** Page.tsx `headerProperties` = `pageHeaderProperties(page)`; for a loaded
- *  page that is `pagePropertyParts` (document/edits/properties.ts:96-104):
- *  Markdown's properties-only first root joins the pre-block. */
-function pageHeaderLines(h: Header): [string, string][] {
-  const root = h.format === "md" && h.firstRoot !== null && isPropertiesOnly(h.firstRoot) ? h.firstRoot : null;
-  const parts = h.preBlock || root === null ? [h.preBlock ?? "", ...(root === null ? [] : [root])] : [root];
-  return parts.flatMap((text) => pagePropertyEntries(text, h.format).map((e): [string, string] => [e.key, e.value]));
-}
-
-/** RightSidebar.tsx `readPageProperties`: the same lines, first per key. */
-function sidebarLines(h: Header): [string, string][] {
-  const seen = new Set<string>();
-  return pageHeaderLines(h).filter(([key]) => !seen.has(key.toLowerCase()) && !!seen.add(key.toLowerCase()));
-}
-
 function headerDiffs(headers: Header[]): string[] {
   const diffs: string[] = [];
   const keys = (names: string[]) => [...new Set(names.map(pageIdentityKey))].sort();
   for (const h of headers) {
+    resetStore();
+    const name = h.path.replace(/^pages\//, "").replace(/\.(md|org)$/, "");
+    const blocks = h.firstRoot === null ? [] : [{ id: `${name}-r0`, raw: h.firstRoot, collapsed: false, children: [] }];
+    loadSingle({ name, kind: "page", title: name, pre_block: h.preBlock, format: h.format, blocks });
+    const page = pageByName(name);
+    const shown = page ? keys(pageAliasNames(page)) : [];
     const store = keys(h.declared);
-    for (const [surface, lines] of [["Page.tsx header", pageHeaderLines(h)], ["RightSidebar.tsx header", sidebarLines(h)]] as const) {
-      const shown = keys(aliasNamesOf(lines, h.format));
-      if (JSON.stringify(shown) !== JSON.stringify(store)) {
-        diffs.push(`${surface}: ${h.path} shows aliases ${JSON.stringify(shown)}, the store declares ${JSON.stringify(store)}`);
-      }
+    if (JSON.stringify(shown) !== JSON.stringify(store)) {
+      diffs.push(`page header (Page.tsx, RightSidebar.tsx): ${h.path} shows aliases ${JSON.stringify(shown)}, the store declares ${JSON.stringify(store)}`);
     }
   }
+  resetStore();
   return diffs.sort();
 }
 

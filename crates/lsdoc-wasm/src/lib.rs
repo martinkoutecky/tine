@@ -106,6 +106,19 @@ pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
+#[path = "../../tine-core/src/page_header.rs"]
+mod page_header;
+
+/// The alias spellings a page declares (census Q7): the store's own answer,
+/// `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+/// properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+/// one spelling per page identity). The page header's alias list shows this.
+/// O(header bytes).
+#[wasm_bindgen]
+pub fn page_alias_spellings(pre_block: Option<String>, first_root: Option<String>, is_org: bool) -> Vec<String> {
+    page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
+}
+
 #[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
 mod og_built_in;
 

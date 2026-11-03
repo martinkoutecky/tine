@@ -6,23 +6,7 @@ use std::collections::HashMap;
 
 use crate::doc::{DocBlock, Document};
 
-/// Page properties owned by lsdoc, including Org directives and head drawers.
-/// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
-pub fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    crate::block_regions::parse_document(text, is_org)
-        .page_properties()
-        .map(|p| {
-            (
-                if is_org {
-                    p.key.to_ascii_lowercase()
-                } else {
-                    p.key.clone()
-                },
-                p.value.clone(),
-            )
-        })
-        .collect()
-}
+pub use crate::page_header::page_property_lines;
 
 /// The first root carries the format; an empty document's parser-owned Org
 /// metadata distinguishes an Org drawer/directive preamble from Markdown.
