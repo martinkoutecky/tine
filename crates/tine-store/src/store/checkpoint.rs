@@ -75,7 +75,12 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// changing marker/planning projections and derived indexes for NEL/BOM input.
 /// Invalidate older disposable results; serialized layout and graph files stay
 /// unchanged.
-pub(crate) const FORMAT: u32 = 21;
+/// 22 (D-20261102-CM4 CM-REFONLY): the referenced-name index also holds
+/// property-key pages (unless `:property-pages/enabled?` is off or the key is
+/// excluded) and referenced task-marker and priority pages, so reference-only
+/// pages and page-anchored query rows change for unchanged graph files. The
+/// serialized layout stays unchanged; older indexes rebuild.
+pub(crate) const FORMAT: u32 = 22;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

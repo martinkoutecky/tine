@@ -274,6 +274,12 @@ impl LinkGraph {
             register(node, &names, &mut by_name, &mut by_property_key);
             node_keys.push(refs::page_key(&canonical));
             self_keys.push(refs::page_key(&self_page));
+            // A page-anchored query row of a reference-only page finds its
+            // node by key, as a file row does (D-20261102-CM4 CM-REFONLY).
+            table
+                .by_key
+                .entry(refs::page_key(&canonical))
+                .or_insert(node);
             table.virtuals.push(VirtualNode {
                 journal_day: format.parse(&canonical).map(|day| day.ordinal_key()),
                 name: canonical,
@@ -383,7 +389,8 @@ impl LinkGraph {
         adjacency(&self.out) + adjacency(&self.inn) + keys + virtuals
     }
 
-    /// The node of the physical page whose key is `page_key`.
+    /// The node of the page whose key is `page_key`: a physical page, else a
+    /// reference-only page's virtual node.
     pub(crate) fn node(&self, page_key: &str) -> Option<u32> {
         self.by_key.get(page_key).copied()
     }
@@ -672,8 +679,9 @@ mod cancellation_tests {
         let QueryRows::Page { pages } = result.rows else {
             panic!("page rows");
         };
-        // p1..p{CHAIN-1} (p0 has no referrer; the fileless end is no row).
-        assert_eq!(pages.len(), CHAIN - 1);
+        // p1..p{CHAIN-1} and the fileless end p{CHAIN}, a reference-only page
+        // row (D-20261102-CM4 CM-REFONLY); p0 has no referrer.
+        assert_eq!(pages.len(), CHAIN);
     }
 
     /// One whole run on `graph` of `tql`, counting its checks.

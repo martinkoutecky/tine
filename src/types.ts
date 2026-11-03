@@ -228,6 +228,14 @@ export interface PageInventory {
   unreadable?: string[];
 }
 
+/** `page_backlink_counts` result (D-20261102-CM4 CM-COUNT): how many blocks
+ *  each page's unfiltered Linked References panel lists, as `[files,
+ *  references]`. `files` holds one row per file that owns its name, by
+ *  graph-relative path (a non-owner twin has none: All pages shows a dash);
+ *  `references` one row per reference-only page, by the name its inventory
+ *  entry carries. */
+export type PageBacklinkCounts = [files: [string, number][], references: [string, number][]];
+
 /** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
  *  file whose last-modified time the store holds. A file with no time is absent. */
 export interface PageModified {

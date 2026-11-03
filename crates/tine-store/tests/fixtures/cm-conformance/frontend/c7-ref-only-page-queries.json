@@ -1,0 +1,307 @@
+{
+  "backlinks": {
+    "A": [],
+    "b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "250d5e41-a23f-803e-a529-29bbc197734b",
+            "raw": "see [[B]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      }
+    ],
+    "proj": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "7639dade-8bc0-8058-bcfe-2afd50750ee2",
+            "raw": "in [[proj/sub]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      }
+    ],
+    "proj/sub": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "7639dade-8bc0-8058-bcfe-2afd50750ee2",
+            "raw": "in [[proj/sub]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      }
+    ],
+    "todo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "deed6dd1-6c68-8fbf-956a-0666e94de766",
+            "raw": "TODO thing",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/A.md",
+        0
+      ]
+    ],
+    [
+      [
+        "B",
+        1
+      ],
+      [
+        "proj/sub",
+        1
+      ],
+      [
+        "TODO",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/B.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "proj/sub",
+      "name": "proj/sub",
+      "target": {
+        "id": "pages/proj%2Fsub.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "TODO",
+      "target": {
+        "id": "pages/TODO.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "B": "b",
+    "TODO": "todo",
+    "proj/sub": "proj/sub"
+  },
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    "TODO": {
+      "journal": [
+        "journal",
+        "todo"
+      ],
+      "page": [
+        "page",
+        "todo"
+      ]
+    },
+    "proj": {
+      "journal": [
+        "journal",
+        "proj"
+      ],
+      "page": [
+        "page",
+        "proj"
+      ]
+    },
+    "proj/sub": {
+      "journal": [
+        "journal",
+        "proj/sub"
+      ],
+      "page": [
+        "page",
+        "proj/sub"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "B": {
+      "journal": null,
+      "page": null
+    },
+    "TODO": {
+      "journal": null,
+      "page": null
+    },
+    "proj": {
+      "journal": null,
+      "page": null
+    },
+    "proj/sub": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "A",
+      "owner": "pages/A.md"
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "b",
+      "owner": null
+    },
+    {
+      "key": "proj",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "proj",
+      "owner": null
+    },
+    {
+      "key": "proj/sub",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "proj/sub",
+      "owner": null
+    },
+    {
+      "key": "todo",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "todo",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    },
+    "TODO": {
+      "backend": [
+        "page",
+        "todo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "todo"
+      ]
+    },
+    "proj": {
+      "backend": [
+        "page",
+        "proj"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "proj"
+      ]
+    },
+    "proj/sub": {
+      "backend": [
+        "page",
+        "proj/sub"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "proj/sub"
+      ]
+    }
+  }
+}

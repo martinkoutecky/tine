@@ -120,15 +120,16 @@ impl WholeGraph {
                             reference
                                 .set_org(crate::query::page_properties::page_document_is_org(doc));
                         }
-                        let projection = reference.projection();
-                        let names = projection.refs_page().iter().map(String::as_str).chain(
-                            tine_core::reference_evidence::linkable_property_names(
-                                projection.reference_source(),
-                                &projection.regions,
-                            ),
+                        // The editor block's names by the collector's own
+                        // per-block rule (`visit_block_referenced_names`).
+                        let mut names: Vec<String> = Vec::new();
+                        crate::model::visit_block_referenced_names(
+                            &reference,
+                            self.graph.config(),
+                            &mut |name| names.push(name.to_owned()),
                         );
                         let mut keys = crate::model::NameKeyMap::new();
-                        for name in names {
+                        for name in &names {
                             if let Some(key) = crate::transliteration::cache_identity(name) {
                                 let value = self
                                     .graph

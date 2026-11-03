@@ -1,4 +1,4 @@
-import type { PageEntry } from "./types";
+import type { PageBacklinkCounts, PageEntry } from "./types";
 import { pageListLabels } from "./pages";
 
 // The All Pages view's list logic (GH #335): which rows, in what order, and which
@@ -22,6 +22,22 @@ export interface AllPagesRow {
 
 /** Most recently updated first, as in Logseq's All pages (`:block/updated-at` descending). */
 export const DEFAULT_SORT: AllPagesSort = { key: "updated", desc: true };
+
+/** The key a row's count is held under: a file's graph-relative path, else
+ *  (a reference-only page, path `""`) its name behind a NUL, which no path
+ *  carries. `page_backlink_counts` answers files by path and reference-only
+ *  pages by name. */
+export function countKey(entry: PageEntry): string {
+  return entry.path || `\0${entry.name}`;
+}
+
+/** The backend's counts by row key (`countKey`): files by path, reference-only
+ *  pages by name. */
+export function backlinkCountsByRow([files, references]: PageBacklinkCounts): Map<string, number> {
+  const counts = new Map(files);
+  for (const [name, count] of references) counts.set(countKey({ name, kind: "page", date_key: null, path: "" }), count);
+  return counts;
+}
 
 /** Unix seconds of each page file by graph-relative path (`PageEntry.path`), from `page_modified`. */
 export type ModifiedTimes = ReadonlyMap<string, number>;
@@ -78,8 +94,8 @@ export function arrangeAllPages(
       if (aHas !== bHas) return aHas ? -1 : 1;
       if (aHas && a.date_key !== b.date_key) return ((a.date_key as number) - (b.date_key as number)) * direction;
     } else if (sort.key === "updated" || sort.key === "backlinks") {
-      const values = sort.key === "backlinks" ? backlinks : modified;
-      const at = values.get(a.path), bt = values.get(b.path);
+      const at = sort.key === "backlinks" ? backlinks.get(countKey(a)) : modified.get(a.path);
+      const bt = sort.key === "backlinks" ? backlinks.get(countKey(b)) : modified.get(b.path);
       if ((at === undefined) !== (bt === undefined)) return at !== undefined ? -1 : 1;
       if (at !== undefined && at !== bt) return (at - (bt as number)) * direction;
     }
@@ -87,7 +103,7 @@ export function arrangeAllPages(
     if (byName !== 0) return (sort.key === "title" ? direction : 1) * byName;
     return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
   });
-  return kept.map((entry) => ({ entry, label: label(entry), modified: modified.get(entry.path), backlinks: backlinks.get(entry.path) }));
+  return kept.map((entry) => ({ entry, label: label(entry), modified: modified.get(entry.path), backlinks: backlinks.get(countKey(entry)) }));
 }
 
 /** The slice of a fixed-row-height list that must exist in the DOM. `overscan` rows

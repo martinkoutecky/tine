@@ -127,7 +127,11 @@ describe("OG-P12 parser-owned properties, references and header spans", () => {
     expect(native).toContain("crate::block_regions::reference_target_name(");
     expect(native).not.toMatch(/fn nested_names|fn local_asset/);
     const model = readFileSync("crates/tine-store/src/model.rs", "utf8");
-    const references = model.slice(model.indexOf("fn property_refs"), model.indexOf("pub(crate) enum Withdrawal"));
+    // The referenced-name collector's property share (CM step 2 batch 5 renamed
+    // `property_refs` to `visit_block_property_and_evidence_names`).
+    const anchor = model.indexOf("fn visit_block_property_and_evidence_names");
+    expect(anchor).toBeGreaterThan(-1);
+    const references = model.slice(anchor, model.indexOf("pub(crate) enum Withdrawal"));
     expect(references).not.toContain("parse_property_line");
     expect(references).toContain("reference_evidence::linkable_property_names(");
     expect(references).toContain("projection.reference_source()");

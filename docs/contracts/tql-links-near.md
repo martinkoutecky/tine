@@ -134,8 +134,24 @@ Unlinked references (plain mentions) are not links. A block reference
 so such a page is a node too: it can be a seed (`near(name = 'idea', 1, 'in')`
 selects the pages linking to a fileless `idea`) and an element (`any(links, name
 = 'idea')`). It has its name, `journal = true` and its `day` when the name is a
-date, no properties and no blocks, and it never links anywhere. Like every
-`@page` query, the result lists only pages that have a file.
+date, no properties and no blocks, and it never links anywhere. A `@page`
+query lists such a page as a row like any other (D-20261102-CM4 CM-REFONLY):
+the row carries its name and no file, and a table shows its other columns
+empty. The fileless pages are those a block names (a link, a tag, a property
+value or key page, a task marker or a priority) that no file, alias or journal
+day answers to.
+
+**Counts.** All pages shows, per page, the number of blocks the page's
+unfiltered Linked References panel lists: a block once however many of the
+page's names it uses, never a block of the page's own panel or of the Favorites
+arrangement page (`WholeGraph::page_backlink_counts`). A counter of its own
+computes it (`query::page_counts`): one forward walk over every block's
+reference targets by the panel's rule, each distinct target folded once to its
+panel by the panel's resolver. It and the panel's own walk
+(`backlinks_bounded`) are two drivers of one rule, an I-12 exception kept equal
+by the conformance harness; it retires with one forward target map (D3). A
+block embed (`{{embed ((uuid))}}`) names no page: no panel lists it, so it is
+no page without a file either.
 
 ## Renames
 
@@ -160,8 +176,18 @@ unless the block also links the page; this is a declared difference.
   final sort, never R times an alias's owner count (200 owners of one alias
   named 50,000 times peak at about 1 MB above the start of the build for a
   338 KB table; before review r1 the occurrences were expanded first, +72 MB). Measured on the
-  realistic 10k graph: 13,904 nodes, 94,121 links, about 2.3 MiB retained. A
-  later snapshot builds its own.
+  realistic 10k graph: 13,904 nodes, 94,121 links, about 2.3 MiB retained
+  (before CM step 2 batch 5 dropped the 3,259 block-embed uuid names, so
+  about 10,645 nodes now, by subtraction). A later snapshot builds its own.
+- **All pages counts** are not read from this table: the counter
+  (`query::page_counts`) is a separate walk per read, O(P + B + R + T) for T
+  distinct targets (one resolve each), whose fold table is local to the call
+  and dropped with it; nothing is kept per snapshot (D-10). All pages reads it
+  on the HK3 quiet signal (`createQuietRun`, at most one read in flight): on
+  the realistic 10k graph a read takes about 100 ms (103 ms median of 3 under
+  load; the walker it replaces about 85 ms), the same on a new snapshot after
+  an idle edit, and the reply is about 330 KB of JSON for 10,000 files and 635
+  fileless pages (CM step 2 batch 5 receipt).
 - **`near`** is breadth-first search over that table, one search per
   direction, never recursion: O(seeds + pages reached + links followed). The seed
   condition is evaluated once per page.

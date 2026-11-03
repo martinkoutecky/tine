@@ -2010,6 +2010,10 @@ mod og_20d_guide_tests {
             "**Page** (name)",
             "**Show journals**",
             "**Journal date**",
+            // D-20261102-CM4: reference-only pages are listed, and the count
+            // is the size of the page's Linked References.
+            "pages with no file of their own",
+            "the number of blocks the page's Linked References lists",
         ] {
             assert!(
                 map.contains(detail),

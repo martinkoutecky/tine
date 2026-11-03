@@ -1,0 +1,34 @@
+{
+  "files": {
+    "pages/A.md": "- see [[B]]\n- in [[proj/sub]]\n- TODO thing\n"
+  },
+  "queries": [
+    {
+      "anchor": "page",
+      "q": {
+        "name": "B"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "not": {
+          "name": "A"
+        }
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "or": [
+          {
+            "name": "proj/sub"
+          },
+          {
+            "name": "todo"
+          }
+        ]
+      }
+    }
+  ]
+}

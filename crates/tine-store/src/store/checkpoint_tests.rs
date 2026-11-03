@@ -166,6 +166,41 @@ fn pre_ecmascript_editor_trim_checkpoints_are_rebuilt() {
     store.close();
 }
 
+/// FORMAT 22 (D-20261102-CM4 CM-REFONLY): a format-21 referenced-name index
+/// lacks property-key and task-marker (and priority) pages; it must rebuild, so the
+/// reference-only pages appear on a warm launch over unchanged files.
+#[test]
+fn pre_reference_only_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/Refs.md"),
+        "- TODO task\n- LATER plan\n- note\n  rating:: 5\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&21_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    let absent: Vec<String> = graph
+        .inventory(crate::InventoryScope::All)
+        .0
+        .iter()
+        .filter(|entry| matches!(entry.target, crate::Resolved::Absent { .. }))
+        .map(|entry| entry.name.to_lowercase())
+        .collect();
+    for key in ["todo", "later", "rating"] {
+        assert!(
+            absent.iter().any(|k| k == key),
+            "{key} missing from {absent:?}"
+        );
+    }
+    store.close();
+}
+
 #[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
@@ -1052,13 +1087,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (21, GOLDEN),
+        (22, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "e154a79e130b4594fae9eec1760fcb10f2ce7f90191770299975a993bf835be0";
+const GOLDEN: &str = "cfee36dc82abc871ca5817df695aa49caf1c4d4ff1807e5c286fa5879a4dd6e9";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no
