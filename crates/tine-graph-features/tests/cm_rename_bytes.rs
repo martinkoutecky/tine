@@ -104,7 +104,7 @@ fn sample(root: &Path) -> Vec<String> {
     let mut by_pages: Vec<(&String, &(String, BTreeSet<usize>, bool))> = seen.iter().collect();
     by_pages.sort_by(|a, b| b.1 .1.len().cmp(&a.1 .1.len()).then(a.0.cmp(b.0)));
     let mut names: Vec<String> = Vec::new();
-    let mut push = |name: &str, names: &mut Vec<String>| {
+    let push = |name: &str, names: &mut Vec<String>| {
         let key = tine_core::refs::page_key(name);
         if !key.is_empty() && !names.iter().any(|n| tine_core::refs::page_key(n) == key) {
             names.push(name.to_string());

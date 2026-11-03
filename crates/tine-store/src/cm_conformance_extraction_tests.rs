@@ -20,20 +20,20 @@
 //! the rename rewrites. Both sides' occurrences are then labelled with the same
 //! syntactic classifier (`form`), so a difference reads as a form, e.g.
 //! `rename-only: [[x]] in {{query}}` or `evidence-only explicit_property_key:
-//! property key`. A rename-only occurrence on a page that holds no evidence
-//! reference to that name (namespace closure included) is marked `(page not
-//! read)`: the planner selects pages by `explicit_referrers`, so today such an
-//! occurrence is rewritten only when the same page also references the name
-//! somewhere else.
+//! property key`. A rename-only occurrence on a page the planner would not
+//! read is marked `(page not read)`: the planner selects pages by
+//! `explicit_referrers` (evidence references, namespace closure included) plus
+//! the pages a text holding `{{` (or, in Org, `[[file:`) of which the rename
+//! changes (`pages.rs rewrite_target_pages`), and this mirrors both.
 //!
 //! Corpora:
 //! - the generated forms below (every reference form either side knows, for
 //!   several name shapes, in Markdown and Org); differences go to part
 //!   `extraction` of `expected-differences.json` (`CM_REFRESH=1` rewrites it),
-//!   and the per-text answers go to `frontend-refs/` for
-//!   `src/cmConformanceRefs.test.ts`, which runs the frontend's
-//!   `swipeRefNames` and `unsavedPathsFor` (through `renameOrMergePage`) on the
-//!   same texts;
+//!   and each text's blocks with their evidence keys go to `frontend-refs/`
+//!   for `src/cmConformanceRefs.test.ts`, which runs the frontend's
+//!   `swipeRefNames` on the same texts (`unsavedPathsFor` asks the rename
+//!   itself since phase B: `tine-graph-features/tests/rename_would_change.rs`);
 //! - `CM_ANON=<graph dir>` (ignored test `extraction_anonymized_graph`): every
 //!   page of a real graph, reporting forms and counts only, never text or
 //!   names, to `artifacts/cm/extraction-anonymized.json`.
@@ -46,7 +46,9 @@ use serde_json::{json, Value};
 use tine_core::config::FileNameFormat;
 use tine_core::doc::DocBlock;
 use tine_core::model::{decode_page_name, encode_page_name};
-use tine_core::refs::{namespace_refs, page_key, rename_rewrite};
+use tine_core::refs::{
+    namespace_refs, page_key, rename_block_raw, rename_pre_block, rename_rewrite,
+};
 
 use super::shared;
 use super::shared::Section;
@@ -371,13 +373,19 @@ fn evidence(text: &str, is_org: bool) -> (Vec<Occ>, BTreeSet<String>) {
             names.insert(r.name.clone());
         }
     };
+    // The store's page-header block (`query.rs page_property_block`): only the
+    // parser-owned page properties, projected; prose before the first block
+    // is not one (the declared prose-preamble limit).
     if let Some(pre) = &parsed.pre_block {
-        let header = tine_core::page_properties::property_projection_with_config(
-            pre,
-            is_org,
-            &Default::default(),
-        );
-        take(&header);
+        let raw = tine_core::page_properties::page_property_raw(pre, is_org);
+        if !raw.is_empty() {
+            let header = tine_core::page_properties::property_projection_with_config(
+                &raw,
+                is_org,
+                &Default::default(),
+            );
+            take(&header);
+        }
     }
     fn walk(blocks: &[DocBlock], take: &mut dyn FnMut(&DocBlock)) {
         for b in blocks {
@@ -426,7 +434,7 @@ fn harvest(text: &str, out: &mut BTreeSet<String>) {
     for line in text.lines() {
         if let Some((key, value)) = line.split_once("::") {
             push(key.trim_start().trim_start_matches(['-', '*', ' ']));
-            for v in value.split([',', '，']) {
+            for v in value.split(tine_core::refs::is_linkable_property_separator) {
                 push(v);
             }
         }
@@ -458,10 +466,13 @@ fn renamed(text: &str, is_org: bool, candidates: &BTreeSet<String>) -> Vec<Occ> 
         .map(|(i, k)| (by_key[k].clone(), format!("QQR{i}QQ")))
         .collect();
     let output = rename_rewrite(text, is_org, &pairs, NAME_FORMAT);
+    // A property key is respelled as OG writes keys (lower-cased; ruling Q1),
+    // so sentinels are found ignoring ASCII case (same byte offsets).
+    let folded = output.to_ascii_lowercase();
     let mut out = Vec::new();
     for (i, key) in keys.iter().enumerate() {
-        let sentinel = format!("QQR{i}QQ");
-        for (at, _) in output.match_indices(&sentinel) {
+        let sentinel = format!("qqr{i}qq");
+        for (at, _) in folded.match_indices(&sentinel) {
             out.push(Occ {
                 key: key.clone(),
                 form: form(&output, at, at + sentinel.len()),
@@ -470,6 +481,30 @@ fn renamed(text: &str, is_org: bool, candidates: &BTreeSet<String>) -> Vec<Occ> 
         }
     }
     out
+}
+
+/// Whether the planner's rewrite-target scan (`pages.rs
+/// rewrite_target_pages`) selects this page for a rename of `key`: a block or
+/// the pre-block holding `{{` (or, in Org, `[[file:`) that the rename changes.
+fn target_read(text: &str, is_org: bool, key: &str) -> bool {
+    let rel = if is_org { "pages/p.org" } else { "pages/p.md" };
+    let parsed = shared::parse_file(rel, text);
+    let renames = std::collections::HashMap::from([(key.to_owned(), "QQZQQ".to_owned())]);
+    let may_hold = |raw: &str| raw.contains("{{") || (is_org && raw.contains("[[file:"));
+    if let Some(pre) = parsed.pre_block.as_deref() {
+        if may_hold(pre) && rename_pre_block(pre, is_org, &renames, NAME_FORMAT) != pre {
+            return true;
+        }
+    }
+    let mut stack: Vec<&DocBlock> = parsed.roots.iter().collect();
+    while let Some(block) = stack.pop() {
+        let raw = block.raw();
+        if may_hold(raw) && rename_block_raw(raw, is_org, &renames, NAME_FORMAT) != raw {
+            return true;
+        }
+        stack.extend(block.children.iter());
+    }
+    false
 }
 
 /// One page's comparison. `show` names the key in each difference (generated
@@ -521,7 +556,7 @@ fn compare(text: &str, is_org: bool, show: bool) -> PageResult {
             diffs.push(format!("evidence-only {rule}: {}{who}", k.1));
         }
         for _ in rules.len()..r {
-            let read = if referrer.contains(&k.0) {
+            let read = if referrer.contains(&k.0) || target_read(text, is_org, &k.0) {
                 ""
             } else {
                 " (page not read: no evidence reference)"
@@ -569,21 +604,6 @@ fn rename_scanner_vs_reference_evidence() {
             }
         }
         walk(&parsed.roots, &mut blocks);
-        let renames: BTreeMap<String, Value> = result
-            .rewrites
-            .iter()
-            .chain(result.referrer.iter())
-            .chain(std::iter::once(&page_key(&entry.name)))
-            .map(|k| {
-                (
-                    k.clone(),
-                    json!({
-                        "rewrites": result.rewrites.contains(k),
-                        "referrer": result.referrer.contains(k),
-                    }),
-                )
-            })
-            .collect();
         let case = cases
             .entry(entry.id.split('/').next().unwrap().to_owned())
             .or_insert_with(|| json!({}));
@@ -591,7 +611,6 @@ fn rename_scanner_vs_reference_evidence() {
             "name": entry.name,
             "preBlock": parsed.pre_block,
             "blocks": blocks,
-            "renames": renames,
         });
     }
     super::check_frontend_cases(

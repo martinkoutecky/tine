@@ -141,3 +141,46 @@ fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() 
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+/// Declared limit (manager ruling 2026-11-03; follow-up batch: the evidence
+/// reads Markdown prose before the first bullet as the first block, as OG
+/// does). Tine's reference answer does not count a link in that prose, so a
+/// rename leaves it as written on every page: one holding only prose, one
+/// whose blocks also link the page, and one held open in a window. When the
+/// evidence counts it, this test flips.
+#[test]
+fn a_link_in_prose_before_the_first_bullet_is_left_on_every_page() {
+    let _integration_guard = crate::integration_lock();
+    let (root, store) = fixture(&[
+        ("pages/Target.md", "- target\n"),
+        ("pages/Prose.md", "[[Target]] in prose\n"),
+        (
+            "pages/Mixed.md",
+            "[[Target]] in prose\n\n- [[Target]] in a block\n",
+        ),
+        ("pages/Held.md", "[[Target]] held\n\n- [[Target]] block\n"),
+    ]);
+    hosted(&store, |host| {
+        let window = serde_json::to_value(host.window_reloaded()).unwrap();
+        host.open(
+            window["session"].as_u64().unwrap(),
+            window["nextId"].as_u64().unwrap(),
+            &tine_store::PageId::from("pages/Held.md"),
+            "Held",
+        )
+        .unwrap();
+        pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+    })
+    .unwrap();
+    let read = |rel: &str| fs::read_to_string(root.join(rel)).unwrap();
+    assert_eq!(read("pages/Prose.md"), "[[Target]] in prose\n");
+    assert_eq!(
+        read("pages/Mixed.md"),
+        "[[Target]] in prose\n\n- [[Renamed]] in a block\n"
+    );
+    assert_eq!(
+        read("pages/Held.md"),
+        "[[Target]] held\n\n- [[Renamed]] block\n"
+    );
+    let _ = fs::remove_dir_all(&root);
+}

@@ -988,6 +988,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async renamePage(): Promise<import("./types").RenameDone> {
       return { outcome: "unchanged", touched: [] }; // no-op in mock
     },
+    async renameWouldChange(old: string, _next: string, texts: import("./types").RenameProbeText[]): Promise<boolean[]> {
+      // The mock has no rename answer to ask: any text spelling the name may
+      // change (over-approximate, so a stuck page refuses rather than loses).
+      const name = old.normalize("NFC").toLowerCase();
+      return texts.map((text) => text.raw.normalize("NFC").toLowerCase().includes(name));
+    },
     async followPageIdentity(): Promise<import("./types").IdentityFollow> {
       return { name: null }; // no-op in mock
     },

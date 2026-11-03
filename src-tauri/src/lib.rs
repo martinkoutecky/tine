@@ -75,6 +75,7 @@ mod query_ir;
 mod quick_share;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod quit_signal;
+mod rename_would_change;
 mod root_identity;
 mod search_workspace;
 mod seen;
@@ -1101,6 +1102,7 @@ pub fn run() {
             block_ref_counts,
             block_referrers,
             rename_page,
+            rename_would_change::rename_would_change,
             identity_follow::follow_page_identity,
             publish_query_plan,
             publish_query,

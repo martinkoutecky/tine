@@ -188,33 +188,36 @@ fn claimants(target: Resolved) -> Vec<PageId> {
     }
 }
 
-/// Every page holding a `{{query}}` or `{{tine-query}}` macro whose argument
-/// spells one of `olds` (page identity's folding, so namespace descendants
-/// too): the rename rewrites their page-name arguments (D-20261031-CMQ), and no
-/// referrers row names those pages. Found by scanning the planning view's
-/// parsed blocks in memory, with no index (D-10; no persisted record, I-25):
-/// O(B) block checks for `{{` plus O(macro text) on the blocks that hold one.
-/// Over-selection costs a read, never a write: a page the rewrite leaves
-/// byte-identical is not written.
-fn query_macro_pages(graph: &tine_store::WholeGraph, olds: &[String]) -> Vec<PageId> {
-    let keys: Vec<String> = olds.iter().map(|old| refs::page_key(old)).collect();
-    let mentions = |raw: &str| {
-        raw.contains("{{")
-            && tine_core::query::macro_text::query_macro_extents(raw)
-                .iter()
-                .any(|extent| {
-                    let argument = refs::page_key(&extent.argument);
-                    keys.iter().any(|key| argument.contains(key.as_str()))
-                })
-    };
+/// Every page with a block the rename rewrites although no reference names
+/// the page (so no referrers row selects it): a `{{query}}` page-name argument
+/// (D-20261031-CMQ), a `[[link]]` in another macro's argument (cloze,
+/// renderer, plugin macros) or an Org `[[file:…]]` link (its label, not its
+/// file, is the reference). Found by scanning the planning view's parsed
+/// blocks and pre-blocks in memory, with no index (D-10; no persisted record,
+/// I-25): O(B) substring checks, plus the rename's own rewrite of each text
+/// holding `{{` (or, in Org, `[[file:`). Exact: a page is selected only when
+/// one of its texts would change.
+fn rewrite_target_pages(
+    graph: &tine_store::WholeGraph,
+    renames: &HashMap<String, String>,
+    format: tine_core::config::FileNameFormat,
+) -> Vec<PageId> {
     graph
         .corpus(None)
         .pages
         .into_iter()
         .filter(|page| {
+            let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+            let may_hold = |raw: &str| raw.contains("{{") || (org && raw.contains("[[file:"));
+            if let Some(pre) = page.document.pre_block.as_deref() {
+                if may_hold(pre) && refs::rename_pre_block(pre, org, renames, format) != pre {
+                    return true;
+                }
+            }
             let mut stack: Vec<_> = page.document.roots.iter().collect();
             while let Some(block) = stack.pop() {
-                if mentions(block.raw()) {
+                let raw = block.raw();
+                if may_hold(raw) && refs::rename_block_raw(raw, org, renames, format) != raw {
                     return true;
                 }
                 stack.extend(block.children.iter());
@@ -223,6 +226,56 @@ fn query_macro_pages(graph: &tine_store::WholeGraph, olds: &[String]) -> Vec<Pag
         })
         .map(|page| page.id)
         .collect()
+}
+
+/// One text an unsaved page holds, as the window asks about it
+/// ([`rename_would_change`]): its pre-block, or one block's raw body.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameProbeText {
+    pub raw: String,
+    pub org: bool,
+    /// The page's pre-block (its page properties).
+    pub pre_block: bool,
+}
+
+/// Per text, whether renaming `old` to `new` would rewrite it: the rename's
+/// own name map (`old` and every namespace descendant a file owns, as
+/// [`plan_rename`] pairs them) and its own rewrite, so the window's check
+/// before a rename that must leave a stuck page alone (GH #535) cannot
+/// disagree with what the rename writes. Read-only: one view, one inventory
+/// of `old`'s namespace, then O(text bytes) per text.
+pub fn rename_would_change(
+    store: &Store,
+    old: &str,
+    new: &str,
+    texts: &[RenameProbeText],
+) -> io::Result<Vec<bool>> {
+    let graph = view(store)?;
+    let old_key = refs::normalize(old);
+    let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
+    let mut renames: HashMap<String, String> = owned
+        .0
+        .iter()
+        .filter(|entry| !entry.is_journal)
+        .map(|entry| {
+            let to = format!("{new}{}", namespace_suffix(&entry.name, &old_key));
+            (refs::normalize(&entry.name), to)
+        })
+        .collect();
+    renames.insert(old_key, new.to_owned());
+    let format = store.config().file_name_format;
+    Ok(texts
+        .iter()
+        .map(|text| {
+            let after = if text.pre_block {
+                refs::rename_pre_block(&text.raw, text.org, &renames, format)
+            } else {
+                refs::rename_block_raw(&text.raw, text.org, &renames, format)
+            };
+            after != text.raw
+        })
+        .collect())
 }
 
 fn physical(target: &Resolved) -> Vec<PageId> {

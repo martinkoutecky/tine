@@ -10,8 +10,10 @@
 //! rewritten (D-20261019-M2(4)), and so are bare `alias::`/`aliases::` members
 //! (R5, declared). A *rewrite target* is not a reference but names a page: a
 //! query's page-name arguments (`[[x]]`, `#x`, `(page x)`, `(page-ref x)`,
-//! `(namespace x)`, `(page-tags …)` and a TQL page-name literal; D-20261031-CMQ)
-//! and the stem of an Org `file:` link. Plain query search text is neither.
+//! `(namespace x)`, `(page-tags …)` and a TQL page-name literal; D-20261031-CMQ),
+//! a `[[x]]` in the argument of any other macro but `embed` (cloze, renderer,
+//! plugin macros; manager ruling Q2), and the stem of an Org `file:` link
+//! (`reference_evidence::rename_targets`). Plain query search text is neither.
 //!
 //! **Intentional OG differences** (manager ruling Q2/Q3/Q4, 2026-11-03; a veto
 //! item for Martin). OG's `replace-page-ref!` replaces a literal `[[old]]`
@@ -28,7 +30,8 @@
 //! bytes past each CRLF, so every byte that is not a rewritten name is kept.
 //!
 //! Cost: one lsdoc parse per block (the projection the store builds anyway),
-//! plus one query parse per query macro; O(page bytes). Pure.
+//! a second one for a block holding `{{` or an Org `[[file:`, plus one query
+//! parse per query macro; O(page bytes). Pure.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -39,6 +42,7 @@ use crate::outline::{self, OutlineFormat};
 use crate::query::macro_text::{
     macro_safe, query_macro_extents, recognizable_macro, split_trailing_map, FormFamily,
 };
+use crate::reference_evidence::RewriteTarget;
 use crate::refs::{is_linkable_property_separator, page_key};
 
 /// One rename, prepared once per text: old page key to new display name, and
@@ -104,7 +108,7 @@ pub(crate) fn rewrite_page(text: &str, is_org: bool, renames: &Renames<'_>) -> S
 pub(crate) fn rewrite_block(raw: &str, is_org: bool, renames: &Renames<'_>) -> String {
     let mut block = DocBlock::new(raw);
     block.set_org(is_org);
-    splice(raw, settle(block_edits(raw, &block, renames)))
+    splice(raw, settle(block_edits(raw, is_org, &block, renames)))
 }
 
 /// Rewrite a page's pre-block text (its page properties; a page DTO's
@@ -188,7 +192,7 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
         }
         let mut block = DocBlock::new(raw.as_str());
         block.set_org(is_org);
-        for (range, to) in block_edits(&raw, &block, renames) {
+        for (range, to) in block_edits(&raw, is_org, &block, renames) {
             let at = pieces.partition_point(|(start, _)| *start <= range.start) - 1;
             let (piece_start, page_start) = pieces[at];
             let piece_end = pieces.get(at + 1).map_or(raw.len(), |(start, _)| start - 1);
@@ -246,7 +250,7 @@ fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> 
         }
     }
     let block = crate::page_properties::property_projection(&raw, is_org);
-    block_edits(&raw, &block, renames)
+    block_edits(&raw, is_org, &block, renames)
         .into_iter()
         .filter_map(|(range, to)| {
             let (start, _, at) = pieces
@@ -258,7 +262,7 @@ fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> 
 }
 
 /// The edits of one block, in its raw offsets (unsettled).
-fn block_edits(raw: &str, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> {
+fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> {
     let projection = block.projection();
     let source = projection.reference_source();
     let mut edits = Vec::new();
@@ -273,7 +277,12 @@ fn block_edits(raw: &str, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> 
             // OG `replace-property-ref!`: the new name lower-cased, whitespace
             // runs hyphenated (D-20261019-M2(4), manager ruling Q1).
             "explicit_property_key" => {
-                if let Some(to) = renames.keys.get(&reference.name) {
+                // The key names its page by page identity (`Über::` is page
+                // "über"); `keys` is keyed by the old name's key spelling.
+                if let Some(to) = renames
+                    .keys
+                    .get(&property_key_norm(&page_key(&reference.name)))
+                {
                     if let Some(key) = property_key_spelling(to) {
                         edits.push((range, key));
                     }
@@ -305,16 +314,7 @@ fn block_edits(raw: &str, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> 
                 }
             }
             "explicit_link" => link_edits(raw, range, &reference.name, renames, &mut edits),
-            "explicit_nested_link" => {
-                for inner in crate::block_regions::nested_reference_ranges(node) {
-                    if let Some(to) = renames.page(&node[inner.clone()]) {
-                        edits.push((
-                            range.start + inner.start..range.start + inner.end,
-                            to.into(),
-                        ));
-                    }
-                }
-            }
+            "explicit_nested_link" => nested_edits(node, range.start, renames, &mut edits),
             "explicit_embed" => {
                 if let (Some(open), Some(close)) = (node.find("[["), node.rfind("]]")) {
                     if open + 2 <= close {
@@ -328,7 +328,45 @@ fn block_edits(raw: &str, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> 
         }
     }
     edits.extend(query_edits(raw, &projection.regions, renames));
+    // Rewrite targets need the parse again; only a block that can hold one
+    // pays for it.
+    if raw.contains("{{") || (is_org && raw.contains("[[file:")) {
+        for target in crate::reference_evidence::rename_targets(raw, is_org) {
+            match target {
+                RewriteTarget::FileLink(range) => {
+                    let inner = range.start + 2..range.end.saturating_sub(2);
+                    if let Some((stem, to)) = raw
+                        .get(inner.clone())
+                        .and_then(|inner| file_link_stem_edit(inner, renames))
+                    {
+                        edits.push((inner.start + stem.start..inner.start + stem.end, to));
+                    }
+                }
+                // A new name with `}` would end the macro early: the macro keeps
+                // its old bytes, as a query macro does.
+                RewriteTarget::MacroLink(reference) => {
+                    let mut local = Vec::new();
+                    let node = &raw[reference.range.clone()];
+                    if reference.rule == "explicit_nested_link" {
+                        nested_edits(node, reference.range.start, renames, &mut local);
+                    } else {
+                        link_edits(raw, reference.range, &reference.name, renames, &mut local);
+                    }
+                    edits.extend(local.into_iter().filter(|(_, to)| !to.contains('}')));
+                }
+            }
+        }
+    }
     edits
+}
+
+/// The names inside a nested link `[[a [[x]] c]]` that a rename respells.
+fn nested_edits(node: &str, at: usize, renames: &Renames<'_>, edits: &mut Vec<Edit>) {
+    for inner in crate::block_regions::nested_reference_ranges(node) {
+        if let Some(to) = renames.page(&node[inner.clone()]) {
+            edits.push((at + inner.start..at + inner.end, to.into()));
+        }
+    }
 }
 
 /// A link node `[[x]]`, Org `[[x][label]]`, Markdown `[label]([[x]])` or an
@@ -495,7 +533,6 @@ fn headline_tag_ok(to: &str) -> bool {
 /// the graph's file-name codec (the one the page move uses, master
 /// b8f73b9af107). `inner` is the link's text between `[[` and `]]`; the
 /// result is the stem's range in `inner` and the new stem.
-#[allow(dead_code)]
 fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
     let body = inner.strip_prefix("file:")?;
     let path_end = body.find("][").unwrap_or(body.len());
