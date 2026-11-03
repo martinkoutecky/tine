@@ -38,6 +38,10 @@ pub(crate) mod shape_stats;
 mod transaction_publish;
 #[cfg(test)]
 use page_identity::effective_page_name;
+// Conceptual model conformance (census Q2): the harness runs the launch
+// walk's provisional names against the answered ones.
+#[cfg(test)]
+pub(crate) use page_identity::launch_listing_walk;
 pub(crate) use page_identity::{claim_lookup, configured_hidden, portable_component};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
@@ -3252,16 +3256,13 @@ impl Graph {
                     .unwrap_or(&dir)
                     .join(format!("{base_stem}.{ext}"));
                 let base_path = base_file.is_file().then(|| self.rel_path(&base_file));
-                let base_name = match kind {
-                    PageKind::Journal => self
-                        .current_journal_format()
-                        .parse(base_stem)
-                        .map(|d| self.current_journal_format().title(d))
-                        .unwrap_or_else(|| base_stem.to_string()),
-                    PageKind::Page => {
-                        decode_page_name(base_stem, self.current_config().file_name_format)
-                    }
-                };
+                // The winner's name is the one answer for that file
+                // (census Q2): its title, else its decoded file name; a
+                // journal by its date. A missing winner is named from its
+                // file name alone.
+                let base_name = self
+                    .entry_for_path(&base_file)
+                    .map_or_else(|| base_stem.to_string(), |entry| entry.name);
                 let tag = stem[base_stem.len()..]
                     .trim_matches(|c: char| c == '.' || c == ' ' || c == '(' || c == ')')
                     .to_string();

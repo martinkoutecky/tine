@@ -155,15 +155,42 @@ pub fn alias_spellings(doc: &Document) -> Vec<String> {
 /// The extractor of a file's alias declarations the harness uses.
 pub type AliasFn = fn(&Document) -> Vec<String>;
 
+/// The page format of a fixture file (`.md` or `.org`).
+pub fn file_format(rel: &str) -> Format {
+    if rel.ends_with(".org") {
+        Format::Org
+    } else {
+        // `.markdown` is Markdown too; the claimant order ranks `.md` first
+        // (owner fixtures o1-*).
+        assert!(
+            rel.ends_with(".md") || rel.ends_with(".markdown"),
+            "fixtures are Markdown or Org: {rel}"
+        );
+        Format::Md
+    }
+}
+
+/// Tine's parse of a fixture file in its format.
+pub fn parse_file(rel: &str, text: &str) -> Document {
+    match file_format(rel) {
+        Format::Org => tine_core::org::parse_org(text),
+        Format::Md => doc::parse(text),
+    }
+}
+
 /// The model's view of one file: Tine's extraction as the given functions.
-pub fn file_json(view: &WholeGraph, rel: &str, text: &str, aliases: AliasFn) -> Value {
+/// `name_format` is the graph's `:file/name-format` (the stem codec's
+/// parameter; census Q2: the harness used to decode every stem as Legacy).
+pub fn file_json(
+    view: &WholeGraph,
+    rel: &str,
+    text: &str,
+    aliases: AliasFn,
+    name_format: FileNameFormat,
+) -> Value {
     let journal_dir = rel.starts_with("journals/");
-    // `.markdown` is Markdown too; the claimant order ranks `.md` first
-    // (owner fixtures o1-*).
-    assert!(
-        rel.ends_with(".md") || rel.ends_with(".markdown"),
-        "fixtures are Markdown: {rel}"
-    );
+    let format = file_format(rel);
+    let org = format == Format::Org;
     let file_stem = Path::new(rel).file_stem().unwrap().to_str().unwrap();
     let stem = if journal_dir {
         // A journal's name is its day title (Tine ignores title:: there).
@@ -174,14 +201,14 @@ pub fn file_json(view: &WholeGraph, rel: &str, text: &str, aliases: AliasFn) -> 
             .map(|e| e.name.clone())
             .unwrap_or_else(|| file_stem.to_owned())
     } else {
-        decode_page_name(file_stem, FileNameFormat::Legacy)
+        decode_page_name(file_stem, name_format)
     };
-    let parsed = doc::parse(text);
+    let parsed = parse_file(rel, text);
     let mut blocks = Vec::new();
     if let Some(pre) = &parsed.pre_block {
         let header = tine_core::page_properties::property_projection_with_config(
             pre,
-            false,
+            org,
             &Default::default(),
         );
         blocks.push(block_json(pre, 1, &header));
@@ -190,10 +217,10 @@ pub fn file_json(view: &WholeGraph, rel: &str, text: &str, aliases: AliasFn) -> 
     json!({
         "path": rel,
         "dir": if journal_dir { "journals" } else { "pages" },
-        "format": "md",
+        "format": if org { "org" } else { "md" },
         "text": text,
         "stem": stem,
-        "title": page_title_from_preamble(text, Format::Md),
+        "title": page_title_from_preamble(text, format),
         "aliases": aliases(&parsed),
         "preBlock": parsed.pre_block.is_some(),
         "blocks": blocks,
@@ -265,6 +292,14 @@ pub struct GraphSpec {
     /// `config.journalFileFormat`); `None` leaves the Logseq default.
     pub journal_title_format: Option<String>,
     pub journal_file_format: Option<String>,
+    /// `:file/name-format` (fixture `config.fileNameFormat`: `"triple-lowbar"`
+    /// or `"legacy"`); `None` leaves OG's default, Legacy.
+    pub file_name_format: Option<String>,
+    /// Census Q2 oracle: per file, the page name OG gives it (fixture
+    /// `ogNames`, written by hand from OG's source, each with its citation in
+    /// the fixture's `ogSource`). Tine's codec and title parser are the
+    /// model's inputs, so only this independent oracle checks them.
+    pub og_names: BTreeMap<String, String>,
     pub navigate: Vec<String>,
     pub queries: Vec<QuerySpec>,
     pub renames: Vec<(String, String)>,
@@ -329,6 +364,15 @@ impl GraphSpec {
                 .as_str()
                 .map(str::to_owned),
             journal_file_format: v["config"]["journalFileFormat"].as_str().map(str::to_owned),
+            file_name_format: v["config"]["fileNameFormat"].as_str().map(str::to_owned),
+            og_names: v["ogNames"]
+                .as_object()
+                .map(|o| {
+                    o.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+                        .collect()
+                })
+                .unwrap_or_default(),
             navigate: strings(&v["navigate"]),
             queries,
             renames,
@@ -346,6 +390,9 @@ impl GraphSpec {
         }
         if let Some(f) = &self.journal_file_format {
             v["config"]["journalFileFormat"] = json!(f);
+        }
+        if let Some(f) = &self.file_name_format {
+            v["config"]["fileNameFormat"] = json!(f);
         }
         if !self.queries.is_empty() {
             v["queries"] = json!(self
@@ -382,6 +429,15 @@ impl GraphSpec {
         )
     }
 
+    /// The graph's `:file/name-format`, as `Config::parse` reads it.
+    pub fn name_format(&self) -> FileNameFormat {
+        match self.file_name_format.as_deref() {
+            Some("triple-lowbar") => FileNameFormat::TripleLowbar,
+            None | Some("legacy") => FileNameFormat::Legacy,
+            Some(other) => panic!("{}: unknown fileNameFormat {other:?}", self.name),
+        }
+    }
+
     /// Write the graph under `root` (pages/, journals/, and a config only
     /// when the fixture configures a Favorites page or a journal format).
     pub fn write(&self, root: &Path) {
@@ -396,6 +452,9 @@ impl GraphSpec {
         }
         if let Some(f) = &self.journal_file_format {
             config.push(format!(":journal/file-name-format {f:?}"));
+        }
+        if let Some(f) = &self.file_name_format {
+            config.push(format!(":file/name-format :{f}"));
         }
         if !config.is_empty() {
             fs::create_dir_all(root.join("logseq")).unwrap();
@@ -590,6 +649,14 @@ fn refs_args(q: &Value, out: &mut Vec<String>) {
 /// (Tine then excludes no Favorites page; the model always excludes one key).
 pub const NO_FAVORITES: &str = "\u{1}no favorites page configured";
 
+/// Whether a fixture file is a sync tool's conflict copy.
+pub fn is_sync_copy(rel: &str) -> bool {
+    Path::new(rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| tine_core::model::sync_conflict_base(stem).is_some())
+}
+
 /// The bridge's input for `spec` as Tine sees it in `view`.
 pub fn model_input(
     view: &WholeGraph,
@@ -599,7 +666,10 @@ pub fn model_input(
 ) -> Value {
     let journal = spec.journal_format();
     let mut input = json!({
-        "files": spec.files.iter().map(|(rel, text)| file_json(view, rel, text, aliases)).collect::<Vec<_>>(),
+        // A sync-conflict copy is not graph text in Tine (no page, no
+        // references; `sync_conflict_base`), and the model has no such file:
+        // it is left out of the model's graph (census Q2 fixtures).
+        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel)).map(|(rel, text)| file_json(view, rel, text, aliases, spec.name_format())).collect::<Vec<_>>(),
         "navigate": spec.navigate,
         "favoritesPage": spec.favorites_page.clone().unwrap_or_else(|| NO_FAVORITES.to_owned()),
         "queries": spec.queries.iter().map(|q| json!({"anchor": q.anchor, "q": q.q})).collect::<Vec<_>>(),
@@ -1800,6 +1870,175 @@ pub fn compare_reference_days(ctx: &Ctx) -> Vec<Diff> {
         ));
     }
     diffs
+}
+
+// ------------------------------------------------- census Q2: file -> name
+
+/// The answer to "what is this file's page name": the store's inventory
+/// entry for the file (`effective_page_name` family in
+/// `model/page_identity.rs`: `title::` else the decoded stem; a journal's
+/// formatted day). `None` for a file that names no page (a sync-conflict
+/// copy).
+pub fn answered_name(view: &WholeGraph, rel: &str) -> Option<String> {
+    view.inventory(InventoryScope::File(&PageId::from(rel)))
+        .0
+        .first()
+        .map(|e| e.name.clone())
+}
+
+/// Org `[[file:…]]` links in `text`: (link value, label).
+pub fn org_file_links(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[file:") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("]]") else { break };
+        let inner = &after[..end];
+        let (value, label) = match inner.split_once("][") {
+            Some((v, l)) => (v, l),
+            None => (inner, ""),
+        };
+        out.push((value.to_owned(), label.to_owned()));
+        rest = &after[end..];
+    }
+    out
+}
+
+/// The graph-relative path an Org file link in `from` points to.
+pub fn file_link_path(from: &str, value: &str) -> String {
+    let target = value.strip_prefix("file:").unwrap_or(value);
+    let mut parts: Vec<&str> = from.split('/').collect();
+    parts.pop();
+    for p in target.split('/') {
+        match p {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    parts.join("/")
+}
+
+/// Census Q2, the parts every harness can run: the answer against the OG
+/// oracle (`ogNames`: checks Tine's codec and title parser, which the model
+/// takes as given), and the Org file-link decode
+/// (`block_regions::reference_target_name` with filename candidates, the
+/// policy the frontend's `pageRefsInText` and `nearestLink` call through
+/// wasm) against the linked file's answered name.
+pub fn compare_file_names(view: &WholeGraph, spec: &GraphSpec) -> Vec<Diff> {
+    let mut diffs = Vec::new();
+    for (rel, og) in &spec.og_names {
+        if !spec.files.contains_key(rel) {
+            diffs.push(Diff::new(
+                "harness: ogNames names a file the fixture lacks",
+                format!("harness: ogNames {rel}"),
+            ));
+            continue;
+        }
+        let tine = answered_name(view, rel);
+        if tine.as_deref() != Some(og.as_str()) {
+            diffs.push(Diff::new(
+                "file name: Tine's name differs from OG's",
+                format!("{rel}: OG names it {og:?}, Tine {tine:?}"),
+            ));
+        }
+    }
+    for (rel, text) in &spec.files {
+        if file_format(rel) != Format::Org {
+            continue;
+        }
+        for (value, label) in org_file_links(text) {
+            let target = file_link_path(rel, &value);
+            let Some(answer) = spec
+                .files
+                .contains_key(&target)
+                .then(|| answered_name(view, &target))
+                .flatten()
+            else {
+                continue;
+            };
+            let decoded = tine_core::block_regions::reference_target_name(
+                "file",
+                &value,
+                &label,
+                true,
+                true,
+                spec.name_format() == FileNameFormat::Legacy,
+            );
+            if decoded.as_deref() != Some(answer.as_str()) {
+                diffs.push(Diff::new(
+                    "file name: an Org file link's decoded target differs from the linked file's name",
+                    format!(
+                        "{rel}: [[{value}]] decodes to {decoded:?} (filename candidates), \
+                         {target} is named {answer:?}"
+                    ),
+                ));
+            }
+        }
+    }
+    diffs
+}
+
+/// What the frontend name checks (`src/cmConformanceFileNames.test.ts`)
+/// need, per fixture with a page header or an Org file link: per ordinary
+/// page file its format, the `pre_block` a `PageDto` carries, the store's
+/// title (`page_title_from_preamble`) and answered name; per Org block with
+/// a file link its raw text and the linked file's answered name.
+pub fn names_case(view: &WholeGraph, spec: &GraphSpec) -> Option<Value> {
+    let corpus = view.corpus(None);
+    let mut files = Vec::new();
+    let mut links = Vec::new();
+    for (rel, text) in &spec.files {
+        let format = file_format(rel);
+        let fmt = if format == Format::Org { "org" } else { "md" };
+        let page = corpus.pages.iter().find(|p| p.id.as_str() == rel);
+        if rel.starts_with("pages/") {
+            if let Some(page) = page {
+                if page.document.pre_block.is_some() {
+                    files.push(json!({
+                        "path": rel,
+                        "format": fmt,
+                        "preBlock": page.document.pre_block,
+                        "title": page_title_from_preamble(text, format),
+                        "name": answered_name(view, rel),
+                    }));
+                }
+            }
+        }
+        if format != Format::Org {
+            continue;
+        }
+        let parsed = parse_file(rel, text);
+        let mut raws = Vec::new();
+        fn collect(blocks: &[DocBlock], out: &mut Vec<String>) {
+            for b in blocks {
+                out.push(b.raw().to_owned());
+                collect(&b.children, out);
+            }
+        }
+        collect(&parsed.roots, &mut raws);
+        for raw in raws {
+            for (value, _) in org_file_links(&raw) {
+                let target = file_link_path(rel, &value);
+                if let Some(answer) = spec
+                    .files
+                    .contains_key(&target)
+                    .then(|| answered_name(view, &target))
+                    .flatten()
+                {
+                    links.push(json!({"path": rel, "raw": raw, "target": target, "name": answer}));
+                }
+            }
+        }
+    }
+    let file_name_format = match spec.name_format() {
+        FileNameFormat::Legacy => "legacy",
+        FileNameFormat::TripleLowbar => "triple-lowbar",
+    };
+    (!files.is_empty() || !links.is_empty())
+        .then(|| json!({"fileNameFormat": file_name_format, "files": files, "links": links}))
 }
 
 /// The bridge's own harness reports.

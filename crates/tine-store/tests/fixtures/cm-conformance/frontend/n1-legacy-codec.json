@@ -1,0 +1,254 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "50% of 100%",
+      "name": "50% of 100%",
+      "target": {
+        "id": "pages/50%25 of 100%.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b",
+      "name": "a/b",
+      "target": {
+        "id": "pages/a.b.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "café",
+      "name": "café",
+      "target": {
+        "id": "pages/caf%C3%A9.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "contents",
+      "name": "Contents",
+      "target": {
+        "id": "pages/contents.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "links",
+      "name": "links",
+      "target": {
+        "id": "pages/links.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ten___child",
+      "name": "Ten___Child",
+      "target": {
+        "id": "pages/Ten___Child.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "50% of 100%": {
+      "journal": [
+        "journal",
+        "50% of 100%"
+      ],
+      "page": [
+        "page",
+        "50% of 100%"
+      ]
+    },
+    "Contents": {
+      "journal": [
+        "journal",
+        "contents"
+      ],
+      "page": [
+        "page",
+        "contents"
+      ]
+    },
+    "Ten___Child": {
+      "journal": [
+        "journal",
+        "ten___child"
+      ],
+      "page": [
+        "page",
+        "ten___child"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "journal": [
+        "journal",
+        "a/b"
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    "café": {
+      "journal": [
+        "journal",
+        "café"
+      ],
+      "page": [
+        "page",
+        "café"
+      ]
+    },
+    "links": {
+      "journal": [
+        "journal",
+        "links"
+      ],
+      "page": [
+        "page",
+        "links"
+      ]
+    }
+  },
+  "owner": {
+    "50% of 100%": {
+      "journal": null,
+      "page": "pages/50%25 of 100%.md"
+    },
+    "Contents": {
+      "journal": null,
+      "page": "pages/contents.md"
+    },
+    "Ten___Child": {
+      "journal": null,
+      "page": "pages/Ten___Child.md"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a.b.md"
+    },
+    "café": {
+      "journal": null,
+      "page": "pages/caf%C3%A9.md"
+    },
+    "links": {
+      "journal": null,
+      "page": "pages/links.md"
+    }
+  },
+  "spellings": {
+    "50% of 100%": {
+      "backend": [
+        "page",
+        "50% of 100%"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "50% of 100%"
+      ]
+    },
+    "Contents": {
+      "backend": [
+        "page",
+        "contents"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "contents"
+      ]
+    },
+    "Ten___Child": {
+      "backend": [
+        "page",
+        "ten___child"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ten___child"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "backend": [
+        "page",
+        "a/b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a/b"
+      ]
+    },
+    "café": {
+      "backend": [
+        "page",
+        "café"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "café"
+      ]
+    },
+    "links": {
+      "backend": [
+        "page",
+        "links"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "links"
+      ]
+    }
+  }
+}

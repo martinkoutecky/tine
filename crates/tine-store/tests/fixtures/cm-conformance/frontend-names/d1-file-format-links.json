@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Plan",
+      "path": "pages/Plan.md",
+      "preBlock": "alias:: 24-10-2026",
+      "title": null
+    }
+  ],
+  "links": []
+}

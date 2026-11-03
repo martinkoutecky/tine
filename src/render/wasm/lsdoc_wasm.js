@@ -949,21 +949,25 @@ function __tine_raw_raw_byte_of_editor(raw, is_org, regions, policy, editor_utf1
 
 /**
  * Shared native target classification on an accepted AST link. O(target).
+ * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+ * `file_name_format`); only read with `filename_candidates`, where omitting it
+ * means legacy, the graph default (`Config::default`).
  * @param {string} kind
  * @param {string} value
  * @param {string} label
  * @param {boolean} org
  * @param {boolean} filename_candidates
+ * @param {boolean | null} [legacy_file_names]
  * @returns {string | undefined}
  */
-function __tine_raw_reference_target_name(kind, value, label, org, filename_candidates) {
+function __tine_raw_reference_target_name(kind, value, label, org, filename_candidates, legacy_file_names) {
     const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ptr2 = passStringToWasm0(label, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.reference_target_name(ptr0, len0, ptr1, len1, ptr2, len2, org, filename_candidates);
+    const ret = wasm.reference_target_name(ptr0, len0, ptr1, len1, ptr2, len2, org, filename_candidates, isLikeNone(legacy_file_names) ? 0xFFFFFF : legacy_file_names ? 1 : 0);
     let v4;
     if (ret[0] !== 0) {
         v4 = getStringFromWasm0(ret[0], ret[1]).slice();

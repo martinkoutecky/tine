@@ -1,0 +1,25 @@
+{
+  "_comment": "Census Q2: the triple-lowbar stem codec against OG's tri-lb-title-parsing.",
+  "ogSource": "OG (logseq/logseq) 6e7afa8eb deps/graph-parser/src/logseq/graph_parser/util.cljs:153 tri-lb-title-parsing ('___' -> '/', then each single %XX escape decoded on its own by safe-url-decode (a lone byte of a multi-byte UTF-8 sequence fails and stays as written), then make-valid-namespaces drops empty segments).",
+  "config": {
+    "fileNameFormat": "triple-lowbar"
+  },
+  "files": {
+    "pages/a___b.md": "- lowbar namespace\n",
+    "pages/a.b.md": "- dots are literal in triple-lowbar\n",
+    "pages/x______y.md": "- an empty namespace segment\n",
+    "pages/___lead.md": "- a leading separator\n",
+    "pages/caf%C3%A9.md": "- percent-encoded UTF-8\n",
+    "pages/bad%E9.md": "- a lone non-UTF-8 escape\n",
+    "pages/links.md": "- [[a/b]] [[a.b]] [[x/y]] [[lead]]\n"
+  },
+  "ogNames": {
+    "pages/a___b.md": "a/b",
+    "pages/a.b.md": "a.b",
+    "pages/x______y.md": "x/y",
+    "pages/___lead.md": "lead",
+    "pages/caf%C3%A9.md": "caf%C3%A9",
+    "pages/bad%E9.md": "bad%E9",
+    "pages/links.md": "links"
+  }
+}

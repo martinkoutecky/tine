@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "a",
+      "path": "pages/b.md",
+      "preBlock": "title:: a\nalias:: zed",
+      "title": "a"
+    }
+  ],
+  "links": []
+}

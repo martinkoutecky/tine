@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "ref",
+      "path": "pages/ref.md",
+      "preBlock": "alias:: Tasks",
+      "title": null
+    }
+  ],
+  "links": []
+}

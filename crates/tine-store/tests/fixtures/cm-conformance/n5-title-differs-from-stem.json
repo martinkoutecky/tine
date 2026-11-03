@@ -1,0 +1,18 @@
+{
+  "_comment": "Census Q2: title:: (Markdown, any key case) and #+title: (Org) that differ from the stem, and a journal with title:: (code-map observation 1: the model names a file by its title in either directory; Tine ignores a journal's title).",
+  "ogSource": "OG (logseq/logseq) 6e7afa8eb deps/graph-parser/src/logseq/graph_parser/extract.cljc:30-63 get-page-name: the leading Properties/Property_Drawer's title (keys lower-cased), else the parsed file name, for every file; INFERRED from the same function that a journal file's title:: names it too (the journal flag then follows that name).",
+  "files": {
+    "pages/stem-name.md": "title:: Shown Title\n\n- body\n",
+    "pages/caps.md": "Title:: Caps Title\n\n- body\n",
+    "pages/o.org": "#+title: Org Title\n* body\n",
+    "journals/2026_10_27.md": "title:: Release day\n\n- shipped\n",
+    "pages/linker.md": "- [[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]\n"
+  },
+  "ogNames": {
+    "pages/stem-name.md": "Shown Title",
+    "pages/caps.md": "Caps Title",
+    "pages/o.org": "Org Title",
+    "journals/2026_10_27.md": "Release day",
+    "pages/linker.md": "linker"
+  }
+}

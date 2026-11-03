@@ -857,6 +857,16 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>, stem_key: Option<&str>) -> 
 /// (`DirEntry::metadata`: no file open on Windows) with the time it was taken,
 /// for the racy judgement. The listing precedes every read, so these stamps
 /// keep §5's stamp-before-read order.
+///
+/// Deliberately a different question from the page-name answer (census Q2):
+/// a PROVISIONAL name, the file stem before any byte is read, so the launch
+/// pass can list before it reads. The pass replaces it with the answer
+/// (`name_from` over the bytes it read) for every file it reads, before it
+/// publishes its named listing. A file it cannot read keeps the file-name
+/// name, as the answer itself does for unreadable bytes
+/// (`discover_page_name`), and is recorded as a discovery failure; a held
+/// page's row is its owner's. The conformance harness pins that it differs
+/// from the answer only for titled pages (`file_name_answerers`).
 pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));

@@ -32,7 +32,8 @@ fn path_saved_under_another_case_opens_disk_spelling() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     let read = store.page(&PageId::from("pages/Contents.md")).unwrap();
     assert_eq!(read.id.as_str(), "pages/contents.md");
-    assert_eq!(read.doc.name, "contents");
+    // OG names pages/contents.* "Contents" (REG-CM-CONTENTS-PAGE-NAME).
+    assert_eq!(read.doc.name, "Contents");
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

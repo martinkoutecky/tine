@@ -1,0 +1,186 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b",
+      "name": "a/b",
+      "target": {
+        "id": "pages/a.b.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "bar",
+      "name": "Bar",
+      "target": {
+        "id": "pages/foo.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "linker",
+      "name": "linker",
+      "target": {
+        "id": "pages/linker.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Bar": {
+      "journal": [
+        "journal",
+        "bar"
+      ],
+      "page": [
+        "page",
+        "bar"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "journal": [
+        "journal",
+        "a/b"
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    "linker": {
+      "journal": [
+        "journal",
+        "linker"
+      ],
+      "page": [
+        "page",
+        "linker"
+      ]
+    }
+  },
+  "owner": {
+    "Bar": {
+      "journal": null,
+      "page": "pages/foo.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a.b.md"
+    },
+    "linker": {
+      "journal": null,
+      "page": "pages/linker.md"
+    }
+  },
+  "spellings": {
+    "Bar": {
+      "backend": [
+        "page",
+        "bar"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "bar"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "backend": [
+        "page",
+        "a/b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a/b"
+      ]
+    },
+    "linker": {
+      "backend": [
+        "page",
+        "linker"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "linker"
+      ]
+    }
+  }
+}

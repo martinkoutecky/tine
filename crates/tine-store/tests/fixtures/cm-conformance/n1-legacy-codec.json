@@ -1,0 +1,20 @@
+{
+  "_comment": "Census Q2: the Legacy stem codec (default :file/name-format) against OG's legacy-title-parsing.",
+  "ogSource": "OG (logseq/logseq) 6e7afa8eb deps/graph-parser/src/logseq/graph_parser/util.cljs:244 legacy-title-parsing (dots -> '/', then ONE decodeURIComponent over the whole body; on a malformed escape the whole body is kept undecoded); extract.cljc:45 get-page-name (pages/contents.* is named \"Contents\").",
+  "files": {
+    "pages/a.b.md": "- dotted legacy namespace\n",
+    "pages/Ten___Child.md": "- lowbars are literal in Legacy\n",
+    "pages/caf%C3%A9.md": "- percent-encoded UTF-8\n",
+    "pages/50%25 of 100%.md": "- a malformed escape after a valid one\n",
+    "pages/contents.md": "- the contents page\n",
+    "pages/links.md": "- [[a/b]] [[Ten___Child]] [[café]] [[Contents]]\n"
+  },
+  "ogNames": {
+    "pages/a.b.md": "a/b",
+    "pages/Ten___Child.md": "Ten___Child",
+    "pages/caf%C3%A9.md": "café",
+    "pages/50%25 of 100%.md": "50%25 of 100%",
+    "pages/contents.md": "Contents",
+    "pages/links.md": "links"
+  }
+}

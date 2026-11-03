@@ -27,7 +27,6 @@ use std::path::Path;
 use std::time::Instant;
 
 use serde_json::{json, Value};
-use tine_core::doc;
 use tine_core::refs::page_key;
 
 use tine_core::model::{PageEntry, PageKind};
@@ -409,7 +408,7 @@ fn run_graph(
     // The rename harness uses the test-side copy of the alias extractor:
     // hold it to the original here, on every file of every graph.
     for (rel, text) in &spec.files {
-        let parsed = doc::parse(text);
+        let parsed = shared::parse_file(rel, text);
         let original = document_alias_spellings(&parsed);
         let copy = shared::alias_spellings(&parsed);
         if original != copy {
@@ -517,12 +516,12 @@ fn fixture_specs() -> Vec<GraphSpec> {
         .collect()
 }
 
-/// The frontend check's inputs (`tests/fixtures/cm-conformance/frontend/`)
+/// The frontend checks' inputs (`tests/fixtures/cm-conformance/<subdir>/`)
 /// are written by this harness and committed, so `npm test` runs the
-/// frontend's real link decision without the bridge. Stale or missing cases
+/// frontend's real decisions without the bridge. Stale or missing cases
 /// fail here; `CM_REFRESH=1` rewrites them.
-fn check_frontend_cases(cases: BTreeMap<String, Value>) {
-    let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR")).join("frontend");
+fn check_frontend_cases(subdir: &str, cases: BTreeMap<String, Value>, hint: &str) {
+    let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR")).join(subdir);
     let refresh = std::env::var_os("CM_REFRESH").is_some();
     if refresh {
         fs::create_dir_all(&dir).unwrap();
@@ -563,9 +562,7 @@ fn check_frontend_cases(cases: BTreeMap<String, Value>) {
     }
     assert!(
         stale.is_empty(),
-        "conceptual model conformance: frontend cases are stale: {stale:?}; refresh with \
-         CM_REFRESH=1 CM_BRIDGE=<cm-bridge> cargo test -p tine-store --lib cm_conformance, \
-         then CM_REFRESH=1 npx vitest run src/cmConformanceNavigate.test.ts"
+        "conceptual model conformance: {subdir} cases are stale: {stale:?}; refresh with {hint}"
     );
 }
 
@@ -643,11 +640,99 @@ fn conceptual_model_conformance() {
         let full = json!({"fixtures": report, "store": section.to_json()});
         fs::write(dest, serde_json::to_string_pretty(&full).unwrap()).unwrap();
     }
-    check_frontend_cases(frontend.into_inner().unwrap());
+    check_frontend_cases(
+        "frontend",
+        frontend.into_inner().unwrap(),
+        "CM_REFRESH=1 CM_BRIDGE=<cm-bridge> cargo test -p tine-store --lib cm_conformance, \
+         then CM_REFRESH=1 npx vitest run src/cmConformanceNavigate.test.ts",
+    );
     shared::check_expected(
         env!("CARGO_MANIFEST_DIR"),
         "store",
         &section,
         "CM_REFRESH=1 CM_BRIDGE=<cm-bridge> cargo test -p tine-store --lib cm_conformance",
+    );
+}
+
+/// Census Q2 ("what is a file's page name"), the computers the store crate
+/// can run: every fixture through the store, no bridge needed (so this runs
+/// in every gate). Compared with the answer (`shared::answered_name`, the
+/// inventory: the `effective_page_name` family):
+/// - OG's name (`ogNames`) and the Org file-link decode
+///   (`shared::compare_file_names`);
+/// - the launch walk (`page_identity::launch_listing_walk`), a declared
+///   provisional answer: it names an ordinary page by its stem before the
+///   load pass reads the title, so it differs exactly on titled pages;
+/// - the test-only `Graph::list_sync_conflicts` copy of the conflict base
+///   name.
+/// The conflict listing of `tine-graph-features` (`conflicts.rs`) is run by
+/// that crate's `cm_conformance_names.rs`. Differences: part `names` of
+/// `expected-differences.json`; `CM_REFRESH=1` rewrites it and the
+/// `frontend-names` cases `src/cmConformanceFileNames.test.ts` reads.
+#[test]
+fn file_name_answerers() {
+    let mut section = Section::default();
+    let mut cases = BTreeMap::new();
+    let mut keep = Vec::new();
+    for spec in fixture_specs() {
+        let dir = tempfile::tempdir().unwrap();
+        spec.write(dir.path());
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let view = store.whole_graph().expect("graph loads");
+        let mut diffs = shared::compare_file_names(&view, &spec);
+        let (listed, _, _, _) = crate::model::launch_listing_walk(&store.graph);
+        for entry in &listed {
+            let rel = store.graph.rel_path(&entry.path);
+            let answer = shared::answered_name(&view, &rel);
+            if answer.as_deref() != Some(entry.name.as_str()) {
+                diffs.push(Diff::new(
+                    "file name: the launch walk's provisional name differs from the answer",
+                    format!("{rel}: launch walk {:?}, answer {answer:?}", entry.name),
+                ));
+            }
+        }
+        for copy in store.graph.list_sync_conflicts() {
+            let Some(base) = &copy.base_path else {
+                continue;
+            };
+            let answer = shared::answered_name(&view, base);
+            if answer.as_deref() != Some(copy.base_name.as_str()) {
+                diffs.push(Diff::new(
+                    "file name: model.rs list_sync_conflicts (test copy) base name differs from the winner's name",
+                    format!(
+                        "{}: base name {:?}, {base} is named {answer:?}",
+                        copy.path, copy.base_name
+                    ),
+                ));
+            }
+        }
+        if let Some(case) = shared::names_case(&view, &spec) {
+            cases.insert(spec.name.clone(), case);
+        }
+        diffs.sort();
+        diffs.dedup();
+        if !diffs.is_empty() {
+            section.fixtures.insert(
+                spec.name.clone(),
+                diffs.into_iter().map(|d| d.detail).collect(),
+            );
+        }
+        drop(view);
+        keep.push(std::thread::spawn(move || drop((store, dir))));
+    }
+    for h in keep {
+        h.join().unwrap();
+    }
+    check_frontend_cases(
+        "frontend-names",
+        cases,
+        "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::file_name_answerers, \
+         then CM_REFRESH=1 npx vitest run src/cmConformanceFileNames.test.ts",
+    );
+    shared::check_expected(
+        env!("CARGO_MANIFEST_DIR"),
+        "names",
+        &section,
+        "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::file_name_answerers",
     );
 }

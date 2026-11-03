@@ -17,6 +17,7 @@ import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
+import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
 import { applyCustomCss, customCssVersion } from "./customCss";
@@ -76,7 +77,8 @@ export function applyCustomCssChange(change: CustomCssChange): void {
 /** Publish one config snapshot and its derived state (I-12). The journal
  *  title format lands before meta or epoch can wake journal observers; the
  *  epoch invalidates older reads before favorites start their arrangement
- *  read. Task workflow, title format, meta publication and favorites have
+ *  read. Task workflow, title format, file-name format (Org file links,
+ *  render/pageRefs.ts), meta publication and favorites have
  *  this one producer. Graph open passes `previous = null` (apply everything); a live
  *  config change passes the meta it replaces, so only what moved is applied,
  *  and favorites the user is already shown are not re-seeded (Tine's own
@@ -89,8 +91,10 @@ export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | n
   const journalFormatsMoved = !previous || previous.journal_page_title_format !== meta.journal_page_title_format
     || previous.journal_file_name_format !== meta.journal_file_name_format;
   if (journalFormatsMoved) setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format);
+  const fileNameFormatMoved = !previous || previous.file_name_format !== meta.file_name_format;
+  if (fileNameFormatMoved) setFileNameFormat(meta.file_name_format);
   setGraphMeta(meta);
-  if (!previous || journalFormatsMoved || previous.preferred_format !== meta.preferred_format) bumpGraphEpoch();
+  if (!previous || journalFormatsMoved || fileNameFormatMoved || previous.preferred_format !== meta.preferred_format) bumpGraphEpoch();
   const incoming = meta.favorites ?? [];
   const alreadyShown = previous !== null && previous.favorites_page === meta.favorites_page
     && sameNames(favorites().map((item) => item.name), incoming);

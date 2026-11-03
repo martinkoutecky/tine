@@ -201,7 +201,9 @@ fn link_page_name(url: &Url, label: &[Inline], is_org: bool) -> Option<String> {
         Url::File { v } => ("file", v.as_str()),
         _ => return None,
     };
-    crate::block_regions::reference_target_name(kind, value, &text, is_org, false)
+    // Evidence names a file link by its label, never its file name, so the
+    // file-name format is not consulted.
+    crate::block_regions::reference_target_name(kind, value, &text, is_org, false, false)
 }
 
 fn tag_name(children: &[Inline]) -> String {

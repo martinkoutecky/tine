@@ -36,12 +36,19 @@ pub use crate::swallowed_rows::strip_swallowed_rows;
 /// Interpret an already accepted link target. Evidence uses File labels;
 /// filename candidates use decoded page filenames, preserving the existing
 /// rename-candidate policy. Unlabeled local assets never name pages. O(target).
+///
+/// `legacy_file_names` is the graph's `:file/name-format` (true = legacy, the
+/// default): a filename candidate decodes the linked file's stem with the same
+/// codec the store names that file with, so `[[file:./a.b.org]]` names the
+/// page `a/b` in a legacy graph and `a.b` in a triple-lowbar one (census Q2,
+/// UI-CM-ORG-FILE-LINK-LEGACY-FORMAT). Unused without filename candidates.
 pub fn reference_target_name(
     kind: &str,
     value: &str,
     label: &str,
     org: bool,
     filename_candidates: bool,
+    legacy_file_names: bool,
 ) -> Option<String> {
     let path = value.strip_prefix("file:").unwrap_or(value);
     let local_asset =
@@ -58,7 +65,10 @@ pub fn reference_target_name(
                 .rfind('.')
                 .filter(|&i| i > 0)
                 .map_or(file, |i| &file[..i]);
-            Some(reference_filename::decode_page_name(stem, false))
+            Some(reference_filename::decode_page_name(
+                stem,
+                legacy_file_names,
+            ))
         }
         "file" if !label.trim().is_empty() && label != value => Some(label.to_owned()),
         _ => None,

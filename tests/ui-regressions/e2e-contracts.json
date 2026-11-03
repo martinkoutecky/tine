@@ -605,6 +605,23 @@
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"stable"
     },
+    "scripts/e2e-cm-file-names.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "In a graph with the default (legacy) file-name format, Ctrl+O on the Org links [[file:./a.b.org][ab]] and [[file:./Ten___Child.org][ten]] opens the pages a/b and Ten___Child with their bodies, and the conflict overview lists the sync copy of pages/foo.md (title:: Bar) as Bar; navigation creates no file and changes no bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing, title decoration and the conflict overview's layout may vary while the routed page shows the linked file's body and the row reads the page's name."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
     "scripts/e2e-cm-duplicate-day.mjs": {
       "contracts": [
         {

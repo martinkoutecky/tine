@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Alpha",
+      "path": "pages/Alpha.md",
+      "preBlock": "alias:: Shared",
+      "title": null
+    },
+    {
+      "format": "md",
+      "name": "Beta",
+      "path": "pages/Beta.md",
+      "preBlock": "alias:: Shared",
+      "title": null
+    }
+  ],
+  "links": []
+}

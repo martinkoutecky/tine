@@ -24,7 +24,8 @@ export interface NearestLink {
 }
 
 import { parseBlock, blockRegions } from "../render/parse";
-import { reference_target_name, nested_reference_names } from "../render/wasm/lsdoc_wasm.js";
+import { nested_reference_names } from "../render/wasm/lsdoc_wasm.js";
+import { linkTargetName } from "../render/pageRefs";
 import { inlineText } from "../render/facets";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline, ListItem, Format } from "../render/ast";
@@ -73,7 +74,7 @@ function collectCandidates(text: string, blocks: Block[], format: Format): Neare
       else if (inline.k === "link" && !inline.image) {
         const url = inline.url;
         if (url.type === "page_ref" || url.type === "search" || url.type === "file") {
-          const name = reference_target_name(url.type, url.v, inline.label ? inlineText(inline.label) : "", format === "org", true);
+          const name = linkTargetName(url.type, url.v, inline.label ? inlineText(inline.label) : "", format === "org");
           if (name) consider(inline, "page", name);
         }
         else if (url.type === "block_ref") consider(inline, "block", url.v);
