@@ -17,7 +17,19 @@ pub fn encode_page_name(name: &str, fmt: crate::config::FileNameFormat) -> Strin
 /// Decode a page filename according to the graph's Logseq naming format.
 /// Legacy dots become namespace separators before percent decoding.
 /// Cost O(stem bytes); malformed percent escapes are preserved.
+///
+/// The stem `contents` names the page "Contents", as OG names
+/// `pages/contents.*` (`graph_parser/extract.cljc get-page-name` at OG
+/// 6e7afa8eb; REG-CM-CONTENTS-PAGE-NAME). Display only: the page key is
+/// `contents` either way. Intentional differences from OG, both
+/// presentation: OG matches only the top of `pages/`, this matches the stem
+/// anywhere in the pages area; and OG lets "Contents" win over a `title::`,
+/// here a `title::` still names the page (the answer reads the title first),
+/// so the key never changes.
 pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> String {
+    if stem == "contents" {
+        return "Contents".to_owned();
+    }
     page_filename::decode_page_name(stem, fmt == crate::config::FileNameFormat::Legacy)
 }
 
@@ -857,6 +869,11 @@ pub struct GraphMeta {
     /// Effective journal filename format (`:journal/file-name-format`, default
     /// `yyyy_MM_dd`).
     pub journal_file_name_format: String,
+    /// Page file-name format (`:file/name-format`): `"legacy"` (the default)
+    /// or `"triple-lowbar"`. The frontend hands it to the shared link policy
+    /// (`block_regions::reference_target_name` via wasm) so an Org
+    /// `[[file:…]]` link names the page the store names that file.
+    pub file_name_format: String,
     /// Format new pages/journals are created in (`"md"` or `"org"`), from
     /// `:preferred-format`. The frontend uses it to label the toggle and pick the
     /// new-page extension. This string reflects the graph configuration's
@@ -988,6 +1005,11 @@ impl GraphMeta {
             quick_capture_template_media: config.quick_capture_template_media.clone(),
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
+            file_name_format: match config.file_name_format {
+                crate::config::FileNameFormat::Legacy => "legacy",
+                crate::config::FileNameFormat::TripleLowbar => "triple-lowbar",
+            }
+            .into(),
             preferred_format: config.preferred_format.ext().to_string(),
             macros: config.macros.clone(),
             enable_timetracking: config.enable_timetracking,

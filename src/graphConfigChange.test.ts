@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { backend } from "./backend";
 import { captureBinding } from "./binding";
@@ -7,6 +7,10 @@ import { graphEpoch, graphMeta, setGraphMeta } from "./graphSession";
 import { favorites, seedFavorites } from "./favorites";
 import { workflow } from "./ui";
 import type { GraphMeta } from "./types";
+import { initParser } from "./render/parse";
+import { pageRefsInText } from "./render/pageRefs";
+
+beforeAll(() => initParser());
 
 const meta = {
   root: "/graph", preferred_workflow: "now", favorites: ["A"], favorites_page: null,
@@ -76,9 +80,19 @@ describe("config-derived state has one producer", () => {
     expect(graphEpoch()).toBeGreaterThan(before);
   });
 
+  it("re-reads Org file links when the page file-name format moves outside Tine (census Q2)", () => {
+    setGraphMeta(meta);
+    const before = graphEpoch();
+    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, file_name_format: "triple-lowbar" } as GraphMeta });
+    expect(graphEpoch()).toBeGreaterThan(before);
+    expect(pageRefsInText("[[file:./a.b.org][ab]]", "org")).toEqual(["a.b"]);
+    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, file_name_format: "legacy" } as GraphMeta });
+    expect(pageRefsInText("[[file:./a.b.org][ab]]", "org")).toEqual(["a/b"]);
+  });
+
   it("graph open and live change share the producer (source guard, I-12)", () => {
     const source = readFileSync("src/graph.ts", "utf8");
-    for (const setter of ["setWorkflow(", "setJournalFormats(", "seedFavorites("]) {
+    for (const setter of ["setWorkflow(", "setJournalFormats(", "setFileNameFormat(", "seedFavorites("]) {
       expect(source.split(setter).length - 1,
         `I-12: ${setter} must be called only from applyConfigDerivedState in src/graph.ts (master exemplar applyConfigDerivedState)`).toBe(1);
     }

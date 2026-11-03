@@ -1,5 +1,5 @@
 {
-  "_comment": "Census Q2 items 3-4: the name a sync-conflict copy's winner is shown under (conflicts.rs graph_text_title, model.rs list_sync_conflicts test copy) and the PageDto a merge hands back (conflicts.rs dto), for a titled page, a journal and a Legacy dotted stem.",
+  "_comment": "Census Q2 items 3-4: the name a sync-conflict copy's winner is shown under (conflicts.rs sync_copy_base_name, formerly graph_text_title; model.rs list_sync_conflicts test copy) and the PageDto a merge hands back (conflicts.rs dto), for a titled page, a journal and a Legacy dotted stem.",
   "files": {
     "pages/foo.md": "title:: Bar\n\n- winner\n",
     "pages/foo.sync-conflict-20261101-120000-ABCDEFG.md": "title:: Bar\n\n- copy\n",

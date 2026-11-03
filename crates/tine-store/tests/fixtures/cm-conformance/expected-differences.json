@@ -1,34 +1,6 @@
 {
   "conflictNames": {
-    "fixtures": {
-      "n5-title-differs-from-stem": [
-        "pages/caps.md: merged/reverted PageDto name \"caps\", answer \"Caps Title\"",
-        "pages/o.org: merged/reverted PageDto name \"o\", answer \"Org Title\"",
-        "pages/stem-name.md: merged/reverted PageDto name \"stem-name\", answer \"Shown Title\"",
-        "pages/caps.md: merged/reverted PageDto title \"caps\", answer \"Caps Title\"",
-        "pages/o.org: merged/reverted PageDto title \"o\", answer \"Org Title\"",
-        "pages/stem-name.md: merged/reverted PageDto title \"stem-name\", answer \"Shown Title\""
-      ],
-      "n6-title-rename": [
-        "pages/custom.md: merged/reverted PageDto name \"custom\", answer \"Custom Name\"",
-        "pages/stem-name.md: merged/reverted PageDto name \"stem-name\", answer \"Shown Title\"",
-        "pages/custom.md: merged/reverted PageDto title \"custom\", answer \"Custom Name\"",
-        "pages/stem-name.md: merged/reverted PageDto title \"stem-name\", answer \"Shown Title\""
-      ],
-      "n7-sync-conflict-names": [
-        "pages/foo.md: merged/reverted PageDto name \"foo\", answer \"Bar\"",
-        "pages/foo.md: merged/reverted PageDto title \"foo\", answer \"Bar\"",
-        "pages/foo.sync-conflict-20261101-120000-ABCDEFG.md: base name \"foo\", pages/foo.md is named Some(\"Bar\")"
-      ],
-      "q1-duplicate-claim": [
-        "pages/other.md: merged/reverted PageDto name \"other\", answer \"foo\"",
-        "pages/other.md: merged/reverted PageDto title \"other\", answer \"foo\""
-      ],
-      "r1-title-names-page": [
-        "pages/file-name.md: merged/reverted PageDto name \"file-name\", answer \"Real Name\"",
-        "pages/file-name.md: merged/reverted PageDto title \"file-name\", answer \"Real Name\""
-      ]
-    },
+    "fixtures": {},
     "harnessSkipped": [],
     "random": {},
     "randomGraphs": 0
@@ -44,28 +16,18 @@
     }
   },
   "frontendNames": {
-    "fixtures": {
-      "n3-org-file-links-legacy": [
-        "frontend file link: pageRefsInText reads [\"Ten/Child\"] in pages/note.org (\"see [[file:./Ten___Child.org][ten]]\"), pages/Ten___Child.org is named \"Ten___Child\"",
-        "frontend file link: pageRefsInText reads [\"a.b\"] in pages/note.org (\"and [[file:./a.b.org][ab]]\"), pages/a.b.org is named \"a/b\""
-      ]
-    }
+    "fixtures": {}
   },
   "names": {
     "fixtures": {
       "n1-legacy-codec": [
-        "pages/50%25 of 100%.md: OG names it \"50%25 of 100%\", Tine Some(\"50% of 100%\")",
-        "pages/contents.md: OG names it \"Contents\", Tine Some(\"contents\")"
+        "pages/50%25 of 100%.md: OG names it \"50%25 of 100%\", Tine Some(\"50% of 100%\")"
       ],
       "n2-triple-lowbar-codec": [
         "pages/___lead.md: OG names it \"lead\", Tine Some(\"/lead\")",
         "pages/bad%E9.md: OG names it \"bad%E9\", Tine Some(\"bad�\")",
         "pages/caf%C3%A9.md: OG names it \"caf%C3%A9\", Tine Some(\"café\")",
         "pages/x______y.md: OG names it \"x/y\", Tine Some(\"x//y\")"
-      ],
-      "n3-org-file-links-legacy": [
-        "pages/note.org: [[file:./Ten___Child.org]] decodes to Some(\"Ten/Child\") (filename candidates), pages/Ten___Child.org is named \"Ten___Child\"",
-        "pages/note.org: [[file:./a.b.org]] decodes to Some(\"a.b\") (filename candidates), pages/a.b.org is named \"a/b\""
       ],
       "n5-title-differs-from-stem": [
         "journals/2026_10_27.md: OG names it \"Release day\", Tine Some(\"Oct 27th, 2026\")",
@@ -78,7 +40,6 @@
         "pages/stem-name.md: launch walk \"stem-name\", answer Some(\"Shown Title\")"
       ],
       "n7-sync-conflict-names": [
-        "pages/foo.sync-conflict-20261101-120000-ABCDEFG.md: base name \"foo\", pages/foo.md is named Some(\"Bar\")",
         "pages/foo.md: launch walk \"foo\", answer Some(\"Bar\")"
       ],
       "q1-duplicate-claim": [
@@ -93,7 +54,14 @@
     "randomGraphs": 0
   },
   "notes": {
-    "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled."
+    "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled.",
+    "n1-legacy-codec": "pending Q-N1 (Martin): OG keeps \"%25\" undecoded in a legacy file name (\"50%25 of 100%\"); Tine percent-decodes it (\"50% of 100%\"). Today's behaviour is kept until Q-N1 is ruled. (\"contents\" -> \"Contents\" was fixed in batch 3, REG-CM-CONTENTS-PAGE-NAME.)",
+    "n2-triple-lowbar-codec": "pending Q-N1 (Martin): decode differences from OG's triple-lowbar codec (a leading \"___\", percent-decoding, \"______\"). Today's behaviour is kept until Q-N1 is ruled.",
+    "n5-title-differs-from-stem": "pending Q-N3 (Martin): OG names a journal file with `title::` by its title (\"Release day\"); Tine names every journal by its date. Today's behaviour is kept until Q-N3 is ruled. The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "n6-title-rename": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "n7-sync-conflict-names": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "q1-duplicate-claim": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "r1-title-names-page": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure."
   },
   "rename": {
     "fixtures": {

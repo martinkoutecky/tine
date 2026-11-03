@@ -6,7 +6,8 @@
 //! so this runs in every gate.
 //!
 //! - `conflicts::list_sync_conflicts` names the page a sync-conflict copy
-//!   shadows (`conflicts.rs graph_text_title`);
+//!   shadows (`conflicts.rs sync_copy_base_name`, through `Store::page_of`
+//!   since batch 3; before, `graph_text_title` decoded the stem);
 //! - `conflicts.rs dto`, the `PageDto` a merged or reverted page is handed
 //!   back in (here through `run_revert::revert_page` with no steps; the live
 //!   conflict merge and the sync-copy fold build theirs the same way).

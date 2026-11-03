@@ -44,7 +44,8 @@ fn a_path_saved_under_another_case_spelling_opens_the_file() {
             "pages/contents.md",
             "disk spelling is handed back"
         );
-        assert_eq!(read.doc.name, "contents");
+        // OG names pages/contents.* "Contents" (REG-CM-CONTENTS-PAGE-NAME).
+        assert_eq!(read.doc.name, "Contents");
     } else {
         assert!(matches!(store.page(&alias), Err(StoreError::NotFound)));
     }

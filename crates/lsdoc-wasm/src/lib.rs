@@ -172,9 +172,19 @@ pub fn page_header_json(raw: &str) -> String {
 }
 
 /// Shared native target classification on an accepted AST link. O(target).
+/// `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+/// `file_name_format`); only read with `filename_candidates`, where omitting it
+/// means legacy, the graph default (`Config::default`).
 #[wasm_bindgen]
-pub fn reference_target_name(kind: &str, value: &str, label: &str, org: bool, filename_candidates: bool) -> Option<String> {
-    block_regions::reference_target_name(kind, value, label, org, filename_candidates)
+pub fn reference_target_name(
+    kind: &str,
+    value: &str,
+    label: &str,
+    org: bool,
+    filename_candidates: bool,
+    legacy_file_names: Option<bool>,
+) -> Option<String> {
+    block_regions::reference_target_name(kind, value, label, org, filename_candidates, legacy_file_names.unwrap_or(true))
 }
 
 /// Names inside an accepted NestedLink node; O(node bytes).

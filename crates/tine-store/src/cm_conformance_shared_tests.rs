@@ -1954,8 +1954,14 @@ pub fn compare_file_names(view: &WholeGraph, spec: &GraphSpec) -> Vec<Diff> {
             else {
                 continue;
             };
-            let decoded =
-                tine_core::block_regions::reference_target_name("file", &value, &label, true, true);
+            let decoded = tine_core::block_regions::reference_target_name(
+                "file",
+                &value,
+                &label,
+                true,
+                true,
+                spec.name_format() == FileNameFormat::Legacy,
+            );
             if decoded.as_deref() != Some(answer.as_str()) {
                 diffs.push(Diff::new(
                     "file name: an Org file link's decoded target differs from the linked file's name",
@@ -2022,7 +2028,12 @@ pub fn names_case(view: &WholeGraph, spec: &GraphSpec) -> Option<Value> {
             }
         }
     }
-    (!files.is_empty() || !links.is_empty()).then(|| json!({"files": files, "links": links}))
+    let file_name_format = match spec.name_format() {
+        FileNameFormat::Legacy => "legacy",
+        FileNameFormat::TripleLowbar => "triple-lowbar",
+    };
+    (!files.is_empty() || !links.is_empty())
+        .then(|| json!({"fileNameFormat": file_name_format, "files": files, "links": links}))
 }
 
 /// The bridge's own harness reports.

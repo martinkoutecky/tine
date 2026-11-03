@@ -38,7 +38,7 @@
       "day": null,
       "is_journal": false,
       "key": "contents",
-      "name": "contents",
+      "name": "Contents",
       "target": {
         "id": "pages/contents.md",
         "kind": "existing",
@@ -131,16 +131,6 @@
         "café"
       ]
     },
-    "contents": {
-      "journal": [
-        "journal",
-        "contents"
-      ],
-      "page": [
-        "page",
-        "contents"
-      ]
-    },
     "links": {
       "journal": [
         "journal",
@@ -217,17 +207,6 @@
       "model": [
         "page",
         "café"
-      ]
-    },
-    "contents": {
-      "backend": [
-        "page",
-        "contents"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "contents"
       ]
     },
     "links": {

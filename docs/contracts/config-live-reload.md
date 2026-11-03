@@ -10,7 +10,8 @@ the oracle for behaviour; the mechanism here is develop's.
 - **Answer (I-12).** `Store::config()` is the only answer to "the current
   configuration" in the backend. The frontend's is the `graphMeta` signal, and
   `applyConfigDerivedState` (src/graph.ts) is the one producer of state derived
-  from it that is not read reactively (workflow, journal title format,
+  from it that is not read reactively (workflow, journal formats, the page
+  file-name format that names Org `[[file:…]]` links in `render/pageRefs.ts`,
   favorites); graph open calls it with `null` ("apply everything").
 - **Door (I-1).** Every settings write goes through
   `tine_graph_features::config::update`: one read of the file, a pure text

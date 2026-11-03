@@ -596,6 +596,8 @@ export interface GraphMeta {
   quick_capture_template_media?: string | null;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
+  /** :file/name-format; absent (older backend) = "legacy", the graph default. */
+  file_name_format?: "legacy" | "triple-lowbar";
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
   macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
   enable_timetracking: boolean; // :feature/enable-timetracking?, default true

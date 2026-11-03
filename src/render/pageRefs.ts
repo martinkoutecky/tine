@@ -11,6 +11,22 @@ import { parseBody, inlineText } from "./facets";
 import { isQuotedPagePropertyValue, propertyKeyNorm } from "./block";
 import type { Block, Format, Inline, ListItem } from "./ast";
 
+/** The graph's `:file/name-format` is legacy (the default). Set only by
+ *  `graph.ts applyConfigDerivedState` from GraphMeta `file_name_format`. */
+let legacyFileNames = true;
+
+export function setFileNameFormat(format: string | null | undefined): void {
+  legacyFileNames = format !== "triple-lowbar";
+}
+
+/** The page an accepted link target names, by the native policy
+ *  (`block_regions::reference_target_name`, filename candidates): an Org
+ *  `[[file:…]]` link names the linked file's page, decoded with the graph's
+ *  file-name format as the store names that file. O(target). */
+export function linkTargetName(kind: string, value: string, label: string, org: boolean): string | undefined {
+  return reference_target_name(kind, value, label, org, true, legacyFileNames);
+}
+
 /** Every page name `raw` references, in source order (may repeat). One lsdoc parse
  *  of `raw`, plus one per property value or macro argument that could hold a
  *  reference. */
@@ -92,8 +108,8 @@ function collectInlines(inlines: readonly Inline[], format: Format, out: Found):
       case "link":
         // FilenameCandidates is the established rename-candidate policy:
         // Org file links select decoded stems, native evidence selects labels.
-        const name = reference_target_name(inline.url.type, "v" in inline.url ? inline.url.v : "",
-          inline.label ? inlineText(inline.label) : "", format === "org", true);
+        const name = linkTargetName(inline.url.type, "v" in inline.url ? inline.url.v : "",
+          inline.label ? inlineText(inline.label) : "", format === "org");
         if (name) out.pages.push(name);
         if (inline.url.type === "block_ref") out.blocks.push(inline.url.v);
         if (inline.label) collectInlines(inline.label, format, out);

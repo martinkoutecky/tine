@@ -239,8 +239,11 @@ export function raw_byte_of_editor(raw: string, is_org: boolean, regions: any, p
 
 /**
  * Shared native target classification on an accepted AST link. O(target).
+ * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+ * `file_name_format`); only read with `filename_candidates`, where omitting it
+ * means legacy, the graph default (`Config::default`).
  */
-export function reference_target_name(kind: string, value: string, label: string, org: boolean, filename_candidates: boolean): string | undefined;
+export function reference_target_name(kind: string, value: string, label: string, org: boolean, filename_candidates: boolean, legacy_file_names?: boolean | null): string | undefined;
 
 /**
  * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
@@ -356,7 +359,7 @@ export interface InitOutput {
     readonly query_macro_extents_json: (a: number, b: number) => [number, number];
     readonly query_macro_is_tql: (a: number, b: number) => number;
     readonly raw_byte_of_editor: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
-    readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+    readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly removal_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly search_fold: (a: number, b: number, c: number) => [number, number];

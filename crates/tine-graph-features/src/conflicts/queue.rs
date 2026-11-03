@@ -12,9 +12,9 @@ use tine_core::model::{sync_conflict_base, PageKind, SyncConflict};
 use tine_store::{Area, FileId, Store};
 
 use super::{
-    area_listing, duplicate_journal_diff, format, graph_text_title, id, sort_copies, store_failed,
-    sync_conflict_diff, sync_copies, sync_copy_entry, sync_copy_winner, vcs_marker_conflict_diff,
-    Unreadable,
+    area_listing, duplicate_journal_diff, format, graph_text_stem, id, marker_row_name,
+    sort_copies, store_failed, sync_conflict_diff, sync_copies, sync_copy_entry, sync_copy_winner,
+    vcs_marker_conflict_diff, Unreadable,
 };
 
 /// Queue objects for every duplicate journal day: the keeper is Mine, each
@@ -81,7 +81,7 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
 /// bytes), where a byte prefilter skips the UTF-8 check and line scan for files
 /// without an anchor marker.
 fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConflict>> {
-    let Some((kind, stem, name)) = graph_text_title(store, file) else {
+    let Some((kind, stem)) = graph_text_stem(store, file) else {
         return Ok(None);
     };
     if sync_conflict_base(&stem).is_some() {
@@ -106,7 +106,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     let markers = vcs_conflict_markers(text, format(file));
     Ok((!markers.is_empty()).then(|| VcsMarkerConflict {
         path: file.as_str().to_owned(),
-        name,
+        name: marker_row_name(store, kind, &stem),
         kind,
         markers: markers.iter().map(|m| m.to_string()).collect(),
     }))
@@ -382,7 +382,7 @@ impl ConflictQueue {
             // the duplicate days and can re-pick their keeper.
             let mut journals = files.iter().any(|f| f.as_str() == CONFIG);
             for file in files {
-                let Some((kind, ..)) = graph_text_title(store, file) else {
+                let Some((kind, _)) = graph_text_stem(store, file) else {
                     continue;
                 };
                 journals |= kind == PageKind::Journal;

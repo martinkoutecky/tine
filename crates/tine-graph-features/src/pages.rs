@@ -148,6 +148,12 @@ fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
 /// no content is read. Unlistable entries are skipped rather than refusing
 /// (missing one yields at worst a duplicate-identity file, never data loss).
 /// Cost O(files under pages/). Master 46a0e8c27.
+///
+/// Deliberately not the store's page-name answer (census Q2): that answer
+/// names the files the view admits, and these files are exactly the ones it
+/// does not. The question here is "would this file's name, decoded with the
+/// graph's codec, claim `name`", asked of the file name alone so that a page
+/// create never duplicates an identity a non-portable file still holds.
 fn retained_legacy_page_identity_exists(store: &Store, name: &str) -> io::Result<bool> {
     let format = store.config().file_name_format;
     let listing = store.scan_area(Area::Pages, None).map_err(store_error)?;

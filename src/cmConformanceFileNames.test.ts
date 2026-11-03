@@ -18,9 +18,9 @@
 //   function is module-private and drives the host, so its title rule is
 //   restated here in one line (`settledTitle`, wiring.ts:563-564).
 // - `render/pageRefs.ts pageRefsInText` (rename candidates, graph rewrite,
-//   swipe actions; `editor/nearestLink.ts` calls the same wasm policy for
-//   follow-link): the name an Org file link names, which must be the linked
-//   file's page name.
+//   swipe actions; `editor/nearestLink.ts` calls the same `linkTargetName` for
+//   follow-link) with the graph's file-name format installed as graph.ts does:
+//   the name an Org file link names, which must be the linked file's page name.
 //
 // Differences are compared with the `frontendNames` part of
 // `expected-differences.json`; `CM_REFRESH=1` rewrites that part.
@@ -29,9 +29,11 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
 import { pagePropertyEntries } from "./editor/properties";
-import { pageRefsInText } from "./render/pageRefs";
+import { pageRefsInText, setFileNameFormat } from "./render/pageRefs";
 
 interface Case {
+  /** The graph's `:file/name-format`, as GraphMeta `file_name_format` carries it. */
+  fileNameFormat: "legacy" | "triple-lowbar";
   files: { path: string; format: "md" | "org"; preBlock: string | null; title: string | null; name: string | null }[];
   links: { path: string; raw: string; target: string; name: string }[];
 }
@@ -62,6 +64,8 @@ const settledTitle = (preBlock: string | null, format: "md" | "org") =>
 
 function runCase(c: Case): string[] {
   const diffs: string[] = [];
+  // graph.ts applyConfigDerivedState: setFileNameFormat(meta.file_name_format).
+  setFileNameFormat(c.fileNameFormat);
   for (const f of c.files) {
     const ts = settledTitle(f.preBlock, f.format) || null;
     if (ts !== f.title) {
