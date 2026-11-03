@@ -605,6 +605,26 @@ pub(crate) async fn rename_page(
     .map_err(|error| error.to_string())?
 }
 
+/// A page's name changed without a rename (its `title::` was edited, in this
+/// window or outside): the backend moves home and favorites with it through
+/// the rename's config step and answers the lists the window adopts
+/// (`pages::follow_page_identity`, CM step 2 FAV-RETITLE). `path` is the
+/// page's file, `old` the name the window knew it by.
+#[tauri::command]
+pub(crate) async fn follow_page_identity(
+    path: String,
+    old: String,
+    state: GraphContext<'_>,
+) -> Result<tine_graph_features::pages::IdentityFollow, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pages::follow_page_identity(&slot.store, &path, &old)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod graph_wide_command_boundary_tests {
     #[test]
@@ -616,6 +636,7 @@ mod graph_wide_command_boundary_tests {
             "rename_page",
             "merge_pages",
             "rename_file_to_page",
+            "follow_page_identity",
         ] {
             let signature = format!("pub(crate) async fn {name}(");
             let start = source.find(&signature).expect("command stays async");

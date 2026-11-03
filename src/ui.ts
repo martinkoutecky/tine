@@ -25,7 +25,7 @@ import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationTarget } from "./pageIndex";
-import { forgetDeletedFavorite, renameFavorite } from "./favorites";
+import { forgetDeletedFavorite } from "./favorites";
 import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 
 export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
@@ -699,21 +699,21 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   if (nextSidebar.length !== rightSidebar().length) setRightSidebar(nextSidebar);
 }
 
-/** After backend rename, re-key favorite, recent and sidebar entries in order,
- * deduplicating destinations even if source is absent. Only changed stores
- * schedule persistence; writes need not finish before a later openPage. Does
- * not rename or open a page. O(favorites + recents² + sidebar items). */
-export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: { favorites?: boolean }): void;
-export function renamePageInNavigation(from: string, to: string, opts?: { favorites?: boolean }): void;
-export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: { favorites?: boolean } = {}) {
+/** After backend rename, re-key recent and sidebar entries in order,
+ * deduplicating destinations even if source is absent. Favorites are not
+ * re-keyed here: config.edn's favorites have one answerer, the backend's
+ * rename config step, whose answer `adoptRenamedFavorites` takes in. Only
+ * changed stores schedule persistence. Does not rename or open a page.
+ * O(recents² + sidebar items). */
+export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
+export function renamePageInNavigation(from: string, to: string): void;
+export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
   const from: PageTarget = typeof fromOrName === "string"
     ? { name: fromOrName, pageKind: "page" }
     : fromOrName;
   const to: PageTarget = typeof toOrName === "string"
     ? { name: toOrName, pageKind: from.pageKind }
     : toOrName;
-  if (opts.favorites !== false) renameFavorite(from, to);
-
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const matches = item.kind === from.pageKind && item.name === from.name
       && (from.path === undefined || item.path === from.path);
@@ -751,7 +751,7 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
  * follow; opening a page never rewrites the favorites config (D11), and a case
  * variant is already the same favorite by `favoriteKey`. */
 export function adoptResolvedPageName(from: string, to: string): void {
-  renamePageInNavigation(from, to, { favorites: false });
+  renamePageInNavigation(from, to);
 }
 // Recently-visited pages (navigation history), newest first. Unlike Favorites,
 // Recent is graph-scoped session state and may retain one exact physical owner.

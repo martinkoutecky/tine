@@ -436,6 +436,77 @@ pub fn rename_or_merge_page(
     )
 }
 
+/// What [`follow_page_identity`] did to `config.edn`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct IdentityFollow {
+    /// The page's name now, when it differs from the old one (by page key).
+    pub name: Option<String>,
+    /// The new `:default-home` name, when it moved.
+    pub home_page: Option<String>,
+    /// The favorites after the change, whenever the change is confirmed
+    /// (also when another writer already moved them), so a window adopts
+    /// the backend's list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favorites: Option<crate::config::FavoritesAfter>,
+    /// Why a move was not written (see [`RenameReport::config_skipped`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_skipped: Option<String>,
+}
+
+/// A page's name changed without a rename operation: its `title::` was edited
+/// (in Tine, by the CLI, or in another editor), so the file at `path` that
+/// was named `old` is now named otherwise. Home and favorites follow it
+/// through the same config.edn step and answerer as a rename (CM step 2,
+/// FAV-RETITLE ruling; OG follows only its page-title rename). Nothing moves
+/// when the file at `path` still answers to `old`, is a journal or is gone,
+/// or when `old` still names some page or alias (a stored favorite still
+/// opens a page). Callers: the CLI owner after a page write, the window after
+/// it observed the identity change. Cost: one published-view inventory scan,
+/// one stat walk if the change is not yet published, plus the config step
+/// (O(config.edn bytes)).
+pub fn follow_page_identity(store: &Store, path: &str, old: &str) -> io::Result<IdentityFollow> {
+    let named = |graph: &tine_store::WholeGraph| {
+        graph
+            .inventory(tine_store::InventoryScope::All)
+            .0
+            .iter()
+            .find(|entry| {
+                !entry.is_journal && physical(&entry.target).iter().any(|id| id.as_str() == path)
+            })
+            .map(|entry| entry.name.clone())
+    };
+    let mut graph = view(store)?;
+    let mut name = named(&graph);
+    if name
+        .as_deref()
+        .is_none_or(|name| refs::same_page(name, old))
+    {
+        graph = refreshed_view(store)?;
+        name = named(&graph);
+    }
+    let Some(name) = name.filter(|name| !refs::same_page(name, old)) else {
+        return Ok(IdentityFollow::default());
+    };
+    if !matches!(graph.resolve(old, false), Resolved::Absent { .. }) {
+        return Ok(IdentityFollow::default());
+    }
+    let lookup = HashMap::from([(refs::normalize(old), name.clone())]);
+    let step = commit_config(store, &lookup, None)?;
+    let current = store.config();
+    let favorites = step.favorites.or_else(|| {
+        Some(crate::config::FavoritesAfter {
+            names: current.config.favorites.clone(),
+            page: current.config.favorites_page.clone(),
+        })
+    });
+    Ok(IdentityFollow {
+        name: Some(name),
+        home_page: step.home,
+        favorites,
+        config_skipped: step.skipped,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rename_page_after_inventory(
     store: &Store,
@@ -604,7 +675,7 @@ fn multi_rename(
     }
     let (mut report, home) = built.into_inner().expect("planned before the operation");
     if let Some((lookup, merged_old)) = home {
-        report.home_page = commit_home_after(store, &report, &lookup, merged_old.as_ref())?;
+        commit_config_after(store, &mut report, &lookup, merged_old.as_ref())?;
     }
     Ok(Some(report))
 }
@@ -850,47 +921,65 @@ fn rename_transaction<'s>(
             touched,
             skipped_conflicted_referrers: skipped,
             home_page: None,
+            favorites: None,
+            config_skipped: None,
         },
         merge,
         home: (lookup, merged_old),
     })
 }
 
-/// The home-page move after published page changes: its failure carries the
+/// The config.edn step after published page changes: its failure carries the
 /// report of what was already applied (`RenameReport::applied_before_error`).
-fn commit_home_after(
+fn commit_config_after(
     store: &Store,
-    report: &RenameReport,
+    report: &mut RenameReport,
     lookup: &HashMap<String, String>,
     merged_old: Option<&String>,
-) -> io::Result<Option<String>> {
-    commit_home(store, lookup, merged_old).map_err(|source| {
-        io::Error::new(
+) -> io::Result<()> {
+    match commit_config(store, lookup, merged_old) {
+        Ok(step) => {
+            report.home_page = step.home;
+            report.favorites = step.favorites;
+            report.config_skipped = step.skipped;
+            Ok(())
+        }
+        Err(source) => Err(io::Error::new(
             source.kind(),
             IncompleteRename {
                 report: report.clone(),
                 source,
             },
-        )
-    })
+        )),
+    }
 }
 
-/// A rename's `:default-home` move: `logseq/config.edn` (the meta area,
-/// never a page file) in its own transaction after the host's operation,
-/// so no page-host fence applies; a merged source (`merged_old`) keeps it
-/// (`home_after`). The new home name, if it moved.
-fn commit_home(
+/// A rename's `config.edn` step: `logseq/config.edn` (the meta area, never a
+/// page file) in ONE guarded transaction after the host's operation, so no
+/// page-host fence applies. It moves `:default-home` (a merged source,
+/// `merged_old`, keeps it: OG `merge-pages!`), `:favorites` and
+/// `:tine/favorites-page` together (`config::config_after_rename`, the one
+/// answerer). Conflicts retry with fresh bytes.
+fn commit_config(
     store: &Store,
     lookup: &HashMap<String, String>,
     merged_old: Option<&String>,
-) -> io::Result<Option<String>> {
+) -> io::Result<crate::config::ConfigAfterRename> {
+    let renamed = |name: &str| lookup.get(&refs::normalize(name)).cloned();
+    let home_renamed = |home: &str| {
+        let key = refs::normalize(home);
+        (merged_old != Some(&key))
+            .then(|| lookup.get(&key).cloned())
+            .flatten()
+    };
     crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
-        let Some((id, rev, bytes, name)) = home_after(store, lookup, merged_old) else {
-            return Ok(Some(None));
+        let mut step = crate::config::config_after_rename(store, &home_renamed, &renamed);
+        let Some((id, rev, bytes)) = step.write.take() else {
+            return Ok(Some(step));
         };
         let mut tx = store.transaction(None);
         tx.replace(&id, rev, bytes);
-        Ok(crate::commit_retry(tx.commit())?.then_some(Some(name)))
+        Ok(crate::commit_retry(tx.commit())?.then_some(step))
     })
 }
 
@@ -903,21 +992,6 @@ pub(crate) fn rename_operation_error(err: io::Error) -> io::Error {
     } else {
         err
     }
-}
-
-/// OG `rename-page-aux` moves `:default-home` with a renamed page;
-/// `merge-pages!` does not, so a merged source (`merged_old`) keeps it.
-fn home_after(
-    store: &Store,
-    lookup: &HashMap<String, String>,
-    merged_old: Option<&String>,
-) -> Option<(FileId, FileRev, Vec<u8>, String)> {
-    crate::config::home_after_rename(store, |home| {
-        let key = refs::normalize(home);
-        (merged_old != Some(&key))
-            .then(|| lookup.get(&key).cloned())
-            .flatten()
-    })
 }
 
 /// The refusal of a rename that would rewrite a page with unsaved input,
@@ -986,8 +1060,18 @@ pub struct RenameReport {
     /// per file.
     pub skipped_conflicted_referrers: Vec<String>,
     /// The new `:default-home` page name when this rename moved the home page
-    /// with it (in the same transaction); `None` otherwise.
+    /// with it (in the rename's config.edn step, its own transaction after
+    /// the page operation); `None` otherwise.
     pub home_page: Option<String>,
+    /// The favorites list and arrangement page name after the rename, when
+    /// the same config.edn step changed them; the frontend adopts it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favorites: Option<crate::config::FavoritesAfter>,
+    /// Why the config.edn step skipped a move the rename called for
+    /// (config.edn unreadable, or a value it cannot edit safely); the rename
+    /// itself succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_skipped: Option<String>,
 }
 
 impl RenameReport {
@@ -1008,6 +1092,8 @@ impl RenameReport {
             touched: Vec::new(),
             skipped_conflicted_referrers: Vec::new(),
             home_page: None,
+            favorites: None,
+            config_skipped: None,
         }
     }
 }
@@ -1022,7 +1108,7 @@ impl std::fmt::Display for IncompleteRename {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Page files renamed, but the home-page config update failed: {}",
+            "Page files renamed, but the config.edn update (home page, favorites) failed: {}",
             self.source
         )
     }

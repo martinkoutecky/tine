@@ -33,6 +33,33 @@ fn scenario_graph(scenario: &shared::Scenario) -> Graph {
     }
 }
 
+/// A title:: change through the owner's one page-write function
+/// (`write::write_page_from_bytes`, which every owner page write and `git
+/// run revert` use). No verb edits the page-properties block today (probed:
+/// `block.edit`/`block.prop` address only body blocks), so this drives the
+/// function the way a revert of a title change reaches it.
+fn retitle(
+    slot: &crate::state::GraphSlot,
+    scenario: &shared::Scenario,
+) -> Result<Value, ErrorBody> {
+    let page = PageId::from(scenario.path.as_deref().expect("a retitle names its file"));
+    let text = scenario.text.clone().unwrap();
+    let store = Arc::clone(&slot.store);
+    super::super::write::write_page_from_bytes(
+        slot,
+        &page,
+        tine_store::EditKind::ReplacePage,
+        None,
+        false,
+        |_, page, _| {
+            Ok(super::super::write::Planned {
+                doc: store.page_of(page, text.as_bytes()).unwrap().doc,
+                changed: Vec::new(),
+            })
+        },
+    )
+}
+
 #[test]
 fn favorites_after_a_headless_cli_rename() {
     let mut found = BTreeMap::new();
@@ -43,11 +70,15 @@ fn favorites_after_a_headless_cli_rename() {
             slot.window.get().is_none(),
             "the headless owner has no window"
         );
-        let result = verb(
-            &slot,
-            "page.rename",
-            json!({"old": scenario.old, "new": scenario.new}),
-        );
+        let result = if scenario.kind == "retitle" {
+            retitle(&slot, &scenario)
+        } else {
+            verb(
+                &slot,
+                "page.rename",
+                json!({"old": scenario.old, "new": scenario.new}),
+            )
+        };
         let lines = match result {
             Ok(_) => shared::differences(&graph.root, &scenario, "owner"),
             Err(body) => vec![format!(

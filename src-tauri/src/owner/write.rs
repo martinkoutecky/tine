@@ -816,6 +816,25 @@ pub(super) fn write_page_from_bytes(
                     );
                 }
                 let mut reply = written(&read.page, &reparsed.doc, &reparsed.rev, &planned.changed);
+                // A write that changed the page's name (its `title::`) moves
+                // home and favorites through the rename's config step and
+                // answerer (CM step 2, FAV-RETITLE), after the page landed:
+                // the page write stands whatever the config step does.
+                if !absent
+                    && current.doc.kind == tine_core::model::PageKind::Page
+                    && reparsed.doc.kind == tine_core::model::PageKind::Page
+                    && !tine_core::refs::same_page(&current.doc.name, &reparsed.doc.name)
+                {
+                    let follow = tine_graph_features::pages::follow_page_identity(
+                        &slot.store,
+                        read.page.as_str(),
+                        &current.doc.name,
+                    );
+                    reply["config"] = match follow {
+                        Ok(follow) => json!(follow),
+                        Err(error) => json!({ "error": error.to_string() }),
+                    };
+                }
                 commit_if_in_run(
                     slot,
                     &read.page,

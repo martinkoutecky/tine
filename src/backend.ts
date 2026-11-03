@@ -427,6 +427,9 @@ class TauriBackend implements Backend {
     if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
+  followPageIdentity(path: string, old: string) {
+    return this.call<import("./types").IdentityFollow>("follow_page_identity", { path, old });
+  }
   publishQueryPlan(request: QueryPublicationRequest) {
     return this.call<QueryPublicationPlan>("publish_query_plan", { request });
   }

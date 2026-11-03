@@ -3,6 +3,7 @@
 // pageIndex.navigationName, folded by pageIdentityKey. Uses only exports that
 // predate the port so it runs against the base as the fail-before proof.
 import { beforeEach, describe, expect, it } from "vitest";
+import { adoptRenamedFavorites } from "./favorites";
 import { favorites, isFavorite, removeDeletedPageFromNavigation, renamePageInNavigation, setFavorites, toggleFavorite } from "./ui";
 
 beforeEach(() => setFavorites([]));
@@ -42,9 +43,15 @@ describe("favorite membership identity (DUP-2)", () => {
     expect(favorites()).toEqual([]);
   });
 
-  it("rename re-keys a favorite stored under a different spelling of the page", () => {
+  // CM step 2 batch 4 (I-12): config.edn's favorites after a rename have one
+  // answerer, the backend's config step, which matches another spelling of the
+  // page (scenario f2, cm-favorites/scenarios.json). The window adopts it.
+  it("rename leaves favorites to the backend and adopts its re-keyed favorite", () => {
     setFavorites([{ name: "foo", kind: "page" }]);
     renamePageInNavigation("Foo", "Bar");
+    expect(favorites()).toEqual([{ name: "foo", kind: "page" }]);
+    adoptRenamedFavorites({ names: ["Bar"], page: null });
     expect(favorites()).toEqual([{ name: "Bar", kind: "page" }]);
+    expect(isFavorite("bar", "page")).toBe(true);
   });
 });

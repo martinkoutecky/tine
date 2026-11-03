@@ -137,6 +137,29 @@ export interface RenameDone {
   /** The new `:default-home` page when the rename moved the home page with it
    *  (og 22b, OG `rename-page-aux`); null otherwise. */
   home_page?: string | null;
+  /** config.edn's favorites after the rename's config step (one answerer:
+   *  `pages::commit_config` in Rust). Absent when the step changed none. */
+  favorites?: FavoritesAfter;
+  /** Why the config step left config.edn alone (malformed or unreadable
+   *  config); the page operation itself is complete. */
+  config_skipped?: string;
+}
+
+/** Favorites membership and arrangement page as the backend computed them. */
+export interface FavoritesAfter {
+  names: string[];
+  page: string | null;
+}
+
+/** What `follow_page_identity` did after a title:: change renamed a page:
+ *  config.edn's home and favorites follow the new name (Rust answerer). */
+export interface IdentityFollow {
+  /** The page's new name; null when nothing followed (same page, or the old
+   *  name still names a page). */
+  name?: string | null;
+  home_page?: string | null;
+  favorites?: FavoritesAfter;
+  config_skipped?: string;
 }
 
 /** An owner-side rename uses the same refresh as the window's own rename. */

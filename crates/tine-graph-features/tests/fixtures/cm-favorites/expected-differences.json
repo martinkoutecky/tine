@@ -1,68 +1,12 @@
 {
-  "frontend": {
-    "f3-namespace": [
-      "frontend favorites: target [\"work/child\", \"work\"], got [\"proj/child\", \"work\"]"
-    ],
-    "f6-alias-spelling": [
-      "frontend favorites: target [\"Al\"], got [\"Omega\"]"
-    ]
-  },
+  "frontend": {},
   "owner": {
-    "f1-plain": [
-      "owner favorites: target [\"Omega\", \"Other\"], got [\"Alpha\", \"Other\"]"
-    ],
-    "f10-arrangement-page-renamed": [
-      "owner favorites-page: target Some(\"Faves\"), got Some(\"Favorites\")"
-    ],
-    "f2-other-spelling": [
-      "owner favorites: target [\"Omega\"], got [\"alpha\"]"
-    ],
-    "f3-namespace": [
-      "owner favorites: target [\"work/child\", \"work\"], got [\"proj/child\", \"proj\"]"
-    ],
     "f4-merge": [
       "owner merge: refused (refused): a page or alias already owns the destination; nothing changed"
     ],
     "f5-merge-both-favorites": [
       "owner merge: refused (refused): a page or alias already owns the destination; nothing changed"
-    ],
-    "f7-reference-only": [
-      "owner favorites: target [\"Spirit\"], got [\"Ghost\"]"
-    ],
-    "f8-home-and-favorite": [
-      "owner favorites: target [\"Omega\"], got [\"Alpha\"]"
-    ],
-    "f9-arrangement-links": [
-      "owner favorites: target [\"Omega\"], got [\"Alpha\"]"
     ]
   },
-  "rust": {
-    "f1-plain": [
-      "rust favorites: target [\"Omega\", \"Other\"], got [\"Alpha\", \"Other\"]"
-    ],
-    "f10-arrangement-page-renamed": [
-      "rust favorites-page: target Some(\"Faves\"), got Some(\"Favorites\")"
-    ],
-    "f2-other-spelling": [
-      "rust favorites: target [\"Omega\"], got [\"alpha\"]"
-    ],
-    "f3-namespace": [
-      "rust favorites: target [\"work/child\", \"work\"], got [\"proj/child\", \"proj\"]"
-    ],
-    "f4-merge": [
-      "rust favorites: target [\"Dst\", \"Other\"], got [\"Src\", \"Other\"]"
-    ],
-    "f5-merge-both-favorites": [
-      "rust favorites: target [\"Dst\"], got [\"Dst\", \"Src\"]"
-    ],
-    "f7-reference-only": [
-      "rust favorites: target [\"Spirit\"], got [\"Ghost\"]"
-    ],
-    "f8-home-and-favorite": [
-      "rust favorites: target [\"Omega\"], got [\"Alpha\"]"
-    ],
-    "f9-arrangement-links": [
-      "rust favorites: target [\"Omega\"], got [\"Alpha\"]"
-    ]
-  }
+  "rust": {}
 }

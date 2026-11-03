@@ -16,6 +16,7 @@ import { pageRefsInText } from "../render/pageRefs";
 import type { Format } from "../render/ast";
 import type { RenameDone, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
+import { adoptRenamedFavorites } from "../favorites";
 import { activeElement, isHTMLElementNode } from "../windowRealm";
 
 let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget, preserveRoutes?: boolean) => void) | null = null;
@@ -94,16 +95,38 @@ export async function applyOwnerPageRename(rename: import("../types").OwnerPageR
   await refreshAfterRename(rename.old, rename.name, { name: rename.old, path: rename.path ?? undefined, pageKind: rename.kind }, rename.report, undefined, true);
 }
 
+/** Take in the rename's config step (one answerer, `pages::commit_config`):
+ *  it moved `:default-home` and `:favorites` (OG `rename-page-aux`) in its
+ *  own transaction after the page operation. An own write raises no config
+ *  event, so the window adopts the backend's answer; it computes nothing. */
+function adoptConfigStep(page: string, step: Pick<RenameDone, "home_page" | "favorites" | "config_skipped">): void {
+  if (step.config_skipped) pushToast(msg("graph-rewrite-config-skipped", { page, reason: step.config_skipped }), "warn", { sticky: true });
+  const home = step.home_page;
+  const meta = graphMeta();
+  if (home && meta) setGraphMeta({ ...meta, default_home: home });
+  if (step.favorites) adoptRenamedFavorites(step.favorites);
+}
+
+/** A title:: change renamed the page at `path` (formerly `old`). The backend
+ *  moves config.edn's home and favorites to the new name and answers with
+ *  them (FAV-RETITLE: the same Rust answerer as a rename); this window only
+ *  adopts the answer. Idempotent: a repeat finds nothing left to move. */
+export async function followPageIdentity(path: string, old: string): Promise<void> {
+  const owner = bindingOwner();
+  try {
+    const result = await writeOwned(owner, backend().followPageIdentity(path, old));
+    if (result.kind === "current") adoptConfigStep(old, result.value);
+  } catch (error) {
+    if (owner()) pushToast(msg("graph-rewrite-config-skipped", { page: old, reason: String(error) }), "warn", { sticky: true });
+  }
+}
+
 async function refreshAfterRename(from: string, to: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void, preserveRoutes = false): Promise<void> {
     if (report.outcome === "unchanged") return;
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = report.skipped_conflicted_referrers ?? [];
     if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
-    // The rename moved `:default-home` in its own transaction (OG
-    // `rename-page-aux`); an own write raises no config event, so take it in.
-    const home = report.home_page;
-    const meta = graphMeta();
-    if (home && meta) setGraphMeta({ ...meta, default_home: home });
+    adoptConfigStep(from, report);
     const reloads = batch(() => {
       const pages = forgetMovedPages(report.touched);
       refreshRenamedNavigation?.(from, to, target, preserveRoutes);

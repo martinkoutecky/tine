@@ -203,6 +203,9 @@ export interface Backend {
    *  `unsavedPaths`: page files whose edits could not be saved; the rename
    *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
   renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
+  /** After a title:: change renamed the page at `path` (formerly `old`):
+   *  the backend moves config.edn's home and favorites and returns them. */
+  followPageIdentity(path: string, old: string): Promise<import("./types").IdentityFollow>;
   /** Resolve a query's complete owner pages without writing. O(graph query +
    * selected source bytes); the fingerprint binds the reviewed selection. */
   publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;

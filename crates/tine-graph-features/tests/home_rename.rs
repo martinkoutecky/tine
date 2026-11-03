@@ -1,7 +1,9 @@
 //! Family 16/11: renaming the home page moves `:default-home` with it, in the
-//! rename's own guarded transaction (OG `rename-page-aux`, page.cljs:491 at
-//! 6e7afa8eb). `merge-pages!` does not, so a merge keeps it. A malformed
-//! config.edn never blocks the rename.
+//! rename's config step: one guarded config.edn transaction after the page
+//! operation, which moves `:favorites` too (OG `rename-page-aux`,
+//! page.cljs:491 at 6e7afa8eb; CM step 2 batch 4). `merge-pages!` does not
+//! move the home, so a merge keeps it. A malformed config.edn never blocks the
+//! rename.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -152,8 +154,80 @@ fn a_malformed_config_neither_blocks_the_rename_nor_is_rewritten() {
     })
     .unwrap();
     assert_eq!(report.home_page, None);
+    assert_eq!(report.favorites, None);
     assert_eq!(config(&dir), truncated);
     assert!(dir.join("pages/Begin.md").exists());
+}
+
+/// The renamed page is the home page and a favorite: one config.edn edit
+/// moves both, keeping every other byte (comments, unknown keys, the other
+/// favorite), and the report carries both answers.
+#[test]
+fn home_and_favorites_move_together_in_the_config_step() {
+    let _integration_guard = crate::integration_lock();
+    let before = HOME.replace(
+        " :unknown/key",
+        " :favorites [\"Start\" \"Kit\"] ;; pinned\n :unknown/key",
+    );
+    let dir = scratch("together", &before);
+    fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
+    fs::write(dir.join("pages/Kit.md"), "- kit\n").unwrap();
+    let store = open(&dir);
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.home_page.as_deref(), Some("Begin"));
+    let favorites = report.favorites.expect("favorites moved");
+    assert_eq!(favorites.names, ["Begin", "Kit"]);
+    assert_eq!(favorites.page, None);
+    assert_eq!(report.config_skipped, None);
+    assert_eq!(config(&dir), before.replace("\"Start\"", "\"Begin\""));
+}
+
+/// A favorite that only renames onto a name already among the favorites (a
+/// reference-only favorite) leaves one entry, in the first one's place.
+#[test]
+fn a_favorite_renamed_onto_another_favorite_is_deduplicated() {
+    let _integration_guard = crate::integration_lock();
+    let dir = scratch("dedupe", "{:favorites [\"New\" \"Old\" \"Pinned\"]}\n");
+    fs::write(dir.join("pages/Old.md"), "- old\n").unwrap();
+    fs::write(dir.join("pages/Pinned.md"), "- see [[New]]\n").unwrap();
+    let store = open(&dir);
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.favorites.expect("moved").names, ["New", "Pinned"]);
+    assert_eq!(config(&dir), "{:favorites [\"New\" \"Pinned\"]}\n");
+}
+
+/// Home and favorites are independent: a rename of a page that is only a
+/// favorite moves no home, and one that is only the home moves no favorite.
+#[test]
+fn home_and_favorites_follow_independently() {
+    let _integration_guard = crate::integration_lock();
+    let start = "{:default-home {:page \"Start\"} :favorites [\"Kit\"]}\n";
+    let dir = scratch("independent", start);
+    fs::write(dir.join("pages/Start.md"), "- home\n").unwrap();
+    fs::write(dir.join("pages/Kit.md"), "- kit\n").unwrap();
+    let store = open(&dir);
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Kit", "Gear", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.home_page, None);
+    assert_eq!(report.favorites.expect("moved").names, ["Gear"]);
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.home_page.as_deref(), Some("Begin"));
+    assert_eq!(report.favorites, None);
+    assert_eq!(
+        config(&dir),
+        "{:default-home {:page \"Begin\"} :favorites [\"Gear\"]}\n"
+    );
 }
 
 #[test]

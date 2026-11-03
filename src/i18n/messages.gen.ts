@@ -1090,6 +1090,7 @@ export interface MessageArgs {
   "graph-recovered-unsaved-edits-on-page-s-tine": { "count": number; "pages": string | number };
   "graph-restart-tine": {};
   "graph-retry": {};
+  "graph-rewrite-config-skipped": { "page": string | number; "reason": string | number };
   "graph-rewrite-conflicted-referrers": { "count": number; "files": string | number; "page": string | number };
   "graph-rewrite-rename-failed": { "error": string | number };
   "graph-row-menu-copy-link": {};

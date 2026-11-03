@@ -321,6 +321,7 @@ Kind `written`. Write replies carry no page text.
 | `blocks` | array of string | always | no | the handles (`PAGE/POS~FP`) of the blocks created or changed, in the new text, in outline order; at most 200 |
 | `more` | integer | always | yes | blocks created or changed beyond the 200 listed; the text output says how many |
 | `git` | object | optional | yes | present only for a write with `--run`: its commit, or why it has none |
+| `config` | object | optional | yes | present only when the write changed the page's name (its `title::`): the rename config step's answer, `{name, home_page, favorites, config_skipped}` as `follow_page_identity` returns it, or `{error}` when that step failed (the page write stands) |
 | `git.committed` | boolean | optional | yes | `true`: the write's bytes are committed. `false`: the file is saved but not committed (`git.error`, `git.message` say why: `refused:git` for a repository error, `refused:git-busy` when the branch kept moving) |
 | `git.commit` | string | optional | no | the agent commit's id |
 | `git.snapshot` | string | nullable | yes | the commit of the user's uncommitted edits to the file, made first under the user's git identity; `null` when `HEAD` already had the bytes the write started from |
@@ -437,7 +438,7 @@ An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits
 ### `page.rename`
 
 `tine page rename OLD NEW` calls the app's rename operation, including references,
-namespaces, titles and the home page. A sole alias resolves to its canonical page.
+namespaces, titles, the home page and favorites. A sole alias resolves to its canonical page.
 A reference-only source or fileless namespace parent uses the same operation:
 references and physical descendants move without creating a placeholder page.
 A destination owned by a file or alias refuses as `refused:page-exists`; merging
@@ -448,11 +449,14 @@ single-file revision guard or run commits: `--rev` or `--run` (including `TINE_R
 refuses as `refused:rename-options` before any change. An error from the app's I/O
 adapter whose admission cannot be proved returns `uncertain` with
 `detail.admitted: null`; inspect disk and any rollback diagnostic before retrying.
-If page/referrer publication succeeded but the separate home-page config update
-failed, it returns `uncertain` with `detail.admitted: true` and `detail.report`
-containing the known applied page changes (`home_page: null`). The window receives
-that report too. This error is a partial outcome, never a no-change refusal;
-inspect the home-page configuration before retrying.
+The home page and `:favorites` (with `:tine/favorites-page`) follow in one
+config.edn step, its own guarded transaction after the page operation. If page/referrer
+publication succeeded but that config.edn write failed, it returns `uncertain` with
+`detail.admitted: true` and `detail.report` containing the known applied page changes
+(`home_page: null`, no `favorites`). The window receives that report too. This error
+is a partial outcome, never a no-change refusal; inspect config.edn's home page and
+favorites before retrying. A config.edn the step cannot read or edit safely is left
+unchanged without failing the rename: `report.config_skipped` says why.
 
 | field | type | presence | disclosure | meaning |
 |---|---|---|---|---|
@@ -465,6 +469,8 @@ inspect the home-page configuration before retrying.
 | `report.touched` | array | always | no | old paths and whether they moved |
 | `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
 | `report.home_page` | string | nullable | no | new home-page title when changed |
+| `report.favorites` | object | optional | no | config.edn's favorites after the rename, present only when they changed: `names` (`:favorites`, in order) and `page` (`:tine/favorites-page`, nullable). A merged-away page's favorite moves to the survivor (deduplicated); an alias spelling stays |
+| `report.config_skipped` | string | optional | yes | why the config step left config.edn unchanged (unreadable, or a value it cannot edit safely); home and favorites may still name the old page |
 
 ### `page.delete`
 

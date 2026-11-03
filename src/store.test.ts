@@ -2487,7 +2487,10 @@ describe("save engine (persistence)", () => {
     expect(rightSidebar()).toEqual([{ kind: "page", name: "Pinned", pageKind: "page" }]);
   });
 
-  it("a successful rename re-keys favorites and collapses old/new recent duplicates", () => {
+  // Favorites are not re-keyed here (CM step 2 batch 4, I-12): the backend's
+  // config step answers them, deduplicating a rename onto another favorite
+  // (home_rename.rs `a_favorite_renamed_onto_another_favorite_is_deduplicated`).
+  it("a successful rename leaves favorites to the backend and collapses old/new recent duplicates", () => {
     setFavorites([
       { name: "Old", kind: "page" },
       { name: "New", kind: "page" },
@@ -2506,6 +2509,7 @@ describe("save engine (persistence)", () => {
     renamePageInNavigation("Old", "New");
 
     expect(favorites()).toEqual([
+      { name: "Old", kind: "page" },
       { name: "New", kind: "page" },
       { name: "Pinned", kind: "page" },
     ]);

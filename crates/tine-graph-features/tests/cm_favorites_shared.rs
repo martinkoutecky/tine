@@ -1,5 +1,6 @@
 //! Conceptual model step 2, batch 4 (census Q12, harness gap H1): what the
-//! favorites list is after a rename or merge. Shared by the Rust-entry check
+//! favorites list is after a rename, a merge or a title:: change that
+//! renames a page. Shared by the Rust-entry check
 //! (`cm_favorites_rename.rs`, this crate) and the headless CLI owner check
 //! (src-tauri `owner/owner_tests/cm_favorites_tests.rs`, which includes this
 //! file by path). The frontend check is `src/cmFavoritesRename.test.ts`.
@@ -30,12 +31,15 @@ pub struct Scenario {
     pub id: String,
     pub config: String,
     pub files: Vec<(String, String)>,
-    /// "rename" or "merge".
+    /// "rename", "merge" or "retitle" (a title:: change; the file stays).
     pub kind: String,
     pub old: String,
     pub new: String,
     /// The survivor's path, for a merge.
     pub into: Option<String>,
+    /// The retitled page's file and its text after the title:: change.
+    pub path: Option<String>,
+    pub text: Option<String>,
     pub target: Value,
 }
 
@@ -59,6 +63,8 @@ pub fn scenarios() -> Vec<Scenario> {
             old: s["op"]["old"].as_str().unwrap().to_owned(),
             new: s["op"]["new"].as_str().unwrap().to_owned(),
             into: s["op"]["into"].as_str().map(str::to_owned),
+            path: s["op"]["path"].as_str().map(str::to_owned),
+            text: s["op"]["text"].as_str().map(str::to_owned),
             target: s["target"].clone(),
         })
         .collect()

@@ -1,17 +1,24 @@
 // Conceptual model step 2, batch 4 (census Q12, harness gap H1): favorites
-// after a rename or merge, as the frontend answers it today.
+// after a rename, a merge or a title:: change that renames a page.
 //
-// The scenarios and the proposed one answer are shared with the Rust checks
+// The scenarios and the one answer are shared with the Rust checks
 // (`crates/tine-graph-features/tests/fixtures/cm-favorites/scenarios.json`;
 // the Rust entry in `tests/cm_favorites_rename.rs`, the headless CLI owner in
-// `src-tauri/src/owner/owner_tests/cm_favorites_tests.rs`). This test runs the
-// frontend's real path after a backend rename: graph.ts `refreshAfterRename`
-// -> ui.ts `renamePageInNavigation` -> favorites.ts `renameFavorite`, from a
-// graph seeded as `graph.ts` seeds it (`seedFavorites(:favorites,
-// :tine/favorites-page)`), and records the config write it makes
-// (`backend().setFavorites`). For a merge the app passes the typed name, as
-// `renamePageOnDisk(from, to, …, mergeInto)` does. Page files (the arrangement
-// page's links) and `:default-home` are the backend's and are checked there.
+// `src-tauri/src/owner/owner_tests/cm_favorites_tests.rs`). One answerer
+// computes the favorites: the backend's config step (`pages::commit_config`).
+// This test pins that the window is not a second computer (I-12): from a graph
+// seeded as `graph.ts` seeds it (`seedFavorites(:favorites,
+// :tine/favorites-page)`), it runs the window's real receive paths with the
+// backend's answer (the scenario's target, which the Rust entries are pinned
+// to produce) and records any config write the window makes
+// (`backend().setFavorites`, expected: none) and what the sidebar shows.
+// - rename/merge: graph.ts `refreshAfterRename` (navigation; must leave
+//   favorites alone) then graphRewrite `applyOwnerPageRename` with a report
+//   carrying `favorites`, as a CLI rename a window hears about does (an app
+//   rename's own report takes the same `refreshAfterRename`).
+// - retitle: graphRewrite `followPageIdentity(path, old)`, which the page
+//   identity handler calls; it must ask the backend with exactly that path and
+//   old name and adopt its answer.
 //
 // Differences from the target are compared with the `frontend` part of
 // `expected-differences.json`; `CM_REFRESH=1` rewrites that part.
@@ -20,6 +27,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { refreshAfterRename } from "./graph";
+import { applyOwnerPageRename, followPageIdentity } from "./document/graphRewrite";
 import { seedFavorites, favorites } from "./favorites";
 import { allPages, installPageIndex, refreshPageIndex, resetPageIndex } from "./pageIndex";
 import type { PageInventoryEntry } from "./types";
@@ -27,7 +35,7 @@ import type { PageInventoryEntry } from "./types";
 interface Scenario {
   id: string;
   config: string;
-  op: { kind: "rename" | "merge"; old: string; new: string; into?: string };
+  op: { kind: "rename" | "merge" | "retitle"; old: string; new: string; into?: string; path?: string };
   target: { favorites: string[]; favoritesPage: string | null };
   frontendInventory?: PageInventoryEntry[];
 }
@@ -57,7 +65,6 @@ function sorted(v: unknown): unknown {
 }
 
 const showList = (names: string[]) => `[${names.map((n) => JSON.stringify(n)).join(", ")}]`;
-const showPage = (page: string | null) => (page === null ? "None" : `Some(${JSON.stringify(page)})`);
 
 async function runScenario(s: Scenario): Promise<string[]> {
   const api = backend();
@@ -76,22 +83,34 @@ async function runScenario(s: Scenario): Promise<string[]> {
   const config = seeded(s.config);
   seedFavorites(config.names, config.page);
   await settle();
-  refreshAfterRename(s.op.old, s.op.new);
-  await settle();
-  const after = written.at(-1) ?? config;
-  // `setFavorites(names, null)` leaves `:tine/favorites-page` as it was.
-  const page = after.page ?? config.page;
+  const answer = { names: s.target.favorites, page: s.target.favoritesPage };
+  const moved = JSON.stringify(answer) !== JSON.stringify(config);
   const diffs: string[] = [];
-  if (JSON.stringify(after.names) !== JSON.stringify(s.target.favorites)) {
-    diffs.push(`frontend favorites: target ${showList(s.target.favorites)}, got ${showList(after.names)}`);
+  if (s.op.kind === "retitle") {
+    const follow = vi.spyOn(api, "followPageIdentity").mockResolvedValue({ name: s.op.new, ...(moved ? { favorites: answer } : {}) });
+    await followPageIdentity(s.op.path!, s.op.old);
+    const asked = follow.mock.calls.map((c) => c.join(" <- "));
+    if (JSON.stringify(asked) !== JSON.stringify([`${s.op.path} <- ${s.op.old}`])) {
+      diffs.push(`frontend follow: asked ${JSON.stringify(asked)}`);
+    }
+  } else {
+    // Navigation alone must not touch favorites.
+    refreshAfterRename(s.op.old, s.op.new);
+    await settle();
+    const shownAfterNavigation = favorites().map((f) => f.name);
+    if (JSON.stringify(shownAfterNavigation) !== JSON.stringify(config.names)) {
+      diffs.push(`frontend navigation computed favorites: ${showList(shownAfterNavigation)}`);
+    }
+    await applyOwnerPageRename({
+      old: s.op.old, name: s.op.new, kind: "page", path: null,
+      report: { outcome: s.op.kind === "merge" ? "merged" : "renamed", touched: [], ...(moved ? { favorites: answer } : {}) },
+    } as never);
   }
-  if (page !== s.target.favoritesPage) {
-    diffs.push(`frontend favorites-page: target ${showPage(s.target.favoritesPage)}, got ${showPage(page)}`);
-  }
-  // The in-memory list the sidebar shows must be what was written.
+  await settle();
+  if (written.length) diffs.push(`frontend wrote favorites: ${written.map((w) => showList(w.names)).join("; ")}`);
   const shown = favorites().map((f) => f.name);
-  if (JSON.stringify(shown) !== JSON.stringify(after.names)) {
-    diffs.push(`frontend sidebar: written ${showList(after.names)}, shown ${showList(shown)}`);
+  if (JSON.stringify(shown) !== JSON.stringify(s.target.favorites)) {
+    diffs.push(`frontend sidebar: target ${showList(s.target.favorites)}, shown ${showList(shown)}`);
   }
   vi.restoreAllMocks();
   return diffs;

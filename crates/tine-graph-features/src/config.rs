@@ -90,19 +90,29 @@ pub fn custom_css(store: &Store) -> io::Result<String> {
 /// whose value or top-level form cannot be edited safely is refused
 /// (`InvalidData`) rather than written unparsable.
 pub fn set_favorites(store: &Store, names: &[String], page: Option<&str>) -> io::Result<()> {
-    update(store, |content| {
-        let mut content = content.to_string();
-        if let Some(page) = page {
-            set_top_level(&mut content, ":tine/favorites-page", &edn_string(page))?;
-        }
-        let names: Vec<String> = names.iter().map(|n| edn_string(n)).collect();
-        set_top_level(
-            &mut content,
-            ":favorites",
-            &format!("[{}]", names.join(" ")),
-        )?;
-        Ok(content)
-    })
+    update(store, |content| edit_favorites(content, names, page))
+}
+
+/// The `:favorites` (and, when given, `:tine/favorites-page`) edit on config
+/// text, shared by the favorites writer and a page rename's config step.
+/// Refuses (`InvalidData`) a value or top-level form it cannot edit safely.
+pub(crate) fn edit_favorites(
+    source: &str,
+    names: &[String],
+    page: Option<&str>,
+) -> io::Result<String> {
+    check_root(source)?;
+    let mut content = source.to_string();
+    if let Some(page) = page {
+        set_top_level(&mut content, ":tine/favorites-page", &edn_string(page))?;
+    }
+    let names: Vec<String> = names.iter().map(|n| edn_string(n)).collect();
+    set_top_level(
+        &mut content,
+        ":favorites",
+        &format!("[{}]", names.join(" ")),
+    )?;
+    Ok(content)
 }
 
 /// Set or clear the graph's Logseq `:default-home {:page "Name"}` value.
@@ -167,22 +177,142 @@ pub(crate) fn edit_default_home(source: &str, name: Option<&str>) -> io::Result<
     Ok(content)
 }
 
-/// The config.edn replacement a page rename carries when it renames the home
-/// page (OG `rename-page-aux`, page.cljs:491 at 6e7afa8eb): `(id, base rev,
-/// new bytes, new home name)`. `renamed` maps the configured home name to its
-/// new name, or `None`. Nothing is returned when config.edn is absent,
-/// unreadable or cannot be edited safely: a malformed config never blocks a
-/// rename (scenario: external-editor race / sync delivery), and home keeps
-/// its old name.
-pub(crate) fn home_after_rename(
+/// What a page rename (or an observed page-name change) does to
+/// `config.edn`: the ONE answer for `:default-home`, `:favorites` and
+/// `:tine/favorites-page` after it (CM step 2, census Q12). `write` is the
+/// guarded replacement `(id, base rev, bytes)` when anything moved.
+#[derive(Debug, Default)]
+pub(crate) struct ConfigAfterRename {
+    pub(crate) write: Option<(FileId, FileRev, Vec<u8>)>,
+    /// The new home name, when home moved.
+    pub(crate) home: Option<String>,
+    /// The new favorites, when they changed.
+    pub(crate) favorites: Option<FavoritesAfter>,
+    /// Why a move the rename called for was not written (config.edn
+    /// unreadable, or a value it cannot edit safely).
+    pub(crate) skipped: Option<String>,
+}
+
+/// The favorites list and arrangement page name after a rename.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FavoritesAfter {
+    /// `:favorites`, in order.
+    pub names: Vec<String>,
+    /// `:tine/favorites-page`, when the graph has one.
+    pub page: Option<String>,
+}
+
+/// The favorites a rename carries, or `None` when it changes nothing.
+/// `renamed` maps a stored name to its new name (the rename plan's own map:
+/// the page, its namespace descendants, a merged-away source onto the typed
+/// survivor name). OG `rename-page-aux` (page.cljs:507 at 6e7afa8eb) moves a
+/// favorite with its page; Tine keeps its position and the new spelling.
+/// Deliberate OG difference (FAV-MERGE, manager ruling 2026-11-03): OG's
+/// `merge-pages!` drops the merged-away page's favorite (`delete!` ->
+/// `unfavorite-page!`); here it moves to the survivor, because a favorite is
+/// a link and a merge rewrites links. An entry the rename maps onto a name
+/// another entry already holds (by page key) is dropped, so the survivor's own
+/// favorite keeps its place. A stored alias spelling is not a renamed name and
+/// stays (FAV-ALIAS: the alias still opens the page). Pre-existing duplicates
+/// are left alone. O(favorites) page-key folds.
+pub(crate) fn favorites_after_rename(
+    config: &tine_core::config::Config,
+    renamed: &dyn Fn(&str) -> Option<String>,
+) -> Option<FavoritesAfter> {
+    let mapped: Vec<(String, bool)> = config
+        .favorites
+        .iter()
+        .map(|name| match renamed(name) {
+            Some(new) => (new, true),
+            None => (name.clone(), false),
+        })
+        .collect();
+    let page = config
+        .favorites_page
+        .as_deref()
+        .and_then(|page| renamed(page));
+    if page.is_none() && !mapped.iter().any(|(_, moved)| *moved) {
+        return None;
+    }
+    let kept: std::collections::HashSet<String> = mapped
+        .iter()
+        .filter(|(_, moved)| !moved)
+        .map(|(name, _)| tine_core::refs::page_key(name))
+        .collect();
+    let mut emitted = std::collections::HashSet::new();
+    let names = mapped
+        .into_iter()
+        .filter(|(name, moved)| {
+            let key = tine_core::refs::page_key(name);
+            !*moved || (!kept.contains(&key) && emitted.insert(key))
+        })
+        .map(|(name, _)| name)
+        .collect();
+    Some(FavoritesAfter {
+        names,
+        page: page.or_else(|| config.favorites_page.clone()),
+    })
+}
+
+/// The config.edn step a page rename carries (one guarded replacement, after
+/// the page operation): home (OG `rename-page-aux`, page.cljs:491 at
+/// 6e7afa8eb) via `home_renamed`, favorites via `renamed`. Nothing is written
+/// when config.edn is absent or nothing moves. A config.edn that cannot be
+/// read or edited safely never blocks the rename (refusal scenario:
+/// external-editor race / sync delivery, docs/contracts/config-live-reload.md):
+/// the edit that would need it is skipped and reported in `skipped`; home
+/// and favorites are edited independently, so one uneditable value does not
+/// stop the other.
+pub(crate) fn config_after_rename(
     store: &Store,
-    renamed: impl Fn(&str) -> Option<String>,
-) -> Option<(FileId, FileRev, Vec<u8>, String)> {
-    let id = config_id(store).ok()?;
-    let (text, rev) = read_config(store, &id).ok()??;
-    let new = renamed(&tine_core::config::Config::parse(&text).default_home?)?;
-    let next = edit_default_home(&text, Some(&new)).ok()?;
-    (next != text).then(|| (id, rev, next.into_bytes(), new))
+    home_renamed: &dyn Fn(&str) -> Option<String>,
+    renamed: &dyn Fn(&str) -> Option<String>,
+) -> ConfigAfterRename {
+    let Ok(id) = config_id(store) else {
+        return ConfigAfterRename::default();
+    };
+    let (text, rev) = match read_config(store, &id) {
+        Ok(Some(read)) => read,
+        Ok(None) => return ConfigAfterRename::default(),
+        Err(error) => {
+            return ConfigAfterRename {
+                skipped: Some(format!("config.edn could not be read: {error}")),
+                ..Default::default()
+            }
+        }
+    };
+    let config = tine_core::config::Config::parse(&text);
+    let mut step = ConfigAfterRename::default();
+    let mut next = text.clone();
+    if let Some(new) = config.default_home.as_deref().and_then(home_renamed) {
+        match edit_default_home(&next, Some(&new)) {
+            Ok(edited) => {
+                if edited != next {
+                    next = edited;
+                    step.home = Some(new);
+                }
+            }
+            Err(error) => step.skipped = Some(error.to_string()),
+        }
+    }
+    if let Some(after) = favorites_after_rename(&config, renamed) {
+        let page = (after.page != config.favorites_page)
+            .then_some(after.page.as_deref())
+            .flatten();
+        match edit_favorites(&next, &after.names, page) {
+            Ok(edited) => {
+                if edited != next {
+                    next = edited;
+                    step.favorites = Some(after);
+                }
+            }
+            Err(error) => step.skipped = Some(error.to_string()),
+        }
+    }
+    if next != text {
+        step.write = Some((id, rev, next.into_bytes()));
+    }
+    step
 }
 
 /// Remove `key` and its value from the map `{…}` at `open..close`, with the
