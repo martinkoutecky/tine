@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
+
 ## [0.9.0-beta.6] - 2026-11-03
 
 ### Changed
