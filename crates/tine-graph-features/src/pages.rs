@@ -1407,7 +1407,13 @@ fn merged_survivor(
     }
     let (header, blocks) = merge_payload::payload(&doc, &source, renames, org, format);
     if let Some(header) = header {
-        doc.pre_block = Some(header);
+        // Back where the survivor's header was: a header written as the
+        // first bullet stays that bullet (a pre-block above it would demote
+        // it to an ordinary block and drop its aliases).
+        match merge_payload::header_of(&doc).map(|(at, _)| at) {
+            Some(merge_payload::HeaderAt::FirstRoot) => doc.blocks[0].raw = header,
+            _ => doc.pre_block = Some(header),
+        }
     }
     doc.blocks.extend(blocks);
     Ok(Survivor {

@@ -390,26 +390,43 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
+/// The text a page's own properties, aliases included, are read from: the
+/// pre-block when the page has one, else a properties-only FIRST root (the
+/// page-properties block in OG, written back as a pre-block on save there;
+/// GH #62), else none. The one header rule of the alias answer
+/// ([`document_alias_spellings`]); a merge reads both pages' aliases and
+/// writes the united header through it (REG-CM-MERGE-LOSES-ALIASES).
+pub fn page_header_text<'a>(
+    pre_block: Option<&'a str>,
+    first_root: Option<&'a str>,
+) -> Option<&'a str> {
+    match pre_block {
+        Some(pre) => Some(pre),
+        None => first_root.filter(|raw| is_properties_only(raw)),
+    }
+}
+
+/// True for a page-header property key that declares aliases: `alias` and
+/// `aliases`, in any case. OG reads only `alias::` as an alias
+/// (`graph_parser/extract.cljc`, `(:alias properties)`) and `aliases::` only as
+/// a reference-valued key; Tine and the conceptual model read both (named OG
+/// difference, D-20261018-M2, K-Q1 2026-11-03). The alias answer and the merge
+/// both ask this.
+pub fn is_alias_key(key: &str) -> bool {
+    let key = property_key_norm(key);
+    key == "alias" || key == "aliases"
+}
+
 /// Authored spellings for display/insertion. Identity consumers use
 /// `document_aliases` or `page_key`; case-only edits must refresh this projection.
 pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
-    let alias_text: Option<&str> = match &doc.pre_block {
-        Some(pre) => Some(pre.as_str()),
-        // No pre-block: a properties-only FIRST block is the page-properties
-        // block in OG (it gets written back as a pre-block on save there).
-        None => doc
-            .roots
-            .first()
-            .filter(|b| is_properties_only(b.raw()))
-            .map(|b| b.raw()),
-    };
+    let alias_text = page_header_text(doc.pre_block.as_deref(), doc.roots.first().map(|b| b.raw()));
     let Some(text) = alias_text else {
         return Vec::new();
     };
     let mut aliases = Vec::new();
     for (k, v) in page_property_lines(text, page_document_is_org(doc)) {
-        let key = property_key_norm(&k);
-        if key == "alias" || key == "aliases" {
+        if is_alias_key(&k) {
             let trimmed = v.trim();
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
                 continue;

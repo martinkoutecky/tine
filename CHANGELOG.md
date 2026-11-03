@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
+
 ### Added
 
 - Indent guides take a muted color by nesting level, six colors repeating down the page, so you can follow one level of a long nested outline by its color (#856). Nothing else is drawn. It is on by default; **Settings → Appearance → Advanced → Fine-tuning → Color indent guides by level** returns to the single guide color. Levels count from the outline you are looking at (a zoomed-in block's children are level 1; an embed or Linked References entry starts again at level 1), and a theme's own guide color tints the colors. Restyle them with `--guide-hue-1` to `--guide-hue-6` in `custom.css`.
