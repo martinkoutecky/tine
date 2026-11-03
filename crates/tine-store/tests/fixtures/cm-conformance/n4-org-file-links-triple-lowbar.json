@@ -1,6 +1,6 @@
 {
   "_comment": "Control for n3: the same Org file links under :file/name-format :triple-lowbar.",
-  "ogSource": "OG 6e7afa8eb (/aux/koutecky/logseq/og) deps/graph-parser/src/logseq/graph_parser/util.cljs:153 tri-lb-title-parsing.",
+  "ogSource": "OG (logseq/logseq) 6e7afa8eb deps/graph-parser/src/logseq/graph_parser/util.cljs:153 tri-lb-title-parsing.",
   "config": {
     "fileNameFormat": "triple-lowbar"
   },

@@ -247,17 +247,21 @@ fn page_name_of(store: &Store, id: &PageId, bytes: &[u8]) -> Option<String> {
 }
 
 /// The name a sync copy is listed under: its winner's page name, read from
-/// the winner's bytes now. A winner that is gone or unreadable is named from
-/// its file name alone (the answer for a file with no `title::`); a path the
-/// store cannot name as a page keeps the raw stem, so the copy stays listed
-/// (I-22). Cost O(winner bytes + blocks), once per copy per listing.
+/// the winner's bytes now. A winner the store cannot read (gone, too large,
+/// a disk error) is named as the store names a file it cannot read
+/// (`discover_page_name`): from its file name alone, which `Store::page_of`
+/// answers for empty text. Its bytes are never taken as empty content: the
+/// file-name answer is the store's rule for that case, and the copy stays
+/// listed (I-22) with its own preview read reporting its own failures. A
+/// path the store cannot name as a page keeps the raw stem. Cost O(winner
+/// bytes + blocks), once per copy per listing.
 fn sync_copy_base_name(store: &Store, winner: &str, base_stem: &str) -> String {
     let id = PageId::from(winner);
-    let bytes = store
-        .read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES))
-        .map(|(bytes, _)| bytes)
-        .unwrap_or_default();
-    page_name_of(store, &id, &bytes)
+    let read_name = match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((bytes, _)) => page_name_of(store, &id, &bytes),
+        Err(_) => None,
+    };
+    read_name
         .or_else(|| page_name_of(store, &id, b""))
         .unwrap_or_else(|| base_stem.to_owned())
 }

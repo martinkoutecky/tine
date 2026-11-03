@@ -1,6 +1,6 @@
 {
   "_comment": "Census Q2 item 8 (risk list item 4): an Org [[file:...]] link in a Legacy-format graph. block_regions.rs reference_target_name decodes the target stem with legacy=false (triple-lowbar) whatever the graph's format; the rename side (refs.rs rewrite_org_file_link) uses the graph's format.",
-  "ogSource": "OG 6e7afa8eb (/aux/koutecky/logseq/og) deps/graph-parser/src/logseq/graph_parser/util.cljs:244 legacy-title-parsing.",
+  "ogSource": "OG (logseq/logseq) 6e7afa8eb deps/graph-parser/src/logseq/graph_parser/util.cljs:244 legacy-title-parsing.",
   "files": {
     "pages/Ten___Child.org": "* lowbars are literal in Legacy\n",
     "pages/a.b.org": "* dotted legacy namespace\n",

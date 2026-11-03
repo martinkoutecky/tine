@@ -1,6 +1,6 @@
 {
   "_comment": "Census Q2: the triple-lowbar stem codec against OG's tri-lb-title-parsing.",
-  "ogSource": "OG 6e7afa8eb (/aux/koutecky/logseq/og) deps/graph-parser/src/logseq/graph_parser/util.cljs:153 tri-lb-title-parsing ('___' -> '/', then each single %XX escape decoded on its own by safe-url-decode (a lone byte of a multi-byte UTF-8 sequence fails and stays as written), then make-valid-namespaces drops empty segments).",
+  "ogSource": "OG (logseq/logseq) 6e7afa8eb deps/graph-parser/src/logseq/graph_parser/util.cljs:153 tri-lb-title-parsing ('___' -> '/', then each single %XX escape decoded on its own by safe-url-decode (a lone byte of a multi-byte UTF-8 sequence fails and stays as written), then make-valid-namespaces drops empty segments).",
   "config": {
     "fileNameFormat": "triple-lowbar"
   },
