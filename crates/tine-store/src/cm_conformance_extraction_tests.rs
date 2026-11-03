@@ -387,11 +387,9 @@ fn evidence(text: &str, is_org: bool) -> (Vec<Occ>, BTreeSet<String>) {
             );
             take(&header);
         }
-        if let Some(preamble) = tine_core::page_properties::preamble_block_with_config(
-            pre,
-            is_org,
-            &Default::default(),
-        ) {
+        if let Some(preamble) =
+            tine_core::page_properties::preamble_block_with_config(pre, is_org, &Default::default())
+        {
             take(&preamble);
         }
     }
