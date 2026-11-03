@@ -14,7 +14,9 @@ use std::time::Duration;
 use tine_core::model::PageDto;
 use tine_core::sync_diff::{DiffRow, RowKind};
 use tine_graph_features::live_conflict::{live_conflict_diff, merge_live_conflict};
-use tine_store::{DiskToken, EditKind, FileRev, PageHost, PageId, PageOperation, Store};
+use tine_store::{
+    DiskToken, EditKind, FileRev, PageHost, PageId, PageOperation, PageRefusal, Store,
+};
 
 const PAGE: &str = "pages/Desk.md";
 const BASE: &str = "- the shared intro line\n- the plan for today\n";
@@ -69,7 +71,16 @@ fn seeded(rows: &[DiffRow], out: &mut HashMap<String, String>) {
     }
 }
 
-fn save_guarded(store: &Arc<Store>, merged: &PageDto, conflict_rev: &str) {
+/// Keep mine as the window sends it (client.ts `submitReviewed`): open `id`
+/// in a page host, submit `merged` with the reviewed disk revision as its
+/// resolve token, and wait for the publication. A refused open or submit
+/// writes nothing.
+pub(crate) fn save_guarded(
+    store: &Arc<Store>,
+    id: &PageId,
+    merged: &PageDto,
+    conflict_rev: &str,
+) -> Result<(), PageRefusal> {
     let app = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::channel();
     let host = PageHost::start(
@@ -85,7 +96,7 @@ fn save_guarded(store: &Arc<Store>, merged: &PageDto, conflict_rev: &str) {
     let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
         .as_u64()
         .unwrap();
-    let opened = host.open(session, 1, &PageId::from(PAGE), "Desk").unwrap();
+    let opened = host.open(session, 1, id, &merged.name)?;
     let key = serde_json::to_value(opened).unwrap()["key"]
         .as_str()
         .unwrap()
@@ -105,8 +116,7 @@ fn save_guarded(store: &Arc<Store>, merged: &PageDto, conflict_rev: &str) {
         version,
         Some(&DiskToken::File(FileRev::from(conflict_rev.to_owned()))),
         &[EditKind::ReplacePage],
-    )
-    .unwrap();
+    )?;
     let version = answer(2);
     host.save_now(session, &[key.clone()]);
     assert_eq!(
@@ -118,6 +128,7 @@ fn save_guarded(store: &Arc<Store>, merged: &PageDto, conflict_rev: &str) {
         PageOperation::Applied
     );
     drop(host);
+    Ok(())
 }
 
 /// Every file under `dir` (graph root, including logseq/ and any trash) whose
@@ -252,7 +263,7 @@ fn l9_04_keep_mine_leaves_a_recoverable_copy_of_the_external_version() {
         "mine",
     )
     .unwrap();
-    save_guarded(&store, &merged, &diff.conflict_rev);
+    save_guarded(&store, &PageId::from(PAGE), &merged, &diff.conflict_rev).unwrap();
     let live = fs::read_to_string(root.join(PAGE)).unwrap();
     assert!(live.contains("the plan for tomorrow"), "{live}");
     let copies = files_containing(&root, "as the other editor wrote it");
