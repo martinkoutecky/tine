@@ -524,21 +524,31 @@ fn graph_equivalent_page_names(
 /// exactly the Linked References panel's names
 /// ([`graph_equivalent_page_names`] with `explicit` set, the one answerer of
 /// "which names denote this page"), returned as the page keys of the alias
-/// class and the journal-day spellings, plus the journal DAYS the panel widens
-/// by referenced spellings. The panel lists the referenced names that parse to
-/// such a day; a query keeps the day instead and asks each reference whether
-/// it parses to it ([`eval::reference_day`], the same test
-/// [`referenced_day_keys`] applies). Same answer for every name the graph
-/// holds, and it stays a function of the evaluated page alone, so a memoized
-/// or mounted answer is not made stale by a link typed elsewhere.
+/// class and the journal-day spellings. The panel also takes the referenced
+/// names that parse to a journal day of the class ([`referenced_day_keys`]):
 ///
-/// Cost: O(component log P) plus one title lookup per journal day reached.
+/// - `spelled` (one execution over `graph`): so does this, and `days` is
+///   empty. A reference then matches by key, with no date parse per
+///   reference; the answer is the panel's over this snapshot.
+/// - otherwise (a plan's own classes, read by the memo carry and the
+///   mounted-query touch test across later generations): the DAYS are kept
+///   instead, and each reference is asked whether it parses to one
+///   ([`eval::reference_day`], the test `referenced_day_keys` applies). The
+///   test is then a function of the evaluated page alone, so a link typed
+///   elsewhere cannot make it stale.
+///
+/// Cost: O(component log P) plus one title lookup per journal day reached;
+/// `spelled` adds `referenced_day_keys`' O(R) digit checks per day.
 ///
 /// A date spelling other than the journal's title (`[[22.10.2026]]` under a
 /// file-name format) names the journal itself (the page key folds the date,
 /// S12), so the journal's alias group joins: the class is the union of the
 /// spelling's and the journal's.
-pub(crate) fn reference_class(graph: &ReadSnapshot, target: &str) -> (Vec<String>, Vec<i64>) {
+pub(crate) fn reference_class(
+    graph: &ReadSnapshot,
+    target: &str,
+    spelled: bool,
+) -> (Vec<String>, Vec<i64>) {
     let format = graph.config().journal_format();
     let real = real_page_names(graph);
     let edges = graph.alias_edges();
@@ -551,8 +561,12 @@ pub(crate) fn reference_class(graph: &ReadSnapshot, target: &str) -> (Vec<String
             name,
             |day| graph.reference_journal_name(day),
             |day| {
-                days.borrow_mut().push(day.ordinal_key());
-                Vec::new()
+                if spelled {
+                    referenced_day_keys(graph.explicit_reference_names(), &format, day)
+                } else {
+                    days.borrow_mut().push(day.ordinal_key());
+                    Vec::new()
+                }
             },
         )
         .1

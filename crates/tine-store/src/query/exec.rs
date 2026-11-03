@@ -161,7 +161,7 @@ impl Plan {
     /// moved).
     pub(crate) fn ref_classes(&self, graph: &ReadSnapshot) -> &RefClasses {
         self.ref_classes
-            .get_or_init(|| Arc::new(RefClasses::build(graph, &self.filter)))
+            .get_or_init(|| Arc::new(RefClasses::build(graph, &self.filter, false)))
     }
 
     fn known_ref_classes(&self) -> &RefClasses {
@@ -338,7 +338,9 @@ impl Plan {
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             links,
             atoms,
-            self.known_ref_classes(),
+            atoms
+                .ref_classes()
+                .unwrap_or_else(|| self.known_ref_classes()),
         )
     }
 
@@ -369,7 +371,9 @@ impl Plan {
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             links,
             atoms,
-            self.known_ref_classes(),
+            atoms
+                .ref_classes()
+                .unwrap_or_else(|| self.known_ref_classes()),
         )
     }
 
@@ -586,11 +590,13 @@ impl Plan {
     ) -> bool {
         self.anchor == Anchor::Block
             && (required_refs(&self.filter).is_some_and(|operands| {
-                let classes = self.known_ref_classes();
+                let classes = cache
+                    .ref_classes()
+                    .unwrap_or_else(|| self.known_ref_classes());
                 !operands.iter().any(|operand| match classes.class(operand) {
                     None => facts.may_reference(entry, &[refs::normalize(operand)]),
                     Some(class) => {
-                        facts.may_reference(entry, &class.keys().cloned().collect::<Vec<_>>())
+                        facts.may_reference(entry, class.key_list())
                             || class.has_days()
                                 && std::iter::once(&refs::normalize(&entry.name))
                                     .chain(facts.refs())
@@ -939,7 +945,6 @@ pub(crate) fn execute_cancellable(
     bounds: Bounds,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
-    plan.ref_classes(graph);
     let mut result = QueryResult {
         rows: match plan.anchor {
             Anchor::Block => QueryRows::Block { groups: Vec::new() },
@@ -983,6 +988,7 @@ pub(crate) fn execute_cancellable(
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        atoms.spell_ref_classes(graph, &plan.filter);
         let Some(links) = plan.link_answers(graph, &candidates, config, &atoms, cancelled) else {
             stopped = true;
             return Ok(());
@@ -1229,11 +1235,11 @@ pub(crate) fn execute_cancellable(
 /// Count the rows a plan matches, constructing nothing (explain-empty's probe).
 /// `None` once `cancelled` stops its link work.
 fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Option<usize> {
-    plan.ref_classes(graph);
     graph.with_pages(|pages| {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        atoms.spell_ref_classes(graph, &plan.filter);
         let links = plan.link_answers(graph, &candidates, config, &atoms, cancelled)?;
         let mut count = 0usize;
         let mut hits = Vec::new();
@@ -1275,7 +1281,6 @@ pub(crate) fn plan(
         || graph.with_pages(|pages| graph.query_index().registry(pages)),
         || graph.with_pages(|pages| Arc::new(graph.query_index().tag_targets(pages))),
     );
-    plan.ref_classes(graph);
     plan
 }
 

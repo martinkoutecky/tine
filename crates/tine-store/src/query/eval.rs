@@ -201,6 +201,11 @@ pub(crate) struct EvalCache {
     /// Reference name -> the journal day it denotes, for the digit-bearing
     /// names only (every other name is no day without a parse).
     reference_days: RefCell<HashMap<String, Option<i64>>>,
+    /// This execution's reference classes with the snapshot's referenced
+    /// spellings of each journal day ([`RefClasses::build`] `spelled`), so a
+    /// reference compares by key, not by a date parse. Unset outside an
+    /// execution (a memo carry or touch test reads the plan's own classes).
+    ref_classes: OnceCell<RefClasses>,
 }
 
 /// Indexed by `format == Org`, then source key, then value; looked up by
@@ -209,6 +214,18 @@ type AtomSlots = ([HashMap<String, HashMap<String, Rc<[Atom]>>>; 2], usize);
 
 impl EvalCache {
     const MAX_ENTRIES: usize = 65_536;
+
+    /// Fix this execution's reference classes over `graph` (the snapshot it
+    /// runs on). Called once, before any page is evaluated.
+    pub(crate) fn spell_ref_classes(&self, graph: &crate::model::ReadSnapshot, filter: &Filter) {
+        let _ = self.ref_classes.set(RefClasses::build(graph, filter, true));
+    }
+
+    /// This execution's reference classes, when [`Self::spell_ref_classes`]
+    /// fixed them.
+    pub(crate) fn ref_classes(&self) -> Option<&RefClasses> {
+        self.ref_classes.get()
+    }
 
     fn get(&self, key: &str, value: &str, format: AtomFormat, config: &ParseConfig) -> Rc<[Atom]> {
         let org = usize::from(format == AtomFormat::Org);
