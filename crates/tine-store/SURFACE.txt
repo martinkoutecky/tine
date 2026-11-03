@@ -125,7 +125,15 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 11)
+## Identity (ceiling: 13)
+# REG-CM-MERGE-LOSES-ALIASES: a merge must keep both pages' aliases, which the
+# alias answer reads from the page header (pre-block, else a properties-only
+# first root) under the keys alias/aliases. No existing item answers either
+# question for a page the caller holds as text (`resolve` answers names in the
+# published graph, not a merge's two parsed pages); exposing the answer's own
+# two rules keeps the merge from restating them (I-12).
+fn query::page_header_text
+fn query::is_alias_key
 # GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
 # candidates. Expose the existing Unicode case-only predicate so the pull
 # planner and host/transaction publication share one candidate policy;
