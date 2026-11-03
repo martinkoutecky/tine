@@ -35,17 +35,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/old%2Fsub.md",
-      1
+      [
+        "pages/old%2Fsub.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/old.md",
+        1
+      ]
     ],
-    [
-      "pages/p.md",
-      0
-    ],
-    [
-      "pages/old.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

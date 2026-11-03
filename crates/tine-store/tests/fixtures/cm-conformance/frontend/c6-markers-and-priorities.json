@@ -176,19 +176,139 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/todo.md",
-      2
+      [
+        "pages/todo.md",
+        2
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
     ],
     [
-      "pages/p.md",
-      0
-    ],
-    [
-      "journals/2026_10_26.md",
-      0
+      [
+        "A",
+        2
+      ],
+      [
+        "B",
+        1
+      ],
+      [
+        "C",
+        1
+      ],
+      [
+        "CANCELED",
+        1
+      ],
+      [
+        "DOING",
+        1
+      ],
+      [
+        "DONE",
+        1
+      ],
+      [
+        "LATER",
+        1
+      ],
+      [
+        "NOW",
+        1
+      ],
+      [
+        "WAITING",
+        1
+      ]
     ]
   ],
   "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/B.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "C",
+      "target": {
+        "id": "pages/C.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "canceled",
+      "name": "CANCELED",
+      "target": {
+        "id": "pages/CANCELED.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "doing",
+      "name": "DOING",
+      "target": {
+        "id": "pages/DOING.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "done",
+      "name": "DONE",
+      "target": {
+        "id": "pages/DONE.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "later",
+      "name": "LATER",
+      "target": {
+        "id": "pages/LATER.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "now",
+      "name": "NOW",
+      "target": {
+        "id": "pages/NOW.md",
+        "kind": "absent"
+      }
+    },
     {
       "day": 20261026,
       "is_journal": true,
@@ -221,12 +341,31 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "waiting",
+      "name": "WAITING",
+      "target": {
+        "id": "pages/WAITING.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
+    "A": "a",
+    "B": "b",
+    "C": "c",
+    "CANCELED": "canceled",
+    "DOING": "doing",
+    "DONE": "done",
+    "LATER": "later",
+    "NOW": "now",
     "Oct 26th, 2026": "oct 26th, 2026",
+    "WAITING": "waiting",
     "p": "p",
     "todo": "todo"
   },

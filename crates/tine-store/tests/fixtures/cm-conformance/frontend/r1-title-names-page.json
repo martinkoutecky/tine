@@ -35,12 +35,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/file-name.md",
-      1
+      [
+        "pages/file-name.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
     ],
     [
-      "pages/Notes.md",
-      0
+      [
+        "file-name",
+        1
+      ]
     ]
   ],
   "inventory": [

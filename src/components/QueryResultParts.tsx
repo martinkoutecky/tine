@@ -31,7 +31,9 @@ export type QueryView = ViewKind;
  *  a name-only row. Search/List show titles, the page's properties as text and a pencil editor;
  *  columns only affect Table. Cost O(returned rows and displayed cells). */
 export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy?: string; columns?: string[] }): JSX.Element {
-  const target = (row: PageRow) => ({ name: row.name, pageKind: row.kind, path: row.path });
+  // A reference-only page row has no file (path `""`, D-20261102-CM4 A15):
+  // it opens by name.
+  const target = (row: PageRow) => ({ name: row.name, pageKind: row.kind, path: row.path || undefined });
   const open = (row: PageRow, event: MouseEvent) => {
     event.stopPropagation();
     const dest = internalLinkDest(event);

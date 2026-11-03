@@ -62,17 +62,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Launch.md",
-      1
+      [
+        "pages/Launch.md",
+        3
+      ],
+      [
+        "pages/n.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        2
+      ]
     ],
-    [
-      "pages/n.md",
-      0
-    ],
-    [
-      "journals/2026_10_26.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

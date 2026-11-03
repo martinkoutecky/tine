@@ -1214,11 +1214,8 @@ pub fn frontend_case(
     // CM step 2 batch 5 (counts and the page set Tine shows; read by
     // `src/cmConformanceCounts.test.ts`, which mounts All Pages and the Linked
     // References panel on these answers).
-    let counts: Vec<Value> = view
-        .page_backlink_counts()
-        .into_iter()
-        .map(|(path, n)| json!([path, n]))
-        .collect();
+    let (files, references) = view.page_backlink_counts();
+    let counts = json!([files, references]);
     let mut pages = Vec::new();
     let mut backlinks = BTreeMap::new();
     for p in &ctx.pages {
@@ -1517,77 +1514,54 @@ pub fn compare_backlinks(ctx: &Ctx) -> Vec<Diff> {
 }
 
 /// Q9 counts: `page_backlink_counts` per owner file against the size of the
-/// model's Linked References (rule 2: counts see the whole group). A
-/// difference is explained against Tine's own rule (`page_backlinks.rs`:
-/// blocks of every file with an occurrence whose namespace closure has the
-/// page's literal `page_key`), naming which part of the model it leaves out.
+/// model's Linked References (rule 2: counts see the whole group). Tine's
+/// count is, by construction, the size of its own unfiltered Linked
+/// References panel of that page (D-20261102-CM4 CM-COUNT); a difference is
+/// explained against that panel, so a count that follows a panel difference
+/// is named as such and a count that leaves its own panel is a defect.
 pub fn compare_counts(ctx: &Ctx) -> Vec<Diff> {
     let mut diffs = Vec::new();
-    let counts: BTreeMap<String, usize> = ctx.view.page_backlink_counts().into_iter().collect();
+    let counts: BTreeMap<String, usize> = ctx.view.page_backlink_counts().0.into_iter().collect();
     for (p, path) in &ctx.owner_of_page {
-        let model_set = model_panel(ctx, p);
-        let model = model_set.len();
+        let model = model_panel(ctx, p).len();
         let Some(&tine) = counts.get(path) else {
-            diffs.push(Diff::new(
-                "counts: no Tine count for an owner file",
-                format!("counts of {p:?} ({path}): model {model}, Tine none"),
-            ));
+            let twin = ctx
+                .view
+                .list
+                .iter()
+                .any(|e| e.rel_path.as_deref() == Some(path.as_str()));
+            diffs.push(if twin {
+                Diff::new(
+                    "counts: the model's owner is a Tine non-owner twin (O1 order; All pages shows a dash, A13)",
+                    format!("counts of {p:?} ({path}): model {model}, Tine none (non-owner twin)"),
+                )
+            } else {
+                Diff::new(
+                    "counts: no Tine count for an owner file",
+                    format!("counts of {p:?} ({path}): model {model}, Tine none"),
+                )
+            });
             continue;
         };
         if tine == model {
             continue;
         }
-        let literal = page_key(&tine_name(ctx, p));
-        let rule: BTreeSet<BlockId> = ctx
-            .files
-            .values()
-            .flat_map(|f| {
-                f.blocks
-                    .iter()
-                    .enumerate()
-                    .map(move |(i, (_, occ))| ((f.path.clone(), i), occ))
-            })
-            .filter(|(_, occ)| {
-                occ.iter()
-                    .any(|(_, s)| closure(s).iter().any(|u| page_key(u) == literal))
-            })
-            .map(|(b, _)| b)
-            .collect();
-        let mut reasons = BTreeSet::new();
-        if rule.len() != tine {
-            reasons.insert("Tine's count is not its literal rule".to_owned());
-        }
-        for b in rule.difference(&model_set) {
-            reasons.insert(match ctx.page_of_path.get(&b.0) {
-                None => "non-owner twin counted".to_owned(),
-                Some(s) if s == p => "own blocks counted".to_owned(),
-                Some(s) if s.1 == ctx.favorites_key => "favorites page counted".to_owned(),
-                Some(_) => "other block counted".to_owned(),
-            });
-        }
-        for b in model_set.difference(&rule) {
-            let occ = ctx.occ(b);
-            let via = ctx.via(occ, &p.1);
-            reasons.insert(if via.contains("alias") {
-                "alias class not counted".to_owned()
-            } else if occ.iter().any(|(_, s)| {
-                closure(s)
-                    .iter()
-                    .any(|u| ctx.key(u) == p.1 && page_key(u) != literal)
-            }) {
-                "date spelling not folded".to_owned()
-            } else {
-                "other block not counted".to_owned()
-            });
-        }
-        // One difference per reason, so classes do not multiply by
-        // combination.
-        for reason in reasons {
-            diffs.push(Diff::new(
-                format!("counts: {reason}, target {}", ctx.page_feature(p)),
-                format!("backlink count of {p:?} ({path}): model {model}, Tine {tine} ({reason})"),
-            ));
-        }
+        let name = tine_name(ctx, p);
+        let panel = ctx
+            .view
+            .backlinks(&name)
+            .map(|groups| groups.iter().map(|g| g.blocks.len()).sum::<usize>());
+        let reason = match panel {
+            Ok(panel) if panel == tine => {
+                "as Tine's Linked References, which differ from the model's"
+            }
+            Ok(_) => "not the size of Tine's own Linked References",
+            Err(_) => "Tine's Linked References failed",
+        };
+        diffs.push(Diff::new(
+            format!("counts: {reason}, target {}", ctx.page_feature(p)),
+            format!("backlink count of {p:?} ({path}): model {model}, Tine {tine} ({reason})"),
+        ));
     }
     diffs
 }

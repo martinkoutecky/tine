@@ -61,17 +61,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/a b.md",
-      0
+      [
+        "pages/a b.md",
+        2
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/a/x.md",
+        2
+      ]
     ],
-    [
-      "pages/Notes.md",
-      0
-    ],
-    [
-      "pages/a/x.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

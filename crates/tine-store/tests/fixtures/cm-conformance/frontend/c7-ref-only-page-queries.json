@@ -65,8 +65,24 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/A.md",
-      0
+      [
+        "pages/A.md",
+        0
+      ]
+    ],
+    [
+      [
+        "B",
+        1
+      ],
+      [
+        "proj/sub",
+        1
+      ],
+      [
+        "TODO",
+        1
+      ]
     ]
   ],
   "inventory": [
@@ -100,6 +116,16 @@
         "id": "pages/proj%2Fsub.md",
         "kind": "absent"
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "TODO",
+      "target": {
+        "id": "pages/TODO.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
@@ -107,6 +133,7 @@
   "keyOf": {
     "A": "a",
     "B": "b",
+    "TODO": "todo",
     "proj/sub": "proj/sub"
   },
   "open": {

@@ -35,17 +35,16 @@
   ],
   "counts": [
     [
-      "pages/2026-10-26.md",
-      1
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        1
+      ]
     ],
-    [
-      "pages/Notes.md",
-      0
-    ],
-    [
-      "pages/A.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

@@ -79,16 +79,32 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/status.md",
-      1
+      [
+        "pages/status.md",
+        1
+      ],
+      [
+        "pages/Book.md",
+        0
+      ],
+      [
+        "pages/Shelf.md",
+        0
+      ]
     ],
     [
-      "pages/Book.md",
-      0
-    ],
-    [
-      "pages/Shelf.md",
-      0
+      [
+        "done-at",
+        1
+      ],
+      [
+        "rating",
+        1
+      ],
+      [
+        "type",
+        2
+      ]
     ]
   ],
   "inventory": [
@@ -101,6 +117,26 @@
         "id": "pages/Book.md",
         "kind": "existing",
         "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "done-at",
+      "name": "done-at",
+      "target": {
+        "id": "pages/done-at.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "rating",
+      "name": "rating",
+      "target": {
+        "id": "pages/rating.md",
+        "kind": "absent"
       }
     },
     {
@@ -124,6 +160,16 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "type",
+      "name": "type",
+      "target": {
+        "id": "pages/type.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
@@ -131,7 +177,10 @@
   "keyOf": {
     "Book": "book",
     "Shelf": "shelf",
-    "status": "status"
+    "done-at": "done-at",
+    "rating": "rating",
+    "status": "status",
+    "type": "type"
   },
   "open": {
     "Book": {

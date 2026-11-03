@@ -35,11 +35,33 @@
   "conflicts": [],
   "counts": [
     [
-      "journals/2026_10_26.md",
-      0
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
+    ],
+    [
+      [
+        "A",
+        1
+      ],
+      [
+        "TODO",
+        1
+      ]
     ]
   ],
   "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "absent"
+      }
+    },
     {
       "day": 20261026,
       "is_journal": true,
@@ -50,12 +72,24 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "TODO",
+      "target": {
+        "id": "pages/TODO.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "Oct 26th, 2026": "oct 26th, 2026"
+    "A": "a",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "TODO": "todo"
   },
   "open": {
     "A": {

@@ -7,6 +7,7 @@ import { resetTabsToJournals, route } from "../router";
 import type { PaneRouter } from "../router";
 import { resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
 import type { PageInventoryEntry } from "../types";
+import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { AllPages, ALL_PAGES_ROW_HEIGHT } from "./AllPages";
 import { Sidebar } from "./Sidebar";
 
@@ -59,12 +60,12 @@ function spyOnEverythingElse() {
   return () => spies.flatMap(({ name, spy }) => spy.mock.calls.map(() => name));
 }
 
-async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = [], backlinks: [string, number][] = []) {
+async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = [], backlinks: [string, number][] = [], references: [string, number][] = []) {
   const read = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   const readModified = vi.spyOn(backend(), "pageModified");
   if (modified === "fail") readModified.mockRejectedValue(new Error("no times"));
   else readModified.mockResolvedValue({ rev: "1", modified });
-  const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(backlinks);
+  const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([backlinks, references]);
   const otherCalls = spyOnEverythingElse();
   const icons = vi.spyOn(backend(), "pageIcons").mockImplementation(async (names: string[]) =>
     Object.fromEntries(names.filter((name) => name === "Page 00001").map((name) => [name, "🚩"])));
@@ -87,29 +88,46 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
-  it("coalesces rapid revisions to one in-flight read and one trailing refresh, and stops on unmount", async () => {
+  // A9 / HK3 (D-20261024): counts are a graph-wide read. They re-run only
+  // once the graph is quiet (QUERY_QUIET_MS after the latest input), the idle
+  // rule mounted queries use, with one read in flight; never while typing.
+  it("rereads counts only once typing has paused, one read in flight, and stops on unmount", async () => {
     const { readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")]);
     await settle();
+    expect(readCounts).toHaveBeenCalledTimes(1);
     vi.useFakeTimers();
     try {
-      let finish!: (counts: [string, number][]) => void;
-      readCounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-      bumpDataRev(); bumpDataRev(); bumpDataRev();
+      // Typing with saves publishing: no count read until the pause.
+      for (let i = 0; i < 5; i++) {
+        noteQueryInput(); bumpDataRev();
+        await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS / 3);
+      }
       expect(readCounts).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(1000);
+      expect(readModified.mock.calls.length).toBeGreaterThan(3);
+      await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS);
       expect(readCounts).toHaveBeenCalledTimes(2);
-      bumpDataRev(); bumpDataRev();
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(readCounts).toHaveBeenCalledTimes(2);
-      finish([]);
+      // A change during a read in flight asks for one more read, after it.
+      let finish!: (counts: [[string, number][], [string, number][]]) => void;
+      readCounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      bumpDataRev();
       await vi.advanceTimersByTimeAsync(0);
       expect(readCounts).toHaveBeenCalledTimes(3);
-      expect(readModified.mock.calls.length).toBeGreaterThan(3);
-      bumpDataRev();
-      dispose();
-      await vi.advanceTimersByTimeAsync(2000);
+      bumpDataRev(); bumpDataRev();
+      await vi.advanceTimersByTimeAsync(2 * QUERY_QUIET_MS);
       expect(readCounts).toHaveBeenCalledTimes(3);
-    } finally { vi.useRealTimers(); }
+      finish([[], []]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readCounts).toHaveBeenCalledTimes(4);
+      noteQueryInput(); bumpDataRev();
+      dispose();
+      await vi.advanceTimersByTimeAsync(2 * QUERY_QUIET_MS);
+      expect(readCounts).toHaveBeenCalledTimes(4);
+    } finally {
+      // The typing clock is app-wide and the fake clock ran ahead of the real
+      // one: leave the last input far in the past for the tests after this.
+      vi.setSystemTime(0); noteQueryInput();
+      vi.useRealTimers();
+    }
   });
   it("keeps graph-wide backlink reads separate from cheap updated times", () => {
     expect(typeof (backend() as unknown as Record<string, unknown>).pageBacklinkCounts).toBe("function");
@@ -120,7 +138,7 @@ describe("the All Pages view", () => {
       column(host, "Backlinks").click();
       await vi.waitFor(() => expect(rowNames(host)).toEqual(["Beta", "Alpha"]));
       readModified.mockResolvedValue({ rev: "2", modified: [] });
-      readCounts.mockResolvedValue([["pages/Alpha.md", 9], ["pages/Beta.md", 7]]);
+      readCounts.mockResolvedValue([[["pages/Alpha.md", 9], ["pages/Beta.md", 7]], []]);
       bumpDataRev();
       await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]), { timeout: 2000 });
       expect(readModified).toHaveBeenCalledTimes(2);

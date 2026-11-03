@@ -49,17 +49,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Notes.md",
-      0
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "journals/2026_10_22.md",
+        3
+      ],
+      [
+        "journals/2026_10_02.md",
+        1
+      ]
     ],
-    [
-      "journals/2026_10_22.md",
-      1
-    ],
-    [
-      "journals/2026_10_02.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

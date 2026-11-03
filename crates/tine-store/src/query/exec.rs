@@ -1062,7 +1062,7 @@ pub(crate) fn execute_cancellable(
             }
             Anchor::Page => {
                 let mut matches: Vec<(&PageEntry, Arc<PageFacts>)> = Vec::new();
-                for (entry, doc) in candidates.pages() {
+                for (entry, doc) in candidates.pages().chain(candidates.reference_only()) {
                     if cancelled() {
                         stopped = true;
                         return Ok(());
@@ -1075,10 +1075,11 @@ pub(crate) fn execute_cancellable(
                         matches.push((entry, facts));
                     }
                 }
+                // Files in path order, then the fileless rows in key order
+                // (the stable sort keeps `reference_only`'s order).
                 matches.sort_by(|a, b| {
-                    a.0.rel_path_str()
-                        .as_bytes()
-                        .cmp(b.0.rel_path_str().as_bytes())
+                    (a.0.rel_path.is_none(), a.0.rel_path_str().as_bytes())
+                        .cmp(&(b.0.rel_path.is_none(), b.0.rel_path_str().as_bytes()))
                 });
                 let matched = matches.len();
                 if let Some(sample) = sample {
@@ -1185,7 +1186,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Opt
         let links = plan.link_answers(graph, &candidates, config, &atoms, cancelled)?;
         let mut count = 0usize;
         let mut hits = Vec::new();
-        for (entry, doc) in candidates.pages() {
+        for (entry, doc) in candidates.pages().chain(candidates.reference_only()) {
             if cancelled() {
                 return None;
             }

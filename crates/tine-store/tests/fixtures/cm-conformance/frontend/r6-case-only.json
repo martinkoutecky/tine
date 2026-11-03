@@ -20,13 +20,16 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Foo.md",
-      1
+      [
+        "pages/Foo.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ]
     ],
-    [
-      "pages/p.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

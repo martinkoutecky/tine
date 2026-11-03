@@ -34,17 +34,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/notes.md",
-      0
+      [
+        "pages/notes.md",
+        0
+      ],
+      [
+        "pages/Machine Learning.md",
+        2
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
     ],
-    [
-      "pages/Machine Learning.md",
-      1
-    ],
-    [
-      "journals/2026_10_26.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

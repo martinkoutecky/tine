@@ -7,17 +7,16 @@
   ],
   "counts": [
     [
-      "pages/Foo.md",
-      1
+      [
+        "pages/Foo.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
     ],
-    [
-      "pages/Notes.md",
-      0
-    ],
-    [
-      "pages/other.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

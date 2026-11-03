@@ -35,12 +35,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/A.md",
-      0
+      [
+        "pages/A.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        1
+      ]
     ],
     [
-      "journals/2026_10_26.md",
-      0
+      [
+        "B",
+        1
+      ]
     ]
   ],
   "inventory": [

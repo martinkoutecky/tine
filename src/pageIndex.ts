@@ -5,6 +5,7 @@ import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import { absentLinkIsJournal } from "./journal";
+import { is_og_built_in_page } from "./render/wasm/lsdoc_wasm";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
@@ -192,7 +193,11 @@ export function resetPageIndex(): void {
   setHeld(null);
 }
 
-let installed: { allPages: () => PageEntry[] | undefined; allPageNames: () => string[] } | null = null;
+let installed: {
+  allPages: () => PageEntry[] | undefined;
+  allPageNames: () => string[];
+  referenceOnlyPages: () => PageEntry[];
+} | null = null;
 
 /** Start the refresh triggers (idempotent). App calls it at mount; every view
  *  calls it too, so a view mounted without App still loads. */
@@ -246,7 +251,22 @@ function ensureInstalled() {
       }
       return names;
     });
-    return { allPages, allPageNames };
+    // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
+    // the backend's absent entries that open themselves (no `link`: not a
+    // date spelling of a day, not an alias), less OG's built-in pages by the
+    // Rust answer (`is_og_built_in_page`, OG `get-all-pages`). A patch that
+    // leaves this list equal leaves All pages alone. O(entries).
+    const referenceOnlyPages = createMemo<PageEntry[]>(() => {
+      const current = held();
+      if (!current) return [];
+      const rows: PageEntry[] = [];
+      for (const entry of current.entries) {
+        if (entry.target.kind !== "absent" || entry.link || entry.is_journal || is_og_built_in_page(entry.name)) continue;
+        rows.push({ name: entry.name, kind: "page", date_key: null, path: "" });
+      }
+      return rows;
+    }, [], { equals: (a, b) => a.length === b.length && a.every((row, at) => row.name === b[at].name) });
+    return { allPages, allPageNames, referenceOnlyPages };
   });
   return installed;
 }
@@ -325,6 +345,11 @@ export function pageNameForPath(path: string): string | undefined {
 /** Every physical page and journal file (`undefined` until the first load). */
 export function allPages(): PageEntry[] | undefined {
   return ensureInstalled().allPages();
+}
+
+/** The reference-only pages All pages lists, path `""` (they have no file). */
+export function referenceOnlyPages(): PageEntry[] {
+  return ensureInstalled().referenceOnlyPages();
 }
 
 /** Physical, alias and reference-only page names (`[]` until loaded). */

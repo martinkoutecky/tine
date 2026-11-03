@@ -56,13 +56,16 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Notes.md",
-      0
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "journals/2026_10_22.md",
+        4
+      ]
     ],
-    [
-      "journals/2026_10_22.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

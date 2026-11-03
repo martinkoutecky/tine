@@ -61,17 +61,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/alpha.md",
-      0
+      [
+        "pages/alpha.md",
+        2
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/Zed.md",
+        2
+      ]
     ],
-    [
-      "pages/Notes.md",
-      0
-    ],
-    [
-      "pages/Zed.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

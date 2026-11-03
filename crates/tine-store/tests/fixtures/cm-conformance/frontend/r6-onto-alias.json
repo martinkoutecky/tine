@@ -21,17 +21,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/a.md",
-      1
+      [
+        "pages/a.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/b.md",
+        0
+      ]
     ],
-    [
-      "pages/p.md",
-      0
-    ],
-    [
-      "pages/b.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

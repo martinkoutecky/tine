@@ -65,21 +65,24 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/linker.md",
-      0
+      [
+        "pages/linker.md",
+        0
+      ],
+      [
+        "pages/a.b.md",
+        1
+      ],
+      [
+        "pages/foo.md",
+        1
+      ],
+      [
+        "journals/2026_10_26.md",
+        1
+      ]
     ],
-    [
-      "pages/a.b.md",
-      1
-    ],
-    [
-      "pages/foo.md",
-      1
-    ],
-    [
-      "journals/2026_10_26.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

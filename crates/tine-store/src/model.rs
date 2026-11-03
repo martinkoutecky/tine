@@ -632,12 +632,13 @@ impl ReadSnapshot {
         // enumeration visits and every name it yields (re-review F4).
         #[cfg(test)]
         let work = std::cell::Cell::new(0usize);
+        let config = self.config.clone();
         let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
             let mut names: std::collections::BTreeSet<String> = std::iter::once(page.name.clone())
                 .chain(crate::query::document_alias_spellings(doc))
                 .filter_map(|name| crate::transliteration::cache_identity(&name))
                 .collect();
-            visit_document_referenced_names(doc, None, &mut |name| {
+            visit_document_referenced_names(doc, None, &config, &mut |name| {
                 if let Some(key) = crate::transliteration::cache_identity(name) {
                     names.insert(key);
                 }
@@ -816,7 +817,7 @@ impl ReadSnapshot {
                         None,
                         &pages,
                         &[],
-                        crate::query::document_alias_spellings,
+                        &crate::query::document_alias_spellings,
                         None,
                     )
                 });
@@ -875,7 +876,7 @@ impl ReadSnapshot {
         });
         let carry_projection =
             |previous: Option<(&SnapshotPageDerivedIndex, &Arc<Pages>)>,
-             project: fn(&Document) -> Vec<String>| {
+             project: &dyn Fn(&Document) -> Vec<String>| {
                 let cell = std::sync::OnceLock::new();
                 if let Some(previous) = previous {
                     let _ = cell.set(SnapshotPageDerivedIndex::capture(
@@ -895,16 +896,23 @@ impl ReadSnapshot {
         } else {
             carry_projection(
                 old.and_then(|old| old.alias_index.get().map(|index| (index, &old.pages))),
-                crate::query::document_alias_spellings,
+                &crate::query::document_alias_spellings,
             )
         };
+        // The names read the property-page settings (a property key names a
+        // page only when `property_page_key_enabled`), so a generation under
+        // other such settings starts afresh instead of patching.
         let referenced_name_index = carry_projection(
-            old.and_then(|old| {
+            old.filter(|old| {
+                old.config.property_pages_enabled == config.property_pages_enabled
+                    && old.config.property_pages_excludelist == config.property_pages_excludelist
+            })
+            .and_then(|old| {
                 old.referenced_name_index
                     .get()
                     .map(|index| (index, &old.pages))
             }),
-            collect_document_referenced_names,
+            &|doc: &Document| collect_document_referenced_names(doc, &config),
         );
         let asset_refs = std::sync::OnceLock::new();
         if let Some(carried) = old.and_then(|old| {
@@ -1537,7 +1545,7 @@ impl ReadSnapshot {
                 None,
                 &self.pages,
                 &[],
-                crate::query::document_alias_spellings,
+                &crate::query::document_alias_spellings,
                 None,
             )
         })
@@ -1687,23 +1695,24 @@ impl ReadSnapshot {
                 None,
                 &self.pages,
                 &[],
-                collect_document_referenced_names,
+                &|doc: &Document| collect_document_referenced_names(doc, &self.config),
                 None,
             )
         })
     }
 }
 
-pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
-    collect_document_referenced_names_with_baseline(doc, None)
+pub(crate) fn collect_document_referenced_names(doc: &Document, config: &Config) -> Vec<String> {
+    collect_document_referenced_names_with_baseline(doc, None, config)
 }
 
 fn collect_document_referenced_names_with_baseline(
     doc: &Document,
     baseline: Option<(&str, &str)>,
+    config: &Config,
 ) -> Vec<String> {
     let mut seen = HashMap::new();
-    visit_document_referenced_names(doc, baseline, &mut |name| {
+    visit_document_referenced_names(doc, baseline, config, &mut |name| {
         if !name.is_empty() {
             seen.entry(tine_core::refs::page_key(name))
                 .or_insert_with(|| name.to_owned());
@@ -1712,25 +1721,76 @@ fn collect_document_referenced_names_with_baseline(
     seen.into_values().collect()
 }
 
+/// Every page name one block references, repeats included and nothing
+/// allocated: its page refs, its linkable property values, and the pages its
+/// reference evidence names by a task marker, a priority or a property key
+/// (D-20261102-CM4 CM-REFONLY, conformance S9). The last three are read
+/// through `reference_evidence::visit_reference_targets`, the one rule behind
+/// the Linked References panel and the link table, so a page is listed
+/// exactly when its panel can have a block for that reason: built-in and
+/// hidden property keys never project (`is_og_built_in_property`), and
+/// `:property-pages/enabled?` / `:property-pages/excludelist` gate the rest.
+/// OG `graph_parser/block.cljs with-page-refs` and
+/// `get-page-refs-from-property-names` (OG 6e7afa8eb). Intentional difference
+/// (D-20261102-CM4 A12): OG also seeds its built-in pages (markers, A/B/C,
+/// Favorites, Contents, card) when nothing references them; Tine lists one
+/// only when something references it.
+pub(crate) fn visit_block_referenced_names(
+    block: &DocBlock,
+    config: &Config,
+    f: &mut dyn FnMut(&str),
+) {
+    let projection = block.projection();
+    for name in projection.refs_page() {
+        f(name);
+    }
+    visit_block_property_and_evidence_names(block, config, f);
+}
+
+/// The page-property block's share of [`visit_block_referenced_names`]: its
+/// linkable property values and evidence-named pages (no page refs; the
+/// header's links are read as property values).
+fn visit_block_property_and_evidence_names(
+    block: &DocBlock,
+    config: &Config,
+    f: &mut dyn FnMut(&str),
+) {
+    let projection = block.projection();
+    for name in tine_core::reference_evidence::linkable_property_names(
+        projection.reference_source(),
+        &projection.regions,
+    ) {
+        f(name);
+    }
+    for reference in projection.reference_source().explicit {
+        if matches!(
+            reference.rule,
+            "explicit_task_marker" | "explicit_priority" | "explicit_property_key"
+        ) {
+            tine_core::reference_evidence::visit_reference_targets(reference, config, |_| {
+                f(reference.name.trim());
+                true
+            });
+        }
+    }
+}
+
 /// Every page name `doc` references, repeats included and nothing allocated:
-/// the page-property block's linkable values, then each block's page refs and
-/// linkable property values in pre-order. `baseline` (block id, raw) reads
-/// that block as if its body were `raw`.
+/// the page-property block's linkable values and evidence names, then each
+/// block's names ([`visit_block_referenced_names`]) in pre-order. `baseline`
+/// (block id, raw) reads that block as if its body were `raw`.
 fn visit_document_referenced_names(
     doc: &Document,
     baseline: Option<(&str, &str)>,
+    config: &Config,
     f: &mut dyn FnMut(&str),
 ) {
-    fn property_refs(f: &mut dyn FnMut(&str), block: &DocBlock) {
-        let projection = block.projection();
-        for name in tine_core::reference_evidence::linkable_property_names(
-            projection.reference_source(),
-            &projection.regions,
-        ) {
-            f(name);
-        }
-    }
-    fn visit(block: &DocBlock, f: &mut dyn FnMut(&str), baseline: Option<(&str, &str)>) {
+    fn visit(
+        block: &DocBlock,
+        config: &Config,
+        f: &mut dyn FnMut(&str),
+        baseline: Option<(&str, &str)>,
+    ) {
         let replacement = baseline
             .filter(|(id, _)| *id == block.uuid)
             .map(|(_, raw)| {
@@ -1738,22 +1798,18 @@ fn visit_document_referenced_names(
                 replacement.set_org(block.is_org());
                 replacement
             });
-        let reference_block = replacement.as_ref().unwrap_or(block);
-        for name in reference_block.projection().refs_page() {
-            f(name);
-        }
-        property_refs(f, reference_block);
+        visit_block_referenced_names(replacement.as_ref().unwrap_or(block), config, f);
         for child in &block.children {
-            visit(child, f, baseline);
+            visit(child, config, f, baseline);
         }
     }
     if let Some(pre) = &doc.pre_block {
         let mut block = DocBlock::new(pre);
         block.set_org(crate::query::page_properties::page_document_is_org(doc));
-        property_refs(f, &block);
+        visit_block_property_and_evidence_names(&block, config, f);
     }
     for block in &doc.roots {
-        visit(block, f, baseline);
+        visit(block, config, f, baseline);
     }
 }
 
@@ -2220,7 +2276,12 @@ impl SnapshotPageDerivedIndex {
         self.shards[SnapshotReferenceCandidateIndex::shard(path)].get(path)
     }
 
-    fn insert(&mut self, entry: &PageEntry, doc: &Document, project: fn(&Document) -> Vec<String>) {
+    fn insert(
+        &mut self,
+        entry: &PageEntry,
+        doc: &Document,
+        project: &dyn Fn(&Document) -> Vec<String>,
+    ) {
         let projection = project(doc);
         Arc::make_mut(&mut self.shards[SnapshotReferenceCandidateIndex::shard(&entry.path)])
             .insert(entry.path.clone(), projection);
@@ -2230,7 +2291,7 @@ impl SnapshotPageDerivedIndex {
         old: Option<(&Self, &Arc<Pages>)>,
         pages: &Arc<Pages>,
         changed_paths: &[String],
-        project: fn(&Document) -> Vec<String>,
+        project: &dyn Fn(&Document) -> Vec<String>,
         positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
     ) -> Self {
         if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {

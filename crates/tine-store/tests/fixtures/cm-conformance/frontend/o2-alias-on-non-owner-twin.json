@@ -22,17 +22,16 @@
   ],
   "counts": [
     [
-      "pages/a.md",
-      0
+      [
+        "pages/a.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
     ],
-    [
-      "pages/Notes.md",
-      0
-    ],
-    [
-      "pages/b.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

@@ -81,29 +81,32 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Ten___Child.md",
-      1
+      [
+        "pages/Ten___Child.md",
+        1
+      ],
+      [
+        "pages/50%25 of 100%.md",
+        0
+      ],
+      [
+        "pages/contents.md",
+        1
+      ],
+      [
+        "pages/a.b.md",
+        1
+      ],
+      [
+        "pages/links.md",
+        0
+      ],
+      [
+        "pages/caf%C3%A9.md",
+        1
+      ]
     ],
-    [
-      "pages/50%25 of 100%.md",
-      0
-    ],
-    [
-      "pages/contents.md",
-      1
-    ],
-    [
-      "pages/a.b.md",
-      1
-    ],
-    [
-      "pages/links.md",
-      0
-    ],
-    [
-      "pages/caf%C3%A9.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

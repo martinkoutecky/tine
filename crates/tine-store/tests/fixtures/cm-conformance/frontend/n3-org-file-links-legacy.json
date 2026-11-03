@@ -38,16 +38,28 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Ten___Child.org",
-      0
+      [
+        "pages/Ten___Child.org",
+        0
+      ],
+      [
+        "pages/a.b.org",
+        0
+      ],
+      [
+        "pages/note.org",
+        0
+      ]
     ],
     [
-      "pages/a.b.org",
-      0
-    ],
-    [
-      "pages/note.org",
-      0
+      [
+        "ab",
+        1
+      ],
+      [
+        "ten",
+        1
+      ]
     ]
   ],
   "inventory": [

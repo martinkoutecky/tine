@@ -30,6 +30,7 @@ import { bumpGraphEpoch } from "./graphSession";
 import { allPageNames, refreshPageIndex, resetPageIndex } from "./pageIndex";
 import { resetStore } from "./document";
 import { initParser } from "./render/parse";
+import { is_og_built_in_page } from "./render/wasm/lsdoc_wasm";
 import { setJournalFormats } from "./journal";
 import { resetReferenceSectionState } from "./referenceSectionState";
 import { AllPages } from "./components/AllPages";
@@ -54,7 +55,8 @@ interface Case {
   journalFileFormat: string | null;
   conflicts: string[];
   inventory: PageInventoryEntry[];
-  counts: [string, number][];
+  /** `page_backlink_counts`: [owner files by path, reference-only pages by name]. */
+  counts: [[string, number][], [string, number][]];
   pages: ModelPage[];
   backlinks: Record<string, RefGroup[]>;
   keyOf: Record<string, string>;
@@ -83,7 +85,8 @@ function sorted(v: unknown): unknown {
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0)); };
 const show = (p: ModelPage) => `("${p.kind}", "${p.key}")`;
 
-/** All Pages with journals shown: per row, its file path and Backlinks cell. */
+/** All Pages with journals shown: per row, its file path (a reference-only
+ *  row, which has none: `ref:` and its name's key) and Backlinks cell. */
 async function allPagesRows(c: Case): Promise<Map<string, string>> {
   vi.spyOn(backend(), "pageModified").mockResolvedValue({ rev: "1", modified: [] });
   vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(c.counts);
@@ -101,14 +104,18 @@ async function allPagesRows(c: Case): Promise<Map<string, string>> {
       await vi.waitFor(() => {
         expect(rows().length).toBeGreaterThan(0);
         // Counts arrive by their own read; a dash is "not loaded yet".
-        if (c.counts.length) expect(rows().every((r) => r.querySelector(".all-pages-backlinks")!.textContent !== "—")).toBe(true);
+        if (c.counts[0].length || c.counts[1].length) expect(rows().some((r) => r.querySelector(".all-pages-backlinks")!.textContent !== "—")).toBe(true);
       });
     }
     await settle();
-    return new Map(rows().map((r) => [
-      r.querySelector<HTMLElement>(".all-pages-open")!.title,
-      r.querySelector(".all-pages-backlinks")!.textContent ?? "",
-    ]));
+    return new Map(rows().map((r) => {
+      const open = r.querySelector<HTMLElement>(".all-pages-open")!;
+      const name = open.textContent ?? "";
+      return [
+        open.title || `ref:${c.keyOf[name] ?? name}`,
+        r.querySelector(".all-pages-backlinks")!.textContent ?? "",
+      ];
+    }));
   } finally {
     dispose();
     host.remove();
@@ -170,14 +177,13 @@ async function runCase(c: Case): Promise<string[]> {
     if (shown !== undefined && shown !== String(p.linkedRefs)) {
       diffs.push(`frontend linked refs header of ${show(p)} [[${p.name}]]: model ${p.linkedRefs}, header ${shown}`);
     }
-    if (p.owner === null) {
-      diffs.push(`frontend all pages: model page ${show(p)} is reference-only and has no row`);
-      continue;
-    }
-    owners.add(p.owner);
-    const cell = rows.get(p.owner);
+    const row = p.owner ?? `ref:${p.key}`;
+    owners.add(row);
+    const cell = rows.get(row);
     if (cell === undefined) {
-      diffs.push(`frontend all pages: model page ${show(p)} (${p.owner}) has no row`);
+      diffs.push(p.owner === null
+        ? `frontend all pages: model page ${show(p)} is reference-only and has no row${is_og_built_in_page(p.name) ? " (hidden as an OG built-in page, A11)" : ""}`
+        : `frontend all pages: model page ${show(p)} (${p.owner}) has no row`);
       continue;
     }
     if (cell !== String(p.linkedRefs)) {

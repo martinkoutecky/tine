@@ -90,3 +90,52 @@ pub(super) fn is_normalized_og_built_in_property(norm: &str) -> bool {
         })
         .contains(norm)
 }
+
+// Exact OG 1.0.0 `logseq.db.default/built-in-pages-names` at 6e7afa8eb
+// (deps/db/src/logseq/db/default.cljs): the built-in markers, the priorities
+// and three page names. `frontend.handler.page/get-all-pages` drops a page
+// when `(built-in-pages-names (string/upper-case name))`, so only the
+// all-capital members can ever match: Favorites, Contents and card stay
+// listed in OG, and here (D-20261102-CM4 A11, follow OG).
+const OG_BUILT_IN_PAGE_NAMES: &[&str] = &[
+    "NOW",
+    "LATER",
+    "DOING",
+    "DONE",
+    "CANCELED",
+    "CANCELLED",
+    "IN-PROGRESS",
+    "TODO",
+    "WAIT",
+    "WAITING",
+    "A",
+    "B",
+    "C",
+    "Favorites",
+    "Contents",
+    "card",
+];
+
+/// Whether All pages hides this page name as an OG built-in page
+/// (`get-all-pages`' upper-case membership test). O(name bytes), no I/O.
+pub fn is_og_built_in_page(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    OG_BUILT_IN_PAGE_NAMES.contains(&upper.as_str())
+}
+
+#[cfg(test)]
+mod built_in_page_tests {
+    use super::is_og_built_in_page;
+
+    #[test]
+    fn og_upper_case_membership_hides_markers_and_priorities_only() {
+        for name in ["TODO", "todo", "Doing", "in-progress", "a", "B", "WAIT"] {
+            assert!(is_og_built_in_page(name), "{name:?}");
+        }
+        // OG upper-cases the name before the lookup, so its mixed-case
+        // members never match; STARTED is a Tine marker OG does not list.
+        for name in ["Favorites", "contents", "card", "STARTED", "D", "todo list"] {
+            assert!(!is_og_built_in_page(name), "{name:?}");
+        }
+    }
+}

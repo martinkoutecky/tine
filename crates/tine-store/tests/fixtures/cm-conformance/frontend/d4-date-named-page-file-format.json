@@ -20,13 +20,16 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/25-10-2026.md",
-      1
+      [
+        "pages/25-10-2026.md",
+        1
+      ],
+      [
+        "pages/x.md",
+        0
+      ]
     ],
-    [
-      "pages/x.md",
-      0
-    ]
+    []
   ],
   "inventory": [
     {

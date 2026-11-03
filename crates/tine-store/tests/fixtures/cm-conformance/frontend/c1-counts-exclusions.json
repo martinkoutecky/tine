@@ -78,20 +78,28 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Favs.md",
-      0
+      [
+        "pages/Favs.md",
+        0
+      ],
+      [
+        "pages/Hub.md",
+        6
+      ],
+      [
+        "pages/x.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
     ],
     [
-      "pages/Hub.md",
-      7
-    ],
-    [
-      "pages/x.md",
-      0
-    ],
-    [
-      "journals/2026_10_26.md",
-      0
+      [
+        "topic",
+        1
+      ]
     ]
   ],
   "inventory": [
@@ -147,6 +155,16 @@
     {
       "day": null,
       "is_journal": false,
+      "key": "topic",
+      "name": "topic",
+      "target": {
+        "id": "pages/topic.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
       "key": "x",
       "name": "x",
       "target": {
@@ -163,6 +181,7 @@
     "H": "h",
     "Hub": "hub",
     "Oct 26th, 2026": "oct 26th, 2026",
+    "topic": "topic",
     "x": "x"
   },
   "open": {

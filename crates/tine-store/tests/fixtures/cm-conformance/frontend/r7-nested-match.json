@@ -27,8 +27,16 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/p.md",
-      0
+      [
+        "pages/p.md",
+        0
+      ]
+    ],
+    [
+      [
+        "A",
+        2
+      ]
     ]
   ],
   "inventory": [

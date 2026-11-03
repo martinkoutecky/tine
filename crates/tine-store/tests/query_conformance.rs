@@ -857,7 +857,10 @@ fn all_page_tags_round_trips_through_tql() {
     let today = JournalDate::today();
 
     for (source, expected) in [
-        ("(all-page-tags)", set(&["alpha"])),
+        // `beta` has no file: a reference-only page (D-20261102-CM4
+        // CM-REFONLY), and OG's `:all-page-tags` rule (deps/db rules.cljc,
+        // `[_ :block/tags ?p]`) lists it too.
+        ("(all-page-tags)", set(&["alpha", "beta"])),
         ("(not (all-page-tags))", set(&["absent", "blank", "tagged"])),
     ] {
         let (query, view) = parse_query_text(source, QueryDialect::Og, today);

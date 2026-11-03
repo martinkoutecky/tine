@@ -100,15 +100,41 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/ref.md",
-      0
+      [
+        "pages/ref.md",
+        0
+      ],
+      [
+        "pages/Tasks.md",
+        6
+      ]
     ],
     [
-      "pages/Tasks.md",
-      6
+      [
+        "A",
+        1
+      ],
+      [
+        "rel",
+        1
+      ],
+      [
+        "TODO",
+        1
+      ]
     ]
   ],
   "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "absent"
+      }
+    },
     {
       "day": null,
       "is_journal": false,
@@ -123,6 +149,16 @@
     {
       "day": null,
       "is_journal": false,
+      "key": "rel",
+      "name": "rel",
+      "target": {
+        "id": "pages/rel.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
       "key": "tasks",
       "name": "Tasks",
       "target": {
@@ -130,13 +166,26 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "TODO",
+      "target": {
+        "id": "pages/TODO.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
+    "A": "a",
+    "TODO": "todo",
     "Tasks": "tasks",
-    "ref": "ref"
+    "ref": "ref",
+    "rel": "rel"
   },
   "open": {
     "A": {

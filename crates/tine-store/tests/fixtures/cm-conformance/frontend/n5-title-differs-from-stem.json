@@ -95,24 +95,36 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/stem-name.md",
-      1
+      [
+        "pages/stem-name.md",
+        1
+      ],
+      [
+        "pages/linker.md",
+        0
+      ],
+      [
+        "pages/caps.md",
+        1
+      ],
+      [
+        "pages/o.org",
+        1
+      ],
+      [
+        "journals/2026_10_27.md",
+        1
+      ]
     ],
     [
-      "pages/linker.md",
-      0
-    ],
-    [
-      "pages/caps.md",
-      1
-    ],
-    [
-      "pages/o.org",
-      1
-    ],
-    [
-      "journals/2026_10_27.md",
-      1
+      [
+        "Release day",
+        1
+      ],
+      [
+        "stem-name",
+        1
+      ]
     ]
   ],
   "inventory": [

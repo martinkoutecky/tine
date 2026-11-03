@@ -20,8 +20,16 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/a.md",
-      0
+      [
+        "pages/a.md",
+        0
+      ]
+    ],
+    [
+      [
+        "public-key",
+        1
+      ]
     ]
   ],
   "inventory": [
@@ -35,12 +43,23 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "public-key",
+      "name": "public-key",
+      "target": {
+        "id": "pages/public-key.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "a": "a"
+    "a": "a",
+    "public-key": "public-key"
   },
   "open": {
     "a": {

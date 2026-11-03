@@ -35,17 +35,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/stem-name.md",
-      1
+      [
+        "pages/stem-name.md",
+        1
+      ],
+      [
+        "pages/linker.md",
+        0
+      ],
+      [
+        "pages/custom.md",
+        1
+      ]
     ],
-    [
-      "pages/linker.md",
-      0
-    ],
-    [
-      "pages/custom.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

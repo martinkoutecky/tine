@@ -23,278 +23,135 @@
   },
   "frontendCounts": {
     "fixtures": {
-      "c1-counts-exclusions": [
-        "frontend (\"page\", \"hub\"): All Pages says 7, its Linked References header says 6",
-        "frontend all pages count of (\"page\", \"hub\") (pages/Hub.md): model 6, All Pages 7",
-        "frontend all pages: model page (\"page\", \"topic\") is reference-only and has no row",
-        "frontend page list: model page \"topic\" is not listed"
-      ],
-      "c2-counts-date-spellings": [
-        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 1, its Linked References header says 3",
-        "frontend (\"journal\", \"oct 27th, 2026\"): All Pages says 0, its Linked References header says 2",
-        "frontend (\"page\", \"launch\"): All Pages says 2, its Linked References header says 3",
-        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 3, All Pages 1",
-        "frontend all pages count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 2, All Pages 0",
-        "frontend all pages count of (\"page\", \"launch\") (pages/Launch.md): model 3, All Pages 2"
-      ],
-      "c3-property-key-pages": [
-        "frontend all pages: model page (\"page\", \"done-at\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"rating\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"type\") is reference-only and has no row",
-        "frontend page list: model page \"done-at\" is not listed",
-        "frontend page list: model page \"rating\" is not listed",
-        "frontend page list: model page \"type\" is not listed"
-      ],
-      "c4-property-pages-excludelist": [
-        "frontend all pages: model page (\"page\", \"public-key\") is reference-only and has no row",
-        "frontend page list: model page \"public-key\" is not listed"
-      ],
       "c6-markers-and-priorities": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"c\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"canceled\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"doing\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"done\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"later\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"now\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"waiting\") is reference-only and has no row",
-        "frontend page list: model page \"a\" is not listed",
-        "frontend page list: model page \"b\" is not listed",
-        "frontend page list: model page \"c\" is not listed",
-        "frontend page list: model page \"canceled\" is not listed",
-        "frontend page list: model page \"doing\" is not listed",
-        "frontend page list: model page \"done\" is not listed",
-        "frontend page list: model page \"later\" is not listed",
-        "frontend page list: model page \"now\" is not listed",
-        "frontend page list: model page \"waiting\" is not listed"
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"c\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"canceled\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"doing\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"done\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"later\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"now\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"waiting\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "c7-ref-only-page-queries": [
-        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"proj\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"proj/sub\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
-        "frontend page list: model page \"proj\" is not listed",
-        "frontend page list: model page \"todo\" is not listed"
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend page list: model page \"proj\" is not listed"
       ],
       "d1-file-format-links": [
-        "frontend (\"journal\", \"oct 22nd, 2026\"): All Pages says 1, its Linked References header says 3",
-        "frontend all pages count of (\"journal\", \"oct 22nd, 2026\") (journals/22-10-2026.md): model 3, All Pages 1",
         "frontend all pages: model page (\"journal\", \"oct 23rd, 2026\") is reference-only and has no row"
       ],
       "d2-title-format-links": [
-        "frontend (\"journal\", \"22.10.2026\"): All Pages says 1, its Linked References header says 4",
-        "frontend all pages count of (\"journal\", \"22.10.2026\") (journals/2026_10_22.md): model 4, All Pages 1",
         "frontend all pages: model page (\"journal\", \"23.10.2026\") is reference-only and has no row"
       ],
       "d3-both-formats-alias-group": [
-        "frontend (\"journal\", \"2026_22_10\"): All Pages says 1, its Linked References header says 3",
-        "frontend (\"page\", \"launch\"): All Pages says 1, its Linked References header says 4",
-        "frontend all pages count of (\"journal\", \"2026_22_10\") (journals/22.10.2026.md): model 3, All Pages 1",
-        "frontend all pages count of (\"page\", \"launch\") (pages/Launch.md): model 4, All Pages 1",
         "frontend all pages: model page (\"journal\", \"2026_10_11\") is reference-only and has no row"
       ],
       "d4-date-named-page-file-format": [
         "frontend all pages count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, All Pages 1",
         "frontend linked refs header of (\"page\", \"oct 25th, 2026\") [[25-10-2026]]: model 2, header 1"
       ],
-      "d5-lenient-spellings": [
-        "frontend (\"journal\", \"oct 22nd, 2026\"): All Pages says 1, its Linked References header says 3",
-        "frontend (\"journal\", \"oct 2nd, 2026\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"journal\", \"oct 22nd, 2026\") (journals/2026_10_22.md): model 3, All Pages 1",
-        "frontend all pages count of (\"journal\", \"oct 2nd, 2026\") (journals/2026_10_02.md): model 1, All Pages 0"
-      ],
       "n1-legacy-codec": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend page list: model page \"a\" is not listed"
       ],
       "n2-triple-lowbar-codec": [
         "frontend all pages: model page (\"page\", \"\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"x\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"x/y\") is reference-only and has no row",
         "frontend linked refs header of (\"page\", \"\"): the page has no name to open",
         "frontend page list: model page \"\" is not listed",
         "frontend page list: model page \"a\" is not listed",
         "frontend page list: model page \"x\" is not listed"
       ],
       "n3-org-file-links-legacy": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"ab\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"ten\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend page list: model page \"a\" is not listed"
-      ],
-      "n4-org-file-links-triple-lowbar": [
-        "frontend all pages: model page (\"page\", \"ab\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"ten\") is reference-only and has no row"
       ],
       "n5-title-differs-from-stem": [
         "frontend all pages: model page (\"journal\", \"oct 27th, 2026\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"stem-name\") is reference-only and has no row"
+        "frontend all pages: row ref:release day (count 1) owns no model page"
       ],
       "n7-sync-conflict-names": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend page list: model page \"a\" is not listed"
       ],
       "o1-twin-file-name-before-folder": [
-        "frontend all pages: row pages/foo.md (count 1) owns no model page",
+        "frontend all pages: row pages/foo.md (count —) owns no model page",
         "frontend all pages: row pages/sub/Foo.md (count 1) owns no model page"
       ],
       "o1-twin-journal-day": [
         "frontend all pages: row journals/2026_10_26.md (count 1) owns no model page"
       ],
       "o1-twin-markdown-first": [
-        "frontend all pages: row pages/Foo.markdown (count 1) owns no model page",
+        "frontend all pages: row pages/Foo.markdown (count —) owns no model page",
         "frontend all pages: row pages/foo.md (count 1) owns no model page"
       ],
       "o1-twin-title-vs-file-name": [
-        "frontend all pages: row pages/a.md (count 2) owns no model page",
+        "frontend all pages: row pages/a.md (count —) owns no model page",
         "frontend all pages: row pages/zed.md (count 2) owns no model page"
       ],
       "o2-alias-on-non-owner-twin": [
         "frontend all pages: model page (\"page\", \"zed\") is reference-only and has no row",
-        "frontend all pages: row pages/a.md (count 0) owns no model page",
-        "frontend all pages: row pages/b.md (count 0) owns no model page",
+        "frontend all pages: row pages/a.md (count 1) owns no model page",
+        "frontend all pages: row pages/b.md (count —) owns no model page",
         "frontend page list: model page \"zed\" is not listed"
       ],
-      "o2-alias-owner-path-order": [
-        "frontend (\"page\", \"a b\"): All Pages says 0, its Linked References header says 2",
-        "frontend (\"page\", \"x\"): All Pages says 0, its Linked References header says 2",
-        "frontend all pages count of (\"page\", \"a b\") (pages/a b.md): model 2, All Pages 0",
-        "frontend all pages count of (\"page\", \"x\") (pages/a/x.md): model 2, All Pages 0"
-      ],
       "o2-date-alias-on-owner": [
-        "frontend all pages: row pages/A.md (count 0) owns no model page",
-        "frontend all pages: row pages/b.md (count 0) owns no model page"
+        "frontend all pages: row pages/A.md (count 1) owns no model page",
+        "frontend all pages: row pages/b.md (count —) owns no model page"
       ],
       "o2-date-alias-on-twin": [
         "frontend all pages: model page (\"journal\", \"oct 26th, 2026\") is reference-only and has no row",
-        "frontend all pages: row pages/2026-10-26.md (count 1) owns no model page",
+        "frontend all pages: row pages/2026-10-26.md (count —) owns no model page",
         "frontend all pages: row pages/A.md (count 1) owns no model page",
         "frontend linked refs header of (\"journal\", \"oct 26th, 2026\") [[oct 26th, 2026]]: model 1, header 2",
         "frontend page list: model page \"oct 26th, 2026\" is not listed"
       ],
       "q1-duplicate-claim": [
         "frontend all pages: row pages/Foo.md (count 1) owns no model page",
-        "frontend all pages: row pages/other.md (count 1) owns no model page"
+        "frontend all pages: row pages/other.md (count —) owns no model page"
       ],
       "q1-page-and-journal-same-day": [
-        "frontend all pages: row journals/2026_10_26.md (count 0) owns no model page",
+        "frontend all pages: row journals/2026_10_26.md (count 1) owns no model page",
         "frontend all pages: row pages/2026-10-26.md (count 1) owns no model page"
       ],
       "q6-task-and-priority-pages": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
-        "frontend page list: model page \"a\" is not listed",
-        "frontend page list: model page \"todo\" is not listed"
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r1-namespace-parent": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"a/b\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"a/b/c\") is reference-only and has no row",
         "frontend all pages: model page (\"page\", \"n\") is reference-only and has no row",
         "frontend page list: model page \"a\" is not listed",
         "frontend page list: model page \"a/b\" is not listed",
         "frontend page list: model page \"n\" is not listed"
       ],
-      "r1-title-names-page": [
-        "frontend all pages: model page (\"page\", \"file-name\") is reference-only and has no row"
-      ],
-      "r2-alias-backlinks": [
-        "frontend (\"page\", \"machine learning\"): All Pages says 1, its Linked References header says 2",
-        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 2, All Pages 1"
-      ],
-      "r2-alias-chain": [
-        "frontend (\"page\", \"a\"): All Pages says 0, its Linked References header says 3",
-        "frontend (\"page\", \"b\"): All Pages says 1, its Linked References header says 3",
-        "frontend (\"page\", \"c\"): All Pages says 1, its Linked References header says 3",
-        "frontend all pages count of (\"page\", \"a\") (pages/A.md): model 3, All Pages 0",
-        "frontend all pages count of (\"page\", \"b\") (pages/B.md): model 3, All Pages 1",
-        "frontend all pages count of (\"page\", \"c\") (pages/C.md): model 3, All Pages 1"
-      ],
-      "r2-journal-in-alias-group": [
-        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 1, its Linked References header says 2",
-        "frontend (\"page\", \"launch\"): All Pages says 1, its Linked References header says 3",
-        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, All Pages 1",
-        "frontend all pages count of (\"page\", \"launch\") (pages/Launch.md): model 3, All Pages 1"
-      ],
-      "r3-capital-sorts-first": [
-        "frontend (\"page\", \"alpha\"): All Pages says 0, its Linked References header says 2",
-        "frontend (\"page\", \"zed\"): All Pages says 0, its Linked References header says 2",
-        "frontend all pages count of (\"page\", \"alpha\") (pages/alpha.md): model 2, All Pages 0",
-        "frontend all pages count of (\"page\", \"zed\") (pages/Zed.md): model 2, All Pages 0"
-      ],
-      "r3-empty-own-file": [
-        "frontend (\"page\", \"machine learning\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 1, All Pages 0"
-      ],
-      "r3-indirect-declarer": [
-        "frontend (\"page\", \"a\"): All Pages says 0, its Linked References header says 2",
-        "frontend (\"page\", \"b\"): All Pages says 1, its Linked References header says 2",
-        "frontend all pages count of (\"page\", \"a\") (pages/A.md): model 2, All Pages 0",
-        "frontend all pages count of (\"page\", \"b\") (pages/B.md): model 2, All Pages 1"
-      ],
-      "r3-own-file-wins": [
-        "frontend (\"page\", \"machine learning\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 1, All Pages 0"
-      ],
-      "r3-two-declarers": [
-        "frontend (\"page\", \"alpha\"): All Pages says 0, its Linked References header says 2",
-        "frontend (\"page\", \"beta\"): All Pages says 0, its Linked References header says 2",
-        "frontend all pages count of (\"page\", \"alpha\") (pages/Alpha.md): model 2, All Pages 0",
-        "frontend all pages count of (\"page\", \"beta\") (pages/Beta.md): model 2, All Pages 0"
-      ],
       "r4-journal-and-date-links": [
-        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0",
         "frontend all pages: model page (\"journal\", \"oct 27th, 2026\") is reference-only and has no row"
       ],
-      "r5-favorites-excluded": [
-        "frontend (\"page\", \"a\"): All Pages says 3, its Linked References header says 1",
-        "frontend all pages count of (\"page\", \"a\") (pages/A.md): model 1, All Pages 3"
-      ],
-      "r5-journal-alias": [
-        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0"
-      ],
       "r6-merge-self-link": [
-        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row"
-      ],
-      "r6-ref-only-descendant": [
-        "frontend all pages: model page (\"page\", \"old/child\") is reference-only and has no row"
-      ],
-      "r6-refused-journal-risk": [
-        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0"
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r6-rewrite-set": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"rel\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
-        "frontend page list: model page \"a\" is not listed",
-        "frontend page list: model page \"rel\" is not listed",
-        "frontend page list: model page \"todo\" is not listed"
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r6-task-marker-page": [
-        "frontend all pages: model page (\"page\", \"a]\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
-        "frontend page list: model page \"todo\" is not listed"
-      ],
-      "r7-alias-query": [
-        "frontend (\"page\", \"machine learning\"): All Pages says 1, its Linked References header says 2",
-        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 2, All Pages 1"
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r7-and-not": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
-        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row"
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r7-nested-match": [
-        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row"
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r7-page-queries": [
-        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
-        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0",
-        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row"
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ]
     }
   },
@@ -1284,59 +1141,20 @@
   },
   "store": {
     "fixtures": {
-      "c1-counts-exclusions": [
-        "backlink count of (\"page\", \"hub\") (pages/Hub.md): model 6, Tine 7 (alias class not counted)",
-        "backlink count of (\"page\", \"hub\") (pages/Hub.md): model 6, Tine 7 (favorites page counted)",
-        "backlink count of (\"page\", \"hub\") (pages/Hub.md): model 6, Tine 7 (own blocks counted)",
-        "pages: model has (\"page\", \"topic\"), Tine does not"
-      ],
+      "c1-counts-exclusions": [],
       "c2-counts-date-spellings": [
-        "backlink count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 2, Tine 0 (alias class not counted)",
-        "backlink count of (\"page\", \"launch\") (pages/Launch.md): model 3, Tine 2 (alias class not counted)",
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 3, Tine 1 (date spelling not folded)",
-        "backlink count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 2, Tine 0 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 27th, 2026\"), model does not",
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not"
       ],
-      "c3-property-key-pages": [
-        "pages: model has (\"page\", \"done-at\"), Tine does not",
-        "pages: model has (\"page\", \"rating\"), Tine does not",
-        "pages: model has (\"page\", \"type\"), Tine does not",
-        "query \"@page and name = 'done-at'\": model has page (\"page\", \"done-at\"), Tine does not",
-        "query \"@page and name = 'rating'\": model has page (\"page\", \"rating\"), Tine does not",
-        "query \"@page and name = 'type'\": model has page (\"page\", \"type\"), Tine does not"
-      ],
-      "c4-property-pages-excludelist": [
-        "pages: model has (\"page\", \"public-key\"), Tine does not",
-        "query \"@page and name = 'public-key'\": model has page (\"page\", \"public-key\"), Tine does not"
-      ],
+      "c3-property-key-pages": [],
+      "c4-property-pages-excludelist": [],
       "c5-property-pages-disabled": [],
-      "c6-markers-and-priorities": [
-        "pages: model has (\"page\", \"a\"), Tine does not",
-        "pages: model has (\"page\", \"b\"), Tine does not",
-        "pages: model has (\"page\", \"c\"), Tine does not",
-        "pages: model has (\"page\", \"canceled\"), Tine does not",
-        "pages: model has (\"page\", \"doing\"), Tine does not",
-        "pages: model has (\"page\", \"done\"), Tine does not",
-        "pages: model has (\"page\", \"later\"), Tine does not",
-        "pages: model has (\"page\", \"now\"), Tine does not",
-        "pages: model has (\"page\", \"waiting\"), Tine does not",
-        "query \"@page and name = 'b'\": model has page (\"page\", \"b\"), Tine does not",
-        "query \"@page and name = 'doing'\": model has page (\"page\", \"doing\"), Tine does not"
-      ],
+      "c6-markers-and-priorities": [],
       "c7-ref-only-page-queries": [
-        "pages: model has (\"page\", \"todo\"), Tine does not",
         "pages: model has (\"page\", \"proj\"), Tine does not",
-        "query \"@page and not (name = 'A')\": model has page (\"page\", \"b\"), Tine does not",
-        "query \"@page and not (name = 'A')\": model has page (\"page\", \"proj\"), Tine does not",
-        "query \"@page and not (name = 'A')\": model has page (\"page\", \"proj/sub\"), Tine does not",
-        "query \"@page and not (name = 'A')\": model has page (\"page\", \"todo\"), Tine does not",
-        "query \"@page and (name = 'proj/sub' or name = 'todo')\": model has page (\"page\", \"proj/sub\"), Tine does not",
-        "query \"@page and (name = 'proj/sub' or name = 'todo')\": model has page (\"page\", \"todo\"), Tine does not",
-        "query \"@page and name = 'B'\": model has page (\"page\", \"b\"), Tine does not"
+        "query \"@page and not (name = 'A')\": model has page (\"page\", \"proj\"), Tine does not"
       ],
       "d1-file-format-links": [
-        "backlink count of (\"journal\", \"oct 22nd, 2026\") (journals/22-10-2026.md): model 3, Tine 1 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 22nd, 2026\"), model does not",
         "pages: Tine has (\"page\", \"oct 23rd, 2026\"), model does not",
         "pages: model has (\"journal\", \"oct 23rd, 2026\"), Tine does not",
@@ -1349,7 +1167,6 @@
         "query \"@page and name = '22-10-2026'\": model has page (\"journal\", \"oct 22nd, 2026\"), Tine does not"
       ],
       "d2-title-format-links": [
-        "backlink count of (\"journal\", \"22.10.2026\") (journals/2026_10_22.md): model 4, Tine 1 (date spelling not folded)",
         "pages: Tine has (\"page\", \"22.10.2026\"), model does not",
         "pages: Tine has (\"page\", \"23.10.2026\"), model does not",
         "pages: model has (\"journal\", \"23.10.2026\"), Tine does not",
@@ -1364,8 +1181,6 @@
         "query \"@page and name = '2026-10-22'\": model has page (\"journal\", \"22.10.2026\"), Tine does not"
       ],
       "d3-both-formats-alias-group": [
-        "backlink count of (\"page\", \"launch\") (pages/Launch.md): model 4, Tine 1 (alias class not counted)",
-        "backlink count of (\"journal\", \"2026_22_10\") (journals/22.10.2026.md): model 3, Tine 1 (date spelling not folded)",
         "pages: Tine has (\"page\", \"2026_22_10\"), model does not",
         "pages: Tine has (\"page\", \"2026_10_11\"), model does not",
         "pages: model has (\"journal\", \"2026_10_11\"), Tine does not",
@@ -1381,14 +1196,12 @@
         "query \"@page and name = '22.10.2026'\": model has page (\"journal\", \"2026_22_10\"), Tine does not"
       ],
       "d4-date-named-page-file-format": [
-        "backlink count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, Tine 1 (date spelling not folded)",
+        "backlink count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, Tine 1 (as Tine's Linked References, which differ from the model's)",
         "Linked References of (\"page\", \"oct 25th, 2026\"): model has block (\"pages/x.md\", 1), Tine does not",
         "navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), Tine (\"journal\", \"oct 25th, 2026\")",
         "query \"[[25-10-2026]]\": model has block (\"pages/x.md\", 1), Tine does not"
       ],
       "d5-lenient-spellings": [
-        "backlink count of (\"journal\", \"oct 22nd, 2026\") (journals/2026_10_22.md): model 3, Tine 1 (date spelling not folded)",
-        "backlink count of (\"journal\", \"oct 2nd, 2026\") (journals/2026_10_02.md): model 1, Tine 0 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 22nd, 2026\"), model does not",
         "pages: Tine has (\"page\", \"oct 2nd, 2026\"), model does not",
         "query \"[[Oct 22nd, 2026]]\": model has block (\"pages/Notes.md\", 0), Tine does not",
@@ -1420,40 +1233,39 @@
         "pages: model has (\"page\", \"a\"), Tine does not"
       ],
       "o1-twin-file-name-before-folder": [
-        "owner of (page, \"foo\"): model pages/foo.md, Tine pages/sub/Foo.md"
+        "owner of (page, \"foo\"): model pages/foo.md, Tine pages/sub/Foo.md",
+        "counts of (\"page\", \"foo\") (pages/foo.md): model 1, Tine none (non-owner twin)"
       ],
       "o1-twin-journal-day": [
         "owner of (journal, \"oct 26th, 2026\"): model journals/2026-10-26.md, Tine journals/2026_10_26.md",
         "counts of (\"journal\", \"oct 26th, 2026\") (journals/2026-10-26.md): model 1, Tine none"
       ],
       "o1-twin-markdown-first": [
-        "owner of (page, \"foo\"): model pages/Foo.markdown, Tine pages/foo.md"
+        "owner of (page, \"foo\"): model pages/Foo.markdown, Tine pages/foo.md",
+        "counts of (\"page\", \"foo\") (pages/Foo.markdown): model 1, Tine none (non-owner twin)"
       ],
       "o1-twin-title-vs-file-name": [
-        "owner of (page, \"zed\"): model pages/a.md, Tine pages/zed.md"
+        "owner of (page, \"zed\"): model pages/a.md, Tine pages/zed.md",
+        "counts of (\"page\", \"zed\") (pages/a.md): model 2, Tine none (non-owner twin)"
       ],
       "o2-alias-on-non-owner-twin": [
         "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"zed\"}",
         "alias group of (\"page\", \"zed\"): model {\"zed\"}, Tine {\"a\", \"zed\"}",
         "[[zed]] declared by pages/b.md, which does not own \"a\"",
+        "backlink count of (\"page\", \"a\") (pages/a.md): model 0, Tine 1 (as Tine's Linked References, which differ from the model's)",
         "Linked References of (\"page\", \"a\"): Tine has block (\"pages/Notes.md\", 0), model does not",
         "link \"notes\" -> \"a\": Tine has it, model does not",
         "link \"notes\" -> \"zed\": model has it, Tine does not",
         "navigate [[zed]]: model (\"page\", \"zed\"), Tine (\"page\", \"a\")",
         "pages: model has (\"page\", \"zed\"), Tine does not"
       ],
-      "o2-alias-owner-path-order": [
-        "backlink count of (\"page\", \"a b\") (pages/a b.md): model 2, Tine 0 (alias class not counted)",
-        "backlink count of (\"page\", \"x\") (pages/a/x.md): model 2, Tine 0 (alias class not counted)"
-      ],
-      "o2-date-alias-on-owner": [
-        "backlink count of (\"page\", \"a\") (pages/A.md): model 1, Tine 0 (alias class not counted)"
-      ],
+      "o2-alias-owner-path-order": [],
+      "o2-date-alias-on-owner": [],
       "o2-date-alias-on-twin": [
         "owner of (page, \"a\"): model pages/2026-10-26.md, Tine pages/A.md",
         "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"oct 26th, 2026\"}",
         "[[a]] declared by pages/2026-10-26.md, which does not own \"a\"",
-        "backlink count of (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine 1 (own blocks counted)",
+        "counts of (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine none (non-owner twin)",
         "query \"any(direct_refs, journal = true)\": native list reads [\"2026-10-26\"] in block (\"pages/A.md\", 0) as a day, the query does not",
         "query \"any(direct_refs, journal = true)\": block (\"pages/2026-10-26.md\", 0) matches, the native list reads no day in it",
         "Linked References of (\"journal\", \"oct 26th, 2026\"): Tine has block (\"pages/2026-10-26.md\", 0), model does not",
@@ -1465,13 +1277,9 @@
       ],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [
-        "conflicts: model \"oct 26th, 2026\" conflicted, Tine not",
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (date spelling not folded)"
+        "conflicts: model \"oct 26th, 2026\" conflicted, Tine not"
       ],
-      "q6-task-and-priority-pages": [
-        "pages: model has (\"page\", \"a\"), Tine does not",
-        "pages: model has (\"page\", \"todo\"), Tine does not"
-      ],
+      "q6-task-and-priority-pages": [],
       "r1-namespace-parent": [
         "pages: model has (\"page\", \"n\"), Tine does not",
         "pages: model has (\"page\", \"a\"), Tine does not",
@@ -1479,51 +1287,24 @@
       ],
       "r1-one-name-one-page": [],
       "r1-title-names-page": [],
-      "r2-alias-backlinks": [
-        "backlink count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 2, Tine 1 (alias class not counted)"
-      ],
-      "r2-alias-chain": [
-        "backlink count of (\"page\", \"a\") (pages/A.md): model 3, Tine 0 (alias class not counted)",
-        "backlink count of (\"page\", \"b\") (pages/B.md): model 3, Tine 1 (alias class not counted)",
-        "backlink count of (\"page\", \"c\") (pages/C.md): model 3, Tine 1 (alias class not counted)"
-      ],
+      "r2-alias-backlinks": [],
+      "r2-alias-chain": [],
       "r2-journal-in-alias-group": [
-        "backlink count of (\"page\", \"launch\") (pages/Launch.md): model 3, Tine 1 (alias class not counted)",
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, Tine 1 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not"
       ],
-      "r3-capital-sorts-first": [
-        "backlink count of (\"page\", \"alpha\") (pages/alpha.md): model 2, Tine 0 (alias class not counted)",
-        "backlink count of (\"page\", \"zed\") (pages/Zed.md): model 2, Tine 0 (alias class not counted)"
-      ],
-      "r3-empty-own-file": [
-        "backlink count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 1, Tine 0 (alias class not counted)"
-      ],
-      "r3-indirect-declarer": [
-        "backlink count of (\"page\", \"a\") (pages/A.md): model 2, Tine 0 (alias class not counted)",
-        "backlink count of (\"page\", \"b\") (pages/B.md): model 2, Tine 1 (alias class not counted)"
-      ],
-      "r3-own-file-wins": [
-        "backlink count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 1, Tine 0 (alias class not counted)"
-      ],
-      "r3-two-declarers": [
-        "backlink count of (\"page\", \"alpha\") (pages/Alpha.md): model 2, Tine 0 (alias class not counted)",
-        "backlink count of (\"page\", \"beta\") (pages/Beta.md): model 2, Tine 0 (alias class not counted)"
-      ],
+      "r3-capital-sorts-first": [],
+      "r3-empty-own-file": [],
+      "r3-indirect-declarer": [],
+      "r3-own-file-wins": [],
+      "r3-two-declarers": [],
       "r4-date-named-page": [],
       "r4-journal-and-date-links": [
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not",
         "pages: Tine has (\"page\", \"oct 27th, 2026\"), model does not",
         "pages: model has (\"journal\", \"oct 27th, 2026\"), Tine does not"
       ],
-      "r5-favorites-excluded": [
-        "backlink count of (\"page\", \"a\") (pages/A.md): model 1, Tine 3 (favorites page counted)",
-        "backlink count of (\"page\", \"a\") (pages/A.md): model 1, Tine 3 (own blocks counted)"
-      ],
-      "r5-journal-alias": [
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (alias class not counted)"
-      ],
+      "r5-favorites-excluded": [],
+      "r5-journal-alias": [],
       "r6-case-only": [],
       "r6-file-descendant": [],
       "r6-into-namespace": [],
@@ -1531,19 +1312,10 @@
       "r6-onto-alias": [],
       "r6-onto-real-page": [],
       "r6-ref-only-descendant": [],
-      "r6-refused-journal-risk": [
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (alias class not counted)"
-      ],
-      "r6-rewrite-set": [
-        "pages: model has (\"page\", \"a\"), Tine does not",
-        "pages: model has (\"page\", \"rel\"), Tine does not",
-        "pages: model has (\"page\", \"todo\"), Tine does not"
-      ],
-      "r6-task-marker-page": [
-        "pages: model has (\"page\", \"todo\"), Tine does not"
-      ],
+      "r6-refused-journal-risk": [],
+      "r6-rewrite-set": [],
+      "r6-task-marker-page": [],
       "r7-alias-query": [
-        "backlink count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 2, Tine 1 (alias class not counted)",
         "query \"[[ML]]\": model has block (\"pages/notes.md\", 1), Tine does not",
         "query \"[[Machine Learning]]\": model has block (\"pages/notes.md\", 0), Tine does not",
         "query \"[[ML]]\": model has block (\"pages/Machine Learning.md\", 1), Tine does not"
@@ -1553,11 +1325,9 @@
         "query \"[[A]]\": model has block (\"pages/p.md\", 1), Tine does not"
       ],
       "r7-page-queries": [
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not",
         "query \"(page \\\"2026-10-26\\\")\": model has block (\"journals/2026_10_26.md\", 0), Tine does not",
-        "query \"@page and name = '2026-10-26'\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not",
-        "query \"@page and name = 'B'\": model has page (\"page\", \"b\"), Tine does not"
+        "query \"@page and name = '2026-10-26'\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not"
       ]
     },
     "harnessSkipped": [],
@@ -1695,8 +1465,8 @@
           ]
         }
       },
-      "[duplicate claim] counts: alias class not counted": {
-        "detail": "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (alias class not counted)",
+      "[duplicate claim] counts: as Tine's Linked References": {
+        "detail": "backlink count of (\"page\", \"oct 26th, 2026\") (pages/2026-10-26.md): model 0, Tine 1 (as Tine's Linked References, which differ from the model's)",
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
@@ -1722,70 +1492,43 @@
           ]
         }
       },
-      "[duplicate claim] counts: date spelling not folded": {
-        "detail": "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, Tine 0 (date spelling not folded)",
+      "[duplicate claim] counts: the model's owner is a Tine non-owner twin": {
+        "detail": "counts of (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine none (non-owner twin)",
         "graph": {
           "files": {
-            "journals/2026_10_26.md": "",
-            "pages/N%2Fy.md": "title:: 2026-10-26\n\n- plain words\n- [[2026-10-26]] and [[A]]\n",
-            "pages/a.md": "- plain words\n- [#A] priority\n  - child [[2026-10-26]]\n"
+            "pages/2026-10-26.md": "title:: a\nalias:: a\n",
+            "pages/A.md": "alias:: 2026-10-26\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "page": {
-                  "name": "N/y"
-                }
+                "or": [
+                  {
+                    "refs": "x"
+                  },
+                  {
+                    "refs": "x"
+                  }
+                ]
               },
-              "tine": "(page \"N/y\")"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] counts: non-owner twin counted": {
-        "detail": "backlink count of (\"page\", \"a\") (pages/A.md): model 0, Tine 1 (non-owner twin counted)",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/a.md": "alias:: n/y, n\n\n- note\n  rel:: [[A]]\n- TODO task [[B]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "A"
-              },
-              "tine": "[[A]]"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] counts: own blocks counted": {
-        "detail": "backlink count of (\"page\", \"oct 26th, 2026\") (pages/2026-10-26.md): model 0, Tine 1 (own blocks counted)",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "",
-            "pages/2026-10-26.md": "alias:: x, 2026-10-26\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "x"
-              },
-              "tine": "[[x]]"
+              "tine": "(or [[x]] [[x]])"
             },
             {
               "anchor": "page",
               "dialect": "tql",
               "q": {
-                "name": "n/y"
+                "or": [
+                  {
+                    "name": "a"
+                  },
+                  {
+                    "name": "N/y"
+                  }
+                ]
               },
-              "tine": "@page and name = 'n/y'"
+              "tine": "@page and (name = 'a' or name = 'N/y')"
             }
           ]
         }
@@ -2147,29 +1890,24 @@
         }
       },
       "[duplicate claim] query @page with not: Tine-only page": {
-        "detail": "query \"@page and not (name = '2026-10-26')\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
+        "detail": "query \"@page and not (name = '2026-10-26')\": Tine has page (\"page\", \"n\"), model does not",
         "graph": {
           "files": {
-            "journals/2026_10_26.md": "alias:: n/y\n",
-            "journals/2026_10_27.md": "",
-            "pages/2026-10-26.md": "alias:: 2026-10-26, 2026-10-26\n\n- N/y mentioned\n- [#A] priority\n- [#A] priority\n",
-            "pages/a.md": "- see [[a]]\n  - child [[A]]\n"
+            "pages/2026-10-26.md": "",
+            "pages/B.md": "title:: x\n",
+            "pages/a.md": "",
+            "pages/x.md": "alias:: 2026-10-26\n\n- #n/y tagged\n- see [[n]]\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "or": [
-                  {
-                    "refs": "N/y"
-                  },
-                  {
-                    "refs": "a"
-                  }
-                ]
+                "not": {
+                  "refs": "a"
+                }
               },
-              "tine": "(or [[N/y]] [[a]])"
+              "tine": "(not [[a]])"
             },
             {
               "anchor": "page",
@@ -2249,125 +1987,6 @@
                 "name": "2026-10-26"
               },
               "tine": "@page and name = '2026-10-26'"
-            }
-          ]
-        }
-      },
-      "counts: alias class not counted, target journal real": {
-        "detail": "backlink count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 1, Tine 0 (alias class not counted)",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "alias:: x\n\n- [[2026-10-26]] and [[B]]\n- TODO task [[A]]\n",
-            "pages/x.md": "alias:: 2026-10-26, n\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "A"
-              },
-              "tine": "[[A]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "a"
-              },
-              "tine": "@page and name = 'a'"
-            }
-          ]
-        }
-      },
-      "counts: alias class not counted, target page real": {
-        "detail": "backlink count of (\"page\", \"b\") (pages/B.md): model 1, Tine 0 (alias class not counted)",
-        "graph": {
-          "files": {
-            "pages/B.md": "alias:: n/y, A\n\n- [#A] priority\n",
-            "pages/n%2Fy.md": "alias:: n\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "x"
-                }
-              },
-              "tine": "(not [[x]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "A"
-              },
-              "tine": "@page and name = 'A'"
-            }
-          ]
-        }
-      },
-      "counts: date spelling not folded, target journal real": {
-        "detail": "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (date spelling not folded)",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "- [[n]] and [[A]]\n- [[x]] and [[n]]\n",
-            "pages/N%2Fy.md": "- B mentioned\n- plain words\n  - child [[2026-10-26]]\n- TODO task [[A]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "n"
-                  },
-                  {
-                    "not": {
-                      "page": {
-                        "name": "A"
-                      }
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[n]] (not (page \"A\")))"
-            }
-          ]
-        }
-      },
-      "counts: own blocks counted, target page real": {
-        "detail": "backlink count of (\"page\", \"n\") (pages/n.md): model 0, Tine 1 (own blocks counted)",
-        "graph": {
-          "files": {
-            "pages/n.md": "alias:: N/y\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n/y"
-              },
-              "tine": "[[n/y]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "or": [
-                  {
-                    "name": "A"
-                  },
-                  {
-                    "name": "N/y"
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'A' or name = 'N/y')"
             }
           ]
         }
@@ -2511,35 +2130,6 @@
                 "name": "N/y"
               },
               "tine": "@page and name = 'N/y'"
-            }
-          ]
-        }
-      },
-      "pages: model-only page (occurrence)": {
-        "detail": "pages: model has (\"page\", \"a\"), Tine does not",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "- [#A] priority\n- [#A] priority\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "n"
-                  },
-                  {
-                    "not": {
-                      "page": {
-                        "name": "2026-10-26"
-                      }
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[n]] (not (page \"2026-10-26\")))"
             }
           ]
         }

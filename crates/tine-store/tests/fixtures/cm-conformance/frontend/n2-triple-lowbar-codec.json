@@ -99,32 +99,40 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/x______y.md",
-      0
+      [
+        "pages/x______y.md",
+        0
+      ],
+      [
+        "pages/bad%E9.md",
+        0
+      ],
+      [
+        "pages/a.b.md",
+        1
+      ],
+      [
+        "pages/links.md",
+        0
+      ],
+      [
+        "pages/___lead.md",
+        1
+      ],
+      [
+        "pages/a___b.md",
+        1
+      ],
+      [
+        "pages/caf%C3%A9.md",
+        0
+      ]
     ],
     [
-      "pages/bad%E9.md",
-      0
-    ],
-    [
-      "pages/a.b.md",
-      1
-    ],
-    [
-      "pages/links.md",
-      0
-    ],
-    [
-      "pages/___lead.md",
-      1
-    ],
-    [
-      "pages/a___b.md",
-      1
-    ],
-    [
-      "pages/caf%C3%A9.md",
-      0
+      [
+        "x/y",
+        1
+      ]
     ]
   ],
   "inventory": [

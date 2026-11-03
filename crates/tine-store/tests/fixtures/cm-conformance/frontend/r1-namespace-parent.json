@@ -52,12 +52,20 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/n%2Fy.md",
-      0
+      [
+        "pages/n%2Fy.md",
+        0
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
     ],
     [
-      "pages/Notes.md",
-      0
+      [
+        "a/b/c",
+        1
+      ]
     ]
   ],
   "inventory": [

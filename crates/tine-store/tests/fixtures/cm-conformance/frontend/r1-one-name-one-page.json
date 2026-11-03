@@ -27,13 +27,16 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/Notes.md",
-      0
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/Project Alpha.md",
+        2
+      ]
     ],
-    [
-      "pages/Project Alpha.md",
-      2
-    ]
+    []
   ],
   "inventory": [
     {

@@ -128,21 +128,24 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/C.md",
-      1
+      [
+        "pages/C.md",
+        3
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        3
+      ],
+      [
+        "pages/B.md",
+        3
+      ]
     ],
-    [
-      "pages/Notes.md",
-      0
-    ],
-    [
-      "pages/A.md",
-      0
-    ],
-    [
-      "pages/B.md",
-      1
-    ]
+    []
   ],
   "inventory": [
     {

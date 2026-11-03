@@ -50,12 +50,24 @@
   "conflicts": [],
   "counts": [
     [
-      "pages/p.md",
-      0
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        1
+      ]
     ],
     [
-      "pages/A.md",
-      1
+      [
+        "A]",
+        1
+      ],
+      [
+        "TODO",
+        1
+      ]
     ]
   ],
   "inventory": [
@@ -90,6 +102,16 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "TODO",
+      "target": {
+        "id": "pages/TODO.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
@@ -97,6 +119,7 @@
   "keyOf": {
     "A": "a",
     "A]": "a]",
+    "TODO": "todo",
     "p": "p"
   },
   "open": {
