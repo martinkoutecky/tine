@@ -9,6 +9,7 @@ import type { PageTarget } from "../routeTypes";
 import { bindTestHost, mailPage } from "../document/host/wiring.test.support";
 import { baseRevFor } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded, openInHost, reportConflict } from "./hostConflict.test.support";
+import { conflictReviewRequest } from "../liveConflicts";
 
 let host: HTMLDivElement;
 let dispose: (() => void) | undefined;
@@ -28,6 +29,9 @@ it("22a: a live-draft conflict routes to the in-page review and never offers Kee
   expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Review"]);
   buttons[0].click();
   expect(opened).toEqual([{ name: "Live", pageKind: "page", path: "pages/Live.md" }]);
+  // GH #858: opening the page already open is a no-op, so Review also asks
+  // that page's resolver to come into view.
+  expect(conflictReviewRequest()?.path).toBe("pages/Live.md");
 });
 
 it("22a: a pathless draft's conflict keeps both choices on the bar", async () => {
