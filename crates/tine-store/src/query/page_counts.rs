@@ -1,30 +1,40 @@
 //! The All pages count (D-20261102-CM4 CM-COUNT): per page, how many blocks
 //! its unfiltered Linked References panel lists, for every page at once.
 //!
-//! One forward walk over every block's parser-owned reference spans:
-//! 1. per block, the distinct literal targets `visit_reference_targets` yields
-//!    (the panel's rule, `property_page_key_enabled` included);
-//! 2. each distinct target folded once to the panel it opens, through the
-//!    panel's own resolver (`query::PanelResolver`, the one setup the link
-//!    table shares); the fold table is a local of this one computation and
-//!    is dropped with it, not a cache (D-10);
-//! 3. per block, the folded panels deduplicated, the source page's own panel
-//!    and the Favorites arrangement page skipped
-//!    (`refs::ReferenceSourceExclusions`), each remaining panel incremented.
+//! The panel rule runs from the panel to its names: a page's panel lists
+//! every block naming one of the names `PanelResolver::resolve` gives that
+//! page (its alias group, the group's journal-date spellings). One name can
+//! belong to several panels (an alias member, a chain, two declarers, a date
+//! spelling), so a target is never folded forward to one panel (the batch 5
+//! regression UI-CM-ALLPAGES-COUNT-ZERO-FOR-ALIAS-GROUP did that). Instead,
+//! as the link table does:
+//! 0. every listed page is a panel, registered under each name its
+//!    resolve gives (`by_name`, and by property-key fold);
+//! 1. one forward walk: per block, the distinct literal targets
+//!    `visit_reference_targets` yields (the panel's rule,
+//!    `property_page_key_enabled` included), interned;
+//! 2. a target no panel answers to opens a page without a file: one panel per
+//!    such target, registered under the names its own resolve gives;
+//! 3. per block, each panel a target reaches counted once, never the panel's
+//!    own page (`self_page`) nor from the Favorites arrangement page
+//!    (`refs::ReferenceSourceExclusions`).
+//!
+//! The tables are locals of this one computation, dropped with it, not a
+//! cache (D-10).
 //!
 //! I-12 exception (CM step 2, coordinator 2026-11-03): this counter and the
 //! panel's `backlinks_bounded` are two drivers of one reference rule; the
 //! conformance harness keeps them equal. Retire: one forward target map (D3).
 //!
-//! Cost O(P + B + R + T) for P pages, B blocks, R references and T distinct
-//! targets (one resolve each); transient memory O(T + E) for E distinct
+//! Cost O(P + B + R + T + F) for P pages, B blocks, R references, T distinct
+//! targets and F (block, panel) pairs reached; one resolve per page and per
+//! fileless target; transient memory O(P + T + E) for E distinct
 //! (block, target) pairs, all dropped on return; nothing persisted (I-25).
-//! Measured on the realistic 10k graph: about 100 ms (CM step 2 batch 5
-//! receipt).
+//! Measured on the realistic 10k graph: see the fix-cm-counts-alias receipt.
 
 use std::collections::HashMap;
 
-use tine_core::doc::DocBlock;
+use tine_core::doc::{property_key_norm, DocBlock};
 use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
@@ -55,7 +65,28 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
     // of each block.
     let mut pending: Vec<(u32, u32, u32)> = Vec::new();
     let mut blocks = 0u32;
+    // Step 0. Panels: every listed page (the first entry of a key), its
+    // own key, the key its panel excludes as `self_page`, and the names it
+    // answers to.
+    let mut panel_ids: HashMap<String, u32> = HashMap::new();
+    let mut panel_keys: Vec<String> = Vec::new();
+    let mut panel_self: Vec<String> = Vec::new();
+    let mut by_name: HashMap<String, Vec<u32>> = HashMap::new();
+    let mut by_property_key: HashMap<String, Vec<u32>> = HashMap::new();
+    let mut targets: Vec<Target> = Vec::new();
     graph.with_pages(|pages| {
+        for (entry, _) in pages.iter() {
+            let key = refs::page_key(&entry.name);
+            if panel_ids.contains_key(&key) {
+                continue;
+            }
+            let panel = panel_keys.len() as u32;
+            let (_, names, self_page) = resolve(&entry.name);
+            register(panel, &names, &mut by_name, &mut by_property_key);
+            panel_ids.insert(key.clone(), panel);
+            panel_keys.push(key);
+            panel_self.push(refs::page_key(&self_page));
+        }
         for (entry, doc) in pages.iter() {
             let key = refs::page_key(&entry.name);
             if favorites.as_deref() == Some(key.as_str()) {
@@ -81,6 +112,7 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
                                         key.to_owned()
                                     });
                                     page_ids.insert(key.to_owned(), id);
+                                    targets.push(Target::Page(key.to_owned()));
                                     id
                                 }
                             },
@@ -91,6 +123,7 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
                                         let id = spellings.len() as u32;
                                         spellings.push(reference.name.trim().to_owned());
                                         property_ids.insert(folded.to_owned(), id);
+                                        targets.push(Target::PropertyKey(folded.to_owned()));
                                         id
                                     }
                                 }
@@ -122,38 +155,77 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
     });
     drop((page_ids, property_ids));
 
-    // Step 2. Each distinct target to its panel, once.
-    let mut panel_ids: HashMap<String, u32> = HashMap::new();
-    let mut panel_keys: Vec<String> = Vec::new();
-    let mut panel_self: Vec<String> = Vec::new();
-    let fold: Vec<u32> = spellings
+    // Step 2. A target no panel answers to opens a page without a file: one
+    // panel per such target, in first-seen order (a later target may be
+    // answered by an earlier one's names), keyed by its canonical name.
+    for (target, spelling) in targets.iter().zip(&spellings) {
+        let answered = match target {
+            Target::Page(key) => by_name.contains_key(key),
+            Target::PropertyKey(folded) => by_property_key.contains_key(folded),
+        };
+        if answered {
+            continue;
+        }
+        let panel = panel_keys.len() as u32;
+        let (canonical, names, self_page) = resolve(spelling);
+        register(panel, &names, &mut by_name, &mut by_property_key);
+        let key = refs::page_key(&canonical);
+        panel_ids.entry(key.clone()).or_insert(panel);
+        panel_keys.push(key);
+        panel_self.push(refs::page_key(&self_page));
+    }
+    drop(spellings);
+    let empty = Vec::new();
+    let reach: Vec<&Vec<u32>> = targets
         .iter()
-        .map(|spelling| {
-            let (canonical, _, self_page) = resolve(spelling);
-            let key = refs::page_key(&canonical);
-            *panel_ids.entry(key.clone()).or_insert_with(|| {
-                panel_keys.push(key);
-                panel_self.push(refs::page_key(&self_page));
-                (panel_keys.len() - 1) as u32
-            })
+        .map(|target| {
+            match target {
+                Target::Page(key) => by_name.get(key),
+                Target::PropertyKey(folded) => by_property_key.get(folded),
+            }
+            .unwrap_or(&empty)
         })
         .collect();
-    drop((spellings, panel_ids));
 
     // Step 3. A block once per panel; never the panel's own page.
     let mut counts = vec![0u32; panel_keys.len()];
     let mut counted = vec![u32::MAX; panel_keys.len()];
     for &(source, block, target) in &pending {
-        let panel = fold[target as usize] as usize;
-        if source_keys[source as usize] == panel_self[panel] || counted[panel] == block {
-            continue;
+        for &panel in reach[target as usize] {
+            let panel = panel as usize;
+            if source_keys[source as usize] == panel_self[panel] || counted[panel] == block {
+                continue;
+            }
+            counted[panel] = block;
+            counts[panel] += 1;
         }
-        counted[panel] = block;
-        counts[panel] += 1;
     }
-    panel_keys
+    // A key names the panel its first entry registered (the link table's
+    // `by_key`).
+    panel_ids
         .into_iter()
-        .zip(counts)
+        .map(|(key, panel)| (key, counts[panel as usize]))
         .filter(|(_, n)| *n > 0)
         .collect()
+}
+
+/// `panel` answers to each of `names` (by key, and by property-key fold).
+fn register(
+    panel: u32,
+    names: &[String],
+    by_name: &mut HashMap<String, Vec<u32>>,
+    by_property_key: &mut HashMap<String, Vec<u32>>,
+) {
+    for name in names {
+        by_name.entry(name.clone()).or_default().push(panel);
+        let panels = by_property_key.entry(property_key_norm(name)).or_default();
+        if panels.last() != Some(&panel) {
+            panels.push(panel);
+        }
+    }
+}
+
+enum Target {
+    Page(String),
+    PropertyKey(String),
 }
