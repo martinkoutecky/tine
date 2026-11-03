@@ -762,6 +762,13 @@ const DISCLOSURES: &[Disclosure] = &[
         words: &["pages/conflict-zq41.md"],
     },
     Disclosure {
+        section: "page.rename",
+        field: "report.config_skipped",
+        base: |f| f.ok("page.rename", json!({"old":"a","new":"a"})),
+        on: |p| set(p, "report.config_skipped", json!("cannot edit :favorites")),
+        words: &["config.edn left unchanged", "cannot edit :favorites"],
+    },
+    Disclosure {
         section: "page.delete",
         field: "broken_refs",
         base: |f| f.ok("page.delete", json!({"name":"ns/child","yes":true})),

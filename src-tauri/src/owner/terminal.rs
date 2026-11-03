@@ -375,6 +375,12 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                     path.as_str().unwrap_or("")
                 );
             }
+            if let Some(reason) = ok["report"]["config_skipped"].as_str() {
+                let _ = writeln!(
+                    out,
+                    "config.edn left unchanged ({reason}): its home page and favorites may still name the old page"
+                );
+            }
         }
         "run-commits" => {
             for commit in list(ok, "commits") {

@@ -470,7 +470,7 @@ unchanged without failing the rename: `report.config_skipped` says why.
 | `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
 | `report.home_page` | string | nullable | no | new home-page title when changed |
 | `report.favorites` | object | optional | no | config.edn's favorites after the rename, present only when they changed: `names` (`:favorites`, in order) and `page` (`:tine/favorites-page`, nullable). A merged-away page's favorite moves to the survivor (deduplicated); an alias spelling stays |
-| `report.config_skipped` | string | optional | yes | why the config step left config.edn unchanged (unreadable, or a value it cannot edit safely); home and favorites may still name the old page |
+| `report.config_skipped` | string | optional | yes | why the config step left config.edn unchanged (unreadable, or a value it cannot edit safely); home and favorites may still name the old page; text prints the reason |
 
 ### `page.delete`
 
