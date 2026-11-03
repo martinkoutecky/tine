@@ -78,12 +78,13 @@ export interface NsNode {
  *  (`InventoryEntry.namespace_parent`), so no level is synthesized here; a name
  *  whose prefixes are not listed (only an empty-key prefix, as in `/x`) is a top
  *  node. `seg` is the part of the name below its parent. Names with no `/` and no
- *  listed name below them are not namespaces and have no node. O(names x depth). */
+ *  listed name below them are not namespaces and have no node. O(names x length)
+ *  when the list holds each name's immediate prefix, as the inventory does. */
 export function buildNamespaceTree(names: readonly string[]): NsNode[] {
-  // Every name with `/` is a node; its proper prefixes' keys are the only keys a
-  // name without `/` can usefully have (one key call per segment, as before).
+  // Every name with `/` is a node. A name without `/` can only be a first
+  // segment, so only first-segment keys are wanted from plain names.
   const nodes = new Map<string, NsNode>();
-  const prefixKeys = new Map<NsNode, string[]>();
+  const slashed: [NsNode, string[]][] = [];
   const wanted = new Set<string>();
   for (const name of names) {
     if (!name.includes("/")) continue;
@@ -92,37 +93,34 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
     const node: NsNode = { seg: name, full: name, children: [] };
     nodes.set(key, node);
     const segs = name.split("/");
-    const keys: string[] = [];
-    for (let depth = 1; depth < segs.length; depth++) {
-      const prefixKey = pageIdentityKey(segs.slice(0, depth).join("/"));
-      keys.push(prefixKey);
-      wanted.add(prefixKey);
-    }
-    prefixKeys.set(node, keys);
+    slashed.push([node, segs]);
+    wanted.add(pageIdentityKey(segs[0]));
   }
-  // A name without `/` joins only as some node's prefix. `allPageNames()`
-  // already holds every name's key (`allPageNameKeys`); any other list pays
-  // one key call per name.
+  // `allPageNames()` already holds every name's key (`allPageNameKeys`); any
+  // other list pays one key call per plain name.
   const known = allPageNameKeys(names);
   names.forEach((name, at) => {
     if (name.includes("/")) return;
     const key = known?.[at] ?? pageIdentityKey(name);
     if (wanted.has(key) && !nodes.has(key)) nodes.set(key, { seg: name, full: name, children: [] });
   });
+  // Each node's parent is its longest listed proper prefix, probed longest
+  // first: the inventory lists the immediate prefix, so that is one key call per
+  // name. (Probing every prefix of every name was O(names x depth x length):
+  // quadratic in depth for a deep imported namespace.)
   const roots: NsNode[] = [];
   const placed = new Set<NsNode>();
-  for (const [node, keys] of prefixKeys) {
-    const segs = node.full.split("/");
+  for (const [node, segs] of slashed) {
     let parent: NsNode | undefined;
-    let depth = keys.length;
+    let depth = segs.length - 1;
     for (; depth > 0; depth--) {
-      const candidate = nodes.get(keys[depth - 1]);
+      const candidate = nodes.get(pageIdentityKey(segs.slice(0, depth).join("/")));
       if (candidate && candidate !== node) { parent = candidate; break; }
     }
     node.seg = parent ? segs.slice(depth).join("/") : node.full;
     if (parent) {
       parent.children.push(node);
-      if (!placed.has(parent) && !prefixKeys.has(parent)) {
+      if (!placed.has(parent) && !parent.full.includes("/")) {
         placed.add(parent);
         roots.push(parent);
       }
