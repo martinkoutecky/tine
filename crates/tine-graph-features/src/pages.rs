@@ -195,20 +195,46 @@ fn claimants(target: Resolved) -> Vec<PageId> {
 /// file, is the reference). Found by scanning the planning view's parsed
 /// blocks and pre-blocks in memory, with no index (D-10; no persisted record,
 /// I-25): O(B) substring checks, plus the rename's own rewrite of each text
-/// holding `{{` (or, in Org, `[[file:`). Exact: a page is selected only when
-/// one of its texts would change.
+/// that may hold a target. Exact: a page is selected only when one of its
+/// texts would change.
+///
+/// A macro's target spells its page's name in the text itself, so a text
+/// holding `{{` is rewritten (one parse) only when its folded text contains a
+/// renamed page's key. That is a necessary condition except for an escaped
+/// spelling (a `\` in the text, EDN `\"`; a quote in the name, SQL `''`),
+/// which takes the rewrite unfiltered, as an Org `[[file:` link (its encoded
+/// file stem) always does. Realistic-10k: ~10k embed and query blocks, of
+/// which a rename parses the few that spell the name.
 fn rewrite_target_pages(
     graph: &tine_store::WholeGraph,
     renames: &HashMap<String, String>,
     format: tine_core::config::FileNameFormat,
 ) -> Vec<PageId> {
+    // A key containing another key is found through that one.
+    let mut keys: Vec<&str> = renames.keys().map(String::as_str).collect();
+    keys.sort_by_key(|key| key.len());
+    let mut needles: Vec<&str> = Vec::new();
+    for key in keys {
+        if !needles.iter().any(|needle| key.contains(needle)) {
+            needles.push(key);
+        }
+    }
+    let quoted = needles.iter().any(|key| key.contains(['\'', '"']));
+    let spells_a_key = |raw: &str| {
+        quoted || raw.contains('\\') || {
+            let folded = refs::page_key(raw);
+            needles.iter().any(|key| folded.contains(key))
+        }
+    };
     graph
         .corpus(None)
         .pages
         .into_iter()
         .filter(|page| {
             let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
-            let may_hold = |raw: &str| raw.contains("{{") || (org && raw.contains("[[file:"));
+            let may_hold = |raw: &str| {
+                (raw.contains("{{") && spells_a_key(raw)) || (org && raw.contains("[[file:"))
+            };
             if let Some(pre) = page.document.pre_block.as_deref() {
                 if may_hold(pre) && refs::rename_pre_block(pre, org, renames, format) != pre {
                     return true;

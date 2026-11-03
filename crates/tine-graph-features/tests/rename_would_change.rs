@@ -191,17 +191,28 @@ fn a_page_holding_only_rewrite_targets_is_rewritten() {
         ("pages/R.md", "- {{renderer :x, [[Old]]}}\n"),
         ("pages/P.md", "note:: {{cloze [[Old]]}}\n\n- body\n"),
         ("pages/F.org", "* see [[file:./Old.org][another name]]\n"),
+        // The name spelled with an escape: the planner's substring prefilter
+        // must not skip these.
+        ("pages/It's.md", "- body\n"),
+        ("pages/T.md", "- {{tine-query @page name = 'IT''S'}}\n"),
+        ("pages/Q.md", "- {{query (page \"Ol\\\\d\")}}\n"),
+        ("pages/Ol.md", "title:: Ol\\d\n\n- body\n"),
     ];
     let (root, store) = fixture(files);
     {
         let host = crate::test_host(&store);
         pages::rename_or_merge_page(&store, &host, "Old", "New", None, None, &[]).unwrap();
+        pages::rename_or_merge_page(&store, &host, "It's", "Its", None, None, &[]).unwrap();
+        pages::rename_or_merge_page(&store, &host, "Ol\\d", "Olx", None, None, &[]).unwrap();
     }
-    for (rel, before) in &files[1..] {
-        let after = fs::read_to_string(root.join(rel)).unwrap();
+    let read = |rel: &str| fs::read_to_string(root.join(rel)).unwrap();
+    for (rel, before) in &files[1..4] {
+        let after = read(rel);
         assert_ne!(&after, before, "{rel} was not rewritten");
         assert!(after.contains("New"), "{rel}: {after:?}");
     }
+    assert_eq!(read("pages/T.md"), "- {{tine-query @page name = 'Its'}}\n");
+    assert_eq!(read("pages/Q.md"), "- {{query (page \"Olx\")}}\n");
     let _ = fs::remove_dir_all(&root);
 }
 

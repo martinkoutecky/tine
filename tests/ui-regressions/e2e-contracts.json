@@ -628,6 +628,24 @@
       ],
       "stability": "stable"
     },
+    "scripts/e2e-cm-rename-forms.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "Renaming the page Old to New through its title rewrites, on disk, {{cloze [[Old]]}} and {{query [[Old]]}} on pages whose only mention of Old is that macro, the property key Old:: (as new::), word#Old, the Org labelled link [[Old][a label]] and the Org headline tag :Old:, and leaves a code block whose ``` fence opens on the bullet line and the brackets of https://ex.com/q?[[[Old],[2]]] byte-for-byte as written; every other byte of those files is unchanged.",
+          "blocking": true,
+          "authority": "D-20261031-CMQ; manager rulings Q1-Q4 and blockers, CM step 2 batch 6 (2026-11-03)"
+        }
+      ],
+      "acceptableVariations": [
+        "Rename latency and the order in which files are rewritten may vary while every file's final bytes are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-counts-refonly.mjs": {
       "contracts": [
         {

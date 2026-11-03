@@ -107,9 +107,10 @@ the old name is therefore not what the definition shares.
 
 Unit cost: no new persisted record, file or transport record; a rename writes
 the pages whose query arguments change, through the existing rename
-transaction. Planning adds one in-memory scan, O(blocks) checks for `{{` plus
-O(macro text) on the blocks holding one; the rewrite adds one outline and query
-parse per candidate page holding a query macro.
+transaction. Planning adds one in-memory scan: O(blocks) checks for `{{`, a
+case fold of each block holding one, and one block parse only where that fold
+contains a renamed name (or the name is escaped); the rewrite adds one outline
+and query parse per candidate page holding a query macro.
 
 Tests: `crates/tine-graph-features/tests/query_publication.rs` (left-out pages, exports page, query text) and `crates/tine-core/src/export_definition.rs` (spelling, round trip,
 Markdown, Org, CRLF, scope) and
