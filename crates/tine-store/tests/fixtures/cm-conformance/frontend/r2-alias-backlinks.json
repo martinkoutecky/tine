@@ -95,6 +95,24 @@
       ]
     }
   },
+  "owner": {
+    "ML": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "Machine Learning": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "notes": {
+      "journal": null,
+      "page": "pages/notes.md"
+    }
+  },
   "spellings": {
     "ML": {
       "backend": [

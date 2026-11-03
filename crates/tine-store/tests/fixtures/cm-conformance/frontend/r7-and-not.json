@@ -67,6 +67,20 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": null
+    },
+    "B": {
+      "journal": null,
+      "page": null
+    },
+    "notes": {
+      "journal": null,
+      "page": "pages/notes.md"
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

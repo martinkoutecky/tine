@@ -96,6 +96,24 @@
       ]
     }
   },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Shared": {
+      "journal": null,
+      "page": "pages/Zed.md"
+    },
+    "Zed": {
+      "journal": null,
+      "page": "pages/Zed.md"
+    },
+    "alpha": {
+      "journal": null,
+      "page": "pages/alpha.md"
+    }
+  },
   "spellings": {
     "Notes": {
       "backend": [

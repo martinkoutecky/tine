@@ -19,7 +19,7 @@ import { openSwitcher } from "./ui";
 import { platformKind } from "./nativeChrome";
 import { activeElement, isElementTag, isHTMLElementNode, nextFrame } from "./windowRealm";
 import { focusPageTrailing } from "./components/pageTrailing";
-import { resolvedTarget, refreshPageIndex } from "./pageIndex";
+import { ownerPath, resolvedTarget, refreshPageIndex } from "./pageIndex";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
 
 export interface LinkTarget {
@@ -120,7 +120,7 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
   if (app.route === "page") {
     // The one frontend name answerer (pageIndex.ts); a cold launch waits for it.
     const fileId = () => (["page", "journal"] as const).map((kind) => resolvedTarget(app.page, kind))
-      .map((target) => target?.kind === "existing" ? target.id : target?.kind === "alias" ? target.owners[0] : null)
+      .map((target) => ownerPath(target))
       .find((id) => !!id);
     if (!fileId()) await refreshPageIndex();
     if (!current()) return;

@@ -74,6 +74,20 @@
       ]
     }
   },
+  "owner": {
+    "ML": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "Machine Learning": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "notes": {
+      "journal": null,
+      "page": "pages/notes.md"
+    }
+  },
   "spellings": {
     "ML": {
       "backend": [

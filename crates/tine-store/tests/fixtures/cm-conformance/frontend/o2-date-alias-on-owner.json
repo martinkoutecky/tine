@@ -1,0 +1,172 @@
+{
+  "conflicts": [
+    "a"
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026-10-26",
+      "link": {
+        "kind": "page",
+        "name": "A"
+      },
+      "name": "2026-10-26",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/A.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "existing",
+        "others": [
+          "pages/b.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "existing",
+        "others": [
+          "pages/b.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "2026-10-26": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  },
+  "owner": {
+    "2026-10-26": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "a": {
+      "journal": null,
+      "page": "pages/A.md"
+    }
+  },
+  "spellings": {
+    "2026-10-26": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    }
+  }
+}

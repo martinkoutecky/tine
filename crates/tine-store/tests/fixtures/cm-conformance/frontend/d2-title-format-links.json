@@ -144,6 +144,32 @@
       ]
     }
   },
+  "owner": {
+    "2026-10-22": {
+      "journal": "journals/2026_10_22.md",
+      "page": null
+    },
+    "2026_10_22": {
+      "journal": "journals/2026_10_22.md",
+      "page": null
+    },
+    "22.10.2026": {
+      "journal": "journals/2026_10_22.md",
+      "page": null
+    },
+    "23.10.2026": {
+      "journal": null,
+      "page": null
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Oct 22nd, 2026": {
+      "journal": "journals/2026_10_22.md",
+      "page": null
+    }
+  },
   "spellings": {
     "2026-10-22": {
       "backend": [

@@ -788,11 +788,17 @@ fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_
         .map_err(|error| io::Error::other(format!("source could not be read: {error:?}")))
 }
 
-/// Duplicate-day files with first-line previews, canonical first. A file whose
-/// preview cannot be read stays listed with `preview_error` (one bad file never
-/// hides the day, I-22); listing entries that cannot be read at all are named by
-/// the conflict inventory and the journal feed. A failed area scan or a closed
-/// store is an error. Cost O(J log J + bytes of duplicate files).
+/// Duplicate-day files with first-line previews, the keeper first. The keeper
+/// (`canonical`, one per day) is the file the day opens: the claimant order's
+/// owner that `Store::page_named` reads (CM step 2 OW-2, PQ-1 2026-11-02, I-12),
+/// so a merge keeps the page the user sees. The rest follow canonical date
+/// stems first, then by name. When no file of the group answers the day (its
+/// owner could not be read), the first of that order is the keeper. A file
+/// whose preview cannot be read stays listed with `preview_error` (one bad file
+/// never hides the day, I-22); listing entries that cannot be read at all are
+/// named by the conflict inventory and the journal feed. A failed area scan or
+/// a closed store is an error. Cost O(J log J + bytes of duplicate files), plus
+/// one page read per duplicate day.
 pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
     let mut groups: BTreeMap<Day, Vec<FileEntry>> = BTreeMap::new();
     for entry in listing(store)?.0 {
@@ -826,13 +832,26 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                 preview_error,
             });
         }
+        let title = fmt.title(JournalDate::from_ordinal(day.0));
+        // The file the day opens. A read error here only loses the ranking
+        // (recovery, not refusal): the listing order below still names a keeper.
+        let opened = store
+            .page_named(&title, tine_core::model::PageKind::Journal)
+            .ok()
+            .flatten()
+            .map(|read| read.id.as_str().to_owned());
         journal_files.sort_by(|a, b| {
-            b.canonical
-                .cmp(&a.canonical)
+            let opens = |file: &JournalFile| opened.as_deref() == Some(file.path.as_str());
+            opens(b)
+                .cmp(&opens(a))
+                .then_with(|| b.canonical.cmp(&a.canonical))
                 .then_with(|| a.name.cmp(&b.name))
         });
+        for (i, file) in journal_files.iter_mut().enumerate() {
+            file.canonical = i == 0;
+        }
         conflicts.push(JournalConflict {
-            title: fmt.title(JournalDate::from_ordinal(day.0)),
+            title,
             files: journal_files,
         });
     }

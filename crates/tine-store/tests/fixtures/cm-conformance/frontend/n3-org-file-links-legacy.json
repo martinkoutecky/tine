@@ -119,6 +119,32 @@
       ]
     }
   },
+  "owner": {
+    "Ten___Child": {
+      "journal": null,
+      "page": "pages/Ten___Child.org"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a.b.org"
+    },
+    "ab": {
+      "journal": null,
+      "page": null
+    },
+    "note": {
+      "journal": null,
+      "page": "pages/note.org"
+    },
+    "ten": {
+      "journal": null,
+      "page": null
+    }
+  },
   "spellings": {
     "Ten___Child": {
       "backend": [

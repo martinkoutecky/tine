@@ -48,6 +48,16 @@
       ]
     }
   },
+  "owner": {
+    "Foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
   "spellings": {
     "Foo": {
       "backend": [

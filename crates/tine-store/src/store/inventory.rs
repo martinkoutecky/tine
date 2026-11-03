@@ -56,16 +56,15 @@ pub(crate) fn link_target_in(
             .get(&(journal, tine_core::refs::page_key(name)))
             .and_then(|claimants| claimants.first())
     };
+    // The alias owner rule's one answer (AL2/CI4); a declarer is a parsed
+    // page of this generation, so its path is always placed.
     let owner = || {
-        let mut owners = graph.alias_owner_paths(&tine_core::refs::page_key(name))?;
-        owners.sort();
-        owners.into_iter().find_map(|path| {
-            let slot = *graph.pages.positions.get(path.as_str())?;
-            let (entry, _) = graph.pages.get(slot)?;
-            Some(LinkTarget {
-                name: entry.name.clone(),
-                is_journal: entry.kind == PageKind::Journal,
-            })
+        let path = graph.alias_owner_path(&tine_core::refs::page_key(name))?;
+        let slot = *graph.pages.positions.get(path.as_str())?;
+        let (entry, _) = graph.pages.get(slot)?;
+        Some(LinkTarget {
+            name: entry.name.clone(),
+            is_journal: entry.kind == PageKind::Journal,
         })
     };
     let page = |entry: &PageEntry| LinkTarget {
@@ -443,12 +442,11 @@ impl Snapshot {
             return None;
         }
         let spelling = table.get(key).map(|referrers| referrers.spelling.as_str());
-        if let Some(mut owners) = self
+        if let Some(owners) = self
             .graph
             .alias_owner_paths(key)
             .filter(|owners| !owners.is_empty())
         {
-            owners.dedup();
             return Some(self.linked(InventoryEntry {
                 name: spelling.unwrap_or(key).to_owned(),
                 target: Resolved::Alias {

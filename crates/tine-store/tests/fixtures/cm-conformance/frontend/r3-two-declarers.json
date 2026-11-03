@@ -96,6 +96,24 @@
       ]
     }
   },
+  "owner": {
+    "Alpha": {
+      "journal": null,
+      "page": "pages/Alpha.md"
+    },
+    "Beta": {
+      "journal": null,
+      "page": "pages/Beta.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Shared": {
+      "journal": null,
+      "page": "pages/Alpha.md"
+    }
+  },
   "spellings": {
     "Alpha": {
       "backend": [

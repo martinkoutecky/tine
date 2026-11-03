@@ -78,6 +78,24 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "A]": {
+      "journal": null,
+      "page": null
+    },
+    "TODO": {
+      "journal": null,
+      "page": null
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

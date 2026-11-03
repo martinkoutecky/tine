@@ -440,7 +440,7 @@ fn sorted_alias_owners(
 }
 
 mod page_names;
-pub(crate) use page_names::{real_page_names, RealPageNames};
+pub(crate) use page_names::{real_page_names, RealPageNames, RealPageOwners};
 
 mod alias_relation;
 pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
@@ -450,7 +450,7 @@ pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
 /// normalized component is shared by backlinks, unlinked references, and their
 /// scoped-invalidation predicates so those paths cannot drift.
 fn equivalent_page_names(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
@@ -458,7 +458,7 @@ fn equivalent_page_names(
 }
 
 fn equivalent_page_names_with(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     edges: &AliasEdges,
     target: &str,
     widen: impl Fn(&str) -> Vec<String>,
@@ -565,7 +565,7 @@ pub(crate) fn referenced_day_keys<'a>(
 /// alias group (S5). An ordinary page named like a date keeps its own name
 /// only (P2, pending Martin).
 pub(crate) fn graph_equivalent_page_names_with(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     edges: &AliasEdges,
     format: &JournalFormat,
     target: &str,
@@ -658,7 +658,7 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
 }
 
 fn invalidation_page_names(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
@@ -1401,7 +1401,7 @@ pub(crate) fn run_query_bounded(
 // the match predicates; result-level sampling and source admission can differ.
 
 pub(crate) fn page_affects_backlinks(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
@@ -1464,7 +1464,7 @@ pub(crate) fn page_affects_backlinks(
 /// Whether page `doc` plain-text-mentions `target` unlinked — i.e. could be in
 /// `unlinked_refs(target)`. Mirrors `unlinked_refs`'s matcher.
 pub(crate) fn page_affects_unlinked(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
@@ -4894,7 +4894,12 @@ mod tests {
             "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
-            equivalent_page_names(&RealPageNames::new(), &AliasEdges::new(&aliases), "Z").0,
+            equivalent_page_names(
+                &RealPageOwners::empty(&Default::default()),
+                &AliasEdges::new(&aliases),
+                "Z"
+            )
+            .0,
             "A"
         );
     }

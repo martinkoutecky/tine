@@ -142,6 +142,36 @@
       ]
     }
   },
+  "owner": {
+    "50% of 100%": {
+      "journal": null,
+      "page": "pages/50%25 of 100%.md"
+    },
+    "Contents": {
+      "journal": null,
+      "page": "pages/contents.md"
+    },
+    "Ten___Child": {
+      "journal": null,
+      "page": "pages/Ten___Child.md"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a.b.md"
+    },
+    "café": {
+      "journal": null,
+      "page": "pages/caf%C3%A9.md"
+    },
+    "links": {
+      "journal": null,
+      "page": "pages/links.md"
+    }
+  },
   "spellings": {
     "50% of 100%": {
       "backend": [

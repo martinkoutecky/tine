@@ -95,6 +95,24 @@
       ]
     }
   },
+  "owner": {
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "old": {
+      "journal": null,
+      "page": "pages/old.md"
+    },
+    "old/sub": {
+      "journal": null,
+      "page": "journals/2026_10_26.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
   "spellings": {
     "Oct 26th, 2026": {
       "backend": [

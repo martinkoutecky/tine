@@ -10,7 +10,7 @@ import { revealCommentMarginFor } from "./commentMargin";
 
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
-import { navigationTarget, resolvedTarget } from "./pageIndex";
+import { navigationTarget, ownerPath, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -244,9 +244,7 @@ function sameNavigationRoute(a: Route, b: Route): boolean {
     || a.block !== b.block || a.blockPos !== b.blockPos) return false;
   const physicalPath = (r: typeof a): string | undefined => {
     if (r.path) return r.path;
-    const target = resolvedTarget(r.name, r.pageKind);
-    return target?.kind === "existing" ? target.id
-      : target?.kind === "alias" ? target.owners[0] : undefined;
+    return ownerPath(resolvedTarget(r.name, r.pageKind));
   };
   const path = physicalPath(a);
   return path !== undefined && path === physicalPath(b);

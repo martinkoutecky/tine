@@ -68,6 +68,24 @@
       ]
     }
   },
+  "owner": {
+    " Project Alpha ": {
+      "journal": null,
+      "page": "pages/Project Alpha.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Project Alpha": {
+      "journal": null,
+      "page": "pages/Project Alpha.md"
+    },
+    "project alpha": {
+      "journal": null,
+      "page": "pages/Project Alpha.md"
+    }
+  },
   "spellings": {
     " Project Alpha ": {
       "backend": [

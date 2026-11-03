@@ -116,6 +116,28 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "B": {
+      "journal": null,
+      "page": "pages/B.md"
+    },
+    "C": {
+      "journal": null,
+      "page": "pages/C.md"
+    },
+    "D": {
+      "journal": null,
+      "page": "pages/C.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

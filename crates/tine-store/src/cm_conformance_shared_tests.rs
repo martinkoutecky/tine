@@ -160,7 +160,12 @@ pub fn file_format(rel: &str) -> Format {
     if rel.ends_with(".org") {
         Format::Org
     } else {
-        assert!(rel.ends_with(".md"), "fixtures are Markdown or Org: {rel}");
+        // `.markdown` is Markdown too; the claimant order ranks `.md` first
+        // (owner fixtures o1-*).
+        assert!(
+            rel.ends_with(".md") || rel.ends_with(".markdown"),
+            "fixtures are Markdown or Org: {rel}"
+        );
         Format::Md
     }
 }

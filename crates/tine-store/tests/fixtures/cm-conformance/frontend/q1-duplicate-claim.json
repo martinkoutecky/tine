@@ -75,6 +75,20 @@
       ]
     }
   },
+  "owner": {
+    "Foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    }
+  },
   "spellings": {
     "Foo": {
       "backend": [

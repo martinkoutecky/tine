@@ -48,6 +48,16 @@
       ]
     }
   },
+  "owner": {
+    "2026-10-26": {
+      "journal": "pages/2026-10-26.md",
+      "page": "pages/2026-10-26.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    }
+  },
   "spellings": {
     "2026-10-26": {
       "backend": [

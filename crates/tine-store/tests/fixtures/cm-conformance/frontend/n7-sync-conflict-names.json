@@ -100,6 +100,28 @@
       ]
     }
   },
+  "owner": {
+    "Bar": {
+      "journal": null,
+      "page": "pages/foo.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a.b.md"
+    },
+    "linker": {
+      "journal": null,
+      "page": "pages/linker.md"
+    }
+  },
   "spellings": {
     "Bar": {
       "backend": [

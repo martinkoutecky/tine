@@ -223,6 +223,60 @@
       ]
     }
   },
+  "owner": {
+    "": {
+      "journal": null,
+      "page": null
+    },
+    "/lead": {
+      "journal": null,
+      "page": "pages/___lead.md"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a.b": {
+      "journal": null,
+      "page": "pages/a.b.md"
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a___b.md"
+    },
+    "bad�": {
+      "journal": null,
+      "page": "pages/bad%E9.md"
+    },
+    "café": {
+      "journal": null,
+      "page": "pages/caf%C3%A9.md"
+    },
+    "lead": {
+      "journal": null,
+      "page": "pages/___lead.md"
+    },
+    "links": {
+      "journal": null,
+      "page": "pages/links.md"
+    },
+    "x": {
+      "journal": null,
+      "page": null
+    },
+    "x/": {
+      "journal": null,
+      "page": null
+    },
+    "x//y": {
+      "journal": null,
+      "page": "pages/x______y.md"
+    },
+    "x/y": {
+      "journal": null,
+      "page": null
+    }
+  },
   "spellings": {
     "": {
       "backend": [

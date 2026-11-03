@@ -151,6 +151,36 @@
       ]
     }
   },
+  "owner": {
+    "Caps Title": {
+      "journal": null,
+      "page": "pages/caps.md"
+    },
+    "Oct 27th, 2026": {
+      "journal": "journals/2026_10_27.md",
+      "page": null
+    },
+    "Org Title": {
+      "journal": null,
+      "page": "pages/o.org"
+    },
+    "Release day": {
+      "journal": null,
+      "page": null
+    },
+    "Shown Title": {
+      "journal": null,
+      "page": "pages/stem-name.md"
+    },
+    "linker": {
+      "journal": null,
+      "page": "pages/linker.md"
+    },
+    "stem-name": {
+      "journal": null,
+      "page": null
+    }
+  },
   "spellings": {
     "Caps Title": {
       "backend": [

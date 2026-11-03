@@ -69,6 +69,20 @@
       ]
     }
   },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "Favs": {
+      "journal": null,
+      "page": "pages/Favs.md"
+    },
+    "x": {
+      "journal": null,
+      "page": "pages/x.md"
+    }
+  },
   "spellings": {
     "A": {
       "backend": [

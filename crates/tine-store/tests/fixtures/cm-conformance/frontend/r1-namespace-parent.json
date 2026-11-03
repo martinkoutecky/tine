@@ -98,6 +98,32 @@
       ]
     }
   },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": null
+    },
+    "a/b/c": {
+      "journal": null,
+      "page": null
+    },
+    "n": {
+      "journal": null,
+      "page": null
+    },
+    "n/y": {
+      "journal": null,
+      "page": "pages/n%2Fy.md"
+    }
+  },
   "spellings": {
     "Notes": {
       "backend": [

@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/foo.md": "- from the top folder\n",
+  "pages/sub/Foo.md": "- from the sub folder\n",
+  "pages/Notes.md": "- [[foo]]\n"
+ }
+}

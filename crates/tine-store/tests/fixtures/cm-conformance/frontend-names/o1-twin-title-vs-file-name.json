@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "ZED",
+      "path": "pages/a.md",
+      "preBlock": "title:: ZED",
+      "title": "ZED"
+    }
+  ],
+  "links": []
+}

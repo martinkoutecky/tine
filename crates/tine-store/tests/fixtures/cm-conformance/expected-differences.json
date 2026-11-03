@@ -12,6 +12,12 @@
       ],
       "n5-title-differs-from-stem": [
         "frontend navigate [[Release day]]: model (\"journal\", \"release day\"), frontend (\"page\", \"release day\") via (page, Release day); backend agrees with the frontend"
+      ],
+      "o2-alias-on-non-owner-twin": [
+        "frontend navigate [[zed]]: model (\"page\", \"zed\"), frontend (\"page\", \"a\") via (page, a); backend agrees with the frontend"
+      ],
+      "o2-date-alias-on-twin": [
+        "frontend navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), frontend (\"page\", \"a\") via (page, A); backend agrees with the frontend"
       ]
     }
   },
@@ -42,6 +48,21 @@
       "n7-sync-conflict-names": [
         "pages/foo.md: launch walk \"foo\", answer Some(\"Bar\")"
       ],
+      "o1-twin-journal-day": [
+        "journals/2026-10-26.md: launch walk \"Oct 26th, 2026\", answer None"
+      ],
+      "o1-twin-title-vs-file-name": [
+        "pages/a.md: launch walk \"a\", answer Some(\"ZED\")"
+      ],
+      "o2-alias-on-non-owner-twin": [
+        "pages/b.md: launch walk \"b\", answer Some(\"a\")"
+      ],
+      "o2-date-alias-on-owner": [
+        "pages/b.md: launch walk \"b\", answer Some(\"a\")"
+      ],
+      "o2-date-alias-on-twin": [
+        "pages/2026-10-26.md: launch walk \"2026-10-26\", answer Some(\"a\")"
+      ],
       "q1-duplicate-claim": [
         "pages/other.md: launch walk \"other\", answer Some(\"foo\")"
       ],
@@ -60,6 +81,10 @@
     "n5-title-differs-from-stem": "pending Q-N3 (Martin): OG names a journal file with `title::` by its title (\"Release day\"); Tine names every journal by its date. Today's behaviour is kept until Q-N3 is ruled. The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n6-title-rename": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n7-sync-conflict-names": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "o1-twin-*": "O1 attribution lines (\"owner of (page, key): model X, Tine Y\") are the model's totalising fallback (path order) vs Tine's claimant order (SPEC 2.1); not a Tine defect. Harness follow-up: hand Tine's claimant order to the bridge as fileLe. Names part (batch 3): The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure. A non-owner twin answers None: its file's page is its owner's.",
+    "o2-alias-on-non-owner-twin": "pending S1/PQ-2 (OW-3): Tine counts an alias:: declared by a non-owner twin (a second file claiming the same page); the model counts the owners' declarations only. Kept as today's behaviour by the manager's ruling 2026-11-02 until Martin decides, with the S1 family, whether a non-owner duplicate contributes anything. Same pending note for the random class \"[duplicate claim] alias owner: declared by a non-owner twin\". Names part (batch 3): The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "o2-date-alias-on-owner": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "o2-date-alias-on-twin": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "q1-duplicate-claim": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r1-title-names-page": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure."
   },
@@ -67,6 +92,7 @@
     "fixtures": {
       "n6-title-rename: Custom Name -> custom": [],
       "n6-title-rename: Shown Title -> Renamed": [],
+      "o1-twin-journal-day: duplicate days": [],
       "r6-case-only: Foo -> foo": [
         "rename \"Foo\" -> \"foo\": model refuses (base guard) (journal risks []), Tine performs (Renamed)"
       ],
@@ -1065,6 +1091,50 @@
       "n7-sync-conflict-names": [
         "pages: model has (\"page\", \"a\"), Tine does not"
       ],
+      "o1-twin-file-name-before-folder": [
+        "owner of (page, \"foo\"): model pages/foo.md, Tine pages/sub/Foo.md"
+      ],
+      "o1-twin-journal-day": [
+        "owner of (journal, \"oct 26th, 2026\"): model journals/2026-10-26.md, Tine journals/2026_10_26.md",
+        "counts of (\"journal\", \"oct 26th, 2026\") (journals/2026-10-26.md): model 1, Tine none"
+      ],
+      "o1-twin-markdown-first": [
+        "owner of (page, \"foo\"): model pages/Foo.markdown, Tine pages/foo.md"
+      ],
+      "o1-twin-title-vs-file-name": [
+        "owner of (page, \"zed\"): model pages/a.md, Tine pages/zed.md"
+      ],
+      "o2-alias-on-non-owner-twin": [
+        "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"zed\"}",
+        "alias group of (\"page\", \"zed\"): model {\"zed\"}, Tine {\"a\", \"zed\"}",
+        "[[zed]] declared by pages/b.md, which does not own \"a\"",
+        "Linked References of (\"page\", \"a\"): Tine has block (\"pages/Notes.md\", 0), model does not",
+        "link \"notes\" -> \"a\": Tine has it, model does not",
+        "link \"notes\" -> \"zed\": model has it, Tine does not",
+        "navigate [[zed]]: model (\"page\", \"zed\"), Tine (\"page\", \"a\")",
+        "pages: model has (\"page\", \"zed\"), Tine does not"
+      ],
+      "o2-alias-owner-path-order": [
+        "backlink count of (\"page\", \"a b\") (pages/a b.md): model 2, Tine 0 (alias class not counted)",
+        "backlink count of (\"page\", \"x\") (pages/a/x.md): model 2, Tine 0 (alias class not counted)"
+      ],
+      "o2-date-alias-on-owner": [
+        "backlink count of (\"page\", \"a\") (pages/A.md): model 1, Tine 0 (alias class not counted)"
+      ],
+      "o2-date-alias-on-twin": [
+        "owner of (page, \"a\"): model pages/2026-10-26.md, Tine pages/A.md",
+        "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"oct 26th, 2026\"}",
+        "[[a]] declared by pages/2026-10-26.md, which does not own \"a\"",
+        "backlink count of (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine 1 (own blocks counted)",
+        "query \"any(direct_refs, journal = true)\": native list reads [\"2026-10-26\"] in block (\"pages/A.md\", 0) as a day, the query does not",
+        "query \"any(direct_refs, journal = true)\": block (\"pages/2026-10-26.md\", 0) matches, the native list reads no day in it",
+        "Linked References of (\"journal\", \"oct 26th, 2026\"): Tine has block (\"pages/2026-10-26.md\", 0), model does not",
+        "Linked References of (\"page\", \"a\"): Tine has block (\"pages/Notes.md\", 0), model does not",
+        "link \"notes\" -> \"a\": Tine has it, model does not",
+        "link \"notes\" -> \"oct 26th, 2026\": model has it, Tine does not",
+        "navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), Tine (\"page\", \"a\")",
+        "pages: model has (\"journal\", \"oct 26th, 2026\"), Tine does not"
+      ],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [
         "conflicts: model \"oct 26th, 2026\" conflicted, Tine not",
@@ -1164,6 +1234,47 @@
     },
     "harnessSkipped": [],
     "random": {
+      "[duplicate claim] O1 owners: model path order vs Tine claimant order": {
+        "detail": "owner of (page, \"a\"): model pages/2026-10-26.md, Tine pages/A.md",
+        "graph": {
+          "files": {
+            "pages/2026-10-26.md": "title:: a\nalias:: a\n",
+            "pages/A.md": "alias:: 2026-10-26\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "x"
+                  },
+                  {
+                    "refs": "x"
+                  }
+                ]
+              },
+              "tine": "(or [[x]] [[x]])"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "or": [
+                  {
+                    "name": "a"
+                  },
+                  {
+                    "name": "N/y"
+                  }
+                ]
+              },
+              "tine": "@page and (name = 'a' or name = 'N/y')"
+            }
+          ]
+        }
+      },
       "[duplicate claim] alias group: Tine larger": {
         "detail": "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"x\"}",
         "graph": {
@@ -1206,6 +1317,25 @@
                 "name": "n/y"
               },
               "tine": "@page and name = 'n/y'"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] alias owner: declared by a non-owner twin": {
+        "detail": "[[x]] declared by pages/a.md, which does not own \"a\"",
+        "graph": {
+          "files": {
+            "pages/A.md": "- N/y mentioned\n",
+            "pages/a.md": "alias:: x\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "refs": "N/y"
+              },
+              "tine": "[[N/y]]"
             }
           ]
         }

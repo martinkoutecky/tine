@@ -78,6 +78,24 @@
       ]
     }
   },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Real Name": {
+      "journal": null,
+      "page": "pages/file-name.md"
+    },
+    "file-name": {
+      "journal": null,
+      "page": null
+    },
+    "real name": {
+      "journal": null,
+      "page": "pages/file-name.md"
+    }
+  },
   "spellings": {
     "Notes": {
       "backend": [

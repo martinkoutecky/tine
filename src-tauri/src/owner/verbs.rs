@@ -418,8 +418,12 @@ pub(super) fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
     }
 }
 
-/// The page a name names, as the app resolves it: a file claimant, else a
-/// sole alias owner, else a journal title.
+/// The page a name names: a file claimant (the claimant order's winner, as the
+/// app opens it), else a journal title. An alias-only name resolves only when
+/// one page declares it: the app opens the first declarer (AL2/CI4), but a CLI
+/// write must not guess among several, so several owners refuse `ambiguous`
+/// (contracted in docs/contracts/cli-output.md; in-scope threat: ambiguous
+/// input from an agent or script landing a write on a page it did not mean).
 pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     match graph.resolve(name, false) {
         Resolved::Existing { id, .. } => return Ok(id),

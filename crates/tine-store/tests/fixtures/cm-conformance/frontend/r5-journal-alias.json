@@ -74,6 +74,20 @@
       ]
     }
   },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "launch day": {
+      "journal": null,
+      "page": "journals/2026_10_26.md"
+    }
+  },
   "spellings": {
     "Notes": {
       "backend": [

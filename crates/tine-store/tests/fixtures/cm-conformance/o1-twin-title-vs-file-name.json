@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/a.md": "title:: ZED\n\n- from the title claimant\n",
+  "pages/zed.md": "- from the file named for the page\n",
+  "pages/Notes.md": "- [[zed]]\n- [[ZED]]\n"
+ }
+}

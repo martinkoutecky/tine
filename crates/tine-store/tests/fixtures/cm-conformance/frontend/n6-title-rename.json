@@ -69,6 +69,20 @@
       ]
     }
   },
+  "owner": {
+    "Custom Name": {
+      "journal": null,
+      "page": "pages/custom.md"
+    },
+    "Shown Title": {
+      "journal": null,
+      "page": "pages/stem-name.md"
+    },
+    "linker": {
+      "journal": null,
+      "page": "pages/linker.md"
+    }
+  },
   "spellings": {
     "Custom Name": {
       "backend": [
