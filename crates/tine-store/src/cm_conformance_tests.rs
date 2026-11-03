@@ -752,7 +752,8 @@ fn file_name_answerers() {
 /// names one fold calls the same page and the other does not.
 ///
 /// Folds that are inline in production code are restated here in one line
-/// each, with their sites; `identity_fold` is called directly. Store-level
+/// each, with their sites (page search's exact match and completion dedup call
+/// `page_key` since census Q1; tine-search `identity_fold` is gone). Store-level
 /// probes run the real `[[` completion (`complete_page_names`) on a graph
 /// whose references spell one page several ways.
 ///
@@ -808,28 +809,17 @@ fn key_answerers() {
         let s = s.strip_prefix('/').unwrap_or(s);
         s.strip_suffix('/').unwrap_or(s)
     }
-    // (name, fold, sites). Each is the production expression, restated.
+    // (name, fold, sites). Each is the production expression, restated. Only
+    // declared different questions remain (census Q1): the LIKE pattern fold
+    // (its differences are expected, a pattern is not a name) and the
+    // `:inputs` literal (must stay difference-free). Page search and publish
+    // call `page_key` and are no longer listed.
     type Fold = fn(&str) -> String;
     let folds: &[(&str, Fold, &str)] = &[
-        (
-            "identity_fold",
-            |s| tine_core::search_query::identity_fold(s),
-            "tine-search lib.rs identity_fold: page search exact match and completion dedup (query_plan.rs, query_plan/pages.rs)",
-        ),
         (
             "like_fold",
             |s| s.to_lowercase().nfc().collect(),
             "query/eval.rs CmpOp::Like page-name pattern (declared pattern text)",
-        ),
-        (
-            "ascii_lowercase",
-            |s| s.to_ascii_lowercase(),
-            "publish_query.rs owner map (kind, name.to_ascii_lowercase())",
-        ),
-        (
-            "plain_lowercase",
-            |s| s.to_lowercase(),
-            "publish_query.rs selects_host_page, close_query_result, baked_queries, snapshot_at, home-name clash",
         ),
         (
             "inputs_then_key",

@@ -28,6 +28,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page links you are typing find the page however you spell its name: with page `Foo`, typing `[[Foo/`, `[[/Foo` or `[[ Foo ` now makes Foo the default (Enter) instead of creating a new page, and a reference written `[[ Foo ]]` no longer adds a second, empty "Foo" row to the suggestions (REG-CM-COMPLETION-PAGE-KEY, UI-CM-COMPLETION-CREATE-DEFAULT).
+- A published query site no longer holds two pages with the same name. A home page named like an exported page with a slash or different Unicode form (`/Notes`, `Notes/`) now gets the ` (export)` suffix, and two files claiming one non-ASCII page (`Über.md` and `über.md`) are refused like ASCII ones, instead of publishing two pages one link cannot tell apart (REG-CM-PUBLISH-PAGE-KEY).
 - Macros in `config.edn` named with keywords, as Logseq writes them (`:macros {:bar "..."}`), now work like `"bar"` names. Before, `{{bar 5}}` stayed raw text, and every macro listed after the first keyword name was ignored as well (GH #854, REG-GH854-CONFIG-MACRO-KEYWORD-NAMES).
 - A journal section shown under today's journal now sorts and groups by the View settings saved on its block on the sections page (GH #855, UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES).
 - **Review** on the "changed on disk while you were editing" banner now shows the page's review of your edits against the disk version, also when the page is already open and scrolled down. Before, it did nothing there (GH #858, UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER).

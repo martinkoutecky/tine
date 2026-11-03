@@ -754,7 +754,10 @@ mod tests {
         assert!(same_page("Café", "Cafe\u{301}"));
         assert_eq!(page_key("/CAFÉ/"), page_key("Cafe\u{301}"));
         assert_ne!(page_key("Σ"), page_key("S")); // Greek sigma is not Latin S
-                                                  // normalize is the same fold as page_key (single source).
+                                                  // No compatibility folding: fullwidth letters name another page
+                                                  // (moved from tine-search `identity_fold`, deleted as a second key).
+        assert_ne!(page_key("Ｔｉｎｅ"), page_key("Tine"));
+        // normalize is the same fold as page_key (single source).
         assert_eq!(normalize("Über"), page_key("Über"));
         // `str::to_lowercase` applies Unicode's contextual final-sigma rule.
         // The frontend navigation key mirrors this exact result.

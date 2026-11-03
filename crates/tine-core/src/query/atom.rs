@@ -179,6 +179,19 @@ const UNPARSED_BUILT_IN_PROPERTIES: &[&str] = &[
 /// OG `gp-property/editable-linkable-built-in-properties` (`property.cljs:46-48`).
 const EDITABLE_LINKABLE_BUILT_IN_PROPERTIES: &[&str] = &["alias", "aliases", "tags"];
 
+/// True for OG's built-in keys whose values are page references
+/// (`editable-linkable-built-in-properties`: `alias`, `aliases`, `tags`), in any
+/// case. The one list (I-12, census Q7): search facets, the sync-conflict member
+/// union and the reference walker ask this; the configured
+/// `:property/separated-by-commas` keys come on top through
+/// [`linkable_property_keys`] where config applies.
+pub fn is_editable_linkable_built_in(key: &str) -> bool {
+    contains_key(
+        EDITABLE_LINKABLE_BUILT_IN_PROPERTIES,
+        &property_key_norm(key),
+    )
+}
+
 fn contains_key(list: &[&str], key: &str) -> bool {
     list.iter()
         .any(|candidate| property_key_norm(candidate) == key)

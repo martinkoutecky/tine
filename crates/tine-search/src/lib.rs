@@ -124,11 +124,6 @@ pub fn exact_text(value: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// Lowercase plus NFC page identity, without compatibility or accent folding.
-pub fn identity_fold(value: &str) -> String {
-    value.to_lowercase().nfc().collect()
-}
-
 /// Fold with original UTF-16 spans for search evidence. Each output scalar
 /// points to its whole source grapheme, including discarded combining marks.
 pub fn canonical_fold_with_map(value: &str) -> (String, Vec<Range<usize>>) {
@@ -872,7 +867,6 @@ mod tests {
         assert!(Matcher::parse_with_policy("café", false)
             .matches(&literal_fold("cafe\u{301}"), "cafe\u{301}"));
         assert_eq!(literal_fold("Ｔｉｎｅ"), "tine");
-        assert_ne!(identity_fold("Ｔｉｎｅ"), identity_fold("Tine"));
         let (mapped, spans) = literal_fold_with_map("Ｔｉｎｅ");
         assert_eq!(mapped, "tine");
         assert_eq!(spans, vec![0..1, 1..2, 2..3, 3..4]);

@@ -1238,10 +1238,7 @@ fn backlink_filter_entry(
         // property boundary and explicit reference tokens are parser-owned;
         // top-level plain text supplies the additional comma-separated names.
         for (key, value) in projection.properties() {
-            if !(key.eq_ignore_ascii_case("tags")
-                || key.eq_ignore_ascii_case("alias")
-                || key.eq_ignore_ascii_case("aliases"))
-            {
+            if !tine_core::query::atom::is_editable_linkable_built_in(key) {
                 continue;
             }
             let quoted = value.trim();

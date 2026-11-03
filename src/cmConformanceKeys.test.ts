@@ -11,9 +11,8 @@
 //
 // Checked here:
 // - `pageIdentityKey` (wasm build of `page_key`) and `seen/displayed.ts keyOf`;
-// - folds inline in production, restated in one line each with their site:
-//   `pageIndex.ts` allPageNames dedup, `editor/autocomplete.ts canonicalName`,
-//   `guide.ts key`, the `seen/displayed.ts keyOf` catch fallback;
+// - folds inline in production that are declared different questions,
+//   restated in one line each with their site (`guide.ts key`);
 // - the real `orderAcItems` (`[[` completion's Enter policy): typing a spelling
 //   of an existing page must make that page the default, not "Create";
 // - the page header's alias list: `render/block.ts aliasNamesOf` over the
@@ -52,12 +51,12 @@ function sorted(v: unknown): unknown {
 
 const show = (s: string) => JSON.stringify(s);
 
-/** Production folds restated, each one line at its site. */
+/** Production folds restated, each one line at its site. Only declared
+ * different questions remain (census Q1): `pageIndex.ts` allPageNames,
+ * `autocomplete.ts` exact match and `seen/displayed.ts` call
+ * `pageIdentityKey`; `autocomplete.ts canonicalName` is a sort key only. */
 const FOLDS: [string, (s: string) => string][] = [
-  ["pageIndex.ts allPageNames dedup", (s) => s.toLowerCase()],
-  ["autocomplete.ts canonicalName", (s) => s.normalize("NFC").toLowerCase()],
-  ["guide.ts key", (s) => s.trim().toLowerCase()],
-  ["seen/displayed.ts keyOf catch fallback", (s) => s.trim().toLowerCase()],
+  ["guide.ts key (declared: Guide titles are a separate namespace)", (s) => s.trim().toLowerCase()],
 ];
 
 function corpusDiffs(corpus: Named[]): string[] {

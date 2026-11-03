@@ -18,6 +18,10 @@ const guideTitles = new Map<string, string>();
 const announcementShownForRoot = new Set<string>();
 let announcementToastId: number | null = null;
 
+/** Declared different question (I-12, census Q1, Martin K-Q3 2026-11-03):
+ * Guide titles are a separate namespace (bundled, read-only pages, not in the
+ * graph inventory), so this map key is not a page identity; it only redirects
+ * links written inside Guide pages to the Guide titles we author. */
 function key(name: string): string {
   return name.trim().toLowerCase();
 }

@@ -234,12 +234,12 @@ function ensureInstalled() {
     const allPageNames = createMemo(() => {
       const current = held();
       if (!current) return [];
-      // Physical display spellings win case-insensitively; alias and
-      // reference-only names then fill gaps.
+      // Physical display spellings win per page identity (`pageIdentityKey`,
+      // the store's `page_key`); alias and reference-only names then fill gaps.
       const seen = new Set<string>();
       const names: string[] = [];
       const add = (name: string) => {
-        const key = name.toLowerCase();
+        const key = pageIdentityKey(name);
         if (!seen.has(key)) {
           seen.add(key);
           names.push(name);
