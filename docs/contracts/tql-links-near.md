@@ -134,8 +134,20 @@ Unlinked references (plain mentions) are not links. A block reference
 so such a page is a node too: it can be a seed (`near(name = 'idea', 1, 'in')`
 selects the pages linking to a fileless `idea`) and an element (`any(links, name
 = 'idea')`). It has its name, `journal = true` and its `day` when the name is a
-date, no properties and no blocks, and it never links anywhere. Like every
-`@page` query, the result lists only pages that have a file.
+date, no properties and no blocks, and it never links anywhere. A `@page`
+query lists such a page as a row like any other (D-20261102-CM4 CM-REFONLY):
+the row carries its name and no file, and a table shows its other columns
+empty. The fileless pages are those a block names (a link, a tag, a property
+value or key page, a task marker or a priority) that no file, alias or journal
+day answers to.
+
+**Counts.** The same pass counts, per node, the blocks the node's unfiltered
+Linked References panel lists: a block once however many of the node's names it
+uses, never a block of the node's own page or of the Favorites arrangement page.
+All pages shows this number (`WholeGraph::page_backlink_counts`). The pass and
+the panel's own walk (`backlinks_bounded`) are two drivers of one rule, an I-12
+exception kept equal by the conformance harness; it retires with one forward
+target map (D3).
 
 ## Renames
 
@@ -161,7 +173,14 @@ its text, as in OG.
   named 50,000 times peak at about 1 MB above the start of the build for a
   338 KB table; before review r1 the occurrences were expanded first, +72 MB). Measured on the
   realistic 10k graph: 13,904 nodes, 94,121 links, about 2.3 MiB retained. A
-  later snapshot builds its own.
+  later snapshot builds its own. The counts add one `u32` per node. All pages
+  reads them on the HK3 quiet signal (`createQuietRun`, at most one read in
+  flight): on the realistic 10k graph a read on a new snapshot (one table build
+  plus the rows) takes about 132 ms, a second read of the same snapshot about
+  10 ms, and the reply is about 470 KB of JSON for 10,000 files and 3,894
+  fileless pages (CM step 2 batch 5 receipt). Building the table without its
+  adjacency lists costs the same, so the counts share this table rather than a
+  pass of their own.
 - **`near`** is breadth-first search over that table, one search per
   direction, never recursion: O(seeds + pages reached + links followed). The seed
   condition is evaluated once per page.

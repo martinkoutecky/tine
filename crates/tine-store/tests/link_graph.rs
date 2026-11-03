@@ -180,7 +180,12 @@ fn links_near_directions_on_a_hand_graph() {
 
     // links / linked_by and their quantifiers.
     assert_eq!(q("@page and any(links, name = 'b')"), set(&["a"]));
-    assert_eq!(q("@page and any(linked_by, name = 'a')"), set(&["b"]));
+    // `a` also links to the fileless `idea`, now a page row (D-20261102-CM4
+    // CM-REFONLY).
+    assert_eq!(
+        q("@page and any(linked_by, name = 'a')"),
+        set(&["b", "idea"])
+    );
     // A self link is not a link (the panel never lists a page under itself).
     assert!(!q("@page and any(links, name = 'a')").contains("a"));
     // An alias: a link to `tt` is a link to `target`.

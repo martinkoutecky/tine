@@ -1017,6 +1017,12 @@ pub(crate) fn backlinks(graph: &ReadSnapshot, target: &str) -> Vec<RefGroup> {
     )
 }
 
+/// The Linked References panel's blocks for `target`.
+///
+/// I-12 exception (CM step 2 D2, D-20261102-CM4 CM-COUNT): this walk and the
+/// link table's pass (`LinkGraph::build`, whose per-node count is the size of
+/// this panel unfiltered) are two drivers of one reference rule; the
+/// conformance harness compares them. Retire: one forward target map (D3).
 pub(crate) fn backlinks_bounded(
     graph: &ReadSnapshot,
     target: &str,

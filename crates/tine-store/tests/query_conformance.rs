@@ -861,7 +861,13 @@ fn all_page_tags_round_trips_through_tql() {
         // CM-REFONLY), and OG's `:all-page-tags` rule (deps/db rules.cljc,
         // `[_ :block/tags ?p]`) lists it too.
         ("(all-page-tags)", set(&["alpha", "beta"])),
-        ("(not (all-page-tags))", set(&["absent", "blank", "tagged"])),
+        // The reference-only pages `TODO` (a task marker) and `block-only`
+        // (a block's tag) are pages that are no page's tag; OG has both as
+        // page entities, so `(not (all-page-tags))` lists them too.
+        (
+            "(not (all-page-tags))",
+            set(&["TODO", "absent", "blank", "block-only", "tagged"]),
+        ),
     ] {
         let (query, view) = parse_query_text(source, QueryDialect::Og, today);
         assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);

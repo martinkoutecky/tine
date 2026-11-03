@@ -1522,14 +1522,18 @@ pub fn compare_backlinks(ctx: &Ctx) -> Vec<Diff> {
 pub fn compare_counts(ctx: &Ctx) -> Vec<Diff> {
     let mut diffs = Vec::new();
     let counts: BTreeMap<String, usize> = ctx.view.page_backlink_counts().0.into_iter().collect();
+    // Every file Tine holds (also built from tine-graph-features, so only
+    // public API).
+    let held: BTreeSet<String> = ctx
+        .view
+        .page_modified()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
     for (p, path) in &ctx.owner_of_page {
         let model = model_panel(ctx, p).len();
         let Some(&tine) = counts.get(path) else {
-            let twin = ctx
-                .view
-                .list
-                .iter()
-                .any(|e| e.rel_path.as_deref() == Some(path.as_str()));
+            let twin = held.contains(path);
             diffs.push(if twin {
                 Diff::new(
                     "counts: the model's owner is a Tine non-owner twin (O1 order; All pages shows a dash, A13)",
