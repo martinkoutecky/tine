@@ -85,7 +85,13 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// signatures (slot 0 now covers that prose) and cached backlink answers
 /// change for unchanged graph files. The serialized layout stays unchanged;
 /// older indexes rebuild.
-pub(crate) const FORMAT: u32 = 23;
+/// 24 (CM step 2 batch 9, D-20261019-Q8): a reference query (`[[A]]`, `#A`,
+/// `refs`, TQL `ref`/`direct_ref`) matches A's whole alias group and a date
+/// spelling names its journal, so memoized query answers change for unchanged
+/// graph files, and a memo entry's retained-byte charge now counts the plan's
+/// reference classes. The serialized layout stays unchanged; older memos
+/// rebuild.
+pub(crate) const FORMAT: u32 = 24;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

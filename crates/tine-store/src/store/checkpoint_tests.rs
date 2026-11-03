@@ -224,6 +224,52 @@ fn pre_preamble_reference_checkpoints_are_rebuilt() {
     store.close();
 }
 
+/// FORMAT 24 (CM step 2 batch 9, D-20261019-Q8): a format-23 checkpoint's
+/// memoized reference-query answers matched the literal name only; it must
+/// rebuild, so a warm launch over unchanged files answers `[[ML]]` with the
+/// blocks that link the page by its other name.
+#[test]
+fn literal_reference_query_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/Machine Learning.md"),
+        "alias:: ML\n\n- intro\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/Notes.md"),
+        "- also [[Machine Learning]]\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    let written = open_cp(root.path(), &cp);
+    written
+        .whole_graph_reconciled()
+        .unwrap()
+        .query("[[ML]]", crate::QueryDialect::Simple)
+        .unwrap();
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&23_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    let crate::QueryResult::Simple(groups) =
+        graph.query("[[ML]]", crate::QueryDialect::Simple).unwrap()
+    else {
+        panic!("simple rows")
+    };
+    let pages: Vec<&str> = groups.iter().map(|g| g.page.as_str()).collect();
+    assert!(pages.contains(&"Notes"), "{pages:?}");
+    store.close();
+}
+
 #[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
@@ -1110,13 +1156,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (23, GOLDEN),
+        (24, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "cfee36dc82abc871ca5817df695aa49caf1c4d4ff1807e5c286fa5879a4dd6e9";
+const GOLDEN: &str = "5857b431fa31be0a4d99b598bf2123b6f094e26a3df7cbd96334a05e0fed27c2";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no

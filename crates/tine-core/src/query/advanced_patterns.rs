@@ -951,7 +951,9 @@ fn parse_adv_group(
                 ran.push("page-ref".into());
                 // OG matches `:block/name` literally: a literal with upper case
                 // matches no page (a different question from page identity,
-                // declared under census Q1).
+                // declared under census Q1). A lower-case name lowers to the
+                // one reference leaf and so matches the alias group
+                // (D-20261019-Q8; QL-1: one rule, see `advanced_joins`).
                 if name != name.to_lowercase() {
                     Filter::False
                 } else {

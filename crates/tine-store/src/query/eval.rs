@@ -729,6 +729,9 @@ fn eval_direct_ref(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
 /// A reference element (`refs`, `direct_refs`) exposes its name; `name = A`
 /// holds for every name of A's alias group and every spelling of a journal
 /// day in it (D-20261019-Q8, S10/S12; [`RefClasses`]).
+/// `direct_refs` (TQL `direct_ref`, advanced `:block/refs`) expands the same
+/// way: "references A through the block's own refs" is still a reference
+/// to A (QL-3, ruled 2026-11-03).
 fn eval_ref_element(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
     match pred {
         Filter::And { items } => items.iter().all(|item| eval_ref_element(item, name, ctx)),
