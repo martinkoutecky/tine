@@ -17,10 +17,12 @@
 //   `pagePropertyEntries` (TS) instead of receiving the backend's name. The
 //   function is module-private and drives the host, so its title rule is
 //   restated here in one line (`settledTitle`, wiring.ts:563-564).
-// - `render/pageRefs.ts pageRefsInText` (rename candidates, graph rewrite,
-//   swipe actions; `editor/nearestLink.ts` calls the same `linkTargetName` for
-//   follow-link) with the graph's file-name format installed as graph.ts does:
-//   the name an Org file link names, which must be the linked file's page name.
+// - `editor/nearestLink.ts nearestLink` (follow-link, through
+//   `render/pageRefs.ts linkTargetName`) with the graph's file-name format
+//   installed as graph.ts does: the name an Org file link names, which must be
+//   the linked file's page name. (Rename candidates, graph rewrite and swipe
+//   actions no longer read link names in the window since CM step 2 batch 6:
+//   they ask the rename and the reference evidence.)
 //
 // Differences are compared with the `frontendNames` part of
 // `expected-differences.json`; `CM_REFRESH=1` rewrites that part.
@@ -29,7 +31,8 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
 import { pagePropertyEntries } from "./editor/properties";
-import { pageRefsInText, setFileNameFormat } from "./render/pageRefs";
+import { setFileNameFormat } from "./render/pageRefs";
+import { nearestLink } from "./editor/nearestLink";
 
 interface Case {
   /** The graph's `:file/name-format`, as GraphMeta `file_name_format` carries it. */
@@ -76,9 +79,9 @@ function runCase(c: Case): string[] {
     }
   }
   for (const l of c.links) {
-    const names = pageRefsInText(l.raw, "org");
-    if (!names.includes(l.name)) {
-      diffs.push(`frontend file link: pageRefsInText reads ${JSON.stringify(names)} in ${l.path} (${JSON.stringify(l.raw)}), ${l.target} is named ${JSON.stringify(l.name)}`);
+    const name = nearestLink(l.raw, l.raw.indexOf("[[file:") + 2, { format: "org" })?.value;
+    if (name !== l.name) {
+      diffs.push(`frontend file link: nearestLink reads ${JSON.stringify(name)} in ${l.path} (${JSON.stringify(l.raw)}), ${l.target} is named ${JSON.stringify(l.name)}`);
     }
   }
   return diffs.sort();

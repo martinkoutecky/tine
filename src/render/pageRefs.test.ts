@@ -1,41 +1,46 @@
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { initParser } from "./parse";
-import { decode_page_name, encode_page_name } from "./wasm/lsdoc_wasm.js";
-import { pageRefsInText, setFileNameFormat } from "./pageRefs";
+import { block_reference_names, decode_page_name, encode_page_name } from "./wasm/lsdoc_wasm.js";
+import { blockRefsInText, linkTargetName, setFileNameFormat } from "./pageRefs";
 
 beforeAll(() => initParser());
 afterEach(() => setFileNameFormat(undefined));
 
-it("reads the references the backend rename rewrites off the lsdoc parse", () => {
-  expect(pageRefsInText("a [[One]] #Two #[[Three x]] **[[Four]]**", "md")).toEqual(["One", "Two", "Three x", "Four"]);
-  expect(pageRefsInText("x\ntags:: Five, [[Six]]", "md")).toEqual(["Six", "Five"]);
-  expect(pageRefsInText("x\ntags:: \"Seven, Eight\"", "md")).toEqual([]);
-  expect(pageRefsInText("{{embed [[Nine]]}}", "md")).toEqual(["Nine"]);
-  setFileNameFormat("triple-lowbar");
-  expect(pageRefsInText("see [[file:../pages/Ten___Child.org][ten]]", "org")).toContain("Ten/Child");
+// The window's page references are the reference evidence's own walk, compiled
+// into wasm (`block_reference_names`, CM step 2 batch 6); these pin that it is
+// the evidence's reading, not a second one.
+it("reads a block's references off the evidence walk", () => {
+  // `#[[Three x]]` is a tag and, inside it, a link: two occurrences.
+  expect(block_reference_names("a [[One]] #Two #[[Three x]] **[[Four]]**", false)).toEqual(["One", "Two", "Three x", "Three x", "Four"]);
+  expect(block_reference_names("x\ntags:: Five, [[Six]]", false)).toEqual(["Five", "Six"]);
+  expect(block_reference_names("x\ntags:: \"Seven, Eight\"", false)).toEqual([]);
+  expect(block_reference_names("{{embed [[Nine]]}}", false)).toEqual(["Nine"]);
+});
+
+it("treats code and prose as literal text", () => {
+  expect(block_reference_names("`[[One]]` and educate #", false)).toEqual([]);
+  expect(block_reference_names("```\n[[One]] #Two\n```", false)).toEqual([]);
+});
+
+it("splits fullwidth-comma tags like OG sep-by-comma", () => {
+  expect(block_reference_names("x\ntags:: Old，Other", false)).toEqual(["Old", "Other"]);
 });
 
 it("names an Org file link's page with the graph's file-name format (UI-CM-ORG-FILE-LINK-LEGACY-FORMAT)", () => {
   // Legacy, the default: the store names Ten___Child.org "Ten___Child" and a.b.org "a/b".
   for (const legacy of [undefined, "legacy"]) {
     setFileNameFormat(legacy);
-    expect(pageRefsInText("see [[file:./Ten___Child.org][ten]] and [[file:./a.b.org][ab]]", "org")).toEqual(["Ten___Child", "a/b"]);
+    expect(linkTargetName("file", "./Ten___Child.org", "ten", true)).toBe("Ten___Child");
+    expect(linkTargetName("file", "./a.b.org", "ab", true)).toBe("a/b");
   }
   setFileNameFormat("triple-lowbar");
-  expect(pageRefsInText("see [[file:./Ten___Child.org][ten]] and [[file:./a.b.org][ab]]", "org")).toEqual(["Ten/Child", "a.b"]);
-});
-
-it("treats code and prose as literal text", () => {
-  expect(pageRefsInText("`[[One]]` and educate #", "md")).toEqual([]);
-  expect(pageRefsInText("```\n[[One]] #Two\n```", "md")).toEqual([]);
-});
-
-it("splits fullwidth-comma tags like OG sep-by-comma", () => {
-  expect(pageRefsInText("x\ntags:: Old，Other", "md")).toEqual(["Old", "Other"]);
+  expect(linkTargetName("file", "./Ten___Child.org", "ten", true)).toBe("Ten/Child");
+  expect(linkTargetName("file", "./a.b.org", "ab", true)).toBe("a.b");
+  expect(linkTargetName("file", "../pages/Ten___Child.org", "ten", true)).toBe("Ten/Child");
 });
 
 it("decodes percent-escaped Org file names", () => {
-  expect(pageRefsInText("see [[file:../pages/A%3AB.org][title]]", "org")).toContain("A:B");
+  expect(linkTargetName("file", "../pages/A%3AB.org", "title", true)).toBe("A:B");
 });
 
 it("shares native filename round trips in both naming formats", () => {
@@ -48,5 +53,10 @@ it("shares native filename round trips in both naming formats", () => {
   expect(decode_page_name("Parent.Child", true)).toBe("Parent/Child");
   expect(decode_page_name("Parent___Child", false)).toBe("Parent/Child");
   setFileNameFormat("triple-lowbar");
-  expect(pageRefsInText("[[file:../pages/A%5F%5F%5FB___Child%25.org][title]]", "org")).toContain("A___B/Child%");
+  expect(linkTargetName("file", "../pages/A%5F%5F%5FB___Child%25.org", "title", true)).toBe("A___B/Child%");
+});
+
+it("reads block references in the text, its property values and macro arguments, not in code", () => {
+  expect(blockRefsInText("see ((a1)) and `((b2))`\nrel:: ((c3))", "md")).toEqual(["a1", "c3"]);
+  expect(blockRefsInText("{{embed ((d4))}}", "md")).toEqual(["d4"]);
 });

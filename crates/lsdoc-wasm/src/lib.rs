@@ -109,6 +109,36 @@ mod render_facets;
 #[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
 mod og_built_in;
 
+// The reference evidence's walker and the config slice it reads, compiled
+// from tine-core's own files (I-12: one answer for "what does this block
+// reference"). They reach their outside names through `super::`, provided
+// here: `block_regions`, `og_built_in`, `is_query_macro_name` (above and
+// below), and these. Only part of each module is used here.
+#[allow(dead_code)]
+#[path = "../../tine-core/src/query/atom/parse_config.rs"]
+mod parse_config;
+use parse_config::{reference_parsing_suppressed, separated_by_commas, ParseConfig};
+use tine_outline::editor_text::property_key_norm;
+use tine_outline::lsdoc_block_parse::parse_inline_bounded;
+#[allow(dead_code)]
+#[path = "../../tine-core/src/reference_evidence/walk.rs"]
+mod walk;
+
+/// Every page name one block's source references, in source order (may
+/// repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+/// over the same block parse, under the default parse config. O(block bytes)
+/// plus one inline parse per property value or macro argument; no I/O.
+#[wasm_bindgen]
+pub fn block_reference_names(raw: &str, is_org: bool) -> Vec<String> {
+    let blocks = lsdoc_block_parse::parse_projection(raw, is_org).blocks;
+    let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    walk::project_with_config(raw, is_org, &blocks, &regions, ParseConfig::default_ref())
+        .explicit
+        .into_iter()
+        .map(|reference| reference.name)
+        .collect()
+}
+
 /// OG built-ins excluded from default query-table property columns.
 #[wasm_bindgen]
 pub fn is_og_built_in_property(key: &str) -> bool {

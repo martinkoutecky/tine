@@ -121,10 +121,12 @@ describe("OG-P12 parser-owned properties, references and header spans", () => {
   it("I-12: reference targets and accepted nested nodes use native block_regions policies; imitate render/pageRefs.ts", () => {
     const frontend = readFileSync("src/render/pageRefs.ts", "utf8");
     expect(frontend).toContain("reference_target_name(");
-    expect(frontend).toContain("nested_reference_names(inline.content)");
     expect(frontend).not.toMatch(/decode_page_name|lastIndexOf|new RegExp|\.indexOf\(|\.match(?:All)?\(|\.exec\(|\.test\(/);
-    const native = readFileSync("crates/tine-core/src/reference_evidence.rs", "utf8");
-    expect(native).toContain("crate::block_regions::reference_target_name(");
+    // A block's page references are the evidence's own walk, in wasm too.
+    expect(readFileSync("src/components/blockSwipeWiring.ts", "utf8")).toContain("block_reference_names(raw,");
+    expect(readFileSync("crates/lsdoc-wasm/src/lib.rs", "utf8")).toContain('#[path = "../../tine-core/src/reference_evidence/walk.rs"]');
+    const native = readFileSync("crates/tine-core/src/reference_evidence/walk.rs", "utf8");
+    expect(native).toContain("super::block_regions::reference_target_name(");
     expect(native).not.toMatch(/fn nested_names|fn local_asset/);
     const model = readFileSync("crates/tine-store/src/model.rs", "utf8");
     // The referenced-name collector's property share (CM step 2 batch 5 renamed

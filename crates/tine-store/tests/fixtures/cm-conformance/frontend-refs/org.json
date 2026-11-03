@@ -7,13 +7,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/cloze/plain": {
     "blocks": [
@@ -23,13 +17,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/cloze/unicode": {
     "blocks": [
@@ -39,13 +27,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/cloze/words": {
     "blocks": [
@@ -55,13 +37,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/drawer-property/ns": {
     "blocks": [
@@ -73,17 +49,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/drawer-property/plain": {
     "blocks": [
@@ -95,13 +61,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/drawer-property/unicode": {
     "blocks": [
@@ -113,13 +73,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/drawer-property/words": {
     "blocks": [
@@ -131,13 +85,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/embed-block/ns": {
     "blocks": [
@@ -150,21 +98,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "((6571a2b3-1111-2222-3333-444455556666))": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-block/plain": {
     "blocks": [
@@ -177,17 +111,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "((6571a2b3-1111-2222-3333-444455556666))": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-block/unicode": {
     "blocks": [
@@ -200,17 +124,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "((6571a2b3-1111-2222-3333-444455556666))": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-block/words": {
     "blocks": [
@@ -223,17 +137,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "((6571a2b3-1111-2222-3333-444455556666))": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-spaced/ns": {
     "blocks": [
@@ -245,17 +149,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-spaced/plain": {
     "blocks": [
@@ -267,13 +161,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-spaced/unicode": {
     "blocks": [
@@ -285,13 +173,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed-spaced/words": {
     "blocks": [
@@ -303,13 +185,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed/ns": {
     "blocks": [
@@ -321,17 +197,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed/plain": {
     "blocks": [
@@ -343,13 +209,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed/unicode": {
     "blocks": [
@@ -361,13 +221,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/embed/words": {
     "blocks": [
@@ -379,13 +233,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/emphasis/ns": {
     "blocks": [
@@ -395,13 +243,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/emphasis/plain": {
     "blocks": [
@@ -411,13 +253,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/emphasis/unicode": {
     "blocks": [
@@ -427,13 +263,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/emphasis/words": {
     "blocks": [
@@ -443,13 +273,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/escaped/ns": {
     "blocks": [
@@ -459,13 +283,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/escaped/plain": {
     "blocks": [
@@ -475,13 +293,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/escaped/unicode": {
     "blocks": [
@@ -491,13 +303,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/escaped/words": {
     "blocks": [
@@ -507,13 +313,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-bare/ns": {
     "blocks": [
@@ -523,13 +323,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-bare/plain": {
     "blocks": [
@@ -539,13 +333,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-bare/unicode": {
     "blocks": [
@@ -555,13 +343,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-bare/words": {
     "blocks": [
@@ -571,13 +353,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-label/ns": {
     "blocks": [
@@ -589,17 +365,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-label/plain": {
     "blocks": [
@@ -611,13 +377,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-label/unicode": {
     "blocks": [
@@ -629,13 +389,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-label/words": {
     "blocks": [
@@ -647,13 +401,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-other-label/ns": {
     "blocks": [
@@ -665,17 +413,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "a label": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-other-label/plain": {
     "blocks": [
@@ -687,17 +425,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "a label": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-other-label/unicode": {
     "blocks": [
@@ -709,17 +437,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "a label": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/file-link-other-label/words": {
     "blocks": [
@@ -731,17 +449,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "a label": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/heading-tag/ns": {
     "blocks": [
@@ -753,17 +461,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/heading-tag/plain": {
     "blocks": [
@@ -775,13 +473,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/heading-tag/unicode": {
     "blocks": [
@@ -793,13 +485,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/heading-tag/words": {
     "blocks": [
@@ -811,17 +497,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/headline-tags/ns": {
     "blocks": [
@@ -834,21 +510,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "other": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/headline-tags/plain": {
     "blocks": [
@@ -861,17 +523,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "other": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/headline-tags/unicode": {
     "blocks": [
@@ -884,17 +536,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "other": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/headline-tags/words": {
     "blocks": [
@@ -904,13 +546,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/labelled-link/ns": {
     "blocks": [
@@ -922,21 +558,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old][a label": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/labelled-link/plain": {
     "blocks": [
@@ -948,17 +570,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old][a label": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/labelled-link/unicode": {
     "blocks": [
@@ -970,17 +582,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über][a label": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/labelled-link/words": {
     "blocks": [
@@ -992,17 +594,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old page][a label": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-case/ns": {
     "blocks": [
@@ -1014,17 +606,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-case/plain": {
     "blocks": [
@@ -1036,13 +618,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-case/unicode": {
     "blocks": [
@@ -1054,13 +630,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-case/words": {
     "blocks": [
@@ -1072,13 +642,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-spaced/ns": {
     "blocks": [
@@ -1090,17 +654,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-spaced/plain": {
     "blocks": [
@@ -1112,13 +666,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-spaced/unicode": {
     "blocks": [
@@ -1130,13 +678,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link-spaced/words": {
     "blocks": [
@@ -1148,13 +690,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link/ns": {
     "blocks": [
@@ -1166,17 +702,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link/plain": {
     "blocks": [
@@ -1188,13 +714,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link/unicode": {
     "blocks": [
@@ -1206,13 +726,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/link/words": {
     "blocks": [
@@ -1224,13 +738,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/logbook/ns": {
     "blocks": [
@@ -1240,13 +748,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/logbook/plain": {
     "blocks": [
@@ -1256,13 +758,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/logbook/unicode": {
     "blocks": [
@@ -1272,13 +768,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/logbook/words": {
     "blocks": [
@@ -1288,13 +778,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/marker/plain": {
     "blocks": [
@@ -1306,13 +790,7 @@
       }
     ],
     "name": "TODO",
-    "preBlock": null,
-    "renames": {
-      "todo": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/math/ns": {
     "blocks": [
@@ -1322,13 +800,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/math/plain": {
     "blocks": [
@@ -1338,13 +810,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/math/unicode": {
     "blocks": [
@@ -1354,13 +820,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/math/words": {
     "blocks": [
@@ -1370,13 +830,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested-outer/ns": {
     "blocks": [
@@ -1389,25 +843,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "ns/old [[x]]": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "x": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested-outer/plain": {
     "blocks": [
@@ -1420,21 +856,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "old [[x]]": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "x": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested-outer/unicode": {
     "blocks": [
@@ -1447,21 +869,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "x": {
-        "referrer": true,
-        "rewrites": true
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "über [[x]]": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/nested-outer/words": {
     "blocks": [
@@ -1474,21 +882,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "old page [[x]]": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "x": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested/ns": {
     "blocks": [
@@ -1501,25 +895,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "a [[ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "a [[ns/old]] c": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested/plain": {
     "blocks": [
@@ -1532,17 +908,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "a [[old]] c": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested/unicode": {
     "blocks": [
@@ -1555,17 +921,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "a [[über]] c": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/nested/words": {
     "blocks": [
@@ -1578,17 +934,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "a [[old page]] c": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/ns-child/ns": {
     "blocks": [
@@ -1600,21 +946,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old/child": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/ns-child/plain": {
     "blocks": [
@@ -1626,17 +958,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old/child": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/ns-child/unicode": {
     "blocks": [
@@ -1648,17 +970,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über/child": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/ns-child/words": {
     "blocks": [
@@ -1670,17 +982,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old page/child": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/page-key/ns": {
     "blocks": [
@@ -1690,13 +992,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": "ns/Old:: value\n",
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": "ns/Old:: value\n"
   },
   "org/page-key/plain": {
     "blocks": [
@@ -1706,13 +1002,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": "Old:: value\n",
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": "Old:: value\n"
   },
   "org/page-key/unicode": {
     "blocks": [
@@ -1722,13 +1012,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": "Über:: value\n",
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": "Über:: value\n"
   },
   "org/page-key/words": {
     "blocks": [
@@ -1738,13 +1022,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": "old page:: value\n",
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": "old page:: value\n"
   },
   "org/page-link/ns": {
     "blocks": [
@@ -1754,17 +1032,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": "related:: [[ns/Old]]\n",
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": "related:: [[ns/Old]]\n"
   },
   "org/page-link/plain": {
     "blocks": [
@@ -1774,13 +1042,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": "related:: [[Old]]\n",
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": "related:: [[Old]]\n"
   },
   "org/page-link/unicode": {
     "blocks": [
@@ -1790,13 +1052,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": "related:: [[Über]]\n",
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": "related:: [[Über]]\n"
   },
   "org/page-link/words": {
     "blocks": [
@@ -1806,13 +1062,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": "related:: [[old page]]\n",
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": "related:: [[old page]]\n"
   },
   "org/page-tags/ns": {
     "blocks": [
@@ -1822,17 +1072,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": "tags:: ns/Old, other\nalias:: ns/Old alias\n",
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": "tags:: ns/Old, other\nalias:: ns/Old alias\n"
   },
   "org/page-tags/plain": {
     "blocks": [
@@ -1842,17 +1082,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": "tags:: Old, other\nalias:: Old alias\n",
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": "tags:: Old, other\nalias:: Old alias\n"
   },
   "org/page-tags/unicode": {
     "blocks": [
@@ -1862,17 +1092,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": "tags:: Über, other\nalias:: Über alias\n",
-    "renames": {
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": "tags:: Über, other\nalias:: Über alias\n"
   },
   "org/page-tags/words": {
     "blocks": [
@@ -1882,17 +1102,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": "tags:: old page, other\nalias:: old page alias\n",
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": "tags:: old page, other\nalias:: old page alias\n"
   },
   "org/priority/plain": {
     "blocks": [
@@ -1905,17 +1115,7 @@
       }
     ],
     "name": "A",
-    "preBlock": null,
-    "renames": {
-      "a": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "todo": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-alias-bare/ns": {
     "blocks": [
@@ -1925,13 +1125,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-alias-bare/plain": {
     "blocks": [
@@ -1941,13 +1135,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-alias-bare/unicode": {
     "blocks": [
@@ -1957,13 +1145,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-alias-bare/words": {
     "blocks": [
@@ -1973,13 +1155,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-key/ns": {
     "blocks": [
@@ -1989,13 +1165,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-key/plain": {
     "blocks": [
@@ -2005,13 +1175,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-key/unicode": {
     "blocks": [
@@ -2021,13 +1185,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-key/words": {
     "blocks": [
@@ -2037,13 +1195,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-bare/ns": {
     "blocks": [
@@ -2053,13 +1205,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-bare/plain": {
     "blocks": [
@@ -2069,13 +1215,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-bare/unicode": {
     "blocks": [
@@ -2085,13 +1225,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-bare/words": {
     "blocks": [
@@ -2101,13 +1235,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-link/ns": {
     "blocks": [
@@ -2119,17 +1247,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-link/plain": {
     "blocks": [
@@ -2141,13 +1259,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-link/unicode": {
     "blocks": [
@@ -2159,13 +1271,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-other-link/words": {
     "blocks": [
@@ -2177,13 +1283,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-bare/ns": {
     "blocks": [
@@ -2193,17 +1293,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-bare/plain": {
     "blocks": [
@@ -2213,17 +1303,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-bare/unicode": {
     "blocks": [
@@ -2233,17 +1313,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-bare/words": {
     "blocks": [
@@ -2253,17 +1323,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "other": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-hash/ns": {
     "blocks": [
@@ -2275,17 +1335,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-hash/plain": {
     "blocks": [
@@ -2297,13 +1347,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-hash/unicode": {
     "blocks": [
@@ -2315,13 +1359,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-hash/words": {
     "blocks": [
@@ -2333,17 +1371,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-link/ns": {
     "blocks": [
@@ -2355,17 +1383,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-link/plain": {
     "blocks": [
@@ -2377,13 +1395,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-link/unicode": {
     "blocks": [
@@ -2395,13 +1407,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-link/words": {
     "blocks": [
@@ -2413,13 +1419,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-quoted/ns": {
     "blocks": [
@@ -2429,17 +1429,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "\"ns/old\"": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-quoted/plain": {
     "blocks": [
@@ -2449,17 +1439,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "\"old\"": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-quoted/unicode": {
     "blocks": [
@@ -2469,17 +1449,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "\"über\"": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-tags-quoted/words": {
     "blocks": [
@@ -2489,17 +1459,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "\"old page\"": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/prop-title-link/ns": {
     "blocks": [
@@ -2511,17 +1471,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-title-link/plain": {
     "blocks": [
@@ -2533,13 +1483,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-title-link/unicode": {
     "blocks": [
@@ -2551,13 +1495,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/prop-title-link/words": {
     "blocks": [
@@ -2569,13 +1507,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-and/ns": {
     "blocks": [
@@ -2585,13 +1517,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-and/plain": {
     "blocks": [
@@ -2601,13 +1527,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-and/unicode": {
     "blocks": [
@@ -2617,13 +1537,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-and/words": {
     "blocks": [
@@ -2633,13 +1547,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-link/ns": {
     "blocks": [
@@ -2649,13 +1557,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-link/plain": {
     "blocks": [
@@ -2665,13 +1567,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-link/unicode": {
     "blocks": [
@@ -2681,13 +1577,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-link/words": {
     "blocks": [
@@ -2697,13 +1587,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-page-bare/ns": {
     "blocks": [
@@ -2713,13 +1597,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page-bare/plain": {
     "blocks": [
@@ -2729,13 +1607,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page-bare/unicode": {
     "blocks": [
@@ -2745,13 +1617,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page-bare/words": {
     "blocks": [
@@ -2761,13 +1627,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page/ns": {
     "blocks": [
@@ -2777,13 +1637,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page/plain": {
     "blocks": [
@@ -2793,13 +1647,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page/unicode": {
     "blocks": [
@@ -2809,13 +1657,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-page/words": {
     "blocks": [
@@ -2825,13 +1667,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-plus-link/ns": {
     "blocks": [
@@ -2843,17 +1679,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-plus-link/plain": {
     "blocks": [
@@ -2865,13 +1691,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-plus-link/unicode": {
     "blocks": [
@@ -2883,13 +1703,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-plus-link/words": {
     "blocks": [
@@ -2901,13 +1715,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/query-search/ns": {
     "blocks": [
@@ -2917,13 +1725,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-search/plain": {
     "blocks": [
@@ -2933,13 +1735,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-search/unicode": {
     "blocks": [
@@ -2949,13 +1745,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/query-search/words": {
     "blocks": [
@@ -2965,13 +1755,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/quote/ns": {
     "blocks": [
@@ -2983,17 +1767,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/quote/plain": {
     "blocks": [
@@ -3005,13 +1779,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/quote/unicode": {
     "blocks": [
@@ -3023,13 +1791,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/quote/words": {
     "blocks": [
@@ -3041,13 +1803,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/renderer/ns": {
     "blocks": [
@@ -3057,13 +1813,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/renderer/plain": {
     "blocks": [
@@ -3073,13 +1823,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/renderer/unicode": {
     "blocks": [
@@ -3089,13 +1833,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/renderer/words": {
     "blocks": [
@@ -3105,13 +1843,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/src/ns": {
     "blocks": [
@@ -3121,13 +1853,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/src/plain": {
     "blocks": [
@@ -3137,13 +1863,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/src/unicode": {
     "blocks": [
@@ -3153,13 +1873,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/src/words": {
     "blocks": [
@@ -3169,13 +1883,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/table/ns": {
     "blocks": [
@@ -3187,17 +1895,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/table/plain": {
     "blocks": [
@@ -3209,13 +1907,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/table/unicode": {
     "blocks": [
@@ -3227,13 +1919,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/table/words": {
     "blocks": [
@@ -3245,13 +1931,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-bracket/ns": {
     "blocks": [
@@ -3263,17 +1943,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-bracket/plain": {
     "blocks": [
@@ -3285,13 +1955,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-bracket/unicode": {
     "blocks": [
@@ -3303,13 +1967,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-bracket/words": {
     "blocks": [
@@ -3321,13 +1979,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-in-word/ns": {
     "blocks": [
@@ -3339,17 +1991,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-in-word/plain": {
     "blocks": [
@@ -3361,13 +2003,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-in-word/unicode": {
     "blocks": [
@@ -3379,13 +2015,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-in-word/words": {
     "blocks": [
@@ -3397,17 +2027,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-trailing-dot/ns": {
     "blocks": [
@@ -3419,17 +2039,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-trailing-dot/plain": {
     "blocks": [
@@ -3441,13 +2051,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-trailing-dot/unicode": {
     "blocks": [
@@ -3459,13 +2063,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag-trailing-dot/words": {
     "blocks": [
@@ -3477,17 +2075,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-url-fragment/ns": {
     "blocks": [
@@ -3497,13 +2085,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-url-fragment/plain": {
     "blocks": [
@@ -3513,13 +2095,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-url-fragment/unicode": {
     "blocks": [
@@ -3529,13 +2105,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag-url-fragment/words": {
     "blocks": [
@@ -3545,13 +2115,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tag/ns": {
     "blocks": [
@@ -3563,17 +2127,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "ns/old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag/plain": {
     "blocks": [
@@ -3585,13 +2139,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag/unicode": {
     "blocks": [
@@ -3603,13 +2151,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tag/words": {
     "blocks": [
@@ -3621,17 +2163,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": true,
-        "rewrites": true
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query-link/ns": {
     "blocks": [
@@ -3641,13 +2173,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query-link/plain": {
     "blocks": [
@@ -3657,13 +2183,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query-link/unicode": {
     "blocks": [
@@ -3673,13 +2193,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query-link/words": {
     "blocks": [
@@ -3689,13 +2203,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query/ns": {
     "blocks": [
@@ -3705,13 +2213,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query/plain": {
     "blocks": [
@@ -3721,13 +2223,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query/unicode": {
     "blocks": [
@@ -3737,13 +2233,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/tine-query/words": {
     "blocks": [
@@ -3753,13 +2243,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/unmatched-opener/ns": {
     "blocks": [
@@ -3771,21 +2255,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "to link [[ns": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "to link [[ns/old": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/unmatched-opener/plain": {
     "blocks": [
@@ -3797,17 +2267,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "to link [[old": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/unmatched-opener/unicode": {
     "blocks": [
@@ -3819,17 +2279,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "to link [[über": {
-        "referrer": true,
-        "rewrites": false
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/unmatched-opener/words": {
     "blocks": [
@@ -3841,17 +2291,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "to link [[old page": {
-        "referrer": true,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/url-brackets/ns": {
     "blocks": [
@@ -3861,21 +2301,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "[ns/old],[2": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "ns/old],[3": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/url-brackets/plain": {
     "blocks": [
@@ -3885,21 +2311,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "[old],[2": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "old],[3": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/url-brackets/unicode": {
     "blocks": [
@@ -3909,21 +2321,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "[über],[2": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "über],[3": {
-        "referrer": false,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/url-brackets/words": {
     "blocks": [
@@ -3935,21 +2333,7 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "[old page],[2": {
-        "referrer": false,
-        "rewrites": true
-      },
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      },
-      "old page],[3": {
-        "referrer": true,
-        "rewrites": true
-      }
-    }
+    "preBlock": null
   },
   "org/verbatim/ns": {
     "blocks": [
@@ -3959,13 +2343,7 @@
       }
     ],
     "name": "ns/Old",
-    "preBlock": null,
-    "renames": {
-      "ns/old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/verbatim/plain": {
     "blocks": [
@@ -3975,13 +2353,7 @@
       }
     ],
     "name": "Old",
-    "preBlock": null,
-    "renames": {
-      "old": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/verbatim/unicode": {
     "blocks": [
@@ -3991,13 +2363,7 @@
       }
     ],
     "name": "Über",
-    "preBlock": null,
-    "renames": {
-      "über": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   },
   "org/verbatim/words": {
     "blocks": [
@@ -4007,12 +2373,6 @@
       }
     ],
     "name": "old page",
-    "preBlock": null,
-    "renames": {
-      "old page": {
-        "referrer": false,
-        "rewrites": false
-      }
-    }
+    "preBlock": null
   }
 }

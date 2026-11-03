@@ -8,7 +8,7 @@ import { favorites, seedFavorites } from "./favorites";
 import { workflow } from "./ui";
 import type { GraphMeta } from "./types";
 import { initParser } from "./render/parse";
-import { pageRefsInText } from "./render/pageRefs";
+import { linkTargetName } from "./render/pageRefs";
 
 beforeAll(() => initParser());
 
@@ -85,9 +85,9 @@ describe("config-derived state has one producer", () => {
     const before = graphEpoch();
     applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, file_name_format: "triple-lowbar" } as GraphMeta });
     expect(graphEpoch()).toBeGreaterThan(before);
-    expect(pageRefsInText("[[file:./a.b.org][ab]]", "org")).toEqual(["a.b"]);
+    expect(linkTargetName("file", "./a.b.org", "ab", true)).toBe("a.b");
     applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, file_name_format: "legacy" } as GraphMeta });
-    expect(pageRefsInText("[[file:./a.b.org][ab]]", "org")).toEqual(["a/b"]);
+    expect(linkTargetName("file", "./a.b.org", "ab", true)).toBe("a/b");
   });
 
   it("graph open and live change share the producer (source guard, I-12)", () => {

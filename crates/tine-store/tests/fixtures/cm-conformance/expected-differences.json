@@ -8,28 +8,16 @@
   "extraction": {
     "fixtures": {
       "md/cloze/ns": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{cloze}} [ns/old]"
       ],
       "md/cloze/plain": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{cloze}} [old]"
       ],
       "md/cloze/unicode": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{cloze}} [über]"
       ],
       "md/cloze/words": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [old page]"
-      ],
-      "md/comment/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/comment/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "md/comment/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "md/comment/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
+        "rename-only: [[x]] in {{cloze}} [old page]"
       ],
       "md/embed-block/ns": [
         "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
@@ -43,113 +31,32 @@
       "md/embed-block/words": [
         "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
       ],
-      "md/escaped/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/escaped/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "md/escaped/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "md/escaped/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
-      ],
-      "md/fence/ns": [
-        "rename-only: [[x]] in code block (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/fence/plain": [
-        "rename-only: [[x]] in code block (page not read: no evidence reference) [old]"
-      ],
-      "md/fence/unicode": [
-        "rename-only: [[x]] in code block (page not read: no evidence reference) [über]"
-      ],
-      "md/fence/words": [
-        "rename-only: [[x]] in code block (page not read: no evidence reference) [old page]"
-      ],
-      "md/html/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/html/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "md/html/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "md/html/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
-      ],
-      "md/logbook/ns": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/logbook/plain": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [old]"
-      ],
-      "md/logbook/unicode": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [über]"
-      ],
-      "md/logbook/words": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [old page]"
-      ],
       "md/marker/plain": [
         "evidence-only explicit_task_marker: bare [todo]"
       ],
-      "md/math/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/math/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "md/math/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "md/math/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
-      ],
       "md/nested-outer/ns": [
-        "evidence-only explicit_nested_link: [[x]] [ns/old [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "md/nested-outer/plain": [
-        "evidence-only explicit_nested_link: [[x]] [old [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "md/nested-outer/unicode": [
-        "evidence-only explicit_nested_link: [[x]] [über [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "md/nested-outer/words": [
-        "evidence-only explicit_nested_link: [[x]] [old page [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "md/nested/ns": [
-        "evidence-only explicit_nested_link: [[x]] [a [[ns/old]] c]"
+        "evidence-only explicit_nested_link: [[x]] nested [ns/old]"
       ],
       "md/nested/plain": [
-        "evidence-only explicit_nested_link: [[x]] [a [[old]] c]"
+        "evidence-only explicit_nested_link: [[x]] nested [old]"
       ],
       "md/nested/unicode": [
-        "evidence-only explicit_nested_link: [[x]] [a [[über]] c]"
+        "evidence-only explicit_nested_link: [[x]] nested [über]"
       ],
       "md/nested/words": [
-        "evidence-only explicit_nested_link: [[x]] [a [[old page]] c]"
-      ],
-      "md/page-key/ns": [
-        "evidence-only explicit_property_key: bare property key [ns/old]"
-      ],
-      "md/page-key/plain": [
-        "evidence-only explicit_property_key: bare property key [old]"
-      ],
-      "md/page-key/unicode": [
-        "evidence-only explicit_property_key: bare property key [über]"
-      ],
-      "md/page-link/ns": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/page-link/plain": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/page-link/unicode": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/page-link/words": [
-        "evidence-only explicit_property_key: bare property key [related]"
+        "evidence-only explicit_nested_link: [[x]] nested [old page]"
       ],
       "md/page-tags/ns": [
         "evidence-only implicit_linkable_property: bare value of alias:: [ns/old alias]"
@@ -179,77 +86,50 @@
       "md/prop-alias-bare/words": [
         "evidence-only implicit_linkable_property: bare value of alias:: [old page]"
       ],
-      "md/prop-key/ns": [
-        "evidence-only explicit_property_key: bare property key [ns/old]"
-      ],
-      "md/prop-key/plain": [
-        "evidence-only explicit_property_key: bare property key [old]"
-      ],
-      "md/prop-key/unicode": [
-        "evidence-only explicit_property_key: bare property key [über]"
-      ],
-      "md/prop-other-bare/ns": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-bare/plain": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-bare/unicode": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-bare/words": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-link/ns": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-link/plain": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-link/unicode": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-other-link/words": [
-        "evidence-only explicit_property_key: bare property key [related]"
-      ],
-      "md/prop-tags-hash/words": [
-        "evidence-only implicit_linkable_property: bare value of tags:: [page]"
-      ],
-      "md/prop-tags-quoted/ns": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"ns/old\"]"
-      ],
-      "md/prop-tags-quoted/plain": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"old\"]"
-      ],
-      "md/prop-tags-quoted/unicode": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"über\"]"
-      ],
-      "md/prop-tags-quoted/words": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"old page\"]"
-      ],
       "md/query-and/ns": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{query}} [ns/old]"
       ],
       "md/query-and/plain": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{query}} [old]"
       ],
       "md/query-and/unicode": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{query}} [über]"
       ],
       "md/query-and/words": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old page]"
+        "rename-only: [[x]] in {{query}} [old page]"
       ],
       "md/query-link/ns": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{query}} [ns/old]"
       ],
       "md/query-link/plain": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{query}} [old]"
       ],
       "md/query-link/unicode": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{query}} [über]"
       ],
       "md/query-link/words": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old page]"
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "md/query-page-bare/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "md/query-page-bare/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "md/query-page-bare/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "md/query-page/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "md/query-page/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "md/query-page/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "md/query-page/words": [
+        "rename-only: bare in {{query}} [old page]"
       ],
       "md/query-plus-link/ns": [
         "rename-only: [[x]] in {{query}} [ns/old]"
@@ -264,95 +144,28 @@
         "rename-only: [[x]] in {{query}} [old page]"
       ],
       "md/renderer/ns": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{renderer}} [ns/old]"
       ],
       "md/renderer/plain": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{renderer}} [old]"
       ],
       "md/renderer/unicode": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{renderer}} [über]"
       ],
       "md/renderer/words": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [old page]"
-      ],
-      "md/tag-in-word/ns": [
-        "evidence-only explicit_tag: #tag [ns/old]"
-      ],
-      "md/tag-in-word/plain": [
-        "evidence-only explicit_tag: #tag [old]"
-      ],
-      "md/tag-in-word/unicode": [
-        "evidence-only explicit_tag: #tag [über]"
-      ],
-      "md/tag-in-word/words": [
-        "evidence-only explicit_tag: #tag [old]"
-      ],
-      "md/tine-query-link/ns": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/tine-query-link/plain": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [old]"
-      ],
-      "md/tine-query-link/unicode": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [über]"
-      ],
-      "md/tine-query-link/words": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [old page]"
-      ],
-      "md/unmatched-opener/ns": [
-        "evidence-only explicit_link: [[x]] [to link [[ns/old]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [ns/old]"
-      ],
-      "md/unmatched-opener/plain": [
-        "evidence-only explicit_link: [[x]] [to link [[old]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [old]"
-      ],
-      "md/unmatched-opener/unicode": [
-        "evidence-only explicit_link: [[x]] [to link [[über]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [über]"
-      ],
-      "md/unmatched-opener/words": [
-        "evidence-only explicit_link: [[x]] [to link [[old page]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [old page]"
-      ],
-      "md/url-brackets/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[ns/old],[2]",
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old],[3]"
-      ],
-      "md/url-brackets/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[old],[2]",
-        "rename-only: [[x]] (page not read: no evidence reference) [old],[3]"
-      ],
-      "md/url-brackets/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[über],[2]",
-        "rename-only: [[x]] (page not read: no evidence reference) [über],[3]"
-      ],
-      "md/url-brackets/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[old page],[2]"
+        "rename-only: [[x]] in {{renderer}} [old page]"
       ],
       "org/cloze/ns": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{cloze}} [ns/old]"
       ],
       "org/cloze/plain": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{cloze}} [old]"
       ],
       "org/cloze/unicode": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{cloze}} [über]"
       ],
       "org/cloze/words": [
-        "rename-only: [[x]] in {{cloze}} (page not read: no evidence reference) [old page]"
-      ],
-      "org/drawer-property/ns": [
-        "evidence-only implicit_linkable_property: bare value of :tags: (drawer) [ns/old]"
-      ],
-      "org/drawer-property/plain": [
-        "evidence-only implicit_linkable_property: bare value of :tags: (drawer) [old]"
-      ],
-      "org/drawer-property/unicode": [
-        "evidence-only implicit_linkable_property: bare value of :tags: (drawer) [über]"
-      ],
-      "org/drawer-property/words": [
-        "evidence-only implicit_linkable_property: bare value of :tags: (drawer) [old page]"
+        "rename-only: [[x]] in {{cloze}} [old page]"
       ],
       "org/embed-block/ns": [
         "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
@@ -366,212 +179,117 @@
       "org/embed-block/words": [
         "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
       ],
-      "org/emphasis/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/emphasis/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "org/emphasis/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "org/emphasis/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
-      ],
-      "org/escaped/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/escaped/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "org/escaped/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "org/escaped/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
-      ],
       "org/file-link-bare/ns": [
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/file-link-bare/plain": [
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [old]"
-      ],
-      "org/file-link-bare/unicode": [
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [über]"
-      ],
-      "org/file-link-bare/words": [
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [old page]"
-      ],
-      "org/file-link-label/ns": [
-        "evidence-only explicit_link: [[file:…][x]] [ns/old]",
         "rename-only: [[file:…x.org]] [ns/old]"
       ],
+      "org/file-link-bare/plain": [
+        "rename-only: [[file:…x.org]] [old]"
+      ],
+      "org/file-link-bare/unicode": [
+        "rename-only: [[file:…x.org]] [über]"
+      ],
+      "org/file-link-bare/words": [
+        "rename-only: [[file:…x.org]] [old page]"
+      ],
+      "org/file-link-label/ns": [
+        "rename-only: [[file:…x.org]] [ns/old]"
+      ],
+      "org/file-link-label/plain": [
+        "rename-only: [[file:…][x]] [old]"
+      ],
+      "org/file-link-label/unicode": [
+        "rename-only: [[file:…][x]] [über]"
+      ],
+      "org/file-link-label/words": [
+        "rename-only: [[file:…][x]] [old page]"
+      ],
       "org/file-link-other-label/ns": [
-        "evidence-only explicit_link: [[file:…][x]] [a label]",
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[file:…x.org]] [ns/old]"
       ],
       "org/file-link-other-label/plain": [
-        "evidence-only explicit_link: [[file:…][x]] [a label]",
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [old]"
+        "rename-only: [[file:…x.org]] [old]"
       ],
       "org/file-link-other-label/unicode": [
-        "evidence-only explicit_link: [[file:…][x]] [a label]",
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [über]"
+        "rename-only: [[file:…x.org]] [über]"
       ],
       "org/file-link-other-label/words": [
-        "evidence-only explicit_link: [[file:…][x]] [a label]",
-        "rename-only: [[file:…x.org]] (page not read: no evidence reference) [old page]"
-      ],
-      "org/headline-tags/ns": [
-        "evidence-only explicit_tag: :x: (headline tag) [ns/old]",
-        "evidence-only explicit_tag: :x: (headline tag) [other]"
-      ],
-      "org/headline-tags/plain": [
-        "evidence-only explicit_tag: :x: (headline tag) [old]",
-        "evidence-only explicit_tag: :x: (headline tag) [other]"
-      ],
-      "org/headline-tags/unicode": [
-        "evidence-only explicit_tag: :x: (headline tag) [other]",
-        "evidence-only explicit_tag: :x: (headline tag) [über]"
-      ],
-      "org/labelled-link/ns": [
-        "evidence-only explicit_link: [[x][label]] [ns/old]",
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old][a label]"
-      ],
-      "org/labelled-link/plain": [
-        "evidence-only explicit_link: [[x][label]] [old]",
-        "rename-only: [[x]] (page not read: no evidence reference) [old][a label]"
-      ],
-      "org/labelled-link/unicode": [
-        "evidence-only explicit_link: [[x][label]] [über]",
-        "rename-only: [[x]] (page not read: no evidence reference) [über][a label]"
-      ],
-      "org/labelled-link/words": [
-        "evidence-only explicit_link: [[x][label]] [old page]",
-        "rename-only: [[x]] (page not read: no evidence reference) [old page][a label]"
-      ],
-      "org/logbook/ns": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/logbook/plain": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [old]"
-      ],
-      "org/logbook/unicode": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [über]"
-      ],
-      "org/logbook/words": [
-        "rename-only: [[x]] in logbook (page not read: no evidence reference) [old page]"
+        "rename-only: [[file:…x.org]] [old page]"
       ],
       "org/marker/plain": [
         "evidence-only explicit_task_marker: bare [todo]"
       ],
-      "org/math/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/math/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old]"
-      ],
-      "org/math/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [über]"
-      ],
-      "org/math/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [old page]"
-      ],
       "org/nested-outer/ns": [
-        "evidence-only explicit_nested_link: [[x]] [ns/old [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "org/nested-outer/plain": [
-        "evidence-only explicit_nested_link: [[x]] [old [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "org/nested-outer/unicode": [
-        "evidence-only explicit_nested_link: [[x]] [über [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "org/nested-outer/words": [
-        "evidence-only explicit_nested_link: [[x]] [old page [[x]]]"
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
       ],
       "org/nested/ns": [
-        "evidence-only explicit_nested_link: [[x]] [a [[ns/old]] c]"
+        "evidence-only explicit_nested_link: [[x]] nested [ns/old]"
       ],
       "org/nested/plain": [
-        "evidence-only explicit_nested_link: [[x]] [a [[old]] c]"
+        "evidence-only explicit_nested_link: [[x]] nested [old]"
       ],
       "org/nested/unicode": [
-        "evidence-only explicit_nested_link: [[x]] [a [[über]] c]"
+        "evidence-only explicit_nested_link: [[x]] nested [über]"
       ],
       "org/nested/words": [
-        "evidence-only explicit_nested_link: [[x]] [a [[old page]] c]"
-      ],
-      "org/page-tags/ns": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [ns/old]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]"
-      ],
-      "org/page-tags/plain": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [old]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]"
-      ],
-      "org/page-tags/unicode": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [über]"
-      ],
-      "org/page-tags/words": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [old page]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]"
+        "evidence-only explicit_nested_link: [[x]] nested [old page]"
       ],
       "org/priority/plain": [
         "evidence-only explicit_priority: [#x] [a]",
         "evidence-only explicit_task_marker: bare [todo]"
       ],
-      "org/prop-tags-bare/ns": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [ns/old]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]"
-      ],
-      "org/prop-tags-bare/plain": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [old]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]"
-      ],
-      "org/prop-tags-bare/unicode": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [über]"
-      ],
-      "org/prop-tags-bare/words": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [old page]",
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [other]"
-      ],
-      "org/prop-tags-quoted/ns": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"ns/old\"]"
-      ],
-      "org/prop-tags-quoted/plain": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"old\"]"
-      ],
-      "org/prop-tags-quoted/unicode": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"über\"]"
-      ],
-      "org/prop-tags-quoted/words": [
-        "rename-only: bare value of tags:: (page not read: no evidence reference) [\"old page\"]"
-      ],
       "org/query-and/ns": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{query}} [ns/old]"
       ],
       "org/query-and/plain": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{query}} [old]"
       ],
       "org/query-and/unicode": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{query}} [über]"
       ],
       "org/query-and/words": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old page]"
+        "rename-only: [[x]] in {{query}} [old page]"
       ],
       "org/query-link/ns": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{query}} [ns/old]"
       ],
       "org/query-link/plain": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{query}} [old]"
       ],
       "org/query-link/unicode": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{query}} [über]"
       ],
       "org/query-link/words": [
-        "rename-only: [[x]] in {{query}} (page not read: no evidence reference) [old page]"
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "org/query-page-bare/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "org/query-page-bare/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "org/query-page-bare/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "org/query-page/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "org/query-page/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "org/query-page/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "org/query-page/words": [
+        "rename-only: bare in {{query}} [old page]"
       ],
       "org/query-plus-link/ns": [
         "rename-only: [[x]] in {{query}} [ns/old]"
@@ -586,71 +304,16 @@
         "rename-only: [[x]] in {{query}} [old page]"
       ],
       "org/renderer/ns": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [ns/old]"
+        "rename-only: [[x]] in {{renderer}} [ns/old]"
       ],
       "org/renderer/plain": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [old]"
+        "rename-only: [[x]] in {{renderer}} [old]"
       ],
       "org/renderer/unicode": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [über]"
+        "rename-only: [[x]] in {{renderer}} [über]"
       ],
       "org/renderer/words": [
-        "rename-only: [[x]] in {{renderer}} (page not read: no evidence reference) [old page]"
-      ],
-      "org/tag-in-word/ns": [
-        "evidence-only explicit_tag: #tag [ns/old]"
-      ],
-      "org/tag-in-word/plain": [
-        "evidence-only explicit_tag: #tag [old]"
-      ],
-      "org/tag-in-word/unicode": [
-        "evidence-only explicit_tag: #tag [über]"
-      ],
-      "org/tag-in-word/words": [
-        "evidence-only explicit_tag: #tag [old]"
-      ],
-      "org/tine-query-link/ns": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/tine-query-link/plain": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [old]"
-      ],
-      "org/tine-query-link/unicode": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [über]"
-      ],
-      "org/tine-query-link/words": [
-        "rename-only: [[x]] in {{tine-query}} (page not read: no evidence reference) [old page]"
-      ],
-      "org/unmatched-opener/ns": [
-        "evidence-only explicit_link: [[x]] [to link [[ns/old]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [ns/old]"
-      ],
-      "org/unmatched-opener/plain": [
-        "evidence-only explicit_link: [[x]] [to link [[old]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [old]"
-      ],
-      "org/unmatched-opener/unicode": [
-        "evidence-only explicit_link: [[x]] [to link [[über]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [über]"
-      ],
-      "org/unmatched-opener/words": [
-        "evidence-only explicit_link: [[x]] [to link [[old page]",
-        "rename-only: [[x]] nested (page not read: no evidence reference) [old page]"
-      ],
-      "org/url-brackets/ns": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[ns/old],[2]",
-        "rename-only: [[x]] (page not read: no evidence reference) [ns/old],[3]"
-      ],
-      "org/url-brackets/plain": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[old],[2]",
-        "rename-only: [[x]] (page not read: no evidence reference) [old],[3]"
-      ],
-      "org/url-brackets/unicode": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[über],[2]",
-        "rename-only: [[x]] (page not read: no evidence reference) [über],[3]"
-      ],
-      "org/url-brackets/words": [
-        "rename-only: [[x]] (page not read: no evidence reference) [[old page],[2]"
+        "rename-only: [[x]] in {{renderer}} [old page]"
       ]
     },
     "harnessSkipped": [],
@@ -845,727 +508,15 @@
     }
   },
   "frontendNames": {
-    "fixtures": {}
-  },
-  "frontendRefs": {
     "fixtures": {
-      "md/cloze/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "md/cloze/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "md/cloze/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "md/cloze/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "md/comment/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/comment/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/comment/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/comment/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/embed-block/ns": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/embed-block/plain": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]"
-      ],
-      "md/embed-block/unicode": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]"
-      ],
-      "md/embed-block/words": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]"
-      ],
-      "md/embed-spaced/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/embed/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/emphasis/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/escaped/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/escaped/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/escaped/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/escaped/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/fence/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/fence/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/fence/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/fence/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/heading-tag/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/html/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/html/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/html/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/html/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/label-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/link-case/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/link-spaced/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/logbook/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/logbook/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/logbook/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/logbook/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/math/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/math/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/math/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/math/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/nested-outer/ns": [
-        "unsavedPathsFor: refuses renaming [ns/old [[x]]], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/nested-outer/plain": [
-        "unsavedPathsFor: refuses renaming [old [[x]]], the rename leaves this text alone"
-      ],
-      "md/nested-outer/unicode": [
-        "unsavedPathsFor: refuses renaming [über [[x]]], the rename leaves this text alone"
-      ],
-      "md/nested-outer/words": [
-        "unsavedPathsFor: refuses renaming [old page [[x]]], the rename leaves this text alone"
-      ],
-      "md/nested/ns": [
-        "unsavedPathsFor: refuses renaming [a [[ns/old]] c], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [a [[ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/nested/plain": [
-        "unsavedPathsFor: refuses renaming [a [[old]] c], the rename leaves this text alone"
-      ],
-      "md/nested/unicode": [
-        "unsavedPathsFor: refuses renaming [a [[über]] c], the rename leaves this text alone"
-      ],
-      "md/nested/words": [
-        "unsavedPathsFor: refuses renaming [a [[old page]] c], the rename leaves this text alone"
-      ],
-      "md/ns-child/ns": [
-        "unsavedPathsFor: refuses renaming [ns/old], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/ns-child/plain": [
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/ns-child/unicode": [
-        "unsavedPathsFor: refuses renaming [über], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/ns-child/words": [
-        "unsavedPathsFor: refuses renaming [old page], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/page-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone"
-      ],
-      "md/page-tags/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone"
-      ],
-      "md/prop-alias-bare/ns": [
-        "swipeRefNames: evidence-only refs [\"ns/old\"]"
-      ],
-      "md/prop-alias-bare/plain": [
-        "swipeRefNames: evidence-only refs [\"old\"]"
-      ],
-      "md/prop-alias-bare/unicode": [
-        "swipeRefNames: evidence-only refs [\"über\"]"
-      ],
-      "md/prop-alias-bare/words": [
-        "swipeRefNames: evidence-only refs [\"old page\"]"
-      ],
-      "md/prop-key/ns": [
-        "swipeRefNames: evidence-only refs [\"ns/old\"]"
-      ],
-      "md/prop-key/plain": [
-        "swipeRefNames: evidence-only refs [\"old\"]"
-      ],
-      "md/prop-key/unicode": [
-        "swipeRefNames: evidence-only refs [\"über\"]"
-      ],
-      "md/prop-other-bare/ns": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-other-bare/plain": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-other-bare/unicode": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-other-bare/words": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-other-link/ns": [
-        "swipeRefNames: evidence-only refs [\"related\"]",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/prop-other-link/plain": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-other-link/unicode": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-other-link/words": [
-        "swipeRefNames: evidence-only refs [\"related\"]"
-      ],
-      "md/prop-tags-bare/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/prop-tags-hash/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/prop-tags-hash/words": [
-        "unsavedPathsFor: refuses renaming [page], the rename leaves this text alone"
-      ],
-      "md/prop-tags-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/prop-tags-quoted/ns": [
-        "unsavedPathsFor: allows renaming [\"ns/old\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/prop-tags-quoted/plain": [
-        "unsavedPathsFor: allows renaming [\"old\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/prop-tags-quoted/unicode": [
-        "unsavedPathsFor: allows renaming [\"über\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/prop-tags-quoted/words": [
-        "unsavedPathsFor: allows renaming [\"old page\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/prop-title-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/query-and/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "md/query-and/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "md/query-and/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "md/query-and/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "md/query-link/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "md/query-link/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "md/query-link/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "md/query-link/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "md/query-plus-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/quote/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/renderer/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "md/renderer/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "md/renderer/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "md/renderer/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "md/table/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/tag-bracket/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/tag-in-word/ns": [
-        "unsavedPathsFor: refuses renaming [ns/old], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/tag-in-word/plain": [
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone"
-      ],
-      "md/tag-in-word/unicode": [
-        "unsavedPathsFor: refuses renaming [über], the rename leaves this text alone"
-      ],
-      "md/tag-in-word/words": [
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone"
-      ],
-      "md/tag-trailing-dot/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/tag/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/tine-query-link/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "md/tine-query-link/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "md/tine-query-link/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "md/tine-query-link/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "md/unmatched-opener/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[ns/old], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [to link [[ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "md/unmatched-opener/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[old], the rename leaves this text alone"
-      ],
-      "md/unmatched-opener/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[über], the rename leaves this text alone"
-      ],
-      "md/unmatched-opener/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[old page], the rename leaves this text alone"
-      ],
-      "md/url-brackets/ns": [
-        "unsavedPathsFor: allows renaming [[ns/old],[2], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [ns/old],[3], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/url-brackets/plain": [
-        "unsavedPathsFor: allows renaming [[old],[2], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [old],[3], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/url-brackets/unicode": [
-        "unsavedPathsFor: allows renaming [[über],[2], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [über],[3], the rename rewrites this text (no evidence reference)"
-      ],
-      "md/url-brackets/words": [
-        "unsavedPathsFor: allows renaming [[old page],[2], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/cloze/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "org/cloze/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/cloze/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/cloze/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/drawer-property/ns": [
-        "swipeRefNames: evidence-only refs [\"ns/old\"]"
-      ],
-      "org/drawer-property/plain": [
-        "swipeRefNames: evidence-only refs [\"old\"]"
-      ],
-      "org/drawer-property/unicode": [
-        "swipeRefNames: evidence-only refs [\"über\"]"
-      ],
-      "org/drawer-property/words": [
-        "swipeRefNames: evidence-only refs [\"old page\"]"
-      ],
-      "org/embed-block/ns": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/embed-block/plain": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]"
-      ],
-      "org/embed-block/unicode": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]"
-      ],
-      "org/embed-block/words": [
-        "swipeRefNames: evidence-only refs [\"((6571a2b3-1111-2222-3333-444455556666))\"]"
-      ],
-      "org/embed-spaced/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/embed/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/emphasis/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "org/emphasis/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/emphasis/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/emphasis/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/escaped/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/escaped/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/escaped/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/escaped/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/file-link-bare/ns": [
-        "swipeRefNames: frontend-only refs [\"ns___old\"]",
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/file-link-bare/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/file-link-bare/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/file-link-bare/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/file-link-label/ns": [
-        "swipeRefNames: evidence-only refs [\"ns/old\"]",
-        "swipeRefNames: frontend-only refs [\"ns___old\"]",
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text"
-      ],
-      "org/file-link-other-label/ns": [
-        "swipeRefNames: evidence-only refs [\"a label\"]",
-        "swipeRefNames: frontend-only refs [\"ns___old\"]",
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/file-link-other-label/plain": [
-        "swipeRefNames: evidence-only refs [\"a label\"]",
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/file-link-other-label/unicode": [
-        "swipeRefNames: evidence-only refs [\"a label\"]",
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/file-link-other-label/words": [
-        "swipeRefNames: evidence-only refs [\"a label\"]",
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/heading-tag/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/labelled-link/ns": [
-        "unsavedPathsFor: allows renaming [ns/old][a label], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [ns/old], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/labelled-link/plain": [
-        "unsavedPathsFor: allows renaming [old][a label], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone"
-      ],
-      "org/labelled-link/unicode": [
-        "unsavedPathsFor: allows renaming [über][a label], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [über], the rename leaves this text alone"
-      ],
-      "org/labelled-link/words": [
-        "unsavedPathsFor: allows renaming [old page][a label], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [old page], the rename leaves this text alone"
-      ],
-      "org/link-case/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/link-spaced/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/logbook/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/logbook/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/logbook/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/logbook/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/math/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/math/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/math/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/math/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/nested-outer/ns": [
-        "unsavedPathsFor: refuses renaming [ns/old [[x]]], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/nested-outer/plain": [
-        "unsavedPathsFor: refuses renaming [old [[x]]], the rename leaves this text alone"
-      ],
-      "org/nested-outer/unicode": [
-        "unsavedPathsFor: refuses renaming [über [[x]]], the rename leaves this text alone"
-      ],
-      "org/nested-outer/words": [
-        "unsavedPathsFor: refuses renaming [old page [[x]]], the rename leaves this text alone"
-      ],
-      "org/nested/ns": [
-        "unsavedPathsFor: refuses renaming [a [[ns/old]] c], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [a [[ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/nested/plain": [
-        "unsavedPathsFor: refuses renaming [a [[old]] c], the rename leaves this text alone"
-      ],
-      "org/nested/unicode": [
-        "unsavedPathsFor: refuses renaming [a [[über]] c], the rename leaves this text alone"
-      ],
-      "org/nested/words": [
-        "unsavedPathsFor: refuses renaming [a [[old page]] c], the rename leaves this text alone"
-      ],
-      "org/ns-child/ns": [
-        "unsavedPathsFor: refuses renaming [ns/old], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/ns-child/plain": [
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/ns-child/unicode": [
-        "unsavedPathsFor: refuses renaming [über], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/ns-child/words": [
-        "unsavedPathsFor: refuses renaming [old page], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/page-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone"
-      ],
-      "org/page-tags/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/page-tags/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/page-tags/unicode": [
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/page-tags/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-other-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/prop-tags-bare/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-bare/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-bare/unicode": [
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-bare/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [other], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-hash/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/prop-tags-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/prop-tags-quoted/ns": [
-        "unsavedPathsFor: allows renaming [\"ns/old\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-quoted/plain": [
-        "unsavedPathsFor: allows renaming [\"old\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-quoted/unicode": [
-        "unsavedPathsFor: allows renaming [\"über\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-tags-quoted/words": [
-        "unsavedPathsFor: allows renaming [\"old page\"], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/prop-title-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/query-and/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "org/query-and/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/query-and/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/query-and/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/query-link/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "org/query-link/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/query-link/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/query-link/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/query-plus-link/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/quote/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/renderer/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "org/renderer/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/renderer/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/renderer/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/table/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/tag-bracket/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/tag-in-word/ns": [
-        "unsavedPathsFor: refuses renaming [ns/old], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/tag-in-word/plain": [
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone"
-      ],
-      "org/tag-in-word/unicode": [
-        "unsavedPathsFor: refuses renaming [über], the rename leaves this text alone"
-      ],
-      "org/tag-in-word/words": [
-        "unsavedPathsFor: refuses renaming [old], the rename leaves this text alone"
-      ],
-      "org/tag-trailing-dot/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/tag/ns": [
-        "unsavedPathsFor: refuses renaming [ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/tine-query-link/ns": [
-        "swipeRefNames: frontend-only refs [\"ns/old\"]"
-      ],
-      "org/tine-query-link/plain": [
-        "swipeRefNames: frontend-only refs [\"old\"]"
-      ],
-      "org/tine-query-link/unicode": [
-        "swipeRefNames: frontend-only refs [\"über\"]"
-      ],
-      "org/tine-query-link/words": [
-        "swipeRefNames: frontend-only refs [\"old page\"]"
-      ],
-      "org/unmatched-opener/ns": [
-        "unsavedPathsFor: allows renaming [ns/old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[ns/old], the rename leaves this text alone",
-        "unsavedPathsFor: refuses renaming [to link [[ns], the rename leaves this text alone (namespace parent: rewritten only if the child page exists, R8)"
-      ],
-      "org/unmatched-opener/plain": [
-        "unsavedPathsFor: allows renaming [old], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[old], the rename leaves this text alone"
-      ],
-      "org/unmatched-opener/unicode": [
-        "unsavedPathsFor: allows renaming [über], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[über], the rename leaves this text alone"
-      ],
-      "org/unmatched-opener/words": [
-        "unsavedPathsFor: allows renaming [old page], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: refuses renaming [to link [[old page], the rename leaves this text alone"
-      ],
-      "org/url-brackets/ns": [
-        "unsavedPathsFor: allows renaming [[ns/old],[2], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [ns/old],[3], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/url-brackets/plain": [
-        "unsavedPathsFor: allows renaming [[old],[2], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [old],[3], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/url-brackets/unicode": [
-        "unsavedPathsFor: allows renaming [[über],[2], the rename rewrites this text (no evidence reference)",
-        "unsavedPathsFor: allows renaming [über],[3], the rename rewrites this text (no evidence reference)"
-      ],
-      "org/url-brackets/words": [
-        "unsavedPathsFor: allows renaming [[old page],[2], the rename rewrites this text (no evidence reference)"
+      "n4-org-file-links-triple-lowbar": [
+        "frontend file link: nearestLink reads \"Ten___Child\" in pages/note.org (\"see [[file:./Ten___Child.org][ten]]\"), pages/Ten___Child.org is named \"Ten/Child\"",
+        "frontend file link: nearestLink reads \"a/b\" in pages/note.org (\"and [[file:./a.b.org][ab]]\"), pages/a.b.org is named \"a.b\""
       ]
     }
+  },
+  "frontendRefs": {
+    "fixtures": {}
   },
   "names": {
     "fixtures": {
@@ -1621,6 +572,7 @@
     "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled.",
     "n1-legacy-codec": "pending Q-N1 (Martin): OG keeps \"%25\" undecoded in a legacy file name (\"50%25 of 100%\"); Tine percent-decodes it (\"50% of 100%\"). Today's behaviour is kept until Q-N1 is ruled. (\"contents\" -> \"Contents\" was fixed in batch 3, REG-CM-CONTENTS-PAGE-NAME.)",
     "n2-triple-lowbar-codec": "pending Q-N1 (Martin): decode differences from OG's triple-lowbar codec (a leading \"___\", percent-decoding, \"______\"). Today's behaviour is kept until Q-N1 is ruled.",
+    "n4-org-file-links-triple-lowbar": "A finding, not a decision (CM step 2 batch 6): `nearestLink` (follow link, Ctrl/Cmd+O) caches each block's link candidates per parsed AST (`candidatesByAst`), so after the graph's `:file/name-format` changes at runtime a block parsed before the change keeps the old format's page name for an Org file link. This test reads the same texts under legacy first, then triple-lowbar. Pre-existing; surfaced when this test moved off `pageRefsInText` (deleted). Fix: key the cache by the file-name format.",
     "n5-title-differs-from-stem": "pending Q-N3 (Martin): OG names a journal file with `title::` by its title (\"Release day\"); Tine names every journal by its date. Today's behaviour is kept until Q-N3 is ruled. The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n6-title-rename": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n7-sync-conflict-names": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
