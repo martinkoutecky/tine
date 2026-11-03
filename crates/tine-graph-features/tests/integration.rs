@@ -55,10 +55,10 @@ mod c3w_rename_refs;
 #[path = "cm_conformance_rename.rs"]
 mod cm_conformance_rename;
 
-#[path = "cm_favorites_rename.rs"]
-mod cm_favorites_rename;
 #[path = "cm_conformance_names.rs"]
 mod cm_conformance_names;
+#[path = "cm_favorites_rename.rs"]
+mod cm_favorites_rename;
 
 #[path = "c3w_rename_unreadable.rs"]
 mod c3w_rename_unreadable;
