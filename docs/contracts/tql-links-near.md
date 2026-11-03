@@ -145,9 +145,14 @@ day answers to.
 unfiltered Linked References panel lists: a block once however many of the
 page's names it uses, never a block of the page's own panel or of the Favorites
 arrangement page (`WholeGraph::page_backlink_counts`). A counter of its own
-computes it (`query::page_counts`): one forward walk over every block's
-reference targets by the panel's rule, each distinct target folded once to its
-panel by the panel's resolver. It and the panel's own walk
+computes it (`query::page_counts`), as the link table does: every listed page
+is registered under each name the panel's resolver gives it (its alias group,
+the group's journal-date spellings); one forward walk collects every block's
+distinct reference targets by the panel's rule; a target no listed page answers
+to opens a page without a file, registered the same way; then each block counts
+once for every panel one of its targets reaches. A target is never folded
+forward to a single panel: one name can belong to several panels (an alias
+member, a chain, two declarers, a date spelling). It and the panel's own walk
 (`backlinks_bounded`) are two drivers of one rule, an I-12 exception kept equal
 by the conformance harness; it retires with one forward target map (D3). A
 block embed (`{{embed ((uuid))}}`) names no page: no panel lists it, so it is

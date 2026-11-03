@@ -131,8 +131,11 @@ impl ChangeFeed {
             files.retain(|(id, _, rev)| deferred.last_rev(id).as_ref() != Some(rev));
             pages.retain(|(id, ..)| files.iter().any(|(file, ..)| file == id));
             if files.is_empty() {
-                // The echoed change reconciles what raced the echo.
-                if let Some(echoed) = deferred.changes.last_mut() {
+                // The echoed change reconciles what raced the echo. A file
+                // filters out only by matching a deferred change, so one exists.
+                let echoed = deferred.changes.last_mut();
+                debug_assert!(echoed.is_some(), "an echo with no deferred change");
+                if let Some(echoed) = echoed {
                     echoed.raced.extend(raced);
                 }
                 return;

@@ -696,13 +696,23 @@ fn a_failed_save_carries_its_platform_step_and_os_error() {
 
 #[test]
 fn create_race_after_guard_is_no_replace_and_then_observes_conflict() {
+    // Also where the storage refuses the no-replace flag (GH #538: Android
+    // shared storage, NFS): the fallback's absence check keeps the occupant.
+    for flag_refused in [false, true] {
+        create_race_after_guard(flag_refused);
+    }
+}
+
+fn create_race_after_guard(flag_refused: bool) {
     let mut f = Fixture::new();
     f.edit("c.md", "mine");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
     f.host.advance_save(); // synced temp
     f.host.advance_save(); // absent base guard
     fs::write(f.graph.join("c.md"), b"other").unwrap();
+    crate::no_replace::REFUSE_NOREPLACE_FLAG.with(|flag| flag.set(flag_refused));
     f.host.advance_save(); // real EEXIST
+    crate::no_replace::REFUSE_NOREPLACE_FLAG.with(|flag| flag.set(false));
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"other");
     assert!(f.host.events.iter().any(|e| matches!(
         e,
