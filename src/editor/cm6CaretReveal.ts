@@ -1,6 +1,6 @@
 import { EditorView } from "@codemirror/view";
 import { nearestScrollableY } from "../components/blockParts";
-import { revealCaretRect, watchCaretReveal } from "./caretReveal";
+import { registerCaretRowSource, revealCaretRect, watchCaretReveal } from "./caretReveal";
 
 /** CM focus already uses preventScroll. Route its scroll requests and late
  * layout changes through the same pane/notice/pin policy as the textarea. */
@@ -24,11 +24,17 @@ export function cm6CaretReveal(view: EditorView) {
     }
   };
   const stopWatch = watchCaretReveal(editor, pane, reveal);
+  // The keyboard-time follow (MobileKeyboardToolbar, GH #783) places the caret from this row, as for the textarea.
+  const unregisterRow = registerCaretRowSource(editor, () => {
+    if (!view.hasFocus || !editor.isConnected) return null;
+    return view.coordsAtPos(view.state.selection.main.head);
+  });
   const gestures = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
   const userInput = () => { settling = false; };
   for (const type of gestures) pane?.addEventListener(type, userInput, { passive: true, capture: true });
   const cancel = () => {
     stopWatch();
+    unregisterRow();
     for (const type of gestures) pane?.removeEventListener(type, userInput, true);
   };
   return { cancel, extension: EditorView.scrollHandler.of(() => {
