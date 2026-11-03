@@ -1,8 +1,19 @@
 //! C3W W3 (L03): rename rewrites every reference to the old name that OG's
-//! rename rewrites. An unmatched `[[` (also `#[[`) used to swallow text up to the
-//! next `]]`, so `[[Target]]` after it stayed stale; a nested `[[a [[Target]] c]]`
-//! lost its inner reference the same way; and a `tags::` value split with the
-//! full-width `，` (which the reference evidence counts) was never rewritten.
+//! rename rewrites. A nested `[[a [[Target]] c]]` used to lose its inner
+//! reference, and a `tags::` value split with the full-width `，` (which the
+//! reference evidence counts) was never rewritten.
+//!
+//! Conceptual model step 2 (batch 6) corrected what the test first claimed
+//! about an unmatched `[[`: the parser, not a text scan, says what is a
+//! reference, and mldoc 1.5.9 (checked through the lsdoc harness) reads
+//! `use [[ to link, then [[Target]] here` as ONE page link named
+//! ` to link, then [[Target`, `#[[ opener then #[[Target]]` as ONE tag named
+//! ` opener then #[[Target`, and the Org `[[ x and [[file:./Target.org][Target]]`
+//! as one labelled link whose target is ` x and [[file:./Target.org`. OG's
+//! `rename-update-refs!` (`frontend/handler/page.cljs:393` at `6e7afa8eb`)
+//! rewrites only blocks in the renamed page's `:block/_refs`; that link does
+//! not reference Target, so OG leaves those spans alone, and Tine renders
+//! them as that one link or tag too.
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -112,15 +123,20 @@ fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() 
     let referrer = fs::read_to_string(root.join("pages/Referrer.md")).unwrap();
     assert_eq!(
         referrer,
-        "- use [[ to link, then [[Renamed]] here\n\
-         - a tag #[[ opener then #Renamed too\n\
+        // The first two lines hold no reference to Target (see the module
+        // comment): left as written.
+        "- use [[ to link, then [[Target]] here\n\
+         - a tag #[[ opener then #[[Target]] too\n\
          - nested [[a [[Renamed]] c]]\n\
          - tagged\n  tags:: Other，Renamed\n\
          - plain [[Renamed]]\n"
     );
     let org = fs::read_to_string(root.join("pages/Org.org")).unwrap();
-    assert!(
-        org.contains("[[file:./Renamed.org][Target]]") && org.contains("and [[Renamed]]"),
+    // The labelled link's target is ` x and [[file:./Target.org` (see the
+    // module comment): it is not a reference to Target, so it stays; the
+    // plain `[[Target]]` after it is one and is rewritten.
+    assert_eq!(
+        org, "* see [[ x and [[file:./Target.org][Target]] and [[Renamed]]\n",
         "{org}"
     );
     let _ = fs::remove_dir_all(&root);

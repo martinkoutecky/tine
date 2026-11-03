@@ -188,62 +188,41 @@ fn claimants(target: Resolved) -> Vec<PageId> {
     }
 }
 
-/// Every page holding an export definition block whose page selector names
-/// one of `olds`, found by the definitions query
-/// (`tine_core::export_definition::definitions_query`) over the planning view
-/// and the selectors of the blocks it returns: O(P + B) in memory, memoized
-/// per generation, no file read, so a definition page the rename does not
-/// touch is not read. A view with more definition blocks than one bounded
-/// answer carries refuses the rename before anything is written, rather than
-/// leave a definition naming the old page (scenario: malformed or generated
-/// input; a later page with the old name would then be the one exported).
-fn export_definition_pages(
-    graph: &tine_store::WholeGraph,
-    olds: &[String],
-) -> io::Result<Vec<PageId>> {
-    use tine_core::query::ir::{ExecutionContext, QueryRows, ViewSettings};
-    use tine_store::{IrAnswer, IrRequest};
-    let parsed = tine_core::query::wire_parse::parse_query_pair(
-        &tine_core::export_definition::definitions_query(),
-        tine_core::query::wire_parse::QueryTextDialect::Og,
-        &[],
-        tine_core::query::registry::Registry::none(),
-    );
-    let answer = graph
-        .query_ir(
-            IrRequest::Run {
-                query: &parsed.query,
-                view: &ViewSettings::default(),
-                context: &ExecutionContext::default(),
-            },
-            &tine_store::Cancel::default(),
-        )
-        .map(|answer| answer.expect("never cancelled"))
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let IrAnswer::Result(result) = answer else {
-        return Err(io::Error::other("query run returned another answer"));
+/// Every page holding a `{{query}}` or `{{tine-query}}` macro whose argument
+/// spells one of `olds` (page identity's folding, so namespace descendants
+/// too): the rename rewrites their page-name arguments (D-20261031-CMQ), and no
+/// referrers row names those pages. Found by scanning the planning view's
+/// parsed blocks in memory, with no index (D-10; no persisted record, I-25):
+/// O(B) block checks for `{{` plus O(macro text) on the blocks that hold one.
+/// Over-selection costs a read, never a write: a page the rewrite leaves
+/// byte-identical is not written.
+fn query_macro_pages(graph: &tine_store::WholeGraph, olds: &[String]) -> Vec<PageId> {
+    let keys: Vec<String> = olds.iter().map(|old| refs::page_key(old)).collect();
+    let mentions = |raw: &str| {
+        raw.contains("{{")
+            && tine_core::query::macro_text::query_macro_extents(raw)
+                .iter()
+                .any(|extent| {
+                    let argument = refs::page_key(&extent.argument);
+                    keys.iter().any(|key| argument.contains(key.as_str()))
+                })
     };
-    if result.exceeded {
-        return Err(error(
-            io::ErrorKind::InvalidData,
-            "too many export definitions to rename their pages safely",
-        ));
-    }
-    let QueryRows::Block { groups } = result.rows else {
-        return Ok(Vec::new());
-    };
-    let olds: HashSet<String> = olds.iter().map(|old| refs::normalize(old)).collect();
-    Ok(groups
-        .iter()
-        .filter(|group| {
-            group.blocks.iter().any(|block| {
-                tine_core::export_definition::selected_names(&block.raw)
-                    .iter()
-                    .any(|name| olds.contains(&refs::normalize(name)))
-            })
+    graph
+        .corpus(None)
+        .pages
+        .into_iter()
+        .filter(|page| {
+            let mut stack: Vec<_> = page.document.roots.iter().collect();
+            while let Some(block) = stack.pop() {
+                if mentions(block.raw()) {
+                    return true;
+                }
+                stack.extend(block.children.iter());
+            }
+            false
         })
-        .flat_map(|group| existing(graph.resolve(&group.page, group.kind == PageKind::Journal)))
-        .collect())
+        .map(|page| page.id)
+        .collect()
 }
 
 fn physical(target: &Resolved) -> Vec<PageId> {
@@ -1359,24 +1338,15 @@ fn merged_survivor(
     })
 }
 
+/// The merge survivor's own references to the merged page follow it: the
+/// same rewrite a rename applies to a page (`refs::rename_rewrite`), block by
+/// block.
 fn rename_doc(
     doc: &mut PageDto,
     renames: &HashMap<String, String>,
     org: bool,
     format: tine_core::config::FileNameFormat,
 ) {
-    fn rewrite(
-        raw: &mut String,
-        renames: &HashMap<String, String>,
-        org: bool,
-        format: tine_core::config::FileNameFormat,
-    ) {
-        *raw = refs::rename_tags_property_multi(
-            &refs::rename_refs_multi(raw, renames, org, format),
-            renames,
-            org,
-        );
-    }
     fn walk(
         blocks: &mut [tine_core::model::BlockDto],
         renames: &HashMap<String, String>,
@@ -1384,12 +1354,12 @@ fn rename_doc(
         format: tine_core::config::FileNameFormat,
     ) {
         for block in blocks {
-            rewrite(&mut block.raw, renames, org, format);
+            block.raw = refs::rename_block_raw(&block.raw, org, renames, format);
             walk(&mut block.children, renames, org, format);
         }
     }
     if let Some(pre) = doc.pre_block.as_mut() {
-        rewrite(pre, renames, org, format);
+        *pre = refs::rename_pre_block(pre, org, renames, format);
     }
     walk(&mut doc.blocks, renames, org, format);
 }

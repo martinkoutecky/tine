@@ -5,11 +5,12 @@
 //! The answerer is `tine_core::reference_evidence` (each block's
 //! `projection().reference_source().explicit`, every occurrence with its rule
 //! and source range). The second computer is the rename's rewrite,
-//! `tine_core::refs::rename_rewrite` (`rename_refs_multi`,
-//! `rename_tags_property_multi`, `export_definition::rename_selectors`), which
-//! scans the whole file text itself to decide which occurrences a rename
-//! changes. The model receives Tine's occurrences as an input, so the two were
-//! never compared before this test.
+//! `tine_core::refs::rename_rewrite`. Until batch 6 phase B it scanned the
+//! whole file text itself to decide which occurrences a rename changes; it now
+//! rewrites the evidence's own occurrences plus query page-name arguments
+//! (`refs_rename.rs`), and this test pins the differences that remain (the
+//! declared ones). The model receives Tine's occurrences as an input, so the
+//! two were never compared before this test.
 //!
 //! How the scanner's occurrences are read without changing it: every
 //! candidate name of a page (the evidence names plus a deliberately crude

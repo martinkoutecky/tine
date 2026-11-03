@@ -205,10 +205,10 @@ pub fn guide_link_renames() -> HashMap<String, String> {
 
 pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>) -> String {
     // Markdown has no `file:` page links, so the filename format is not consulted.
-    crate::refs::rename_refs_multi(
+    crate::refs::rename_rewrite_keyed(
         markdown,
-        renames,
         false,
+        renames,
         crate::config::FileNameFormat::TripleLowbar,
     )
 }

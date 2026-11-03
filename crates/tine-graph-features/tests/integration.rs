@@ -51,6 +51,8 @@ mod c3w_keep_both_ids;
 
 #[path = "c3w_rename_refs.rs"]
 mod c3w_rename_refs;
+#[path = "cm_rename_bytes.rs"]
+mod cm_rename_bytes;
 
 #[path = "cm_conformance_rename.rs"]
 mod cm_conformance_rename;

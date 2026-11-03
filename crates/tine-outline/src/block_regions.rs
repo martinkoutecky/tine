@@ -84,6 +84,21 @@ pub fn unbracket(value: &str) -> &str {
 }
 
 pub fn nested_reference_names(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = nested_reference_ranges(content)
+        .into_iter()
+        .map(|range| content[range].to_string())
+        .collect();
+    if out.is_empty() && !content.trim().is_empty() {
+        out.push(unbracket(content).to_string());
+    }
+    out
+}
+
+/// The byte range of each name a nested link's source `content` holds (each
+/// balanced `[[…]]` body, inner first), in closing order: the one scan behind
+/// [`nested_reference_names`], kept with offsets for a rename that respells a
+/// name in place.
+pub fn nested_reference_ranges(content: &str) -> Vec<std::ops::Range<usize>> {
     let mut starts = Vec::new();
     let mut out = Vec::new();
     let bytes = content.as_bytes();
@@ -95,16 +110,13 @@ pub fn nested_reference_names(content: &str) -> Vec<String> {
         } else if bytes[index] == b']' && bytes[index + 1] == b']' {
             if let Some(start) = starts.pop() {
                 if start <= index {
-                    out.push(content[start..index].to_string());
+                    out.push(start..index);
                 }
             }
             index += 2;
         } else {
             index += content[index..].chars().next().map_or(1, char::len_utf8);
         }
-    }
-    if out.is_empty() && !content.trim().is_empty() {
-        out.push(unbracket(content).to_string());
     }
     out
 }
