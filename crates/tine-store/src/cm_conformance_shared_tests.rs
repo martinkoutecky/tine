@@ -23,7 +23,7 @@ use std::path::Path;
 use std::process::Command;
 
 use serde_json::{json, Value};
-use tine_core::config::FileNameFormat;
+use tine_core::config::{Config, FileNameFormat};
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::doc::{self, property_key_norm, DocBlock, Document};
 use tine_core::model::{
@@ -31,6 +31,7 @@ use tine_core::model::{
 };
 use tine_core::query::ir::{ExecutionContext, QueryRows};
 use tine_core::query::{parse_query_text, QueryDialect};
+use tine_core::reference_evidence::visit_reference_targets;
 use tine_core::refs::page_key;
 
 use super::store_crate::{Cancel, InventoryScope, IrAnswer, IrRequest, Resolved, WholeGraph};
@@ -67,21 +68,27 @@ fn occ_kind(rule: &str) -> &'static str {
     }
 }
 
-fn block_json(raw: &str, level: usize, block: &DocBlock) -> Value {
+/// A block's occurrences for the model: the parser-owned explicit references
+/// that reach a target under the graph's config (`visit_reference_targets`,
+/// the one rule behind Linked References and the link table: a property key
+/// the graph's `:property-pages/enabled?` / `:property-pages/excludelist`
+/// turns off names no page, as in OG `get-page-refs-from-property-names`).
+fn block_json(raw: &str, level: usize, block: &DocBlock, config: &Config) -> Value {
     let occ: Vec<Value> = block
         .projection()
         .reference_source()
         .explicit
         .iter()
+        .filter(|r| visit_reference_targets(r, config, |_| true))
         .map(|r| json!([occ_kind(r.rule), r.name]))
         .collect();
     json!({"text": raw, "level": level, "occ": occ})
 }
 
-fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>) {
+fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>, config: &Config) {
     for block in blocks {
-        out.push(block_json(block.raw(), level, block));
-        walk(&block.children, level + 1, out);
+        out.push(block_json(block.raw(), level, block, config));
+        walk(&block.children, level + 1, out, config);
     }
 }
 
@@ -187,6 +194,7 @@ pub fn file_json(
     text: &str,
     aliases: AliasFn,
     name_format: FileNameFormat,
+    config: &Config,
 ) -> Value {
     let journal_dir = rel.starts_with("journals/");
     let format = file_format(rel);
@@ -211,9 +219,9 @@ pub fn file_json(
             org,
             &Default::default(),
         );
-        blocks.push(block_json(pre, 1, &header));
+        blocks.push(block_json(pre, 1, &header, config));
     }
-    walk(&parsed.roots, 1, &mut blocks);
+    walk(&parsed.roots, 1, &mut blocks, config);
     json!({
         "path": rel,
         "dir": if journal_dir { "journals" } else { "pages" },
@@ -300,6 +308,9 @@ pub struct GraphSpec {
     /// the fixture's `ogSource`). Tine's codec and title parser are the
     /// model's inputs, so only this independent oracle checks them.
     pub og_names: BTreeMap<String, String>,
+    /// Further `config.edn` entries, verbatim EDN (fixture `config.edn`, e.g.
+    /// `":property-pages/excludelist #{:secret}"`).
+    pub extra_config: Vec<String>,
     pub navigate: Vec<String>,
     pub queries: Vec<QuerySpec>,
     pub renames: Vec<(String, String)>,
@@ -373,6 +384,7 @@ impl GraphSpec {
                         .collect()
                 })
                 .unwrap_or_default(),
+            extra_config: strings(&v["config"]["edn"]),
             navigate: strings(&v["navigate"]),
             queries,
             renames,
@@ -393,6 +405,9 @@ impl GraphSpec {
         }
         if let Some(f) = &self.file_name_format {
             v["config"]["fileNameFormat"] = json!(f);
+        }
+        if !self.extra_config.is_empty() {
+            v["config"]["edn"] = json!(self.extra_config);
         }
         if !self.queries.is_empty() {
             v["queries"] = json!(self
@@ -438,11 +453,9 @@ impl GraphSpec {
         }
     }
 
-    /// Write the graph under `root` (pages/, journals/, and a config only
-    /// when the fixture configures a Favorites page or a journal format).
-    pub fn write(&self, root: &Path) {
-        fs::create_dir_all(root.join("pages")).unwrap();
-        fs::create_dir_all(root.join("journals")).unwrap();
+    /// The graph's `config.edn` entries (none when the fixture configures
+    /// nothing).
+    fn config_entries(&self) -> Vec<String> {
         let mut config = Vec::new();
         if let Some(f) = &self.favorites_page {
             config.push(format!(":tine/favorites-page {f:?}"));
@@ -456,6 +469,21 @@ impl GraphSpec {
         if let Some(f) = &self.file_name_format {
             config.push(format!(":file/name-format :{f}"));
         }
+        config.extend(self.extra_config.iter().cloned());
+        config
+    }
+
+    /// The graph's config as the store parses its `config.edn`.
+    pub fn config(&self) -> Config {
+        Config::parse(&format!("{{{}}}\n", self.config_entries().join("\n ")))
+    }
+
+    /// Write the graph under `root` (pages/, journals/, and a config only
+    /// when the fixture configures something).
+    pub fn write(&self, root: &Path) {
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("journals")).unwrap();
+        let config = self.config_entries();
         if !config.is_empty() {
             fs::create_dir_all(root.join("logseq")).unwrap();
             fs::write(
@@ -665,11 +693,12 @@ pub fn model_input(
     map_strings: &[String],
 ) -> Value {
     let journal = spec.journal_format();
+    let config = spec.config();
     let mut input = json!({
         // A sync-conflict copy is not graph text in Tine (no page, no
         // references; `sync_conflict_base`), and the model has no such file:
         // it is left out of the model's graph (census Q2 fixtures).
-        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel)).map(|(rel, text)| file_json(view, rel, text, aliases, spec.name_format())).collect::<Vec<_>>(),
+        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel)).map(|(rel, text)| file_json(view, rel, text, aliases, spec.name_format(), &config)).collect::<Vec<_>>(),
         "navigate": spec.navigate,
         "favoritesPage": spec.favorites_page.clone().unwrap_or_else(|| NO_FAVORITES.to_owned()),
         "queries": spec.queries.iter().map(|q| json!({"anchor": q.anchor, "q": q.q})).collect::<Vec<_>>(),
@@ -1121,7 +1150,10 @@ fn resolved_wire(r: &Resolved) -> Value {
 ///   the model's page and the backend's own answer (`navigate`);
 /// - `open`: per name the click path can route to (every spelling and every
 ///   inventory name), the page `get_page(name, kind)` opens for each kind
-///   (`WholeGraph::resolve`, first alias owner, as `Store::page_named`).
+///   (`WholeGraph::resolve`, first alias owner, as `Store::page_named`);
+/// - `counts`, `pages`, `backlinks`, `keyOf` (batch 5): All Pages' counts
+///   read, the model's pages with their Linked References size, each page's
+///   panel answer, and the model key of every inventory name.
 pub fn frontend_case(
     ctx: &Ctx,
     journal_title_format: Option<&str>,
@@ -1179,6 +1211,39 @@ pub fn frontend_case(
             )
         })
         .collect();
+    // CM step 2 batch 5 (counts and the page set Tine shows; read by
+    // `src/cmConformanceCounts.test.ts`, which mounts All Pages and the Linked
+    // References panel on these answers).
+    let counts: Vec<Value> = view
+        .page_backlink_counts()
+        .into_iter()
+        .map(|(path, n)| json!([path, n]))
+        .collect();
+    let mut pages = Vec::new();
+    let mut backlinks = BTreeMap::new();
+    for p in &ctx.pages {
+        if ctx.conflicts.contains(&p.1) {
+            continue;
+        }
+        let name = tine_name(ctx, p);
+        let groups: Vec<Value> = match view.backlinks(&name) {
+            Ok(groups) => groups.iter().map(ref_group_wire).collect(),
+            Err(e) => vec![json!({"harness": format!("backlinks({name:?}): {e:?}")})],
+        };
+        backlinks.insert(name.clone(), json!(groups));
+        pages.push(json!({
+            "kind": p.0,
+            "key": p.1,
+            "name": name,
+            "owner": ctx.owner_of_page.get(p),
+            "linkedRefs": model_panel(ctx, p).len(),
+        }));
+    }
+    let key_of: BTreeMap<String, String> = inventory
+        .0
+        .iter()
+        .map(|e| (e.name.clone(), fold(journal, &e.name)))
+        .collect();
     json!({
         "journalTitleFormat": journal_title_format,
         "journalFileFormat": journal_file_format,
@@ -1186,6 +1251,29 @@ pub fn frontend_case(
         "inventory": entries,
         "spellings": spellings,
         "open": open,
+        "counts": counts,
+        "pages": pages,
+        "backlinks": backlinks,
+        "keyOf": key_of,
+    })
+}
+
+/// A Linked References group as `get_backlinks` puts it on the wire, with
+/// only the fields the panel's count and its filter chips read.
+fn ref_group_wire(g: &RefGroup) -> Value {
+    json!({
+        "page": g.page,
+        "kind": match g.kind {
+            tine_core::model::PageKind::Journal => "journal",
+            tine_core::model::PageKind::Page => "page",
+        },
+        "blocks": g.blocks.iter().map(|b| json!({
+            "id": b.id,
+            "raw": b.raw,
+            "children": [],
+            "collapsed": false,
+            "tags": [],
+        })).collect::<Vec<_>>(),
     })
 }
 

@@ -1,5 +1,63 @@
 {
+  "backlinks": {
+    "A": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "376b5cbd-782f-8eb3-93c9-5938d5a03905",
+            "raw": "see [[A]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "a]": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "TODO write [#A]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "p": [],
+    "todo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "TODO write [#A]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/p.md",
+      0
+    ],
+    [
+      "pages/A.md",
+      1
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -36,6 +94,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "A]": "a]",
+    "p": "p"
+  },
   "open": {
     "A": {
       "journal": [
@@ -96,6 +159,36 @@
       "page": "pages/p.md"
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "A",
+      "owner": "pages/A.md"
+    },
+    {
+      "key": "a]",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a]",
+      "owner": null
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    },
+    {
+      "key": "todo",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "todo",
+      "owner": null
+    }
+  ],
   "spellings": {
     "A": {
       "backend": [

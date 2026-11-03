@@ -1,5 +1,113 @@
 {
+  "backlinks": {
+    "Tasks": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:ref",
+            "raw": "alias:: Tasks",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "f8d9a1a1-b7ff-8aab-a777-4ad533daeb91",
+            "raw": "[[Tasks]] link",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "2352187c-7a44-87a6-8891-30b5da5d1caa",
+            "raw": "#Tasks tag",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "91e56968-32bb-86ce-905b-76870f913e07",
+            "raw": "{{embed [[Tasks]]}}",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1f5cfe29-5f12-8eec-a798-9d368bd61b39",
+            "raw": "note\nTasks:: value",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "efe779a9-ee20-842c-9664-5a7a096cd2ce",
+            "raw": "other\nrel:: [[Tasks]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "ref"
+      }
+    ],
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "2df93009-6178-8b34-bb36-4715e1f7566d",
+            "raw": "TODO [#A] keep",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "ref"
+      }
+    ],
+    "ref": [],
+    "rel": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "efe779a9-ee20-842c-9664-5a7a096cd2ce",
+            "raw": "other\nrel:: [[Tasks]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "ref"
+      }
+    ],
+    "todo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "2df93009-6178-8b34-bb36-4715e1f7566d",
+            "raw": "TODO [#A] keep",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "ref"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/ref.md",
+      0
+    ],
+    [
+      "pages/Tasks.md",
+      6
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -26,6 +134,10 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Tasks": "tasks",
+    "ref": "ref"
+  },
   "open": {
     "A": {
       "journal": [
@@ -114,6 +226,43 @@
       "page": "pages/Tasks.md"
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "ref",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "ref",
+      "owner": "pages/ref.md"
+    },
+    {
+      "key": "rel",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "rel",
+      "owner": null
+    },
+    {
+      "key": "tasks",
+      "kind": "page",
+      "linkedRefs": 6,
+      "name": "Tasks",
+      "owner": "pages/Tasks.md"
+    },
+    {
+      "key": "todo",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "todo",
+      "owner": null
+    }
+  ],
   "spellings": {
     "A": {
       "backend": [

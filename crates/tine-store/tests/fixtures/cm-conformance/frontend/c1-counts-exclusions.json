@@ -1,0 +1,365 @@
+{
+  "backlinks": {
+    "Favs": [],
+    "Hub": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1db45489-f00c-80a8-9d55-69b5311f8e24",
+            "raw": "#Hub today",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "e91a4b4b-2414-86f2-9ce7-a5174b2b4a8f",
+            "raw": "topic\ntopic:: [[Hub]]",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "cc27b5e9-7374-8e8c-8d3b-c1cd0851767c",
+            "raw": "via alias [[H]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "591b40f9-1313-8058-85a5-172df7260d78",
+            "raw": "direct [[Hub]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "02b4deea-234c-8610-a223-d452c88b14b9",
+            "raw": "child also [[Hub]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "037ab62b-78d2-89c7-8bd9-dc5760302985",
+            "raw": "both [[Hub]] [[H]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "x"
+      }
+    ],
+    "Oct 26th, 2026": [],
+    "topic": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "e91a4b4b-2414-86f2-9ce7-a5174b2b4a8f",
+            "raw": "topic\ntopic:: [[Hub]]",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "x": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      "pages/Favs.md",
+      0
+    ],
+    [
+      "pages/Hub.md",
+      7
+    ],
+    [
+      "pages/x.md",
+      0
+    ],
+    [
+      "journals/2026_10_26.md",
+      0
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "favs",
+      "name": "Favs",
+      "target": {
+        "id": "pages/Favs.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "h",
+      "link": {
+        "kind": "page",
+        "name": "Hub"
+      },
+      "name": "H",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Hub.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "hub",
+      "name": "Hub",
+      "target": {
+        "id": "pages/Hub.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x",
+      "name": "x",
+      "target": {
+        "id": "pages/x.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Favs": "favs",
+    "H": "h",
+    "Hub": "hub",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "x": "x"
+  },
+  "open": {
+    "Favs": {
+      "journal": [
+        "journal",
+        "favs"
+      ],
+      "page": [
+        "page",
+        "favs"
+      ]
+    },
+    "H": {
+      "journal": [
+        "journal",
+        "h"
+      ],
+      "page": [
+        "page",
+        "hub"
+      ]
+    },
+    "Hub": {
+      "journal": [
+        "journal",
+        "hub"
+      ],
+      "page": [
+        "page",
+        "hub"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "topic": {
+      "journal": [
+        "journal",
+        "topic"
+      ],
+      "page": [
+        "page",
+        "topic"
+      ]
+    },
+    "x": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  },
+  "owner": {
+    "Favs": {
+      "journal": null,
+      "page": "pages/Favs.md"
+    },
+    "H": {
+      "journal": null,
+      "page": "pages/Hub.md"
+    },
+    "Hub": {
+      "journal": null,
+      "page": "pages/Hub.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "topic": {
+      "journal": null,
+      "page": null
+    },
+    "x": {
+      "journal": null,
+      "page": "pages/x.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md"
+    },
+    {
+      "key": "favs",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Favs",
+      "owner": "pages/Favs.md"
+    },
+    {
+      "key": "hub",
+      "kind": "page",
+      "linkedRefs": 6,
+      "name": "Hub",
+      "owner": "pages/Hub.md"
+    },
+    {
+      "key": "topic",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "topic",
+      "owner": null
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "x",
+      "owner": "pages/x.md"
+    }
+  ],
+  "spellings": {
+    "Favs": {
+      "backend": [
+        "page",
+        "favs"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "favs"
+      ]
+    },
+    "H": {
+      "backend": [
+        "page",
+        "hub"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "hub"
+      ]
+    },
+    "Hub": {
+      "backend": [
+        "page",
+        "hub"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "hub"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "topic": {
+      "backend": [
+        "page",
+        "topic"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "topic"
+      ]
+    },
+    "x": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    }
+  }
+}

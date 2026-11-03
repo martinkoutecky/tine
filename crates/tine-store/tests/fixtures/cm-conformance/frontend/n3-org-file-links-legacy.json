@@ -1,5 +1,55 @@
 {
+  "backlinks": {
+    "Ten___Child": [],
+    "a": [],
+    "a/b": [],
+    "ab": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "8b359dca-890c-878d-aed7-7a2835a75cb3",
+            "raw": "and [[file:./a.b.org][ab]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "note"
+      }
+    ],
+    "note": [],
+    "ten": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ed8f6232-45b1-8b6c-a074-1af61545776d",
+            "raw": "see [[file:./Ten___Child.org][ten]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "note"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/Ten___Child.org",
+      0
+    ],
+    [
+      "pages/a.b.org",
+      0
+    ],
+    [
+      "pages/note.org",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -57,6 +107,13 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Ten___Child": "ten___child",
+    "a/b": "a/b",
+    "ab": "ab",
+    "note": "note",
+    "ten": "ten"
+  },
   "open": {
     "Ten___Child": {
       "journal": [
@@ -145,6 +202,50 @@
       "page": null
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "a/b",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a/b",
+      "owner": "pages/a.b.org"
+    },
+    {
+      "key": "ab",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ab",
+      "owner": null
+    },
+    {
+      "key": "note",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "note",
+      "owner": "pages/note.org"
+    },
+    {
+      "key": "ten",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ten",
+      "owner": null
+    },
+    {
+      "key": "ten___child",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Ten___Child",
+      "owner": "pages/Ten___Child.org"
+    }
+  ],
   "spellings": {
     "Ten___Child": {
       "backend": [

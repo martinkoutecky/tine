@@ -1,5 +1,48 @@
 {
+  "backlinks": {
+    "Notes": [],
+    "Oct 26th, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[2026-10-26]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "oct 27th, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "[[2026-10-27]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/Notes.md",
+      0
+    ],
+    [
+      "journals/2026_10_26.md",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -54,6 +97,12 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-26": "oct 26th, 2026",
+    "2026-10-27": "oct 27th, 2026",
+    "Notes": "notes",
+    "Oct 26th, 2026": "oct 26th, 2026"
+  },
   "open": {
     "2026-10-26": {
       "journal": [
@@ -128,6 +177,29 @@
       "page": null
     }
   },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md"
+    },
+    {
+      "key": "oct 27th, 2026",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "oct 27th, 2026",
+      "owner": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "2026-10-26": {
       "backend": [

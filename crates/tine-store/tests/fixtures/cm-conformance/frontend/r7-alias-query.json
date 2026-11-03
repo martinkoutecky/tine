@@ -1,5 +1,40 @@
 {
+  "backlinks": {
+    "Machine Learning": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "18291579-c847-8bad-8432-add90e972123",
+            "raw": "reading about [[ML]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "9c07297b-fd9d-8683-a4e2-209226596c8a",
+            "raw": "also [[Machine Learning]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "notes"
+      }
+    ],
+    "notes": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/notes.md",
+      0
+    ],
+    [
+      "pages/Machine Learning.md",
+      1
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -42,6 +77,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "ML": "ml",
+    "Machine Learning": "machine learning",
+    "notes": "notes"
+  },
   "open": {
     "ML": {
       "journal": [
@@ -88,6 +128,22 @@
       "page": "pages/notes.md"
     }
   },
+  "pages": [
+    {
+      "key": "machine learning",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "Machine Learning",
+      "owner": "pages/Machine Learning.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "notes",
+      "owner": "pages/notes.md"
+    }
+  ],
   "spellings": {
     "ML": {
       "backend": [

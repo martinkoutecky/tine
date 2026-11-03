@@ -1,6 +1,38 @@
 {
+  "backlinks": {
+    "Notes": [],
+    "zed": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[zed]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
   "conflicts": [
     "a"
+  ],
+  "counts": [
+    [
+      "pages/a.md",
+      0
+    ],
+    [
+      "pages/Notes.md",
+      0
+    ],
+    [
+      "pages/b.md",
+      0
+    ]
   ],
   "inventory": [
     {
@@ -46,6 +78,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "a": "a",
+    "zed": "zed"
+  },
   "open": {
     "Notes": {
       "journal": [
@@ -92,6 +129,22 @@
       "page": "pages/b.md"
     }
   },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    },
+    {
+      "key": "zed",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "zed",
+      "owner": null
+    }
+  ],
   "spellings": {
     "Notes": {
       "backend": [

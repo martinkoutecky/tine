@@ -1,5 +1,40 @@
 {
+  "backlinks": {
+    "Notes": [],
+    "Project Alpha": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "see [[project alpha]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "and [[ Project Alpha ]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/Notes.md",
+      0
+    ],
+    [
+      "pages/Project Alpha.md",
+      2
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -26,6 +61,10 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "Project Alpha": "project alpha"
+  },
   "open": {
     " Project Alpha ": {
       "journal": [
@@ -86,6 +125,22 @@
       "page": "pages/Project Alpha.md"
     }
   },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    },
+    {
+      "key": "project alpha",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "Project Alpha",
+      "owner": "pages/Project Alpha.md"
+    }
+  ],
   "spellings": {
     " Project Alpha ": {
       "backend": [

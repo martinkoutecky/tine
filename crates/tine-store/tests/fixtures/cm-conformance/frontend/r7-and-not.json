@@ -1,5 +1,72 @@
 {
+  "backlinks": {
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "18291579-c847-8bad-8432-add90e972123",
+            "raw": "[[A]] only",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "9c07297b-fd9d-8683-a4e2-209226596c8a",
+            "raw": "[[A]] and [[B]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3e0118a4-b27d-8dd0-9103-4d9dfa51ae40",
+            "raw": "[[A]] parent",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "notes"
+      }
+    ],
+    "b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "9c07297b-fd9d-8683-a4e2-209226596c8a",
+            "raw": "[[A]] and [[B]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "f9029857-aa01-81d4-8c74-5c4745838110",
+            "raw": "[[B]] only",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b90fd386-8cce-8f7b-bd47-b6923c9d3f66",
+            "raw": "child [[B]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "notes"
+      }
+    ],
+    "notes": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/notes.md",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -35,6 +102,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "B": "b",
+    "notes": "notes"
+  },
   "open": {
     "A": {
       "journal": [
@@ -81,6 +153,29 @@
       "page": "pages/notes.md"
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "b",
+      "owner": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "notes",
+      "owner": "pages/notes.md"
+    }
+  ],
   "spellings": {
     "A": {
       "backend": [

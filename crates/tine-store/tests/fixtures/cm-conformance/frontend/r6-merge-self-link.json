@@ -1,5 +1,29 @@
 {
+  "backlinks": {
+    "a": [],
+    "b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "a71d42a6-03c3-8f25-bb54-4f50b975653f",
+            "raw": "see [[b]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "a"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/a.md",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -25,6 +49,10 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "a": "a",
+    "b": "b"
+  },
   "open": {
     "a": {
       "journal": [
@@ -57,6 +85,22 @@
       "page": null
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a",
+      "owner": "pages/a.md"
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "b",
+      "owner": null
+    }
+  ],
   "spellings": {
     "a": {
       "backend": [

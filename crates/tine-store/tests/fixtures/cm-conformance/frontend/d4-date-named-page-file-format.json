@@ -1,5 +1,33 @@
 {
+  "backlinks": {
+    "25-10-2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "cc27b5e9-7374-8e8c-8d3b-c1cd0851767c",
+            "raw": "see [[25-10-2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "x"
+      }
+    ],
+    "x": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/25-10-2026.md",
+      1
+    ],
+    [
+      "pages/x.md",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -40,6 +68,11 @@
   ],
   "journalFileFormat": "dd-MM-yyyy",
   "journalTitleFormat": null,
+  "keyOf": {
+    "25-10-2026": "oct 25th, 2026",
+    "Oct 25th, 2026": "oct 25th, 2026",
+    "x": "x"
+  },
   "open": {
     "25-10-2026": {
       "journal": [
@@ -86,6 +119,22 @@
       "page": "pages/x.md"
     }
   },
+  "pages": [
+    {
+      "key": "oct 25th, 2026",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "25-10-2026",
+      "owner": "pages/25-10-2026.md"
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "x",
+      "owner": "pages/x.md"
+    }
+  ],
   "spellings": {
     "25-10-2026": {
       "backend": [

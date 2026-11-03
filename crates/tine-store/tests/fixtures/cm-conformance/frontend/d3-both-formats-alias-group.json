@@ -1,5 +1,108 @@
 {
+  "backlinks": {
+    "2026_10_11": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "eadfd58e-f4ab-8d58-86ce-ce86c724f1fe",
+            "raw": "two lists, two days [[2026_10_11]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "n"
+      }
+    ],
+    "2026_22_10": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "39c78c23-dc52-8b67-a31a-f3964843dad2",
+            "raw": "file form [[22.10.2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "37047b18-956d-868b-bb22-82e4960d08d0",
+            "raw": "title form [[2026_22_10]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3b2dc3d1-ccdf-8376-9823-038009670756",
+            "raw": "default title [[Oct 22nd, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "n"
+      }
+    ],
+    "Launch": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Journal:2026_22_10",
+            "raw": "alias:: Launch",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "2026_22_10"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "39c78c23-dc52-8b67-a31a-f3964843dad2",
+            "raw": "file form [[22.10.2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "37047b18-956d-868b-bb22-82e4960d08d0",
+            "raw": "title form [[2026_22_10]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3b2dc3d1-ccdf-8376-9823-038009670756",
+            "raw": "default title [[Oct 22nd, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "n"
+      }
+    ],
+    "n": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/Launch.md",
+      1
+    ],
+    [
+      "pages/n.md",
+      0
+    ],
+    [
+      "journals/22.10.2026.md",
+      1
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -79,6 +182,14 @@
   ],
   "journalFileFormat": "dd.MM.yyyy",
   "journalTitleFormat": "yyyy_dd_MM",
+  "keyOf": {
+    "2026_10_11": "2026_10_11",
+    "2026_22_10": "2026_22_10",
+    "22.10.2026": "2026_22_10",
+    "Launch": "launch",
+    "Oct 22nd, 2026": "2026_22_10",
+    "n": "n"
+  },
   "open": {
     "2026_10_11": {
       "journal": [
@@ -167,6 +278,36 @@
       "page": "pages/n.md"
     }
   },
+  "pages": [
+    {
+      "key": "2026_10_11",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "2026_10_11",
+      "owner": null
+    },
+    {
+      "key": "2026_22_10",
+      "kind": "journal",
+      "linkedRefs": 3,
+      "name": "2026_22_10",
+      "owner": "journals/22.10.2026.md"
+    },
+    {
+      "key": "launch",
+      "kind": "page",
+      "linkedRefs": 4,
+      "name": "Launch",
+      "owner": "pages/Launch.md"
+    },
+    {
+      "key": "n",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "n",
+      "owner": "pages/n.md"
+    }
+  ],
   "spellings": {
     "2026_10_11": {
       "backend": [

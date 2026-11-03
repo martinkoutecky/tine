@@ -21,6 +21,283 @@
       ]
     }
   },
+  "frontendCounts": {
+    "fixtures": {
+      "c1-counts-exclusions": [
+        "frontend (\"page\", \"hub\"): All Pages says 7, its Linked References header says 6",
+        "frontend all pages count of (\"page\", \"hub\") (pages/Hub.md): model 6, All Pages 7",
+        "frontend all pages: model page (\"page\", \"topic\") is reference-only and has no row",
+        "frontend page list: model page \"topic\" is not listed"
+      ],
+      "c2-counts-date-spellings": [
+        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 1, its Linked References header says 3",
+        "frontend (\"journal\", \"oct 27th, 2026\"): All Pages says 0, its Linked References header says 2",
+        "frontend (\"page\", \"launch\"): All Pages says 2, its Linked References header says 3",
+        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 3, All Pages 1",
+        "frontend all pages count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 2, All Pages 0",
+        "frontend all pages count of (\"page\", \"launch\") (pages/Launch.md): model 3, All Pages 2"
+      ],
+      "c3-property-key-pages": [
+        "frontend all pages: model page (\"page\", \"done-at\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"rating\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"type\") is reference-only and has no row",
+        "frontend page list: model page \"done-at\" is not listed",
+        "frontend page list: model page \"rating\" is not listed",
+        "frontend page list: model page \"type\" is not listed"
+      ],
+      "c4-property-pages-excludelist": [
+        "frontend all pages: model page (\"page\", \"public-key\") is reference-only and has no row",
+        "frontend page list: model page \"public-key\" is not listed"
+      ],
+      "c6-markers-and-priorities": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"c\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"canceled\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"doing\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"done\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"later\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"now\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"waiting\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed",
+        "frontend page list: model page \"b\" is not listed",
+        "frontend page list: model page \"c\" is not listed",
+        "frontend page list: model page \"canceled\" is not listed",
+        "frontend page list: model page \"doing\" is not listed",
+        "frontend page list: model page \"done\" is not listed",
+        "frontend page list: model page \"later\" is not listed",
+        "frontend page list: model page \"now\" is not listed",
+        "frontend page list: model page \"waiting\" is not listed"
+      ],
+      "c7-ref-only-page-queries": [
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"proj\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"proj/sub\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
+        "frontend page list: model page \"proj\" is not listed",
+        "frontend page list: model page \"todo\" is not listed"
+      ],
+      "d1-file-format-links": [
+        "frontend (\"journal\", \"oct 22nd, 2026\"): All Pages says 1, its Linked References header says 3",
+        "frontend all pages count of (\"journal\", \"oct 22nd, 2026\") (journals/22-10-2026.md): model 3, All Pages 1",
+        "frontend all pages: model page (\"journal\", \"oct 23rd, 2026\") is reference-only and has no row"
+      ],
+      "d2-title-format-links": [
+        "frontend (\"journal\", \"22.10.2026\"): All Pages says 1, its Linked References header says 4",
+        "frontend all pages count of (\"journal\", \"22.10.2026\") (journals/2026_10_22.md): model 4, All Pages 1",
+        "frontend all pages: model page (\"journal\", \"23.10.2026\") is reference-only and has no row"
+      ],
+      "d3-both-formats-alias-group": [
+        "frontend (\"journal\", \"2026_22_10\"): All Pages says 1, its Linked References header says 3",
+        "frontend (\"page\", \"launch\"): All Pages says 1, its Linked References header says 4",
+        "frontend all pages count of (\"journal\", \"2026_22_10\") (journals/22.10.2026.md): model 3, All Pages 1",
+        "frontend all pages count of (\"page\", \"launch\") (pages/Launch.md): model 4, All Pages 1",
+        "frontend all pages: model page (\"journal\", \"2026_10_11\") is reference-only and has no row"
+      ],
+      "d4-date-named-page-file-format": [
+        "frontend all pages count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, All Pages 1",
+        "frontend linked refs header of (\"page\", \"oct 25th, 2026\") [[25-10-2026]]: model 2, header 1"
+      ],
+      "d5-lenient-spellings": [
+        "frontend (\"journal\", \"oct 22nd, 2026\"): All Pages says 1, its Linked References header says 3",
+        "frontend (\"journal\", \"oct 2nd, 2026\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"journal\", \"oct 22nd, 2026\") (journals/2026_10_22.md): model 3, All Pages 1",
+        "frontend all pages count of (\"journal\", \"oct 2nd, 2026\") (journals/2026_10_02.md): model 1, All Pages 0"
+      ],
+      "n1-legacy-codec": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed"
+      ],
+      "n2-triple-lowbar-codec": [
+        "frontend all pages: model page (\"page\", \"\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"x\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"x/y\") is reference-only and has no row",
+        "frontend linked refs header of (\"page\", \"\"): the page has no name to open",
+        "frontend page list: model page \"\" is not listed",
+        "frontend page list: model page \"a\" is not listed",
+        "frontend page list: model page \"x\" is not listed"
+      ],
+      "n3-org-file-links-legacy": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"ab\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"ten\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed"
+      ],
+      "n4-org-file-links-triple-lowbar": [
+        "frontend all pages: model page (\"page\", \"ab\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"ten\") is reference-only and has no row"
+      ],
+      "n5-title-differs-from-stem": [
+        "frontend all pages: model page (\"journal\", \"oct 27th, 2026\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"stem-name\") is reference-only and has no row"
+      ],
+      "n7-sync-conflict-names": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed"
+      ],
+      "o1-twin-file-name-before-folder": [
+        "frontend all pages: row pages/foo.md (count 1) owns no model page",
+        "frontend all pages: row pages/sub/Foo.md (count 1) owns no model page"
+      ],
+      "o1-twin-journal-day": [
+        "frontend all pages: row journals/2026_10_26.md (count 1) owns no model page"
+      ],
+      "o1-twin-markdown-first": [
+        "frontend all pages: row pages/Foo.markdown (count 1) owns no model page",
+        "frontend all pages: row pages/foo.md (count 1) owns no model page"
+      ],
+      "o1-twin-title-vs-file-name": [
+        "frontend all pages: row pages/a.md (count 2) owns no model page",
+        "frontend all pages: row pages/zed.md (count 2) owns no model page"
+      ],
+      "o2-alias-on-non-owner-twin": [
+        "frontend all pages: model page (\"page\", \"zed\") is reference-only and has no row",
+        "frontend all pages: row pages/a.md (count 0) owns no model page",
+        "frontend all pages: row pages/b.md (count 0) owns no model page",
+        "frontend page list: model page \"zed\" is not listed"
+      ],
+      "o2-alias-owner-path-order": [
+        "frontend (\"page\", \"a b\"): All Pages says 0, its Linked References header says 2",
+        "frontend (\"page\", \"x\"): All Pages says 0, its Linked References header says 2",
+        "frontend all pages count of (\"page\", \"a b\") (pages/a b.md): model 2, All Pages 0",
+        "frontend all pages count of (\"page\", \"x\") (pages/a/x.md): model 2, All Pages 0"
+      ],
+      "o2-date-alias-on-owner": [
+        "frontend all pages: row pages/A.md (count 0) owns no model page",
+        "frontend all pages: row pages/b.md (count 0) owns no model page"
+      ],
+      "o2-date-alias-on-twin": [
+        "frontend all pages: model page (\"journal\", \"oct 26th, 2026\") is reference-only and has no row",
+        "frontend all pages: row pages/2026-10-26.md (count 1) owns no model page",
+        "frontend all pages: row pages/A.md (count 1) owns no model page",
+        "frontend linked refs header of (\"journal\", \"oct 26th, 2026\") [[oct 26th, 2026]]: model 1, header 2",
+        "frontend page list: model page \"oct 26th, 2026\" is not listed"
+      ],
+      "q1-duplicate-claim": [
+        "frontend all pages: row pages/Foo.md (count 1) owns no model page",
+        "frontend all pages: row pages/other.md (count 1) owns no model page"
+      ],
+      "q1-page-and-journal-same-day": [
+        "frontend all pages: row journals/2026_10_26.md (count 0) owns no model page",
+        "frontend all pages: row pages/2026-10-26.md (count 1) owns no model page"
+      ],
+      "q6-task-and-priority-pages": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed",
+        "frontend page list: model page \"todo\" is not listed"
+      ],
+      "r1-namespace-parent": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a/b\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a/b/c\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"n\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed",
+        "frontend page list: model page \"a/b\" is not listed",
+        "frontend page list: model page \"n\" is not listed"
+      ],
+      "r1-title-names-page": [
+        "frontend all pages: model page (\"page\", \"file-name\") is reference-only and has no row"
+      ],
+      "r2-alias-backlinks": [
+        "frontend (\"page\", \"machine learning\"): All Pages says 1, its Linked References header says 2",
+        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 2, All Pages 1"
+      ],
+      "r2-alias-chain": [
+        "frontend (\"page\", \"a\"): All Pages says 0, its Linked References header says 3",
+        "frontend (\"page\", \"b\"): All Pages says 1, its Linked References header says 3",
+        "frontend (\"page\", \"c\"): All Pages says 1, its Linked References header says 3",
+        "frontend all pages count of (\"page\", \"a\") (pages/A.md): model 3, All Pages 0",
+        "frontend all pages count of (\"page\", \"b\") (pages/B.md): model 3, All Pages 1",
+        "frontend all pages count of (\"page\", \"c\") (pages/C.md): model 3, All Pages 1"
+      ],
+      "r2-journal-in-alias-group": [
+        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 1, its Linked References header says 2",
+        "frontend (\"page\", \"launch\"): All Pages says 1, its Linked References header says 3",
+        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, All Pages 1",
+        "frontend all pages count of (\"page\", \"launch\") (pages/Launch.md): model 3, All Pages 1"
+      ],
+      "r3-capital-sorts-first": [
+        "frontend (\"page\", \"alpha\"): All Pages says 0, its Linked References header says 2",
+        "frontend (\"page\", \"zed\"): All Pages says 0, its Linked References header says 2",
+        "frontend all pages count of (\"page\", \"alpha\") (pages/alpha.md): model 2, All Pages 0",
+        "frontend all pages count of (\"page\", \"zed\") (pages/Zed.md): model 2, All Pages 0"
+      ],
+      "r3-empty-own-file": [
+        "frontend (\"page\", \"machine learning\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 1, All Pages 0"
+      ],
+      "r3-indirect-declarer": [
+        "frontend (\"page\", \"a\"): All Pages says 0, its Linked References header says 2",
+        "frontend (\"page\", \"b\"): All Pages says 1, its Linked References header says 2",
+        "frontend all pages count of (\"page\", \"a\") (pages/A.md): model 2, All Pages 0",
+        "frontend all pages count of (\"page\", \"b\") (pages/B.md): model 2, All Pages 1"
+      ],
+      "r3-own-file-wins": [
+        "frontend (\"page\", \"machine learning\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 1, All Pages 0"
+      ],
+      "r3-two-declarers": [
+        "frontend (\"page\", \"alpha\"): All Pages says 0, its Linked References header says 2",
+        "frontend (\"page\", \"beta\"): All Pages says 0, its Linked References header says 2",
+        "frontend all pages count of (\"page\", \"alpha\") (pages/Alpha.md): model 2, All Pages 0",
+        "frontend all pages count of (\"page\", \"beta\") (pages/Beta.md): model 2, All Pages 0"
+      ],
+      "r4-journal-and-date-links": [
+        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0",
+        "frontend all pages: model page (\"journal\", \"oct 27th, 2026\") is reference-only and has no row"
+      ],
+      "r5-favorites-excluded": [
+        "frontend (\"page\", \"a\"): All Pages says 3, its Linked References header says 1",
+        "frontend all pages count of (\"page\", \"a\") (pages/A.md): model 1, All Pages 3"
+      ],
+      "r5-journal-alias": [
+        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0"
+      ],
+      "r6-merge-self-link": [
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row"
+      ],
+      "r6-ref-only-descendant": [
+        "frontend all pages: model page (\"page\", \"old/child\") is reference-only and has no row"
+      ],
+      "r6-refused-journal-risk": [
+        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0"
+      ],
+      "r6-rewrite-set": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"rel\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
+        "frontend page list: model page \"a\" is not listed",
+        "frontend page list: model page \"rel\" is not listed",
+        "frontend page list: model page \"todo\" is not listed"
+      ],
+      "r6-task-marker-page": [
+        "frontend all pages: model page (\"page\", \"a]\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row",
+        "frontend page list: model page \"todo\" is not listed"
+      ],
+      "r7-alias-query": [
+        "frontend (\"page\", \"machine learning\"): All Pages says 1, its Linked References header says 2",
+        "frontend all pages count of (\"page\", \"machine learning\") (pages/Machine Learning.md): model 2, All Pages 1"
+      ],
+      "r7-and-not": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row"
+      ],
+      "r7-nested-match": [
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row"
+      ],
+      "r7-page-queries": [
+        "frontend (\"journal\", \"oct 26th, 2026\"): All Pages says 0, its Linked References header says 1",
+        "frontend all pages count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, All Pages 0",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row"
+      ]
+    }
+  },
   "frontendNames": {
     "fixtures": {}
   },
@@ -1007,6 +1284,57 @@
   },
   "store": {
     "fixtures": {
+      "c1-counts-exclusions": [
+        "backlink count of (\"page\", \"hub\") (pages/Hub.md): model 6, Tine 7 (alias class not counted)",
+        "backlink count of (\"page\", \"hub\") (pages/Hub.md): model 6, Tine 7 (favorites page counted)",
+        "backlink count of (\"page\", \"hub\") (pages/Hub.md): model 6, Tine 7 (own blocks counted)",
+        "pages: model has (\"page\", \"topic\"), Tine does not"
+      ],
+      "c2-counts-date-spellings": [
+        "backlink count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 2, Tine 0 (alias class not counted)",
+        "backlink count of (\"page\", \"launch\") (pages/Launch.md): model 3, Tine 2 (alias class not counted)",
+        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 3, Tine 1 (date spelling not folded)",
+        "backlink count of (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 2, Tine 0 (date spelling not folded)",
+        "pages: Tine has (\"page\", \"oct 27th, 2026\"), model does not",
+        "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not"
+      ],
+      "c3-property-key-pages": [
+        "pages: model has (\"page\", \"done-at\"), Tine does not",
+        "pages: model has (\"page\", \"rating\"), Tine does not",
+        "pages: model has (\"page\", \"type\"), Tine does not",
+        "query \"@page and name = 'done-at'\": model has page (\"page\", \"done-at\"), Tine does not",
+        "query \"@page and name = 'rating'\": model has page (\"page\", \"rating\"), Tine does not",
+        "query \"@page and name = 'type'\": model has page (\"page\", \"type\"), Tine does not"
+      ],
+      "c4-property-pages-excludelist": [
+        "pages: model has (\"page\", \"public-key\"), Tine does not",
+        "query \"@page and name = 'public-key'\": model has page (\"page\", \"public-key\"), Tine does not"
+      ],
+      "c5-property-pages-disabled": [],
+      "c6-markers-and-priorities": [
+        "pages: model has (\"page\", \"a\"), Tine does not",
+        "pages: model has (\"page\", \"b\"), Tine does not",
+        "pages: model has (\"page\", \"c\"), Tine does not",
+        "pages: model has (\"page\", \"canceled\"), Tine does not",
+        "pages: model has (\"page\", \"doing\"), Tine does not",
+        "pages: model has (\"page\", \"done\"), Tine does not",
+        "pages: model has (\"page\", \"later\"), Tine does not",
+        "pages: model has (\"page\", \"now\"), Tine does not",
+        "pages: model has (\"page\", \"waiting\"), Tine does not",
+        "query \"@page and name = 'b'\": model has page (\"page\", \"b\"), Tine does not",
+        "query \"@page and name = 'doing'\": model has page (\"page\", \"doing\"), Tine does not"
+      ],
+      "c7-ref-only-page-queries": [
+        "pages: model has (\"page\", \"todo\"), Tine does not",
+        "pages: model has (\"page\", \"proj\"), Tine does not",
+        "query \"@page and not (name = 'A')\": model has page (\"page\", \"b\"), Tine does not",
+        "query \"@page and not (name = 'A')\": model has page (\"page\", \"proj\"), Tine does not",
+        "query \"@page and not (name = 'A')\": model has page (\"page\", \"proj/sub\"), Tine does not",
+        "query \"@page and not (name = 'A')\": model has page (\"page\", \"todo\"), Tine does not",
+        "query \"@page and (name = 'proj/sub' or name = 'todo')\": model has page (\"page\", \"proj/sub\"), Tine does not",
+        "query \"@page and (name = 'proj/sub' or name = 'todo')\": model has page (\"page\", \"todo\"), Tine does not",
+        "query \"@page and name = 'B'\": model has page (\"page\", \"b\"), Tine does not"
+      ],
       "d1-file-format-links": [
         "backlink count of (\"journal\", \"oct 22nd, 2026\") (journals/22-10-2026.md): model 3, Tine 1 (date spelling not folded)",
         "pages: Tine has (\"page\", \"oct 22nd, 2026\"), model does not",

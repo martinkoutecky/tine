@@ -1,6 +1,23 @@
 {
+  "backlinks": {
+    "Notes": []
+  },
   "conflicts": [
     "oct 26th, 2026"
+  ],
+  "counts": [
+    [
+      "pages/2026-10-26.md",
+      1
+    ],
+    [
+      "pages/Notes.md",
+      0
+    ],
+    [
+      "journals/2026_10_26.md",
+      0
+    ]
   ],
   "inventory": [
     {
@@ -43,6 +60,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-26": "oct 26th, 2026",
+    "Notes": "notes",
+    "Oct 26th, 2026": "oct 26th, 2026"
+  },
   "open": {
     "2026-10-26": {
       "journal": [
@@ -89,6 +111,15 @@
       "page": null
     }
   },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "2026-10-26": {
       "backend": [

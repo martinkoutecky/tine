@@ -1,0 +1,117 @@
+{
+  "backlinks": {
+    "a": [],
+    "public-key": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "a71d42a6-03c3-8f25-bb54-4f50b975653f",
+            "raw": "note\nsecret:: x\npublic-key:: y",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "a"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      "pages/a.md",
+      0
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "target": {
+        "id": "pages/a.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "a": "a"
+  },
+  "open": {
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "public-key": {
+      "journal": [
+        "journal",
+        "public-key"
+      ],
+      "page": [
+        "page",
+        "public-key"
+      ]
+    }
+  },
+  "owner": {
+    "a": {
+      "journal": null,
+      "page": "pages/a.md"
+    },
+    "public-key": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a",
+      "owner": "pages/a.md"
+    },
+    {
+      "key": "public-key",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "public-key",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "public-key": {
+      "backend": [
+        "page",
+        "public-key"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "public-key"
+      ]
+    }
+  }
+}

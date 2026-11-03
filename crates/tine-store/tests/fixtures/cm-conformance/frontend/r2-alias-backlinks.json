@@ -1,5 +1,51 @@
 {
+  "backlinks": {
+    "Machine Learning": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1db45489-f00c-80a8-9d55-69b5311f8e24",
+            "raw": "[[Machine Learning]] today",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "18291579-c847-8bad-8432-add90e972123",
+            "raw": "[[ML]] notes",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "notes"
+      }
+    ],
+    "Oct 26th, 2026": [],
+    "notes": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/notes.md",
+      0
+    ],
+    [
+      "pages/Machine Learning.md",
+      1
+    ],
+    [
+      "journals/2026_10_26.md",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -53,6 +99,12 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "ML": "ml",
+    "Machine Learning": "machine learning",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "notes": "notes"
+  },
   "open": {
     "ML": {
       "journal": [
@@ -113,6 +165,29 @@
       "page": "pages/notes.md"
     }
   },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md"
+    },
+    {
+      "key": "machine learning",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "Machine Learning",
+      "owner": "pages/Machine Learning.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "notes",
+      "owner": "pages/notes.md"
+    }
+  ],
   "spellings": {
     "ML": {
       "backend": [

@@ -1,5 +1,78 @@
 {
+  "backlinks": {
+    "Notes": [],
+    "a b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[shared]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:x",
+            "raw": "alias:: shared",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "x"
+      }
+    ],
+    "x": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[shared]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:a b",
+            "raw": "alias:: shared",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "a b"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      "pages/a b.md",
+      0
+    ],
+    [
+      "pages/Notes.md",
+      0
+    ],
+    [
+      "pages/a/x.md",
+      0
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -54,6 +127,12 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "a b": "a b",
+    "shared": "shared",
+    "x": "x"
+  },
   "open": {
     "Notes": {
       "journal": [
@@ -114,6 +193,29 @@
       "page": "pages/a/x.md"
     }
   },
+  "pages": [
+    {
+      "key": "a b",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "a b",
+      "owner": "pages/a b.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "x",
+      "owner": "pages/a/x.md"
+    }
+  ],
   "spellings": {
     "Notes": {
       "backend": [

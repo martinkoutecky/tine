@@ -1,0 +1,33 @@
+{
+  "files": {
+    "pages/Book.md": "type:: book\nrating:: 5\n\n- read it\n  status:: done\n  collapsed:: true\n- second\n  done_at:: today\n  background-color:: red\n",
+    "pages/Shelf.md": "- shelf\n  type:: shelf\n",
+    "pages/status.md": "- the status page\n"
+  },
+  "queries": [
+    {
+      "anchor": "page",
+      "q": {
+        "name": "type"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "rating"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "collapsed"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "done-at"
+      }
+    }
+  ]
+}

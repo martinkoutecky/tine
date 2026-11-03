@@ -1,6 +1,23 @@
 {
+  "backlinks": {
+    "Notes": []
+  },
   "conflicts": [
     "zed"
+  ],
+  "counts": [
+    [
+      "pages/a.md",
+      2
+    ],
+    [
+      "pages/zed.md",
+      2
+    ],
+    [
+      "pages/Notes.md",
+      0
+    ]
   ],
   "inventory": [
     {
@@ -43,6 +60,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "ZED": "zed",
+    "zed": "zed"
+  },
   "open": {
     "Notes": {
       "journal": [
@@ -89,6 +111,15 @@
       "page": "pages/zed.md"
     }
   },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "Notes": {
       "backend": [
