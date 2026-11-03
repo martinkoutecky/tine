@@ -32,7 +32,7 @@ const inventory = (rev: number, ...entries: PageInventoryEntry[]): PageInventory
 async function loadInventory() {
   // `vi.resetModules` gives each test a fresh wasm module: initialize it as
   // main.tsx does before the page index runs (its reference-only rows ask the
-  // Rust built-in answer, `is_og_built_in_page`).
+  // Rust answer, `hidden_from_all_pages`).
   const { initParser } = await import("./render/parse");
   await initParser();
   const ui = await import("./graphSession");

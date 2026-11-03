@@ -295,6 +295,20 @@ function __tine_raw_header_tokens_json(raw, is_org) {
 }
 
 /**
+ * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+ * page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+ * with tine-core).
+ * @param {string} name
+ * @returns {boolean}
+ */
+function __tine_raw_hidden_from_all_pages(name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.hidden_from_all_pages(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  * @param {string} policy
  * @param {string} key
@@ -317,19 +331,6 @@ function __tine_raw_hide_policy_hides(policy, key, properties) {
 
 function __tine_raw_install_panic_hook() {
     wasm.install_panic_hook();
-}
-
-/**
- * Whether All pages hides this name as an OG built-in page (I-12: the one
- * answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
- * @param {string} name
- * @returns {boolean}
- */
-function __tine_raw_is_og_built_in_page(name) {
-    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.is_og_built_in_page(ptr0, len0);
-    return ret !== 0;
 }
 
 /**
@@ -708,6 +709,29 @@ function __tine_raw_page_identity_key(name) {
         const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.page_identity_key(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * The prose of a Markdown page preamble after its page header, as UTF-8 byte
+ * offsets `[start, end]`, or `null` (I-12: the one answerer,
+ * `page_preamble::page_preamble_content`, which the store's reference answer
+ * reads too).
+ * @param {string} raw
+ * @returns {string}
+ */
+function __tine_raw_page_preamble_content_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_preamble_content_json(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -1598,9 +1622,9 @@ export const editor_text_json = __tineGuard("editor_text_json", __tine_raw_edito
 export const encode_page_name = __tineGuard("encode_page_name", __tine_raw_encode_page_name);
 export const format_journal_date = __tineGuard("format_journal_date", __tine_raw_format_journal_date);
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
+export const hidden_from_all_pages = __tineGuard("hidden_from_all_pages", __tine_raw_hidden_from_all_pages);
 export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
-export const is_og_built_in_page = __tineGuard("is_og_built_in_page", __tine_raw_is_og_built_in_page);
 export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
@@ -1621,6 +1645,7 @@ export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_o
 export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
+export const page_preamble_content_json = __tineGuard("page_preamble_content_json", __tine_raw_page_preamble_content_json);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
 export const parse_block_bundle_json = __tineGuard("parse_block_bundle_json", __tine_raw_parse_block_bundle_json);
 export const parse_block_json = __tineGuard("parse_block_json", __tine_raw_parse_block_json);

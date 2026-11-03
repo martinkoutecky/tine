@@ -38,7 +38,7 @@ use tine_core::query::ir::{Leaf, NearDir, Quant, Rel};
 use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
-use super::{page_property_block_with_config, PanelResolver};
+use super::{pre_blocks_with_config, PanelResolver};
 use crate::model::ReadSnapshot;
 
 /// A page without a file that some page links to: the panel exists for it, so
@@ -187,10 +187,11 @@ impl LinkGraph {
                     }
                     true
                 };
-                if let Some(block) = doc
+                for block in doc
                     .pre_block
                     .as_deref()
-                    .and_then(|pre| page_property_block_with_config(entry, pre, &parse_config))
+                    .into_iter()
+                    .flat_map(|pre| pre_blocks_with_config(entry, pre, &parse_config))
                 {
                     if !collect(&block) {
                         return false;

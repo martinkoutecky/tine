@@ -28,6 +28,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A `[[link]]`, `#tag` or `((block reference))` in a page's text before its first bullet (Markdown) or first heading (Org) now counts as a reference, as in Logseq: it shows in the target's Linked References, counts in All pages, makes a page only it mentions appear in All pages, and is updated when the target page is renamed. Before, it showed as a link but nothing else saw it, and a rename left it naming the old page (internal REG-CM-PREAMBLE-PROSE-REFERENCES).
+- All pages no longer lists pages named by a block UUID (from `{{embed ((…))}}`) or drawings under `draws/`, which Logseq's All pages also hides (internal REG-CM-ALL-PAGES-UUID-AND-DRAWINGS).
 - Renaming a page no longer changes the text of a Markdown code block whose ``` fence opens on the bullet's own line; before, `[[Old]]` inside such code became `[[New]]` when the page also linked the renamed page (internal REG-CM-RENAME-FENCE-ON-BULLET-LINE).
 - Renaming a page no longer rewrites brackets inside a URL, such as the nested arrays of `https://ex.com/q?[[[Old],[2]]]`, as if they were links (internal REG-CM-RENAME-URL-NESTED-ARRAY).
 - Renaming a page now updates a `[[link]]` inside other macros (`{{cloze [[Old]]}}`, `{{renderer …}}`, plugin macros) and an Org file link to the page's file (`[[file:./Old.org][any label]]`) on every page. Before, these changed only on a page that also linked the renamed page somewhere else (internal REG-CM-RENAME-QUERY-ARG-PAGE-DEPENDENT, REG-CM-RENAME-ORG-FILE-LINK-PAGE-DEPENDENT).

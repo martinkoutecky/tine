@@ -73,12 +73,12 @@ pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, Dis
 /// Run every lsdoc parse the page's later stages read, inside the one-page
 /// isolation (`isolate_page_parse`): each block's projection (cached on the
 /// block, so the initial capture's projection pass then finds it built) and
-/// the page-property block's. A parser panic then names this one file as
+/// the pre-blocks' (page properties and prose). A parser panic then names this one file as
 /// unreadable instead of escaping from a graph-wide index build, where it
 /// would stop the whole load (one bad file must never stop the graph load).
 /// Cost: the block projections move here from the capture's parallel pass
-/// (no new work); the page-property block is one extra parse of the
-/// pre-block's property lines, O(pre-block bytes), for pages that have one.
+/// (no new work); the pre-blocks are one extra parse each of the pre-block's
+/// property lines and prose, O(pre-block bytes), for pages that have one.
 pub(super) fn prime_projections(doc: &Document) {
     fn walk(blocks: &[DocBlock]) {
         for block in blocks {
@@ -86,7 +86,7 @@ pub(super) fn prime_projections(doc: &Document) {
             walk(&block.children);
         }
     }
-    if let Some(block) = tine_core::page_properties::document_page_property_block(doc) {
+    for block in tine_core::page_properties::document_pre_blocks(doc) {
         block.projection();
     }
     walk(&doc.roots);

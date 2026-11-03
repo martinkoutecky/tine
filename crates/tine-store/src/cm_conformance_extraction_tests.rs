@@ -373,9 +373,10 @@ fn evidence(text: &str, is_org: bool) -> (Vec<Occ>, BTreeSet<String>) {
             names.insert(r.name.clone());
         }
     };
-    // The store's page-header block (`query.rs page_property_block`): only the
-    // parser-owned page properties, projected; prose before the first block
-    // is not one (the declared prose-preamble limit).
+    // The store's pre-blocks (`query.rs pre_blocks_with_config`): the
+    // page-header block (only the parser-owned page properties, projected),
+    // then the prose before the first block as its own block (CM step 2,
+    // batch 8; before it, the declared prose-preamble limit).
     if let Some(pre) = &parsed.pre_block {
         let raw = tine_core::page_properties::page_property_raw(pre, is_org);
         if !raw.is_empty() {
@@ -385,6 +386,13 @@ fn evidence(text: &str, is_org: bool) -> (Vec<Occ>, BTreeSet<String>) {
                 &Default::default(),
             );
             take(&header);
+        }
+        if let Some(preamble) = tine_core::page_properties::preamble_block_with_config(
+            pre,
+            is_org,
+            &Default::default(),
+        ) {
+            take(&preamble);
         }
     }
     fn walk(blocks: &[DocBlock], take: &mut dyn FnMut(&DocBlock)) {

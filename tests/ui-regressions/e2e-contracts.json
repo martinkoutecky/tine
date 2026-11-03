@@ -646,6 +646,24 @@
       ],
       "stability": "burn-in"
     },
+    "scripts/e2e-cm-preamble.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "Prose before a page's first bullet (Markdown, with or without page properties) or first heading (Org) is a referencing block: All pages counts Target 4 (two preambles, one Org preamble, one bullet) and lists Ghost (named only by a #Ghost in a preamble) with 1 while the page property tags:: Other still counts Other 1; Target's Linked References header shows 4 and lists the preamble rows; renaming Target to New through its title rewrites [[Target]] in each preamble on disk and leaves every other byte, including the page properties, unchanged; All pages lists no page named by a UUID and none whose name starts with draws/.",
+          "blocking": true,
+          "authority": "CM step 2 batch 8 brief (OG graph-parser with-pre-block-if-exists, handler/page.cljs get-all-pages)"
+        }
+      ],
+      "acceptableVariations": [
+        "Row order, count refresh latency and the order in which files are rewritten may vary while the counts, rows and final bytes are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-counts-refonly.mjs": {
       "contracts": [
         {

@@ -95,6 +95,84 @@ pub fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
     Some(property_projection(&raw, is_org))
 }
 
+/// Where the pre-block's prose is: the text before the page's first block that
+/// is not its page properties, without the newlines at either edge.
+///
+/// OG makes everything before the first block one pre-block whose
+/// `:block/refs` are its properties' and its body's (graph-parser
+/// `block.cljs with-pre-block-if-exists`), for Markdown and Org alike, so a
+/// link written there is a Linked Reference, counts, and is renamed
+/// (`handler/page.cljs rename-update-refs!` walks `:block/_refs`). Tine keeps
+/// the page properties as the header block ([`document_page_property_block`])
+/// and reads this prose as the page's first block, which is also what the
+/// page shows (`Page.tsx`) and what editing it promotes it to (GH #85). The
+/// one answer (I-12; CM step 2, batch 8):
+/// - Markdown: `tine_outline::page_preamble::page_preamble_content` (after the leading run
+///   of page properties; the window asks the same function through wasm).
+/// - Org: after the last line of the parser's page properties (directives and
+///   the head drawer). Text between two directives is not read (recorded in
+///   the batch 8 design note).
+///
+/// O(pre-block bytes); `None` when there is no prose.
+pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range<usize>> {
+    if !is_org {
+        return tine_outline::page_preamble::page_preamble_content(pre).map(|r| r.0..r.1);
+    }
+    let regions = crate::block_regions::parse_document(pre, true);
+    if regions.quarantined {
+        // A refused pre-block has no readable references in either part.
+        return None;
+    }
+    let mut start = 0;
+    for property in regions.page_properties() {
+        start = start.max(property.line.1);
+        if let Some(drawer) = regions.property_regions.get(property.region) {
+            start = start.max(drawer.1);
+        }
+    }
+    let start = start.min(pre.len());
+    let rest = &pre[start..];
+    let leading = rest.len() - rest.trim_start_matches('\n').len();
+    let content = rest.trim_matches('\n');
+    (!content.is_empty()).then(|| start + leading..start + leading + content.len())
+}
+
+/// The pre-block's prose as a block (see [`preamble_content_range`]): the
+/// text a promoted preamble block would hold, so its reference answer is the
+/// one that block will have.
+pub fn preamble_block(pre: &str, is_org: bool) -> Option<DocBlock> {
+    let range = preamble_content_range(pre, is_org)?;
+    let mut block = DocBlock::new(&pre[range]);
+    block.set_org(is_org);
+    Some(block)
+}
+
+/// [`preamble_block`] under the graph's property-reference policy.
+pub fn preamble_block_with_config(
+    pre: &str,
+    is_org: bool,
+    config: &crate::query::atom::ParseConfig,
+) -> Option<DocBlock> {
+    let mut block = preamble_block(pre, is_org)?;
+    block.set_property_ref_config(config);
+    Some(block)
+}
+
+/// The pre-block's prose block from the document alone (no page entry); the
+/// sibling of [`document_page_property_block`] for the same walkers.
+pub fn document_preamble_block(doc: &Document) -> Option<DocBlock> {
+    let pre = doc.pre_block.as_deref()?;
+    preamble_block(pre, page_document_is_org(doc))
+}
+
+/// The pre-block's blocks every reference question reads, in page order:
+/// the page-property header block, then the prose block.
+pub fn document_pre_blocks(doc: &Document) -> impl Iterator<Item = DocBlock> {
+    document_page_property_block(doc)
+        .into_iter()
+        .chain(document_preamble_block(doc))
+}
+
 /// Count each projected block reference once per referring block. The one
 /// counter behind the graph's block-ref badges and a publication's counts.
 /// Cost O(document blocks).
@@ -111,8 +189,9 @@ pub fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
     }
     let mut counts = HashMap::new();
     // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
-    // `((uuid))` in a page property is one referrer of that block.
-    if let Some(pre) = document_page_property_block(doc) {
+    // `((uuid))` in a page property is one referrer of that block; so is one
+    // in the preamble's prose (its own block, batch 8).
+    for pre in document_pre_blocks(doc) {
         for id in pre.projection().block_refs() {
             *counts.entry(id.clone()).or_insert(0) += 1;
         }

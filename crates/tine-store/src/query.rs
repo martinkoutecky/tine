@@ -29,7 +29,7 @@ pub(crate) mod page_properties;
 mod sample_seed_tests;
 pub(crate) use page_properties::page_facets;
 use page_properties::{page_document_is_org, page_property_lines};
-pub(crate) use tine_core::page_properties::{document_page_property_block, page_property_raw};
+pub(crate) use tine_core::page_properties::page_property_raw;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -263,7 +263,7 @@ pub(crate) fn crumb_line(b: &DocBlock) -> String {
 fn collect(
     graph: &ReadSnapshot,
     keep: impl FnMut(&DocBlock) -> bool,
-    keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    keep_page_properties: impl FnMut(&PageEntry, &str) -> Vec<BlockDto>,
     exclude: Option<&str>,
 ) -> Vec<RefGroup> {
     collect_bounded(
@@ -280,7 +280,7 @@ fn collect(
 fn collect_bounded(
     graph: &ReadSnapshot,
     mut keep: impl FnMut(&DocBlock) -> bool,
-    mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Vec<BlockDto>,
     exclude: Option<&str>,
     max_rows: usize,
     max_bytes: usize,
@@ -297,7 +297,7 @@ fn collect_bounded(
             }
             let mut matched: Vec<BlockDto> = Vec::new();
             if let Some(pre) = doc.pre_block.as_deref() {
-                if let Some(property_ref) = keep_page_properties(entry, pre) {
+                for property_ref in keep_page_properties(entry, pre) {
                     if budget.admit_estimated(
                         &entry.name,
                         tine_core::model::block_dto_estimated_bytes(&property_ref),
@@ -799,15 +799,55 @@ fn page_property_block_with_config(
     Some(block)
 }
 
-/// The header pre-block when it references block `uuid`, as a page-property row.
-fn page_property_referrer(entry: &PageEntry, pre: &str, uuid: &str) -> Option<BlockDto> {
-    let block = page_property_block(entry, pre)?;
-    if !block.projection().block_refs().iter().any(|r| r == uuid) {
-        return None;
+/// The pre-block's prose as the page's first block for every reference
+/// question (`page_properties::preamble_content_range`, CM step 2 batch 8),
+/// with a page-scoped identity like the header block's.
+fn page_preamble_block_with_config(
+    entry: &PageEntry,
+    pre: &str,
+    config: &tine_core::query::atom::ParseConfig,
+) -> Option<DocBlock> {
+    let is_org = Format::from_path(&entry.path) == Format::Org;
+    let mut block = tine_core::page_properties::preamble_block_with_config(pre, is_org, config)?;
+    block.uuid = format!(
+        "page-preamble:{:?}:{}",
+        entry.kind,
+        refs::page_key(&entry.name)
+    );
+    Some(block)
+}
+
+/// The pre-block's blocks a reference question reads, in page order: the
+/// page-property header block, then the prose block. The ordinal of both in
+/// the reference candidate signatures is 0 (`model.rs reference_signatures`).
+fn pre_blocks_with_config(
+    entry: &PageEntry,
+    pre: &str,
+    config: &tine_core::query::atom::ParseConfig,
+) -> impl Iterator<Item = DocBlock> {
+    page_property_block_with_config(entry, pre, config)
+        .into_iter()
+        .chain(page_preamble_block_with_config(entry, pre, config))
+}
+
+/// A reference row for one of [`pre_blocks_with_config`]'s blocks: the
+/// header one is a page-property row, the prose one a preamble row.
+fn pre_block_dto(block: &DocBlock) -> BlockDto {
+    let mut dto = block_to_shallow_dto(block);
+    if block.uuid.starts_with("page-preamble:") {
+        dto.page_preamble = true;
+    } else {
+        dto.page_property = true;
     }
-    let mut dto = block_to_shallow_dto(&block);
-    dto.page_property = true;
-    Some(dto)
+    dto
+}
+
+/// A pre-block referencing block `uuid`, as a page-property or preamble row.
+fn page_property_referrers(entry: &PageEntry, pre: &str, uuid: &str) -> Vec<BlockDto> {
+    pre_blocks_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
+        .filter(|block| block.projection().block_refs().iter().any(|r| r == uuid))
+        .map(|block| pre_block_dto(&block))
+        .collect()
 }
 
 /// Parser-owned explicit page-reference targets contributed by one physical
@@ -865,12 +905,13 @@ fn explicit_reference_names_where(
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc
+    for block in doc
         .pre_block
         .as_deref()
         .filter(|_| include_header)
-        .and_then(|pre| {
-            page_property_block_with_config(
+        .into_iter()
+        .flat_map(|pre| {
+            pre_blocks_with_config(
                 entry,
                 pre,
                 &tine_core::query::atom::ParseConfig::from_config(config),
@@ -979,12 +1020,15 @@ fn collect_reference_occurrences_bounded(
             }
             let mut blocks = Vec::new();
             let mut evidence = Vec::new();
-            if let Some(mut block) = doc
+            // Both pre-blocks (header, then the preamble's prose) share
+            // signature slot 0.
+            for mut block in doc
                 .pre_block
                 .as_deref()
                 .filter(|_| candidate_pages.admits(page, 0))
-                .and_then(|pre| {
-                    page_property_block_with_config(
+                .into_iter()
+                .flat_map(|pre| {
+                    pre_blocks_with_config(
                         entry,
                         pre,
                         &tine_core::query::atom::ParseConfig::from_config(config),
@@ -998,8 +1042,7 @@ fn collect_reference_occurrences_bounded(
                 } else if let Some(hit) =
                     block_reference_evidence(&block, canonical, &needles, kind, config)
                 {
-                    let mut dto = block_to_shallow_dto(&block);
-                    dto.page_property = true;
+                    let dto = pre_block_dto(&block);
                     let estimated = tine_core::model::block_dto_estimated_bytes(&dto)
                         .saturating_add(reference_evidence_estimated_bytes(&hit));
                     if budget.admit_estimated(&entry.name, estimated) {
@@ -1309,7 +1352,7 @@ pub(crate) fn backlink_filter_context(
                 continue;
             };
             if let Some(pre) = document.pre_block.as_deref() {
-                if let Some(block) = page_property_block_with_config(
+                for block in pre_blocks_with_config(
                     page,
                     pre,
                     &tine_core::query::atom::ParseConfig::from_config(graph.config()),
@@ -1404,7 +1447,7 @@ pub(crate) fn block_referrers(graph: &ReadSnapshot, uuid: &str) -> Vec<RefGroup>
     collect(
         graph,
         |b| b.projection().block_refs().iter().any(|r| r == u),
-        |entry, pre| page_property_referrer(entry, pre, u),
+        |entry, pre| page_property_referrers(entry, pre, u),
         None,
     )
 }
@@ -1426,7 +1469,7 @@ pub(crate) fn block_referrers_bounded(
     collect_bounded(
         graph,
         |b| b.projection().block_refs().iter().any(|r| r == u),
-        |entry, pre| page_property_referrer(entry, pre, u),
+        |entry, pre| page_property_referrers(entry, pre, u),
         None,
         max_rows,
         max_bytes,
@@ -1525,12 +1568,12 @@ pub(crate) fn page_affects_backlinks(
     // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block_with_config(
+        pre_blocks_with_config(
             entry,
             pre,
             &tine_core::query::atom::ParseConfig::from_config(config),
         )
-        .is_some_and(|block| {
+        .any(|block| {
             block_reference_evidence(
                 &block,
                 &canonical,
@@ -1569,12 +1612,12 @@ pub(crate) fn page_affects_unlinked(
     let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block_with_config(
+        pre_blocks_with_config(
             entry,
             pre,
             &tine_core::query::atom::ParseConfig::from_config(config),
         )
-        .is_some_and(|block| {
+        .any(|block| {
             block_reference_evidence(&block, &canonical, &needles, ReferenceKind::Plain, &config)
                 .is_some()
         })
@@ -1600,7 +1643,7 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     if uuid.is_empty() {
         return false;
     }
-    if document_page_property_block(doc).is_some_and(|block| {
+    if tine_core::page_properties::document_pre_blocks(doc).any(|block| {
         block
             .projection()
             .block_refs()
@@ -1633,7 +1676,7 @@ pub(crate) fn changed_page_affects_unlinked(
     target: &str,
     entry: &PageEntry,
     blocks: &[&DocBlock],
-    header: Option<&DocBlock>,
+    header: &[DocBlock],
 ) -> bool {
     let real = real_page_names(graph);
     let aliases = graph.alias_edges();
@@ -1654,7 +1697,8 @@ pub(crate) fn changed_page_affects_unlinked(
     let names = reference_invalidation_names(graph, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names);
     if header
-        .is_some_and(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+        .iter()
+        .any(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
     {
         return true;
     }
@@ -1670,7 +1714,7 @@ pub(crate) fn changed_reference_source_blocks<'a>(
     config: &tine_core::config::Config,
     changed: &std::collections::BTreeSet<String>,
     header_changed: bool,
-) -> (Option<DocBlock>, Vec<&'a DocBlock>) {
+) -> (Vec<DocBlock>, Vec<&'a DocBlock>) {
     fn select<'a>(
         roots: &'a [DocBlock],
         changed: &std::collections::BTreeSet<String>,
@@ -1689,13 +1733,15 @@ pub(crate) fn changed_reference_source_blocks<'a>(
         .pre_block
         .as_deref()
         .filter(|_| header_changed)
-        .and_then(|pre| {
-            page_property_block_with_config(
+        .into_iter()
+        .flat_map(|pre| {
+            pre_blocks_with_config(
                 entry,
                 pre,
                 &tine_core::query::atom::ParseConfig::from_config(config),
             )
-        });
+        })
+        .collect();
     (header, blocks)
 }
 
@@ -1708,7 +1754,7 @@ pub(crate) fn changed_block_reference_targets(
 ) -> Vec<String> {
     let mut targets = Vec::new();
     if header_changed {
-        if let Some(block) = document_page_property_block(doc) {
+        for block in tine_core::page_properties::document_pre_blocks(doc) {
             targets.extend(block.projection().block_refs().iter().cloned());
         }
     }

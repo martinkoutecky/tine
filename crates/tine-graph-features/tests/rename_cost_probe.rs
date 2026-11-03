@@ -189,3 +189,39 @@ fn rename_and_delete_walks_at_scale() {
     drop(host);
     store.close();
 }
+
+/// CM step 2, batch 8: what the reference build costs at scale. Ignored:
+/// `TINE_RENAME_PROBE_ROOT=<fresh copy of a generated 10k graph>`
+/// (`TINE_RENAME_PROBE_ROUNDS`, default 7), release build, run alone. Prints
+/// the wall time of a cold open plus the whole-graph build (which primes
+/// every page's reference projections) and the median of All pages'
+/// `page_backlink_counts`, one forward walk of every referring block.
+#[test]
+#[ignore]
+fn reference_build_at_scale() {
+    let _integration_guard = crate::integration_lock();
+    let root = std::path::PathBuf::from(std::env::var("TINE_RENAME_PROBE_ROOT").unwrap());
+    let rounds: usize = std::env::var("TINE_RENAME_PROBE_ROUNDS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(7);
+    let started = Instant::now();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+    let open = started.elapsed().as_micros();
+    let mut counts = vec![];
+    let mut rows = 0;
+    for _ in 0..rounds {
+        let started = Instant::now();
+        let (files, references) = graph.page_backlink_counts();
+        counts.push(started.elapsed().as_micros());
+        rows = files.iter().map(|(_, n)| n).sum::<usize>()
+            + references.iter().map(|(_, n)| n).sum::<usize>();
+    }
+    println!(
+        "REFBUILD rounds={rounds} open_whole_graph_us={open} backlink_counts_us={} counted_rows={rows}",
+        median(counts),
+    );
+    drop(graph);
+    store.close();
+}
