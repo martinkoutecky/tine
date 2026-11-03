@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A namespace page that has no file of its own, such as `Work` for a page titled `Work/Plan` or a link `[[Work/Plan]]`, is now a page everywhere, as in Logseq: it has a row in All pages, page queries find it, and it appears or goes as soon as its first child appears or its last child goes. Before, only the namespace tree showed it, and it was missing from All pages and queries. The Namespaces view now counts it among the pages below a namespace (REG-CM-NAMESPACE-PARENTS-INVENTORY, UI-CM-NAMESPACE-PARENTS).
 - Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
 
 ### Added

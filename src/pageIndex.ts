@@ -238,17 +238,20 @@ function ensureInstalled() {
       // the store's `page_key`); alias and reference-only names then fill gaps.
       const seen = new Set<string>();
       const names: string[] = [];
+      const keys: string[] = [];
       const add = (name: string) => {
         const key = pageIdentityKey(name);
         if (!seen.has(key)) {
           seen.add(key);
           names.push(name);
+          keys.push(key);
         }
       };
       for (const page of allPages() ?? []) add(page.name);
       for (const entry of current.entries) {
         if (entry.target.kind !== "existing") add(entry.name);
       }
+      keysOfNames.set(names, keys);
       return names;
     });
     // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
@@ -356,4 +359,13 @@ export function referenceOnlyPages(): PageEntry[] {
 /** Physical, alias and reference-only page names (`[]` until loaded). */
 export function allPageNames(): string[] {
   return ensureInstalled().allPageNames();
+}
+
+const keysOfNames = new WeakMap<readonly string[], readonly string[]>();
+
+/** The page keys (`pageIdentityKey`) of an `allPageNames()` result, index for
+ *  index, already computed by its dedup; undefined for any other array. Lets a
+ *  view that nests names (the namespace tree) skip a second key call per name. */
+export function allPageNameKeys(names: readonly string[]): readonly string[] | undefined {
+  return keysOfNames.get(names);
 }

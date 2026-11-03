@@ -220,6 +220,10 @@ export interface PageInventoryEntry {
    *  store's `WholeGraph::link_target` (an alias's owner, a date spelling's
    *  journal). Absent means the entry itself. */
   link?: { name: string; kind: PageKind };
+  /** Set when the entry exists only as the namespace parent of a listed name
+   *  (`n` for `n/y`; conceptual model rule 1, `InventoryEntry::namespace_parent`).
+   *  Absent means false. */
+  namespace_parent?: boolean;
 }
 
 /** What one publication changed in the `page_inventory` answer when no page
