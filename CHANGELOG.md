@@ -28,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- In the development build, on Android the CodeMirror editor now keeps the edited line on screen when the keyboard opens late or the page is scrolled after the first reveal, as the classic editor already did: the line comes back just above the keyboard toolbar instead of staying under it (#783; internal UI-GH783-CM6-KEYBOARD-FOLLOW). Not yet tried on a device.
 - Renaming a page from the command line (`tine page rename`) now moves its favorite to the new name, also when no Tine window is open. Before, the sidebar kept the old name, and clicking that favorite opened an empty page of the old name (internal UI-CM-FAVORITES-CLI-RENAME-STALE).
 - Renaming a namespace parent such as `proj` to `work` now moves a favorite child, `proj/child` becoming `work/child`, as Logseq does. Before, only the parent's own favorite followed (internal UI-CM-FAVORITES-NAMESPACE-CHILD-STALE).
 - A favorite stored under an alias of a renamed page keeps its alias spelling, which still opens the page, as Logseq does. Before, Tine rewrote it to the new page name (internal REG-CM-FAVORITES-ALIAS-SPELLING-REWRITTEN).

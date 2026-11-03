@@ -81,6 +81,24 @@ export function caretViewRow(editor: HTMLTextAreaElement, scroller: HTMLElement 
 
 interface CaretViewRow { top: number; bottom: number; visibleTop: number; visibleBottom: number }
 
+/** An editor engine that is not a textarea (CM6) measures its own caret row and
+ * registers it here, keyed by the focused element (`contentDOM`), so the shared
+ * keyboard-time reveals below (`MobileKeyboardToolbar`, GH #783) can place its
+ * caret without importing the engine. Viewport pixels; null without layout. */
+const caretRowSources = new WeakMap<HTMLElement, () => { top: number; bottom: number } | null>();
+export function registerCaretRowSource(editor: HTMLElement, source: () => { top: number; bottom: number } | null): () => void {
+  caretRowSources.set(editor, source);
+  return () => { if (caretRowSources.get(editor) === source) caretRowSources.delete(editor); };
+}
+
+/** The caret row of either editor engine, with the pane/pin bounds; null for an
+ * unfocused editor, no layout, or an engine that registered no source. */
+export function editorCaretRow(editor: HTMLElement, scroller: HTMLElement | null): CaretViewRow | null {
+  if (isElementTag(editor, "textarea")) return caretViewRow(editor, scroller);
+  const row = caretRowSources.get(editor)?.();
+  return row && row.bottom > row.top ? caretViewBounds(editor, scroller, row) : null;
+}
+
 /** Both editor engines supply viewport coordinates; pane/pin policy has one owner. */
 function caretViewBounds(editor: HTMLElement, scroller: HTMLElement | null, row: { top: number; bottom: number }): CaretViewRow | null {
   if (!scroller || !editor.isConnected || !scroller.contains(editor) || documentOf(editor).activeElement !== editor) return null;
@@ -130,8 +148,8 @@ export function scrollToClearToolbar(editor: HTMLElement, scroller: HTMLElement 
   const limit = toolbarTop - MARGIN * zoom();
   const bottomRule = editor.getBoundingClientRect().bottom - limit;
   if (bottomRule <= 0) return 0;
-  // The CodeMirror editor measures its caret itself; it keeps the bottom rule.
-  const g = isElementTag(editor, "textarea") ? caretViewRow(editor, scroller) : null;
+  // CM6 supplies its measured caret row through `registerCaretRowSource`.
+  const g = editorCaretRow(editor, scroller);
   if (!g) return bottomRule;
   const room = limit - g.visibleTop;
   if (editor.getBoundingClientRect().height <= room) return bottomRule;
@@ -152,7 +170,7 @@ export function scrollToClearToolbar(editor: HTMLElement, scroller: HTMLElement 
  * scroller clamps at either end of the page. `band` is the visual viewport's top
  * and the toolbar's top in viewport pixels, converted to scrollTop pixels under
  * Android's CSS interface zoom. Returns whether it scrolled. */
-export function revealCaretAboveKeyboard(editor: HTMLTextAreaElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): boolean {
+export function revealCaretAboveKeyboard(editor: HTMLElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): boolean {
   const delta = keyboardCaretOffset(editor, scroller, band);
   if (!scroller || Math.abs(delta) <= 0.5) return false;
   scroller.scrollTop += delta / zoom();
@@ -161,8 +179,8 @@ export function revealCaretAboveKeyboard(editor: HTMLTextAreaElement, scroller: 
 
 /** The viewport-pixel scroll `revealCaretAboveKeyboard` makes; 0 while the caret
  * row is visible or without layout. Exported for its unit test. */
-export function keyboardCaretOffset(editor: HTMLTextAreaElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): number {
-  const g = caretViewRow(editor, scroller);
+export function keyboardCaretOffset(editor: HTMLElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): number {
+  const g = editorCaretRow(editor, scroller);
   if (!g) return 0;
   const top = Math.max(g.visibleTop, band.top + MARGIN * zoom());
   const bottom = Math.min(g.visibleBottom, band.bottom - MARGIN * zoom());
