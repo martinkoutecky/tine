@@ -1,5 +1,5 @@
 {
-  "about": "CM step 2 batch 4 (census Q12, harness gap H1): what the favorites list is after a rename or merge. Each scenario is a small graph, one operation and the proposed one answer (`target`). Three entries run every scenario and record where they differ from `target` in expected-differences.json: `rust` (tine-graph-features `pages::rename_or_merge_page`, the entry the app and the CLI owner both call), `owner` (the headless CLI owner's `page.rename` verb, src-tauri owner tests: `tine serve` has no window, so nothing in TypeScript runs after it) and `frontend` (src/favorites.ts `renameFavorite`, reached as graph.ts `refreshAfterRename` reaches it after an app rename or a CLI rename a window hears about). `target` is the manager's stated goal (favorites follow a rename; a merged-away page's favorite ends on the survivor) plus OG's namespace behaviour; `pending` names a target that is a proposal awaiting a ruling (see the design note cm-step2-favorites-design.md). Names avoid the owner test graph's seed pages (a, b, ns, ns/child, dup).",
+  "about": "CM step 2 batch 4 (census Q12, harness gap H1): what the favorites list is after a rename, a merge or a title:: change that renames a page. Each scenario is a small graph, one operation and the one answer (`target`), set by the manager's rulings (FAV-MERGE, FAV-ALIAS, f3, FAV-RETITLE; see the design note cm-step2-favorites-design.md and `ruling` on a scenario). One answerer computes it: tine-graph-features `pages::commit_config` (the rename's config step, and `pages::follow_page_identity` after a title:: change). Three entries run every scenario and record where they differ from `target` in expected-differences.json: `rust` (`pages::rename_or_merge_page`, or a guarded page write plus `follow_page_identity` for a retitle), `owner` (the headless CLI owner, `tine serve`: no window, so no TypeScript runs; `page.rename`, or `block.edit` of the title for a retitle) and `frontend` (src/cmFavoritesRename.test.ts: the window adopts the backend's answer and computes and writes nothing itself). Names avoid the owner test graph's seed pages (a, b, ns, ns/child, dup).",
   "scenarios": [
     {
       "id": "f1-plain",
@@ -26,7 +26,8 @@
       "files": { "pages/proj.md": "- parent\n", "pages/proj___child.md": "- child\n" },
       "op": { "kind": "rename", "old": "proj", "new": "work" },
       "target": { "favorites": ["work/child", "work"], "favoritesPage": null },
-      "og": "rename-namespace-pages! calls rename-page-aux for every namespace page, so each favorite follows: [\"work\" \"work/child\"] (front-insertion order)"
+      "og": "rename-namespace-pages! calls rename-page-aux for every namespace page, so each favorite follows: [\"work\" \"work/child\"] (front-insertion order)",
+      "ruling": "f3: namespace children's favorites follow, as OG does."
     },
     {
       "id": "f4-merge",
@@ -35,8 +36,8 @@
       "files": { "pages/Src.md": "- from src\n", "pages/Dst.md": "- in dst\n", "pages/Other.md": "- other\n" },
       "op": { "kind": "merge", "old": "Src", "new": "Dst", "into": "pages/Dst.md" },
       "target": { "favorites": ["Dst", "Other"], "favoritesPage": null },
-      "pending": "FAV-MERGE: OG drops the merged-away page's favorite (merge-pages! -> delete! -> unfavorite-page!); the brief's goal moves it to the survivor, as Tine's TypeScript does today.",
-      "og": "merge-pages! does not call rename-page-aux; delete! of the source calls unfavorite-page!: [\"Other\"]"
+      "og": "merge-pages! does not call rename-page-aux; delete! of the source calls unfavorite-page!: [\"Other\"]",
+      "ruling": "FAV-MERGE: the merged-away page's favorite moves to the survivor (a favorite behaves like a link, and merge rewrites links, M-Q4). Deliberate OG difference: OG drops it (merge-pages! -> delete! -> unfavorite-page!)."
     },
     {
       "id": "f5-merge-both-favorites",
@@ -45,7 +46,8 @@
       "files": { "pages/Src.md": "- from src\n", "pages/Dst.md": "- in dst\n" },
       "op": { "kind": "merge", "old": "Src", "new": "Dst", "into": "pages/Dst.md" },
       "target": { "favorites": ["Dst"], "favoritesPage": null },
-      "og": "the source's favorite is dropped: [\"Dst\"]"
+      "og": "the source's favorite is dropped: [\"Dst\"]",
+      "ruling": "FAV-MERGE: moved to the survivor, deduplicated when the survivor is already a favorite."
     },
     {
       "id": "f6-alias-spelling",
@@ -54,12 +56,12 @@
       "files": { "pages/Alpha.md": "alias:: Al\n\n- alpha body\n" },
       "op": { "kind": "rename", "old": "Alpha", "new": "Omega" },
       "target": { "favorites": ["Al"], "favoritesPage": null },
-      "pending": "FAV-ALIAS: keep the stored alias spelling (it still opens the page; a rename maps page names, not aliases) or rewrite it to the new page name, as Tine's TypeScript does today (favoriteKey resolves the alias through navigationName).",
       "og": "favorited? compares the stored name with the old page name only; an alias spelling is not matched and stays: [\"Al\"]",
       "frontendInventory": [
         { "key": "alpha", "name": "Alpha", "is_journal": false, "day": null, "target": { "kind": "existing", "id": "pages/Alpha.md", "others": [] } },
         { "key": "al", "name": "Al", "is_journal": false, "day": null, "target": { "kind": "alias", "owners": ["pages/Alpha.md"] }, "link": { "name": "Alpha", "kind": "page" } }
-      ]
+      ],
+      "ruling": "FAV-ALIAS: keep the stored alias spelling, as OG and the model's rename do with [[alias]] links (it still opens the page). Before this batch the TypeScript rewrote it to the new page name."
     },
     {
       "id": "f7-reference-only",
@@ -96,6 +98,25 @@
       "op": { "kind": "rename", "old": "Favorites", "new": "Faves" },
       "target": { "favorites": ["Alpha"], "favoritesPage": "Faves", "pages": { "pages/Faves.md": "tine.favorites:: true\n\n- Work\n\t- [[Alpha]]\n" } },
       "og": "OG has no arrangement page"
+    },
+    {
+      "id": "f11-retitle",
+      "about": "A title:: change renames the page (the file stays): its favorite and the home page follow, from the same answerer as a rename.",
+      "config": "{:default-home {:page \"Alpha\"} :favorites [\"Alpha\" \"Other\"]}\n",
+      "files": { "pages/Alpha.md": "title:: Alpha\n\n- alpha body\n", "pages/Other.md": "- other\n" },
+      "op": { "kind": "retitle", "old": "Alpha", "new": "Omega", "path": "pages/Alpha.md", "text": "title:: Omega\n\n- alpha body\n" },
+      "target": { "favorites": ["Omega", "Other"], "favoritesPage": null, "home": "Omega" },
+      "ruling": "FAV-RETITLE: a title:: change that changes the page's name moves its favorites and home through the Rust answerer (pages::follow_page_identity); no TypeScript computation. Not an I-12 exception.",
+      "og": "OG does not rename on a title:: property edit (rename! runs only from the page-title UI): [\"Alpha\" \"Other\"]"
+    },
+    {
+      "id": "f12-retitle-same-page",
+      "about": "A title:: change to another spelling of the same name keeps the stored favorite spelling (one favorite identity; D11).",
+      "config": "{:favorites [\"Alpha\"]}\n",
+      "files": { "pages/Alpha.md": "title:: Alpha\n\n- alpha body\n" },
+      "op": { "kind": "retitle", "old": "Alpha", "new": "ALPHA", "path": "pages/Alpha.md", "text": "title:: ALPHA\n\n- alpha body\n" },
+      "target": { "favorites": ["Alpha"], "favoritesPage": null },
+      "og": "no rename: [\"Alpha\"]"
     }
   ]
 }

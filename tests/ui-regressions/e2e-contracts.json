@@ -640,6 +640,28 @@
       ],
       "stability": "stable"
     },
+    "scripts/e2e-cm-favorites.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "After a CLI page rename with no window open, the next app open lists the favorite under its new name in config.edn and the sidebar, and clicking it opens the renamed page with its body.",
+          "blocking": true
+        },
+        {
+          "class": "core-operation",
+          "userOutcome": "An app rename of a namespace parent moves a favorite namespace child to its new name, and a title:: change of an open page moves its favorite; config.edn and the sidebar agree, each favorite opens its page with its body, and no page file is created.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation and config reload timing may vary while config.edn and the sidebar reach the listed favorites."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels, sidebar order animation or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
     "scripts/e2e-gh623-link-navigation.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
