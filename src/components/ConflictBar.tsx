@@ -2,7 +2,7 @@ import { Rich } from "../i18n/Rich";
 import { t, msg } from "../i18n";
 import { For, Show, type JSX } from "solid-js";
 import { conflictReason, conflicts, pageByName, resolveConflict } from "../document";
-import { liveConflictForPage } from "../liveConflicts";
+import { liveConflictForPage, requestConflictReview } from "../liveConflicts";
 import { openPageTarget } from "../routerBridge";
 import { DiskOrMineChoice } from "./DiskOrMineChoice";
 
@@ -28,7 +28,14 @@ export function ConflictBar(): JSX.Element {
               <div class="conflict-banner">
                 <span class="conflict-msg"><Rich message={msg("conflict-bar-live-notice", { name })} /></span>
                 <span class="conflict-actions">
-                  <button class="conflict-btn" onClick={() => { const c = live(); if (c) openPageTarget({ name: c.page_name, pageKind: c.kind, path: c.page_path }); }}>{t("conflict-bar-review")}</button>
+                  <button class="conflict-btn" onClick={() => {
+                  const c = live();
+                  if (!c) return;
+                  // Opens the page when it is not the current one (a no-op when it
+                  // is), then brings its resolver into view (GH #858).
+                  openPageTarget({ name: c.page_name, pageKind: c.kind, path: c.page_path });
+                  requestConflictReview(c.page_path);
+                }}>{t("conflict-bar-review")}</button>
                 </span>
               </div>
             }>

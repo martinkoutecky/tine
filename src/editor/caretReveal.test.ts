@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // what is tested (GH #745): no move while the caret row is visible, the least move otherwise, below pins.
 let row: { top: number; bottom: number } | null = { top: 0, bottom: 20 };
 vi.mock("./caretRows", () => ({ textareaCaretRow: () => row }));
-import { caretViewRow, keyboardCaretOffset, revealCaret, revealCaretAboveKeyboard, revealCaretSettled } from "./caretReveal";
+import { caretViewRow, editorCaretRow, keyboardCaretOffset, registerCaretRowSource, revealCaret, revealCaretAboveKeyboard, revealCaretSettled } from "./caretReveal";
 import { applyAndroidInterfaceZoom } from "../zoom";
 
 const frames: FrameRequestCallback[] = [];
@@ -313,5 +313,45 @@ describe.each([1.25, 1.5])("at interface zoom %d", z => {
     const f = zoomed(60 * z - 2);
     expect(revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD)).toBe(true);
     expect(f.editor.getBoundingClientRect().bottom).toBeCloseTo(450 - 8 * z, 6);
+  });
+});
+
+// GH #783 follow-up: the CM6 editor (a div) supplies its measured caret row; the keyboard-time rules use it like the textarea's.
+describe("a non-textarea editor with a registered caret row", () => {
+  function cm6Fixture(rowTop: number) {
+    const f = fixture(0);
+    const div = document.createElement("div");
+    div.tabIndex = 0;
+    f.scroller.append(div);
+    div.focus();
+    div.getBoundingClientRect = () => ({ top: 100 + rowTop - (f.scroller.scrollTop - 1000), bottom: 100 + rowTop + 800 - (f.scroller.scrollTop - 1000), height: 800 } as DOMRect);
+    const source = () => { const y = 100 + rowTop - (f.scroller.scrollTop - 1000); return { top: y, bottom: y + 20 }; };
+    return { ...f, div, source };
+  }
+  it("has no row without a source, and none once it is unregistered", () => {
+    const f = cm6Fixture(0);
+    expect(editorCaretRow(f.div, f.scroller)).toBeNull();
+    const off = registerCaretRowSource(f.div, f.source);
+    expect(editorCaretRow(f.div, f.scroller)).not.toBeNull();
+    off();
+    expect(editorCaretRow(f.div, f.scroller)).toBeNull();
+  });
+  it("puts a caret line that left the view back just above the keyboard", () => {
+    const f = cm6Fixture(-300); // caret row at viewport y -200
+    registerCaretRowSource(f.div, f.source);
+    const band = { top: 0, bottom: 480 };
+    // the 800px editor cannot fit between the pins and the keyboard: the caret row's bottom (y -180) goes to 472
+    expect(keyboardCaretOffset(f.div, f.scroller, band)).toBe(-180 - 472);
+    expect(revealCaretAboveKeyboard(f.div, f.scroller, band)).toBe(true);
+    expect(f.scroller.scrollTop).toBe(1000 - 652);
+    expect(revealCaretAboveKeyboard(f.div, f.scroller, band)).toBe(false); // placed: nothing further
+  });
+  it("lets the toolbar rule clear the caret row of a tall editor, not its bottom (never upward)", () => {
+    const above = cm6Fixture(100); // caret row at y 200..220, the toolbar at 480: the row is clear
+    registerCaretRowSource(above.div, above.source);
+    expect(scrollToClearToolbar(above.div, above.scroller, 480)).toBe(0);
+    const below = cm6Fixture(450); // caret row at y 550..570, under the toolbar
+    registerCaretRowSource(below.div, below.source);
+    expect(scrollToClearToolbar(below.div, below.scroller, 480)).toBe(570 - 472);
   });
 });

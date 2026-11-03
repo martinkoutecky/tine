@@ -28,6 +28,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Macros in `config.edn` named with keywords, as Logseq writes them (`:macros {:bar "..."}`), now work like `"bar"` names. Before, `{{bar 5}}` stayed raw text, and every macro listed after the first keyword name was ignored as well (GH #854, REG-GH854-CONFIG-MACRO-KEYWORD-NAMES).
+- A journal section shown under today's journal now sorts and groups by the View settings saved on its block on the sections page (GH #855, UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES).
+- **Review** on the "changed on disk while you were editing" banner now shows the page's review of your edits against the disk version, also when the page is already open and scrolled down. Before, it did nothing there (GH #858, UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER).
+- On Windows, images no longer look washed out next to other image viewers: Tine's windows now draw colours in sRGB (GH #804, REG-GH804-WINDOWS-WEBVIEW-SRGB).
+- The left sidebar's "All pages" heading is the same size as the other section headings (GH #704, UI-GH704-SIDEBAR-HEADINGS-ONE-SIZE).
+- In the development build, on Android the CodeMirror editor now keeps the edited line on screen when the keyboard opens late or the page is scrolled after the first reveal, as the classic editor already did: the line comes back just above the keyboard toolbar instead of staying under it (#783; internal UI-GH783-CM6-KEYBOARD-FOLLOW). Not yet tried on a device.
 - Renaming a page from the command line (`tine page rename`) now moves its favorite to the new name, also when no Tine window is open. Before, the sidebar kept the old name, and clicking that favorite opened an empty page of the old name (internal UI-CM-FAVORITES-CLI-RENAME-STALE).
 - Renaming a namespace parent such as `proj` to `work` now moves a favorite child, `proj/child` becoming `work/child`, as Logseq does. Before, only the parent's own favorite followed (internal UI-CM-FAVORITES-NAMESPACE-CHILD-STALE).
 - A favorite stored under an alias of a renamed page keeps its alias spelling, which still opens the page, as Logseq does. Before, Tine rewrote it to the new page name (internal REG-CM-FAVORITES-ALIAS-SPELLING-REWRITTEN).
