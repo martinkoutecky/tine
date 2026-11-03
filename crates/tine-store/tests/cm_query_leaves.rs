@@ -60,11 +60,7 @@ fn blocks(graph: &WholeGraph, text: &str, input: QueryInput) -> Vec<String> {
         .iter()
         .flat_map(|group| {
             group.blocks.iter().map(move |block| {
-                format!(
-                    "{}: {}",
-                    group.page,
-                    block.raw.lines().next().unwrap_or("")
-                )
+                format!("{}: {}", group.page, block.raw.lines().next().unwrap_or(""))
             })
         })
         .collect();
@@ -112,7 +108,7 @@ fn a_reference_query_matches_the_whole_alias_group() {
             "{query}"
         );
     }
-    for query in ["ref(\"ML\")", "ref(\"Machine Learning\")"] {
+    for query in ["@block and ref('ML')", "@block and ref('Machine Learning')"] {
         assert_eq!(
             blocks(&graph, query, QueryInput::MacroTql),
             every_ml_block(),
@@ -128,7 +124,11 @@ fn a_reference_query_matches_the_whole_alias_group() {
     ];
     direct.sort();
     assert_eq!(
-        blocks(&graph, "direct_ref(\"Machine Learning\")", QueryInput::MacroTql),
+        blocks(
+            &graph,
+            "@block and direct_ref('Machine Learning')",
+            QueryInput::MacroTql
+        ),
         direct
     );
 }
@@ -170,7 +170,10 @@ fn name_and_page_stay_literal_for_aliases() {
 }
 
 const DAY: &[(&str, &str)] = &[
-    ("pages/A.md", "- see [[B]]\n- on [[2026-10-26]]\n- on [[Oct 26th, 2026]]\n"),
+    (
+        "pages/A.md",
+        "- see [[B]]\n- on [[2026-10-26]]\n- on [[Oct 26th, 2026]]\n",
+    ),
     ("journals/2026_10_26.md", "- day\n"),
 ];
 
@@ -192,6 +195,10 @@ fn a_date_spelling_names_its_journal_in_every_leaf() {
         "Oct 26th, 2026: day".to_owned(),
     ];
     for query in ["[[2026-10-26]]", "[[Oct 26th, 2026]]"] {
-        assert_eq!(blocks(&graph, query, QueryInput::MacroQuery), all, "{query}");
+        assert_eq!(
+            blocks(&graph, query, QueryInput::MacroQuery),
+            all,
+            "{query}"
+        );
     }
 }

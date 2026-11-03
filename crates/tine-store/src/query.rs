@@ -519,6 +519,60 @@ fn graph_equivalent_page_names(
     )
 }
 
+/// The names a query reference leaf (`[[A]]`, `refs`, `#A`, TQL `ref` /
+/// `direct_ref`) matches for `target` (D-20261019-Q8, conformance S10/S12):
+/// exactly the Linked References panel's names
+/// ([`graph_equivalent_page_names`] with `explicit` set, the one answerer of
+/// "which names denote this page"), returned as the page keys of the alias
+/// class and the journal-day spellings, plus the journal DAYS the panel widens
+/// by referenced spellings. The panel lists the referenced names that parse to
+/// such a day; a query keeps the day instead and asks each reference whether
+/// it parses to it ([`eval::reference_day`], the same test
+/// [`referenced_day_keys`] applies). Same answer for every name the graph
+/// holds, and it stays a function of the evaluated page alone, so a memoized
+/// or mounted answer is not made stale by a link typed elsewhere.
+///
+/// Cost: O(component log P) plus one title lookup per journal day reached.
+///
+/// A date spelling other than the journal's title (`[[22.10.2026]]` under a
+/// file-name format) names the journal itself (the page key folds the date,
+/// S12), so the journal's alias group joins: the class is the union of the
+/// spelling's and the journal's.
+pub(crate) fn reference_class(graph: &ReadSnapshot, target: &str) -> (Vec<String>, Vec<i64>) {
+    let format = graph.config().journal_format();
+    let real = real_page_names(graph);
+    let edges = graph.alias_edges();
+    let days = std::cell::RefCell::new(Vec::new());
+    let class_of = |name: &str| {
+        graph_equivalent_page_names_with(
+            &real,
+            &edges,
+            &format,
+            name,
+            |day| graph.reference_journal_name(day),
+            |day| {
+                days.borrow_mut().push(day.ordinal_key());
+                Vec::new()
+            },
+        )
+        .1
+    };
+    let mut keys = class_of(target);
+    if let Some(journal) = format
+        .parse(target)
+        .and_then(|day| graph.reference_journal_name(day))
+        .filter(|journal| refs::page_key(journal) != refs::page_key(target))
+    {
+        keys.extend(class_of(&journal));
+        keys.sort();
+        keys.dedup();
+    }
+    let mut days = days.into_inner();
+    days.sort_unstable();
+    days.dedup();
+    (keys, days)
+}
+
 /// The explicitly referenced name keys that denote `day` by the graph's one
 /// date answerer ([`JournalFormat::parse`]): `2026-10-2` and `October 22nd,
 /// 2026` reach the Oct 22nd journal because they parse to it, not because a
@@ -4428,7 +4482,7 @@ mod tests {
             let facts = index.facts(entry, doc);
             let config = index.parse_config();
             let touches =
-                |plan: std::sync::Arc<exec::Plan>| plan.touches(entry, doc, &facts, config);
+                |plan: std::sync::Arc<exec::Plan>| plan.touches(&graph, entry, doc, &facts, config);
             assert!(touches(
                 exec::run_query_bounded(&graph, "(and (task TODO) [[Target]])", 20, 1 << 20).1
             ));

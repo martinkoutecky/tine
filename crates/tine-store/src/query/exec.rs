@@ -44,6 +44,7 @@ use tine_core::query::{
 };
 use tine_core::refs;
 
+use super::eval::ref_classes::RefClasses;
 use super::eval::{self, CompiledLeaves, EvalCache, EvalCtx};
 use super::index::{atom_format, PageFacts, QueryIndex};
 use super::link_graph::{LinkAnswers, LinkGraph, VirtualNode};
@@ -85,6 +86,11 @@ pub(crate) struct Plan {
     /// filter reads `used_as_tag` (graph-wide, so the memo cannot treat such a
     /// plan as page-local: see [`Plan::reads_tag_targets`]).
     tag_targets: Option<Arc<HashSet<String>>>,
+    /// What each reference operand names in the generation the plan runs on
+    /// (alias class and journal days, D-20261019-Q8). Not persisted: set by
+    /// [`plan`], or built on first use from the graph a carried or restored
+    /// plan is asked about ([`Self::ref_classes`]).
+    ref_classes: std::sync::OnceLock<Arc<RefClasses>>,
 }
 
 /// A [`Plan`]'s persisted half (launch checkpoint, ADR 0070): every field
@@ -107,6 +113,7 @@ impl Plan {
     /// no sound page-local test and deliberately invalidate on every edit.
     pub(crate) fn touches_edit(
         &self,
+        graph: &ReadSnapshot,
         entry: &PageEntry,
         before: &Document,
         after: &Document,
@@ -122,8 +129,8 @@ impl Plan {
             || self.reads_links()
             || self.registry().is_some() && old_facts.registry_rows_differ(new_facts)
             || self.reads_tag_targets() && old_facts.tags() != new_facts.tags()
-            || self.touches(entry, before, old_facts, config)
-            || self.touches(entry, after, new_facts, config)
+            || self.touches(graph, entry, before, old_facts, config)
+            || self.touches(graph, entry, after, new_facts, config)
     }
 
     pub(super) fn estimated_bytes(&self) -> usize {
@@ -139,7 +146,28 @@ impl Plan {
             .saturating_add(self.tag_targets.as_ref().map_or(0, |targets| {
                 super::memo::retained::serialized_bytes(&**targets)
             }))
+            .saturating_add(
+                self.ref_classes
+                    .get()
+                    .map_or(0, |classes| classes.estimated_bytes()),
+            )
             .saturating_add(std::mem::size_of::<Self>())
+    }
+
+    /// The reference classes of this plan in `graph`'s generation, built on
+    /// first use. `graph` must hold the same alias relation and page names as
+    /// the generation the plan answers for: every caller passes the snapshot
+    /// the plan runs on or is carried from (a carry happens only when neither
+    /// moved).
+    pub(crate) fn ref_classes(&self, graph: &ReadSnapshot) -> &RefClasses {
+        self.ref_classes
+            .get_or_init(|| Arc::new(RefClasses::build(graph, &self.filter)))
+    }
+
+    fn known_ref_classes(&self) -> &RefClasses {
+        self.ref_classes
+            .get()
+            .map_or(RefClasses::none(), |classes| classes.as_ref())
     }
 
     /// Whether an answer depends on the wall-clock instant rather than the
@@ -202,6 +230,7 @@ impl Plan {
             remove_accents,
             registry,
             tag_targets,
+            ref_classes: std::sync::OnceLock::new(),
         }
     }
 
@@ -218,6 +247,7 @@ impl Plan {
             top_level_only,
             filter,
             compiled: _,
+            ref_classes: _,
             track,
             today,
             remove_accents,
@@ -262,6 +292,7 @@ impl Plan {
             remove_accents,
             registry: registry.cloned(),
             tag_targets: tag_targets.cloned(),
+            ref_classes: std::sync::OnceLock::new(),
         }
     }
 
@@ -307,6 +338,7 @@ impl Plan {
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             links,
             atoms,
+            self.known_ref_classes(),
         )
     }
 
@@ -337,6 +369,7 @@ impl Plan {
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             links,
             atoms,
+            self.known_ref_classes(),
         )
     }
 
@@ -505,11 +538,13 @@ impl Plan {
     /// registry snapshot.
     pub(crate) fn touches(
         &self,
+        graph: &ReadSnapshot,
         entry: &PageEntry,
         doc: &Document,
         facts: &PageFacts,
         config: &ParseConfig,
     ) -> bool {
+        self.ref_classes(graph);
         let atoms = EvalCache::default();
         if self.skips(entry, facts, config, &atoms) {
             return false;
@@ -550,17 +585,29 @@ impl Plan {
         cache: &EvalCache,
     ) -> bool {
         self.anchor == Anchor::Block
-            && (required_refs(&self.filter)
-                .is_some_and(|names| !facts.may_reference(entry, &names))
-                || required_reference_days(&self.filter).is_some_and(|preds| {
-                    !facts.refs().iter().any(|name| {
-                        let day = cache.reference_day(name, config);
-                        day.is_some()
-                            && preds.iter().any(|pred| {
-                                eval::reference_date_pred(pred, day, self.today) == Some(true)
-                            })
-                    })
-                }))
+            && (required_refs(&self.filter).is_some_and(|operands| {
+                let classes = self.known_ref_classes();
+                !operands.iter().any(|operand| match classes.class(operand) {
+                    None => facts.may_reference(entry, &[refs::normalize(operand)]),
+                    Some(class) => {
+                        facts.may_reference(entry, &class.keys().cloned().collect::<Vec<_>>())
+                            || class.has_days()
+                                && std::iter::once(&refs::normalize(&entry.name))
+                                    .chain(facts.refs())
+                                    .any(|name| {
+                                        class.holds(name, |key| cache.reference_day(key, config))
+                                    })
+                    }
+                })
+            }) || required_reference_days(&self.filter).is_some_and(|preds| {
+                !facts.refs().iter().any(|name| {
+                    let day = cache.reference_day(name, config);
+                    day.is_some()
+                        && preds.iter().any(|pred| {
+                            eval::reference_date_pred(pred, day, self.today) == Some(true)
+                        })
+                })
+            }))
     }
 }
 
@@ -603,9 +650,11 @@ fn row_dto(facts: &PageFacts, block: &DocBlock) -> BlockDto {
     dto
 }
 
-/// Page refs one of which every matching block's path-refs closure must
-/// contain, normalized; `None` when the filter does not require any.
-fn required_refs(filter: &Filter) -> Option<Vec<String>> {
+/// Reference operands one of which every matching block's path-refs closure
+/// must hold a name of (the operand's class, [`RefClasses`]: the same names
+/// [`eval::eval_refs`] matches, so narrowing never drops a row); `None` when
+/// the filter does not require any.
+fn required_refs(filter: &Filter) -> Option<Vec<&str>> {
     match filter {
         Filter::Leaf {
             leaf:
@@ -614,7 +663,7 @@ fn required_refs(filter: &Filter) -> Option<Vec<String>> {
                     quant: Quant::Any | Quant::Every,
                     pred,
                 },
-        } => eval::single_ref_name(pred).map(|name| vec![refs::normalize(name)]),
+        } => eval::single_ref_name(pred).map(|name| vec![name]),
         Filter::And { items } => items.iter().find_map(required_refs),
         Filter::Or { items } if !items.is_empty() => items
             .iter()
@@ -890,6 +939,7 @@ pub(crate) fn execute_cancellable(
     bounds: Bounds,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
+    plan.ref_classes(graph);
     let mut result = QueryResult {
         rows: match plan.anchor {
             Anchor::Block => QueryRows::Block { groups: Vec::new() },
@@ -1179,6 +1229,7 @@ pub(crate) fn execute_cancellable(
 /// Count the rows a plan matches, constructing nothing (explain-empty's probe).
 /// `None` once `cancelled` stops its link work.
 fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Option<usize> {
+    plan.ref_classes(graph);
     graph.with_pages(|pages| {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
@@ -1216,14 +1267,16 @@ pub(crate) fn plan(
     today: JournalDate,
     block_rows: bool,
 ) -> Plan {
-    Plan::new(
+    let plan = Plan::new(
         query,
         today,
         block_rows,
         graph.config().enable_search_remove_accents,
         || graph.with_pages(|pages| graph.query_index().registry(pages)),
         || graph.with_pages(|pages| Arc::new(graph.query_index().tag_targets(pages))),
-    )
+    );
+    plan.ref_classes(graph);
+    plan
 }
 
 /// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a

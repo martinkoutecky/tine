@@ -2,7 +2,8 @@
 use super::*;
 use crate::model::persistent::Pages;
 
-/// A conservative necessary condition, never a replacement for evaluation.
+/// The page-name operands (as written) one of which every row's page must
+/// carry. A conservative necessary condition, never a replacement for evaluation.
 /// Negation and partially constrained ORs must retain the whole candidate set.
 fn required_names(filter: &Filter, anchor: Anchor) -> Option<Vec<String>> {
     match filter {
@@ -14,10 +15,10 @@ fn required_names(filter: &Filter, anchor: Anchor) -> Option<Vec<String>> {
                     pred,
                 },
         } if anchor == Anchor::Block => {
-            eval::single_ref_name(pred).map(|name| vec![refs::page_key(name)])
+            eval::single_ref_name(pred).map(|name| vec![name.to_owned()])
         }
         Filter::Leaf { .. } if anchor == Anchor::Page => {
-            eval::single_ref_name(filter).map(|name| vec![refs::page_key(name)])
+            eval::single_ref_name(filter).map(|name| vec![name.to_owned()])
         }
         Filter::And { items } => items
             .iter()
@@ -44,7 +45,24 @@ pub(super) struct Candidates<'a> {
 
 impl<'a> Candidates<'a> {
     pub(super) fn new(graph: &ReadSnapshot, pages: &'a Pages, plan: &Plan) -> Self {
-        let names = required_names(&plan.filter, plan.anchor);
+        let names = required_names(&plan.filter, plan.anchor).map(|names| {
+            // A date spelling names its journal (S12, `eval_page_name`): the
+            // journal is named by the configured title, so its key joins the
+            // probe. The one date answerer reads the spelling.
+            let format = graph.config().journal_format();
+            let mut names: Vec<String> = names
+                .into_iter()
+                .flat_map(|name| {
+                    let journal = eval::reference_day(&name, &format)
+                        .and(format.parse(&name))
+                        .map(|day| refs::page_key(&format.title(day)));
+                    std::iter::once(refs::page_key(&name)).chain(journal)
+                })
+                .collect();
+            names.sort();
+            names.dedup();
+            names
+        });
         let selected = names.as_ref().map(|names| {
             let named = graph
                 .reference_real_page_names()
