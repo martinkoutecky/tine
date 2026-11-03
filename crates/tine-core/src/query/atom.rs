@@ -35,29 +35,18 @@ use crate::doc::property_key_norm;
 use crate::query::ir::ObservedType;
 use unicode_normalization::UnicodeNormalization;
 
+// Also compiled into lsdoc-wasm, with the reference walker.
+mod parse_config;
+pub use parse_config::ParseConfig;
+use parse_config::EDITABLE_LINKABLE_BUILT_IN_PROPERTIES;
+pub(crate) use parse_config::{reference_parsing_suppressed, separated_by_commas};
+
 /// The comparison form of an atom's text: NFC-lowercased and trimmed.
 pub fn atom_key(text: &str) -> String {
     text.trim().to_lowercase().nfc().collect()
 }
 
-/// The parse-relevant slice of the graph config the atomizer and registry
-/// read (master `config::ParseConfig`, SPEC §5.8), filled from `config.edn`
-/// by [`ParseConfig::from_config`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ParseConfig {
-    pub separated_by_commas: Vec<String>,
-    pub ignored_page_references_keywords: Vec<String>,
-    pub hidden_properties: Vec<String>,
-    pub journal_page_title_format: Option<String>,
-    pub journal_file_name_format: Option<String>,
-}
-
 impl ParseConfig {
-    pub(crate) fn default_ref() -> &'static Self {
-        static DEFAULT: std::sync::OnceLock<ParseConfig> = std::sync::OnceLock::new();
-        DEFAULT.get_or_init(Self::default)
-    }
-
     /// The graph's journal date answerer, as [`crate::config::Config::journal_format`].
     pub fn journal_format(&self) -> crate::date::JournalFormat {
         crate::date::JournalFormat::new(
@@ -75,12 +64,6 @@ impl ParseConfig {
             journal_page_title_format: config.journal_page_title_format.clone(),
             journal_file_name_format: config.journal_file_name_format.clone(),
         }
-    }
-}
-
-impl Default for ParseConfig {
-    fn default() -> Self {
-        ParseConfig::from_config(&crate::config::Config::default())
     }
 }
 
@@ -138,47 +121,6 @@ pub struct Atom {
     pub ordinal: u32,
 }
 
-/// OG `gp-property/unparsed-built-in-properties` (`property.cljs:110-121`):
-/// `(hidden-built-in ∪ editable-built-in) − built-in-extended(∅) −
-/// editable-linkable − keys(built-in-property-types)`, expanded here because
-/// Tine has no Clojure set algebra at runtime. Names are `(name k)` of the
-/// keyword, i.e. what a `key::` line spells.
-const UNPARSED_BUILT_IN_PROPERTIES: &[&str] = &[
-    // from hidden-built-in-properties (`property.cljs:68-79`)
-    "id",
-    "custom-id",
-    "background-color",
-    "background_color",
-    "query-properties",
-    "query-sort-by",
-    "ls-type",
-    "hl-type",
-    "hl-color",
-    "logseq.macro-name",
-    "logseq.macro-arguments",
-    "logseq.order-list-type",
-    "logseq.tldraw.page",
-    "logseq.tldraw.shape",
-    // from editable-built-in-properties (`property.cljs:58-66`)
-    "title",
-    "icon",
-    "template",
-    "filters",
-    "macro",
-    "filetags",
-    "logseq.color",
-    "logseq.table.version",
-    "logseq.table.compact",
-    "logseq.table.headers",
-    "logseq.table.hover",
-    "logseq.table.borders",
-    "logseq.table.stripes",
-    "logseq.table.max-width",
-];
-
-/// OG `gp-property/editable-linkable-built-in-properties` (`property.cljs:46-48`).
-const EDITABLE_LINKABLE_BUILT_IN_PROPERTIES: &[&str] = &["alias", "aliases", "tags"];
-
 /// True for OG's built-in keys whose values are page references
 /// (`editable-linkable-built-in-properties`: `alias`, `aliases`, `tags`), in any
 /// case. The one list (I-12, census Q7): search facets, the sync-conflict member
@@ -186,26 +128,10 @@ const EDITABLE_LINKABLE_BUILT_IN_PROPERTIES: &[&str] = &["alias", "aliases", "ta
 /// `:property/separated-by-commas` keys come on top through
 /// [`linkable_property_keys`] where config applies.
 pub fn is_editable_linkable_built_in(key: &str) -> bool {
-    contains_key(
-        EDITABLE_LINKABLE_BUILT_IN_PROPERTIES,
-        &property_key_norm(key),
-    )
-}
-
-fn contains_key(list: &[&str], key: &str) -> bool {
-    list.iter()
+    let key = property_key_norm(key);
+    EDITABLE_LINKABLE_BUILT_IN_PROPERTIES
+        .iter()
         .any(|candidate| property_key_norm(candidate) == key)
-}
-
-fn contains_config_key(list: &[String], key: &str) -> bool {
-    list.iter()
-        .any(|candidate| property_key_norm(candidate.trim_start_matches(':')) == key)
-}
-
-/// OG `separated-by-commas?` (`text.cljs:141-146`).
-pub(crate) fn separated_by_commas(key: &str, config: &ParseConfig) -> bool {
-    contains_key(EDITABLE_LINKABLE_BUILT_IN_PROPERTIES, key)
-        || contains_config_key(&config.separated_by_commas, key)
 }
 
 /// The normalized keys whose value shows each comma item as a page link on
@@ -227,13 +153,6 @@ pub fn linkable_property_keys(config: &ParseConfig) -> Vec<String> {
         }
     }
     keys
-}
-
-/// Step 1's key test: OG `parse-property`'s first `cond` branch
-/// (`text.cljs:169-176`).
-pub(crate) fn reference_parsing_suppressed(key: &str, config: &ParseConfig) -> bool {
-    contains_key(UNPARSED_BUILT_IN_PROPERTIES, key)
-        || contains_config_key(&config.ignored_page_references_keywords, key)
 }
 
 /// OG `gp-util/wrapped-by-quotes?`: a trimmed value of length > 1 starting and
@@ -546,6 +465,16 @@ pub fn format_number(number: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ParseConfig`'s derived default (it compiles into wasm, without
+    /// `Config`) is the slice of `Config::default()`.
+    #[test]
+    fn the_default_parse_config_is_the_default_configs_slice() {
+        assert_eq!(
+            ParseConfig::default(),
+            ParseConfig::from_config(&crate::config::Config::default())
+        );
+    }
 
     fn config() -> ParseConfig {
         ParseConfig::default()

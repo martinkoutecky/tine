@@ -338,14 +338,18 @@ pub(super) fn plan_rename(
         .iter()
         .map(|(from, to)| (refs::normalize(from), to.clone()))
         .collect();
-    // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: only
-    // pages that explicitly reference a renamed name are rewritten, plus
-    // every moved page. A name mentioned only inside an ordinary query stays;
-    // the pages holding export definitions are read too, whose page
-    // selectors follow the rename (`tine_core::export_definition`).
+    // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: the
+    // pages that explicitly reference a renamed name, plus every moved page.
+    // The pages with a rewrite target no reference selects are read too: a
+    // query's page-name arguments (D-20261031-CMQ), links in other macros'
+    // arguments and Org file links follow the rename like links.
     let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
     let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
-    candidates.extend(export_definition_pages(&graph, &olds)?);
+    candidates.extend(rewrite_target_pages(
+        &graph,
+        &lookup,
+        config.file_name_format,
+    ));
     candidates.extend(moves.keys().cloned());
     candidates.extend(moved_titles_to_rebind.iter().cloned());
     candidates.retain(|id| {

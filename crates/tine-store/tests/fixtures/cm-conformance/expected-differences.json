@@ -28,6 +28,321 @@
     "random": {},
     "randomGraphs": 0
   },
+  "extraction": {
+    "fixtures": {
+      "md/cloze/ns": [
+        "rename-only: [[x]] in {{cloze}} [ns/old]"
+      ],
+      "md/cloze/plain": [
+        "rename-only: [[x]] in {{cloze}} [old]"
+      ],
+      "md/cloze/unicode": [
+        "rename-only: [[x]] in {{cloze}} [über]"
+      ],
+      "md/cloze/words": [
+        "rename-only: [[x]] in {{cloze}} [old page]"
+      ],
+      "md/embed-block/ns": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "md/embed-block/plain": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "md/embed-block/unicode": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "md/embed-block/words": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "md/marker/plain": [
+        "evidence-only explicit_task_marker: bare [todo]"
+      ],
+      "md/nested-outer/ns": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "md/nested-outer/plain": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "md/nested-outer/unicode": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "md/nested-outer/words": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "md/nested/ns": [
+        "evidence-only explicit_nested_link: [[x]] nested [ns/old]"
+      ],
+      "md/nested/plain": [
+        "evidence-only explicit_nested_link: [[x]] nested [old]"
+      ],
+      "md/nested/unicode": [
+        "evidence-only explicit_nested_link: [[x]] nested [über]"
+      ],
+      "md/nested/words": [
+        "evidence-only explicit_nested_link: [[x]] nested [old page]"
+      ],
+      "md/page-tags/ns": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [ns/old alias]"
+      ],
+      "md/page-tags/plain": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [old alias]"
+      ],
+      "md/page-tags/unicode": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [über alias]"
+      ],
+      "md/page-tags/words": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [old page alias]"
+      ],
+      "md/priority/plain": [
+        "evidence-only explicit_priority: [#x] [a]",
+        "evidence-only explicit_task_marker: bare [todo]"
+      ],
+      "md/prop-alias-bare/ns": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [ns/old]"
+      ],
+      "md/prop-alias-bare/plain": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [old]"
+      ],
+      "md/prop-alias-bare/unicode": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [über]"
+      ],
+      "md/prop-alias-bare/words": [
+        "evidence-only implicit_linkable_property: bare value of alias:: [old page]"
+      ],
+      "md/query-and/ns": [
+        "rename-only: [[x]] in {{query}} [ns/old]"
+      ],
+      "md/query-and/plain": [
+        "rename-only: [[x]] in {{query}} [old]"
+      ],
+      "md/query-and/unicode": [
+        "rename-only: [[x]] in {{query}} [über]"
+      ],
+      "md/query-and/words": [
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "md/query-link/ns": [
+        "rename-only: [[x]] in {{query}} [ns/old]"
+      ],
+      "md/query-link/plain": [
+        "rename-only: [[x]] in {{query}} [old]"
+      ],
+      "md/query-link/unicode": [
+        "rename-only: [[x]] in {{query}} [über]"
+      ],
+      "md/query-link/words": [
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "md/query-page-bare/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "md/query-page-bare/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "md/query-page-bare/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "md/query-page/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "md/query-page/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "md/query-page/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "md/query-page/words": [
+        "rename-only: bare in {{query}} [old page]"
+      ],
+      "md/query-plus-link/ns": [
+        "rename-only: [[x]] in {{query}} [ns/old]"
+      ],
+      "md/query-plus-link/plain": [
+        "rename-only: [[x]] in {{query}} [old]"
+      ],
+      "md/query-plus-link/unicode": [
+        "rename-only: [[x]] in {{query}} [über]"
+      ],
+      "md/query-plus-link/words": [
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "md/renderer/ns": [
+        "rename-only: [[x]] in {{renderer}} [ns/old]"
+      ],
+      "md/renderer/plain": [
+        "rename-only: [[x]] in {{renderer}} [old]"
+      ],
+      "md/renderer/unicode": [
+        "rename-only: [[x]] in {{renderer}} [über]"
+      ],
+      "md/renderer/words": [
+        "rename-only: [[x]] in {{renderer}} [old page]"
+      ],
+      "org/cloze/ns": [
+        "rename-only: [[x]] in {{cloze}} [ns/old]"
+      ],
+      "org/cloze/plain": [
+        "rename-only: [[x]] in {{cloze}} [old]"
+      ],
+      "org/cloze/unicode": [
+        "rename-only: [[x]] in {{cloze}} [über]"
+      ],
+      "org/cloze/words": [
+        "rename-only: [[x]] in {{cloze}} [old page]"
+      ],
+      "org/embed-block/ns": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "org/embed-block/plain": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "org/embed-block/unicode": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "org/embed-block/words": [
+        "evidence-only explicit_embed: bare in {{embed}} [((6571a2b3-1111-2222-3333-444455556666))]"
+      ],
+      "org/file-link-bare/ns": [
+        "rename-only: [[file:…x.org]] [ns/old]"
+      ],
+      "org/file-link-bare/plain": [
+        "rename-only: [[file:…x.org]] [old]"
+      ],
+      "org/file-link-bare/unicode": [
+        "rename-only: [[file:…x.org]] [über]"
+      ],
+      "org/file-link-bare/words": [
+        "rename-only: [[file:…x.org]] [old page]"
+      ],
+      "org/file-link-label/ns": [
+        "rename-only: [[file:…x.org]] [ns/old]"
+      ],
+      "org/file-link-label/plain": [
+        "rename-only: [[file:…][x]] [old]"
+      ],
+      "org/file-link-label/unicode": [
+        "rename-only: [[file:…][x]] [über]"
+      ],
+      "org/file-link-label/words": [
+        "rename-only: [[file:…][x]] [old page]"
+      ],
+      "org/file-link-other-label/ns": [
+        "rename-only: [[file:…x.org]] [ns/old]"
+      ],
+      "org/file-link-other-label/plain": [
+        "rename-only: [[file:…x.org]] [old]"
+      ],
+      "org/file-link-other-label/unicode": [
+        "rename-only: [[file:…x.org]] [über]"
+      ],
+      "org/file-link-other-label/words": [
+        "rename-only: [[file:…x.org]] [old page]"
+      ],
+      "org/marker/plain": [
+        "evidence-only explicit_task_marker: bare [todo]"
+      ],
+      "org/nested-outer/ns": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "org/nested-outer/plain": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "org/nested-outer/unicode": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "org/nested-outer/words": [
+        "evidence-only explicit_nested_link: [[x]] nested [x]"
+      ],
+      "org/nested/ns": [
+        "evidence-only explicit_nested_link: [[x]] nested [ns/old]"
+      ],
+      "org/nested/plain": [
+        "evidence-only explicit_nested_link: [[x]] nested [old]"
+      ],
+      "org/nested/unicode": [
+        "evidence-only explicit_nested_link: [[x]] nested [über]"
+      ],
+      "org/nested/words": [
+        "evidence-only explicit_nested_link: [[x]] nested [old page]"
+      ],
+      "org/priority/plain": [
+        "evidence-only explicit_priority: [#x] [a]",
+        "evidence-only explicit_task_marker: bare [todo]"
+      ],
+      "org/query-and/ns": [
+        "rename-only: [[x]] in {{query}} [ns/old]"
+      ],
+      "org/query-and/plain": [
+        "rename-only: [[x]] in {{query}} [old]"
+      ],
+      "org/query-and/unicode": [
+        "rename-only: [[x]] in {{query}} [über]"
+      ],
+      "org/query-and/words": [
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "org/query-link/ns": [
+        "rename-only: [[x]] in {{query}} [ns/old]"
+      ],
+      "org/query-link/plain": [
+        "rename-only: [[x]] in {{query}} [old]"
+      ],
+      "org/query-link/unicode": [
+        "rename-only: [[x]] in {{query}} [über]"
+      ],
+      "org/query-link/words": [
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "org/query-page-bare/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "org/query-page-bare/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "org/query-page-bare/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "org/query-page/ns": [
+        "rename-only: bare in {{query}} [ns/old]"
+      ],
+      "org/query-page/plain": [
+        "rename-only: bare in {{query}} [old]"
+      ],
+      "org/query-page/unicode": [
+        "rename-only: bare in {{query}} [über]"
+      ],
+      "org/query-page/words": [
+        "rename-only: bare in {{query}} [old page]"
+      ],
+      "org/query-plus-link/ns": [
+        "rename-only: [[x]] in {{query}} [ns/old]"
+      ],
+      "org/query-plus-link/plain": [
+        "rename-only: [[x]] in {{query}} [old]"
+      ],
+      "org/query-plus-link/unicode": [
+        "rename-only: [[x]] in {{query}} [über]"
+      ],
+      "org/query-plus-link/words": [
+        "rename-only: [[x]] in {{query}} [old page]"
+      ],
+      "org/renderer/ns": [
+        "rename-only: [[x]] in {{renderer}} [ns/old]"
+      ],
+      "org/renderer/plain": [
+        "rename-only: [[x]] in {{renderer}} [old]"
+      ],
+      "org/renderer/unicode": [
+        "rename-only: [[x]] in {{renderer}} [über]"
+      ],
+      "org/renderer/words": [
+        "rename-only: [[x]] in {{renderer}} [old page]"
+      ]
+    },
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
+  },
   "frontend": {
     "fixtures": {
       "d4-date-named-page-file-format": [
@@ -280,6 +595,14 @@
     }
   },
   "frontendNames": {
+    "fixtures": {
+      "n4-org-file-links-triple-lowbar": [
+        "frontend file link: nearestLink reads \"Ten___Child\" in pages/note.org (\"see [[file:./Ten___Child.org][ten]]\"), pages/Ten___Child.org is named \"Ten/Child\"",
+        "frontend file link: nearestLink reads \"a/b\" in pages/note.org (\"and [[file:./a.b.org][ab]]\"), pages/a.b.org is named \"a.b\""
+      ]
+    }
+  },
+  "frontendRefs": {
     "fixtures": {}
   },
   "keys": {
@@ -424,6 +747,7 @@
     "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled.",
     "n1-legacy-codec": "pending Q-N1 (Martin): OG keeps \"%25\" undecoded in a legacy file name (\"50%25 of 100%\"); Tine percent-decodes it (\"50% of 100%\"). Today's behaviour is kept until Q-N1 is ruled. (\"contents\" -> \"Contents\" was fixed in batch 3, REG-CM-CONTENTS-PAGE-NAME.)",
     "n2-triple-lowbar-codec": "pending Q-N1 (Martin): decode differences from OG's triple-lowbar codec (a leading \"___\", percent-decoding, \"______\"). Today's behaviour is kept until Q-N1 is ruled.",
+    "n4-org-file-links-triple-lowbar": "A finding, not a decision (CM step 2 batch 6): `nearestLink` (follow link, Ctrl/Cmd+O) caches each block's link candidates per parsed AST (`candidatesByAst`), so after the graph's `:file/name-format` changes at runtime a block parsed before the change keeps the old format's page name for an Org file link. This test reads the same texts under legacy first, then triple-lowbar. Pre-existing; surfaced when this test moved off `pageRefsInText` (deleted). Fix: key the cache by the file-name format.",
     "n5-title-differs-from-stem": "pending Q-N3 (Martin): OG names a journal file with `title::` by its title (\"Release day\"); Tine names every journal by its date. Today's behaviour is kept until Q-N3 is ruled. The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n6-title-rename": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n7-sync-conflict-names": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
@@ -461,12 +785,8 @@
       "r6-rewrite-set: Tasks -> Chores": [
         "aliases of pages/ref.md: Tine has (\"alias\", \"tasks\"), model does not (model [(\"alias\", \"chores\")], Tine [(\"alias\", \"tasks\")])",
         "aliases of pages/ref.md: model has (\"alias\", \"chores\"), Tine does not (model [(\"alias\", \"chores\")], Tine [(\"alias\", \"tasks\")])",
-        "occurrences of pages/ref.md: Tine has (\"linkableValue\", \"tasks\"), model does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"tasks\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])",
-        "occurrences of pages/ref.md: Tine has (\"propertyKey\", \"tasks\"), model does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"tasks\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])",
-        "occurrences of pages/ref.md: model has (\"linkableValue\", \"chores\"), Tine does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"tasks\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])",
-        "occurrences of pages/ref.md: model has (\"propertyKey\", \"chores\"), Tine does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"tasks\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])",
-        "query args of pages/ref.md: Tine has (\"query arg\", \"tasks\"), model does not (model [(\"query arg\", \"chores\"), (\"query arg\", \"chores\")], Tine [(\"query arg\", \"chores\"), (\"query arg\", \"tasks\")])",
-        "query args of pages/ref.md: model has (\"query arg\", \"chores\"), Tine does not (model [(\"query arg\", \"chores\"), (\"query arg\", \"chores\")], Tine [(\"query arg\", \"chores\"), (\"query arg\", \"tasks\")])"
+        "occurrences of pages/ref.md: Tine has (\"linkableValue\", \"tasks\"), model does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])",
+        "occurrences of pages/ref.md: model has (\"linkableValue\", \"chores\"), Tine does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])"
       ],
       "r6-task-marker-page: A -> Alpha": []
     },

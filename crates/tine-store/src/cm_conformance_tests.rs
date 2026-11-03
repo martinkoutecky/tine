@@ -43,6 +43,9 @@ mod store_crate {
 #[path = "cm_conformance_shared_tests.rs"]
 mod shared;
 
+#[path = "cm_conformance_extraction_tests.rs"]
+mod extraction;
+
 use shared::{Ctx, Diff, GraphSpec, Section};
 
 const RANDOM_DEFAULT: usize = 300;

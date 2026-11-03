@@ -31,6 +31,24 @@ function __tine_raw_block_may_have_logbook(raw) {
 }
 
 /**
+ * Every page name one block's source references, in source order (may
+ * repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+ * over the same block parse, under the default parse config. O(block bytes)
+ * plus one inline parse per property value or macro argument; no I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_block_reference_names(raw, is_org) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.block_reference_names(ptr0, len0, is_org);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  * @param {string} value
  * @returns {string | undefined}
@@ -1569,6 +1587,7 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
 }
 export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __tine_raw_absent_link_is_journal);
 export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
+export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);

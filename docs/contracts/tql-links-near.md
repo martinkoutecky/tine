@@ -161,11 +161,11 @@ no page without a file either.
 ## Renames
 
 Seeds and element conditions are ordinary page conditions, so the existing
-rename rule applies unchanged (`docs/contracts/export-definitions.md`): inside an
-export definition block, renaming a page rewrites a quoted page name of an
+rename rule applies unchanged (`docs/contracts/export-definitions.md`): in every
+query block (D-20261031-CMQ), renaming a page rewrites a quoted page name of an
 active `name` comparison (`=`, `!=`, `in`, `not in`), wherever it sits —
-including inside `near(…)` and `any(links, …)`. An ordinary query block keeps
-its text, as in OG.
+including inside `near(…)` and `any(links, …)`. OG leaves query text alone
+unless the block also links the page; this is a declared difference.
 
 ## Evaluation and cost
 

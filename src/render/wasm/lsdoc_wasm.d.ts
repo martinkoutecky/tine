@@ -12,6 +12,14 @@ export function absent_link_is_journal(name: string, file_format: string, title_
 export function block_may_have_logbook(raw: string): boolean;
 
 /**
+ * Every page name one block's source references, in source order (may
+ * repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+ * over the same block parse, under the default parse config. O(block bytes)
+ * plus one inline parse per property value or macro argument; no I/O.
+ */
+export function block_reference_names(raw: string, is_org: boolean): string[];
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  */
 export function canonical_group_field(value: string): string | undefined;
@@ -328,6 +336,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly block_may_have_logbook: (a: number, b: number) => number;
+    readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
@@ -389,9 +398,9 @@ export interface InitOutput {
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
-    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

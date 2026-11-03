@@ -182,6 +182,15 @@ export interface RenameTouchedPage {
   moved: boolean;
 }
 
+/** One text an unsaved page holds (its pre-block, or one block's raw body),
+ *  asked of `rename_would_change`. */
+export interface RenameProbeText {
+  raw: string;
+  org: boolean;
+  /** The page's pre-block (page properties), rewritten as a pre-block is. */
+  preBlock: boolean;
+}
+
 /** `page_alias_group`: the other members of one page's alias group
  *  (D-20261019-AL1/AL2), each list sorted case-insensitively. */
 export interface AliasGroup {

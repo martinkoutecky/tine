@@ -1991,7 +1991,7 @@ pub fn file_link_path(from: &str, value: &str) -> String {
 /// oracle (`ogNames`: checks Tine's codec and title parser, which the model
 /// takes as given), and the Org file-link decode
 /// (`block_regions::reference_target_name` with filename candidates, the
-/// policy the frontend's `pageRefsInText` and `nearestLink` call through
+/// policy the frontend's `linkTargetName` and `nearestLink` call through
 /// wasm) against the linked file's answered name.
 pub fn compare_file_names(view: &WholeGraph, spec: &GraphSpec) -> Vec<Diff> {
     let mut diffs = Vec::new();

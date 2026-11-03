@@ -138,39 +138,34 @@ it("a rewritten page that cannot be re-read leaves the working set instead of st
 });
 
 // G3 finding 1 (og 12b follow-up): the stuck-page check asks the question the
-// backend rename answers — does this text hold a reference the rename rewrites?
-// — through the one lsdoc parse and the one page key, not a substring scan.
-const referenceCases: [label: string, from: string, draft: string, blocks: boolean][] = [
-  ["page ref, other casing", "Old", "draft about [[old]]", true],
-  ["decomposed reference to an NFC name", "Café", "see [[Café]]", true],
-  ["NFC reference to a decomposed name", "Café", "see [[Café]]", true],
-  ["#tag", "Old", "a #Old tag", true],
-  ["#[[tag]]", "Old", "a #[[old]] tag", true],
-  ["bare tags:: value", "Old", "draft\ntags:: Other, Old", true],
-  ["namespace child reference", "Old", "see [[Old/Child]]", true],
-  ["reference in a property value", "Old", "draft\nrelated:: [[Old]]", true],
-  ["reference in a macro argument", "Old", "{{embed [[Old]]}}", true],
-  ["prose containing the name", "Cat", "we educate cats", false],
-  ["a longer page name", "Old", "see [[Older]] and #Oldest", false],
-  ["a namespace parent, not child", "Old/Child", "see [[Old]]", false],
-  ["a reference inside inline code", "Old", "literal `[[Old]]` here", false],
-];
-
-it.each(referenceCases)("a stuck page blocks a rename only when it references the renamed page: %s", async (_label, from, draft, blocks) => {
+// backend rename answers: does this text hold a reference the rename rewrites?
+// Conceptual model step 2 (batch 6): it asks the rename itself
+// (`renameWouldChange`, the `rename_would_change` command), so no frontend
+// walker can disagree with the rewrite. The reference cases this test used to
+// pin on a frontend walker are pinned on that answer in Rust
+// (`crates/tine-graph-features/tests/rename_would_change.rs`); here, the
+// window sends the stuck page's texts as it holds them and follows the answer.
+it.each([true, false])("a stuck page blocks a rename exactly when the rename would rewrite its text (answer %s)", async (changes) => {
   graph("Other");
   await stuckDisk("Other", "io:PermissionDenied");
   vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
-  setRaw("other", draft, { timetracking: false });
+  const asked = vi.spyOn(backend(), "renameWouldChange").mockResolvedValue([false, changes]);
+  setDoc("pages", doc.pages.findIndex((loaded) => loaded.name === "Other"), "preBlock", "title:: Other");
+  setRaw("other", "draft about [[old]]", { timetracking: false });
 
-  const outcome = await renameOrMergePage(from, "New");
+  const outcome = await renameOrMergePage("Old", "New");
 
-  if (blocks) {
+  expect(asked).toHaveBeenCalledWith("Old", "New", [
+    { raw: "title:: Other", org: false, preBlock: true },
+    { raw: "draft about [[old]]", org: false, preBlock: false },
+  ]);
+  if (changes) {
     expect(outcome).toEqual({ unsaved: "Other", mentions: true });
     expect(rename).not.toHaveBeenCalled();
   } else {
     expect(outcome).toBe("renamed");
-    expect(rename).toHaveBeenCalledWith(from, "New", "rename-page", undefined, undefined, ["pages/Other.md"]);
+    expect(rename).toHaveBeenCalledWith("Old", "New", "rename-page", undefined, undefined, ["pages/Other.md"]);
   }
-  expect(doc.byId.other.raw).toBe(draft);
+  expect(doc.byId.other.raw).toBe("draft about [[old]]");
 });
