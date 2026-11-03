@@ -1,0 +1,27 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "- DOING draft\n- LATER [#B] plan\n- NOW go\n- DONE [#C] shipped\n- WAITING reply\n- CANCELED trip\n- [#A] urgent\n",
+    "pages/todo.md": "- my own todo page\n",
+    "pages/p.md": "- TODO write\n- TODO [#A] call\n"
+  },
+  "queries": [
+    {
+      "anchor": "page",
+      "q": {
+        "name": "doing"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "b"
+      }
+    },
+    {
+      "anchor": "block",
+      "q": {
+        "refs": "TODO"
+      }
+    }
+  ]
+}

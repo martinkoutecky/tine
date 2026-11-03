@@ -1,5 +1,69 @@
 {
+  "backlinks": {
+    "Notes": [],
+    "Oct 22nd, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "full month [[October 22nd, 2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "wrong suffix [[Oct 22st, 2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "40b6e5b1-bf8a-8ec7-a458-1c60acf71f64",
+            "raw": "lower case [[oct 22nd, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Oct 2nd, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3b38235a-9fae-85eb-9de9-3773ae417ef4",
+            "raw": "one-digit day [[2026-10-2]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "journals/2026_10_22.md",
+        3
+      ],
+      [
+        "journals/2026_10_02.md",
+        1
+      ]
+    ],
+    []
+  ],
   "inventory": [
     {
       "day": null,
@@ -79,6 +143,14 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-2": "oct 2nd, 2026",
+    "Notes": "notes",
+    "Oct 22nd, 2026": "oct 22nd, 2026",
+    "Oct 22st, 2026": "oct 22nd, 2026",
+    "Oct 2nd, 2026": "oct 2nd, 2026",
+    "October 22nd, 2026": "oct 22nd, 2026"
+  },
   "open": {
     "2026-10-2": {
       "journal": [
@@ -181,6 +253,29 @@
       "page": null
     }
   },
+  "pages": [
+    {
+      "key": "oct 22nd, 2026",
+      "kind": "journal",
+      "linkedRefs": 3,
+      "name": "Oct 22nd, 2026",
+      "owner": "journals/2026_10_22.md"
+    },
+    {
+      "key": "oct 2nd, 2026",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "Oct 2nd, 2026",
+      "owner": "journals/2026_10_02.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "2026-10-2": {
       "backend": [

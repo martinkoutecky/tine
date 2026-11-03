@@ -1,0 +1,18 @@
+{
+  "config": {
+    "edn": [
+      ":property-pages/enabled? false"
+    ]
+  },
+  "files": {
+    "pages/a.md": "- note\n  kind:: z\n"
+  },
+  "queries": [
+    {
+      "anchor": "page",
+      "q": {
+        "name": "kind"
+      }
+    }
+  ]
+}

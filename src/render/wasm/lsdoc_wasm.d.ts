@@ -72,6 +72,12 @@ export function hide_policy_hides(policy: string, key: string, properties: strin
 export function install_panic_hook(): void;
 
 /**
+ * Whether All pages hides this name as an OG built-in page (I-12: the one
+ * answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
+ */
+export function is_og_built_in_page(name: string): boolean;
+
+/**
  * OG built-ins excluded from default query-table property columns.
  */
 export function is_og_built_in_property(key: string): boolean;
@@ -334,6 +340,7 @@ export interface InitOutput {
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
+    readonly is_og_built_in_page: (a: number, b: number) => number;
     readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;

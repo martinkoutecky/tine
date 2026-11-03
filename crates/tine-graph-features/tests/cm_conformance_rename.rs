@@ -340,6 +340,7 @@ fn run_rename(
         favorites_page: spec.favorites_page.clone(),
         journal_title_format: spec.journal_title_format.clone(),
         journal_file_format: spec.journal_file_format.clone(),
+        extra_config: spec.extra_config.clone(),
         queries: spec
             .queries
             .iter()

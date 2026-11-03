@@ -1,0 +1,385 @@
+{
+  "backlinks": {
+    "Book": [],
+    "Shelf": [],
+    "done-at": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "69d66905-2907-8817-88ca-81a527c4a247",
+            "raw": "second\ndone_at:: today\nbackground-color:: red",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Book"
+      }
+    ],
+    "rating": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:book",
+            "raw": "type:: book\nrating:: 5",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Book"
+      }
+    ],
+    "status": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "8cc7d2ec-ee6f-870d-ad75-fd5a90d50f5e",
+            "raw": "read it\nstatus:: done\ncollapsed:: true",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Book"
+      }
+    ],
+    "type": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:book",
+            "raw": "type:: book\nrating:: 5",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Book"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "6d8c8c27-f537-8bab-b0a3-093cb8a7a6e3",
+            "raw": "shelf\ntype:: shelf",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Shelf"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/status.md",
+        1
+      ],
+      [
+        "pages/Book.md",
+        0
+      ],
+      [
+        "pages/Shelf.md",
+        0
+      ]
+    ],
+    [
+      [
+        "done-at",
+        1
+      ],
+      [
+        "rating",
+        1
+      ],
+      [
+        "type",
+        2
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "book",
+      "name": "Book",
+      "target": {
+        "id": "pages/Book.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "done-at",
+      "name": "done-at",
+      "target": {
+        "id": "pages/done-at.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "rating",
+      "name": "rating",
+      "target": {
+        "id": "pages/rating.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "shelf",
+      "name": "Shelf",
+      "target": {
+        "id": "pages/Shelf.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "status",
+      "name": "status",
+      "target": {
+        "id": "pages/status.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "type",
+      "name": "type",
+      "target": {
+        "id": "pages/type.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Book": "book",
+    "Shelf": "shelf",
+    "done-at": "done-at",
+    "rating": "rating",
+    "status": "status",
+    "type": "type"
+  },
+  "open": {
+    "Book": {
+      "journal": [
+        "journal",
+        "book"
+      ],
+      "page": [
+        "page",
+        "book"
+      ]
+    },
+    "Shelf": {
+      "journal": [
+        "journal",
+        "shelf"
+      ],
+      "page": [
+        "page",
+        "shelf"
+      ]
+    },
+    "done-at": {
+      "journal": [
+        "journal",
+        "done-at"
+      ],
+      "page": [
+        "page",
+        "done-at"
+      ]
+    },
+    "rating": {
+      "journal": [
+        "journal",
+        "rating"
+      ],
+      "page": [
+        "page",
+        "rating"
+      ]
+    },
+    "status": {
+      "journal": [
+        "journal",
+        "status"
+      ],
+      "page": [
+        "page",
+        "status"
+      ]
+    },
+    "type": {
+      "journal": [
+        "journal",
+        "type"
+      ],
+      "page": [
+        "page",
+        "type"
+      ]
+    }
+  },
+  "owner": {
+    "Book": {
+      "journal": null,
+      "page": "pages/Book.md"
+    },
+    "Shelf": {
+      "journal": null,
+      "page": "pages/Shelf.md"
+    },
+    "done-at": {
+      "journal": null,
+      "page": null
+    },
+    "rating": {
+      "journal": null,
+      "page": null
+    },
+    "status": {
+      "journal": null,
+      "page": "pages/status.md"
+    },
+    "type": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "book",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Book",
+      "owner": "pages/Book.md"
+    },
+    {
+      "key": "done-at",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "done-at",
+      "owner": null
+    },
+    {
+      "key": "rating",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "rating",
+      "owner": null
+    },
+    {
+      "key": "shelf",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Shelf",
+      "owner": "pages/Shelf.md"
+    },
+    {
+      "key": "status",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "status",
+      "owner": "pages/status.md"
+    },
+    {
+      "key": "type",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "type",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "Book": {
+      "backend": [
+        "page",
+        "book"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "book"
+      ]
+    },
+    "Shelf": {
+      "backend": [
+        "page",
+        "shelf"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "shelf"
+      ]
+    },
+    "done-at": {
+      "backend": [
+        "page",
+        "done-at"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "done-at"
+      ]
+    },
+    "rating": {
+      "backend": [
+        "page",
+        "rating"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "rating"
+      ]
+    },
+    "status": {
+      "backend": [
+        "page",
+        "status"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "status"
+      ]
+    },
+    "type": {
+      "backend": [
+        "page",
+        "type"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "type"
+      ]
+    }
+  }
+}

@@ -115,6 +115,13 @@ pub fn is_og_built_in_property(key: &str) -> bool {
     og_built_in::is_og_built_in_property(key)
 }
 
+/// Whether All pages hides this name as an OG built-in page (I-12: the one
+/// answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
+#[wasm_bindgen]
+pub fn is_og_built_in_page(name: &str) -> bool {
+    og_built_in::is_og_built_in_page(name)
+}
+
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]

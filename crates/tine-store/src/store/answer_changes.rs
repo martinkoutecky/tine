@@ -78,7 +78,8 @@ impl Snapshot {
             }
             // Each key this page aliases or references, with the page's own
             // spelling of a reference (the spelling the graph-wide table may use).
-            let names = |doc: Option<&tine_core::doc::Document>| {
+            let names = |doc: Option<&tine_core::doc::Document>,
+                         config: &tine_core::config::Config| {
                 let mut aliases = BTreeSet::new();
                 let mut references = BTreeMap::new();
                 if let Some(doc) = doc {
@@ -87,14 +88,14 @@ impl Snapshot {
                             .iter()
                             .map(|alias| tine_core::refs::page_key(alias)),
                     );
-                    for name in crate::model::collect_document_referenced_names(doc) {
+                    for name in crate::model::collect_document_referenced_names(doc, config) {
                         references.insert(tine_core::refs::page_key(&name), name);
                     }
                 }
                 (aliases, references)
             };
-            let (aliases_before, references_before) = names(before.as_deref());
-            let (aliases_after, references_after) = names(after.as_deref());
+            let (aliases_before, references_before) = names(before.as_deref(), old.graph.config());
+            let (aliases_after, references_after) = names(after.as_deref(), self.graph.config());
             keys.extend(aliases_before.symmetric_difference(&aliases_after).cloned());
             // A page that moved slot can change which page spells a key.
             let moved = old.graph.pages.positions.get(path) != self.graph.pages.positions.get(path);

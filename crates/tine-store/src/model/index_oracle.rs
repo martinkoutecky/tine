@@ -50,7 +50,7 @@ impl crate::WholeGraph {
                 None,
                 &graph.pages,
                 &[],
-                crate::query::document_alias_spellings,
+                &crate::query::document_alias_spellings,
                 None
             )
         );
@@ -113,7 +113,7 @@ fn image(snapshot: &ReadSnapshot, probes: &[&str], include_layout: bool) -> Stri
         for block in &doc.roots {
             block_lines(&mut out, block, 0);
         }
-        let mut referenced = collect_document_referenced_names(doc);
+        let mut referenced = collect_document_referenced_names(doc, &snapshot.config);
         referenced.sort();
         out.push_str(&format!("  referenced {referenced:?}\n"));
         out.push_str(&format!(

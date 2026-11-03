@@ -178,7 +178,7 @@ fn name_keys_equal_collecting_then_filtering() {
     for (page, doc) in pages.iter() {
         let names: std::collections::BTreeSet<String> = std::iter::once(page.name.clone())
             .chain(crate::query::document_alias_spellings(doc))
-            .chain(collect_document_referenced_names(doc))
+            .chain(collect_document_referenced_names(doc, &graph.config))
             .filter_map(|name| crate::transliteration::cache_identity(&name))
             .collect();
         for name in names {

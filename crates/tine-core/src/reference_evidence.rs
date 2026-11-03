@@ -19,7 +19,7 @@ const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
 // This small module also compiles into lsdoc-wasm; keep one built-in answer.
 mod og_built_in;
-pub use og_built_in::is_og_built_in_property;
+pub use og_built_in::{is_og_built_in_page, is_og_built_in_property};
 #[cfg(test)]
 use og_built_in::{OG_EDITABLE_BUILT_IN_PROPERTIES, OG_HIDDEN_BUILT_IN_PROPERTIES};
 

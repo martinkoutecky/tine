@@ -1125,7 +1125,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const base = Date.UTC(2026, 5, 15, 12, 0, 0) / 1000;
       return { rev: "0", modified: all.map((p, i) => [mockPagePath(p), base - i * 3600] as [string, number]) };
     },
-    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
+    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], []]; },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {

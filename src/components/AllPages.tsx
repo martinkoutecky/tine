@@ -4,8 +4,11 @@ import { t } from "../i18n";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { changed } from "../changeKeys";
 import type { PaneRouter } from "../router";
+import type { PageEntry } from "../types";
 import { allPages, pageListLabels } from "../pages";
-import { installPageIndex } from "../pageIndex";
+import { installPageIndex, referenceOnlyPages } from "../pageIndex";
+import { is_og_built_in_page } from "../render/wasm/lsdoc_wasm";
+import { createQuietRun } from "../querySubscription";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { openRouteInOtherPane } from "../panes";
 import { pageIcon } from "../pageIconBatch";
@@ -17,6 +20,7 @@ import {
   arrangeAllPages,
   formatPageDay,
   formatUpdated,
+  backlinkCountsByRow,
   listablePages,
   nextSort,
   visibleRange,
@@ -32,11 +36,20 @@ import {
 // index (`pageIndex.ts`); the Updated column is ONE `page_modified` read when the
 // view opens (times the store already holds), never a call per row. Only the
 // visible slice is in the DOM, so 10k+ pages cost what one screenful costs.
-// Backlink counts use a separate coalesced read while mounted. Created and bulk deletion are
+// Backlink counts use a separate read on open and after the graph is quiet (HK3). Created and bulk deletion are
 // not offered here: file creation time is not reliable across platforms.
 
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
 export const ALL_PAGES_ROW_HEIGHT = 32;
+
+/** A file All pages leaves out: one named like an OG built-in page. OG's All
+ *  pages (handler/page.cljs `get-all-pages`) drops such a page even when it
+ *  has a file, so a `pages/TODO.md` is not listed either; the same Rust answer
+ *  decides (`is_og_built_in_page`; CM step 2 batch 5 ruling). The file still
+ *  opens from search, links and its own route. */
+export function hiddenFromAllPages(page: PageEntry): boolean {
+  return is_og_built_in_page(page.name);
+}
 
 export function AllPages(props: { router: PaneRouter }): JSX.Element {
   installPageIndex();
@@ -51,9 +64,14 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
 
+  // Files less `hiddenFromAllPages`, then the reference-only pages, which OG
+  // lists too (D-20261102-CM4 CM-REFONLY; built-ins hidden by
+  // `referenceOnlyPages`, the same rule).
   const listed = createMemo(() => {
     const pages = allPages();
-    return pages ? listablePages(pages, journals()) : undefined;
+    if (!pages) return undefined;
+    const files = listablePages(pages, journals()).filter((page) => !hiddenFromAllPages(page));
+    return [...files, ...referenceOnlyPages()];
   });
   const labels = createMemo(() => pageListLabels(listed() ?? []));
   const rows = createMemo<AllPagesRow[]>(() => {
@@ -64,35 +82,32 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const slice = createMemo(() => rows().slice(range().start, range().end));
 
   const metricsScope = {};
+  // Counts are a graph-wide read: on open, then after each published change
+  // once the graph is quiet, on the idle rule graph-wide queries use (HK3,
+  // `createQuietRun`), never while typing. One read in flight; a change
+  // during it asks for one more quiet read.
   let countPending = false;
   let countInFlight = false;
-  let countStarted = -Infinity;
-  let countTimer: ReturnType<typeof setTimeout> | undefined;
-  const refreshCounts = () => {
-    if (!alive || countInFlight || countTimer !== undefined || !countPending) return;
-    const wait = Math.max(0, countStarted + 1000 - Date.now());
-    if (wait) {
-      countTimer = setTimeout(() => { countTimer = undefined; refreshCounts(); }, wait);
-      return;
-    }
+  const readCounts = () => {
+    if (!alive || countInFlight || !countPending) return;
     countPending = false;
     countInFlight = true;
-    countStarted = Date.now();
     const owner = graphOwner(() => alive);
     void readOwned(owner, backend().pageBacklinkCounts()).then(result => {
-      if (result.kind === "current") setBacklinks(new Map(result.value));
+      if (result.kind !== "current") return;
+      setBacklinks(backlinkCountsByRow(result.value));
     }).catch(() => {
       // Missing counts leave dashes; updated times stay independently available.
     }).finally(() => {
       countInFlight = false;
-      refreshCounts();
+      if (countPending) requestCounts();
     });
   };
-  onCleanup(() => { if (countTimer !== undefined) clearTimeout(countTimer); });
+  const requestCounts = createQuietRun(readCounts);
   // This requested whole-graph table exposes modified times for every page.
   createEffect(on(() => changed("publication"), () => {
     countPending = true;
-    refreshCounts();
+    requestCounts();
     // One read per open or graph revision, never per row or presentation edit.
     void (async () => {
       try {
@@ -128,7 +143,8 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
 
   const open = (row: AllPagesRow, event: MouseEvent) => {
     const { entry } = row;
-    const target = { name: entry.name, pageKind: entry.kind, path: entry.path };
+    // A reference-only page has no file: it opens by name (path `""`).
+    const target = { name: entry.name, pageKind: entry.kind, path: entry.path || undefined };
     const dest = internalLinkDest(event);
     if (dest === "sidebar") openPageInSidebar(target);
     else if (dest === "background") props.router.openPageTargetInNewTab(target);
@@ -203,7 +219,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                     onMouseDown={internalLinkMouseDown}
                     onContextMenu={(event) => {
                       event.preventDefault();
-                      openPageContextMenu(event.clientX, event.clientY, { name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path });
+                      openPageContextMenu(event.clientX, event.clientY, { name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path || undefined });
                     }}
                   >
                     <button
@@ -213,7 +229,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                       title={row.entry.path}
                       onClick={(event) => open(row, event)}
                       onAuxClick={(event) =>
-                        internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path }))}
+                        internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path || undefined }))}
                     >
                       {/* OG all-pages table: `icon::` before the name (page.cljs :td.name). */}
                       <Show when={pageIcon(row.entry.name)}>{(icon) => <span class="all-pages-icon"><PageIcon value={icon()} name={row.entry.name} /> </span>}</Show>
