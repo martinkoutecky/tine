@@ -14,9 +14,6 @@
 //! - excluded sources are `refs::ReferenceSourceExclusions`' (T itself, the
 //!   Favorites arrangement page).
 //!
-//! The same pass counts, per node, the blocks its panel lists: the All pages
-//! count (`LinkGraph::counts`, D-20261102-CM4 CM-COUNT).
-//!
 //! The table lives in memory, one per graph snapshot, built on the first query
 //! that reads it (`ReadSnapshot::link_graph`) and never persisted (I-25: no new
 //! record, file or transport byte per edit). Build: one pass over every block's
@@ -64,27 +61,15 @@ pub(crate) struct LinkGraph {
     virtuals: Vec<VirtualNode>,
     out: Vec<Vec<u32>>,
     inn: Vec<Vec<u32>>,
-    /// Per node: how many blocks its unfiltered Linked References panel
-    /// lists, the All pages count (D-20261102-CM4 CM-COUNT). Each block
-    /// counts once however many of the node's names it uses; blocks of the
-    /// node's own page and of the Favorites arrangement page are not counted
-    /// (`ReferenceSourceExclusions`, as for the links).
-    ///
-    /// I-12 exception (CM step 2 D2, accepted by the coordinator 2026-11-03):
-    /// two drivers walk the same reference rule, this one (every page's
-    /// blocks, all targets at once) and the panel's `backlinks_bounded` (one
-    /// target's referrers). Retire: one forward target map (D3).
-    counts: Vec<u32>,
 }
 
 /// How many references, links or edges a pass handles between two
 /// cancellation checks.
 pub(crate) const CHECK_EVERY: usize = 1024;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
 enum PendingTarget {
-    Page { key: String },
-    PropertyKey { folded: String },
+    Page { key: String, spelling: String },
+    PropertyKey { folded: String, spelling: String },
 }
 
 impl LinkGraph {
@@ -159,15 +144,7 @@ impl LinkGraph {
                 }
             }
         };
-        // Every distinct target any block names, in first-occurrence order,
-        // with the spelling of that first occurrence (what a page without a
-        // file is named after), and per block its distinct targets:
-        // `(source node, block ordinal, target)`. A source's entries are
-        // contiguous, and so are one block's.
-        let mut target_ids: HashMap<PendingTarget, u32> = HashMap::new();
-        let mut targets: Vec<(PendingTarget, String)> = Vec::new();
-        let mut pending: Vec<(u32, u32, u32)> = Vec::new();
-        let mut blocks = 0u32;
+        let mut pending: Vec<(u32, PendingTarget)> = Vec::new();
         // References read so far, across pages: the collection checks the
         // caller once per CHECK_EVERY of them, so one block naming many
         // targets is not one unbounded step.
@@ -200,52 +177,50 @@ impl LinkGraph {
                 {
                     continue;
                 }
-                // One pending entry per distinct target of each block: a
-                // block naming one target R times holds one entry, not R
-                // (review r1: the occurrences were expanded before
-                // deduplication); the links dedup per page below.
-                let mut seen: HashSet<u32> = HashSet::new();
+                // One pending entry per distinct target of this page: a page
+                // naming one target R times holds one entry, not R (review r1:
+                // the occurrences were expanded before deduplication).
+                let mut seen_keys: HashSet<String> = HashSet::new();
+                let mut seen_folds: HashSet<String> = HashSet::new();
                 // False once the caller cancelled.
                 let mut collect = |block: &DocBlock| -> bool {
-                    seen.clear();
-                    let ordinal = blocks;
-                    blocks += 1;
                     for reference in block.projection().reference_source().explicit {
                         references += 1;
                         if references.is_multiple_of(CHECK_EVERY) && cancelled() {
                             return false;
                         }
                         visit_reference_targets(reference, config, |target| {
-                            let (pending_target, spelling) = match target {
-                                ReferenceTarget::PageKey(key) => (
-                                    PendingTarget::Page {
-                                        key: key.to_owned(),
-                                    },
-                                    if key == refs::page_key(&reference.name) {
-                                        reference.name.trim()
-                                    } else {
-                                        key
-                                    },
-                                ),
-                                ReferenceTarget::PropertyKey(folded) => (
-                                    PendingTarget::PropertyKey {
-                                        folded: folded.to_owned(),
-                                    },
-                                    reference.name.trim(),
-                                ),
-                            };
-                            let id = match target_ids.get(&pending_target) {
-                                Some(&id) => id,
-                                None => {
-                                    let id = targets.len() as u32;
-                                    targets.push((pending_target.clone(), spelling.to_owned()));
-                                    target_ids.insert(pending_target, id);
-                                    id
+                            let fresh = match target {
+                                ReferenceTarget::PageKey(key) => {
+                                    !seen_keys.contains(key) && seen_keys.insert(key.to_owned())
+                                }
+                                ReferenceTarget::PropertyKey(folded) => {
+                                    !seen_folds.contains(folded)
+                                        && seen_folds.insert(folded.to_owned())
                                 }
                             };
-                            if seen.insert(id) {
-                                pending.push((source, ordinal, id));
+                            if !fresh {
+                                return false;
                             }
+                            pending.push((
+                                source,
+                                match target {
+                                    ReferenceTarget::PageKey(key) => PendingTarget::Page {
+                                        key: key.to_owned(),
+                                        spelling: if key == refs::page_key(&reference.name) {
+                                            reference.name.trim().to_owned()
+                                        } else {
+                                            key.to_owned()
+                                        },
+                                    },
+                                    ReferenceTarget::PropertyKey(folded) => {
+                                        PendingTarget::PropertyKey {
+                                            folded: folded.to_owned(),
+                                            spelling: reference.name.trim().to_owned(),
+                                        }
+                                    }
+                                },
+                            ));
                             false
                         });
                     }
@@ -279,16 +254,17 @@ impl LinkGraph {
         if !finished {
             return None;
         }
-        drop(target_ids);
         // A target no node answers to is a page without a file: one node per
         // panel, registered under every name that panel answers to.
-        for (at, (target, spelling)) in targets.iter().enumerate() {
+        for (at, (_, target)) in pending.iter().enumerate() {
             if at.is_multiple_of(CHECK_EVERY) && cancelled() {
                 return None;
             }
-            let missing = match target {
-                PendingTarget::Page { key } => !by_name.contains_key(key),
-                PendingTarget::PropertyKey { folded } => !by_property_key.contains_key(folded),
+            let (missing, spelling) = match target {
+                PendingTarget::Page { key, spelling } => (!by_name.contains_key(key), spelling),
+                PendingTarget::PropertyKey { folded, spelling } => {
+                    (!by_property_key.contains_key(folded), spelling)
+                }
             };
             if !missing {
                 continue;
@@ -312,52 +288,39 @@ impl LinkGraph {
         let count = node_keys.len();
         table.out = vec![Vec::new(); count];
         table.inn = vec![Vec::new(); count];
-        table.counts = vec![0; count];
         let empty = Vec::new();
-        // The nodes each distinct target reaches, once per target.
-        let reach: Vec<&Vec<u32>> = targets
-            .iter()
-            .map(|(target, _)| {
-                match target {
-                    PendingTarget::Page { key } => by_name.get(key),
-                    PendingTarget::PropertyKey { folded } => by_property_key.get(folded),
-                }
-                .unwrap_or(&empty)
-            })
-            .collect();
         // `added[target]` is the last source that linked to `target`: within
         // one source's run of entries a link is pushed once, so the lists
         // hold O(links) before the final sort and dedup (duplicate files of
         // one name, whose entries are not adjacent, add at most one copy per
-        // file). `counted[target]` is the last block counted for `target`:
-        // a block reaching one node by several names counts once.
+        // file).
         let mut added: Vec<u32> = vec![u32::MAX; count];
-        let mut counted: Vec<u32> = vec![u32::MAX; count];
         let mut work = 0usize;
-        for &(source, block, target) in pending.iter() {
-            for &target in reach[target as usize] {
+        for (source, target) in pending.iter() {
+            let targets = match target {
+                PendingTarget::Page { key, .. } => by_name.get(key),
+                PendingTarget::PropertyKey { folded, .. } => by_property_key.get(folded),
+            }
+            .unwrap_or(&empty);
+            for &target in targets {
                 // Checked per target scanned, not per entry: one entry may
                 // fan out to every owner of an alias.
                 work += 1;
                 if work.is_multiple_of(CHECK_EVERY) && cancelled() {
                     return None;
                 }
+                if added[target as usize] == *source {
+                    continue;
+                }
                 // `ReferenceSourceExclusions`: T's panel never lists T itself.
-                if node_keys[source as usize] == self_keys[target as usize] {
+                if node_keys[*source as usize] == self_keys[target as usize] {
                     continue;
                 }
-                if counted[target as usize] != block {
-                    counted[target as usize] = block;
-                    table.counts[target as usize] += 1;
-                }
-                if added[target as usize] == source {
-                    continue;
-                }
-                added[target as usize] = source;
-                table.out[source as usize].push(target);
+                added[target as usize] = *source;
+                table.out[*source as usize].push(target);
             }
         }
-        drop((added, counted, reach));
+        drop(added);
         drop(pending);
         if cancelled() {
             return None;
@@ -402,12 +365,6 @@ impl LinkGraph {
         self.out.len()
     }
 
-    /// How many blocks `node`'s unfiltered Linked References panel lists
-    /// ([`LinkGraph::counts`]'s rule).
-    pub(crate) fn referring_blocks(&self, node: u32) -> u32 {
-        self.counts[node as usize]
-    }
-
     #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn edge_count(&self) -> usize {
         self.out.iter().map(Vec::len).sum()
@@ -429,7 +386,7 @@ impl LinkGraph {
                 .iter()
                 .map(|node| node.name.capacity())
                 .sum::<usize>();
-        adjacency(&self.out) + adjacency(&self.inn) + keys + virtuals + self.counts.capacity() * 4
+        adjacency(&self.out) + adjacency(&self.inn) + keys + virtuals
     }
 
     /// The node of the page whose key is `page_key`: a physical page, else a

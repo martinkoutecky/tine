@@ -33,7 +33,9 @@ import { initParser } from "./render/parse";
 import { is_og_built_in_page } from "./render/wasm/lsdoc_wasm";
 import { setJournalFormats } from "./journal";
 import { resetReferenceSectionState } from "./referenceSectionState";
-import { AllPages } from "./components/AllPages";
+import { AllPages, hiddenFromAllPages } from "./components/AllPages";
+import { allPages } from "./pages";
+import { backlinkCountsByRow, countKey } from "./allPagesList";
 import { LinkedReferences } from "./components/LinkedReferences";
 import type { PaneRouter } from "./router";
 import type { PageInventoryEntry, RefGroup } from "./types";
@@ -87,7 +89,7 @@ const show = (p: ModelPage) => `("${p.kind}", "${p.key}")`;
 
 /** All Pages with journals shown: per row, its file path (a reference-only
  *  row, which has none: `ref:` and its name's key) and Backlinks cell. */
-async function allPagesRows(c: Case): Promise<Map<string, string>> {
+async function allPagesRows(c: Case): Promise<{ rows: Map<string, string>; hidden: string[] }> {
   vi.spyOn(backend(), "pageModified").mockResolvedValue({ rev: "1", modified: [] });
   vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(c.counts);
   vi.spyOn(backend(), "pageIcons").mockResolvedValue({});
@@ -99,7 +101,8 @@ async function allPagesRows(c: Case): Promise<Map<string, string>> {
     await vi.waitFor(() => expect(host.querySelector(".all-pages-journals input")).not.toBeNull());
     host.querySelector<HTMLInputElement>(".all-pages-journals input")!.click();
     const rows = () => [...host.querySelectorAll<HTMLElement>(".all-pages-row")];
-    const files = c.inventory.filter((e) => e.target.kind === "existing").length;
+    // A file named like an OG built-in page has no row (OG `get-all-pages`).
+    const files = c.inventory.filter((e) => e.target.kind === "existing" && !hiddenFromAllPages({ name: e.name, kind: "page", date_key: null, path: "" })).length;
     if (files > 0) {
       await vi.waitFor(() => {
         expect(rows().length).toBeGreaterThan(0);
@@ -108,7 +111,7 @@ async function allPagesRows(c: Case): Promise<Map<string, string>> {
       });
     }
     await settle();
-    return new Map(rows().map((r) => {
+    const shown = new Map(rows().map((r) => {
       const open = r.querySelector<HTMLElement>(".all-pages-open")!;
       const name = open.textContent ?? "";
       return [
@@ -116,6 +119,17 @@ async function allPagesRows(c: Case): Promise<Map<string, string>> {
         r.querySelector(".all-pages-backlinks")!.textContent ?? "",
       ];
     }));
+    // A file All Pages leaves out as an OG built-in page (batch 5) keeps its
+    // count checked: the cell its row would show, by the row's own key
+    // (`countKey`) over the view's own count map (`backlinkCountsByRow`).
+    const counts = backlinkCountsByRow(c.counts);
+    const hidden: string[] = [];
+    for (const page of allPages() ?? []) {
+      if (!hiddenFromAllPages(page) || shown.has(page.path)) continue;
+      hidden.push(page.path);
+      shown.set(page.path, String(counts.get(countKey(page)) ?? "—"));
+    }
+    return { rows: shown, hidden };
   } finally {
     dispose();
     host.remove();
@@ -156,7 +170,8 @@ async function runCase(c: Case): Promise<string[]> {
   const conflicts = new Set(c.conflicts);
 
   // All Pages: rows and their Backlinks cells.
-  const rows = await allPagesRows(c);
+  const { rows, hidden } = await allPagesRows(c);
+  for (const file of hidden) diffs.push(`frontend all pages: file ${file} has no row (hidden as an OG built-in page, A11)`);
   const owners = new Set<string>();
   const header = new Map<string, string>();
   for (const p of c.pages) {

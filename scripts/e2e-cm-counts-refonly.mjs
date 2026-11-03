@@ -2,8 +2,9 @@
 // All pages shows each page's count as the number of blocks its unfiltered
 // Linked References panel lists (self and code excluded, a block once however
 // it names the page), lists a page that only blocks name (a reference-only
-// page) with its own count, hides OG built-in pages (TODO) through the Rust
-// answer, and opens a reference-only page whose Linked References header
+// page) with its own count, hides OG built-in pages (TODO; LATER even with a
+// file, OG `get-all-pages`) through the Rust answer, names no page for a block
+// embed, and opens a reference-only page whose Linked References header
 // shows the same number. A page query (`(all-page-tags)`) lists a
 // reference-only tag page by name. Written by the cm-counts-refonly lane.
 import { spawn, execFileSync } from "node:child_process";
@@ -33,8 +34,12 @@ fs.writeFileSync(path.join(graph, "pages/Notes.md"), [
   "- `[[Target]]` in code",
   "- [[Ref Only]] first",
   "- #[[Ref Only]] second",
-  "- TODO a task", "",
+  "- TODO a task",
+  "- {{embed ((00000000-0000-4000-8000-0000000000e1))}}",
+  "- embedded", "  id:: 00000000-0000-4000-8000-0000000000e1", "",
 ].join("\n"));
+// A file named like an OG built-in page: OG's All pages hides it too.
+fs.writeFileSync(path.join(graph, "pages/LATER.md"), "- a later file\n");
 fs.writeFileSync(path.join(graph, "pages/Queries.md"), '- {{query (all-page-tags) {:title "Tag pages"}}}\n');
 fs.writeFileSync(path.join(graph, "journals", "2026_11_03.md"), "- journal\n");
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
@@ -90,6 +95,9 @@ try {
   }
   stage = "OG built-in pages are hidden (A11)";
   assert.ok(!Object.keys(rows).some((title) => title.toUpperCase() === "TODO"), `no TODO row: ${JSON.stringify(rows)}`);
+  assert.ok(!Object.keys(rows).some((title) => title.toUpperCase() === "LATER"), `no LATER row though LATER.md exists: ${JSON.stringify(rows)}`);
+  stage = "a block embed names no page (batch 5 ruling)";
+  assert.ok(!Object.keys(rows).some((title) => title.includes("0000000000e1")), `no embed uuid row: ${JSON.stringify(rows)}`);
 
   stage = "a file page's Linked References header matches its All pages count";
   await openPageByName(browser, "Target");
@@ -120,7 +128,7 @@ try {
   await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Ideas", { timeout: 10_000 });
   await browser.waitUntil(async () => (await linkedCount()) === "1", { timeout: 20_000, timeoutMsg: `Ideas header count ${await linkedCount()}` });
 
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "All pages counts = panel sizes, reference-only rows, built-in hidden, open reference-only page, (all-page-tags) lists a reference-only tag page", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "All pages counts = panel sizes, reference-only rows, built-in hidden (also with a file), no embed uuid row, open reference-only page, (all-page-tags) lists a reference-only tag page", graph }, null, 2));
   console.log(`PASS CM counts and reference-only pages. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

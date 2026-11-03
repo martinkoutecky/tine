@@ -1741,7 +1741,19 @@ pub(crate) fn visit_block_referenced_names(
     f: &mut dyn FnMut(&str),
 ) {
     let projection = block.projection();
+    let embedded = projection.block_refs();
     for name in projection.refs_page() {
+        // `{{embed ((uuid))}}`: lsdoc, like mldoc, keeps the macro argument,
+        // and its page projection names the bare UUID. The Linked References
+        // rule (`reference_source().explicit` through `visit_reference_targets`)
+        // never names that page, so no panel lists a block for it, and the
+        // page set leaves it out too (CM step 2 batch 5 ruling: before, it was
+        // an absent inventory name that `[[` completion could offer; All pages
+        // never listed it). Open question: OG `with-page-refs` creates such a
+        // page (see the batch 5 receipt).
+        if embedded.iter().any(|id| id.eq_ignore_ascii_case(name)) {
+            continue;
+        }
         f(name);
     }
     visit_block_property_and_evidence_names(block, config, f);

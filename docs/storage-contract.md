@@ -492,7 +492,7 @@ AVL with entries inside shared nodes; other spellings keep exact string keys.
 The writer and loader share the page namespace and child-id derivation.
 Warm launch decodes those rows without rebuilding the index
 from blocks. A malformed owner slot declines the whole disposable checkpoint
-and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once. FORMAT 20 (GH #741 F2: a bare marker title before a LOGBOOK drawer parses as a task) supersedes 19 once; the body shape is unchanged. FORMAT 22 (D-20261102-CM4 CM-REFONLY: the referenced-name inventory also holds property-key, task-marker and priority pages) supersedes the earlier formats once; the body shape is unchanged, and on the realistic 10k graph the file grows by 34,694 bytes (45,037,578 to 45,072,272, +0.08%).
+and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once. FORMAT 20 (GH #741 F2: a bare marker title before a LOGBOOK drawer parses as a task) supersedes 19 once; the body shape is unchanged. FORMAT 22 (D-20261102-CM4 CM-REFONLY: the referenced-name inventory also holds property-key, task-marker and priority pages, and no longer a block embed's uuid) supersedes the earlier formats once; the body shape is unchanged, and on the realistic 10k graph the file grows by 25,881 bytes (45,037,578 to 45,063,459, +0.06%).
 There is no additional per-edit file or byte write: the page save protocol
 is unchanged. The checkpoint remains one postcard+zstd app-data file, rewritten
 on the existing idle cadence (60 s quiet, at least 5 min between writes,

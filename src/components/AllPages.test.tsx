@@ -296,6 +296,16 @@ describe("the All Pages view", () => {
     dispose();
   });
 
+  // CM step 2 batch 5 (OG handler/page.cljs `get-all-pages`): a page named
+  // like an OG built-in page is not listed even when it has a file.
+  it("leaves out a page named like a Logseq built-in page, even one with a file", async () => {
+    const { host, dispose } = await mountAllPages([existing("Alpha"), existing("TODO"), existing("card"), existing("Todo list")]);
+    await settle();
+    // OG upper-cases before its lookup, so its mixed-case member `card` never matches.
+    expect(rowNames(host).sort()).toEqual(["Alpha", "Todo list", "card"]);
+    dispose();
+  });
+
   it("opens a row's own file with the ordinary link gestures", async () => {
     const { host, router, dispose } = await mountAllPages([existing("Alpha"), existing("beta")]);
     const first = host.querySelector<HTMLElement>(".all-pages-open")!;

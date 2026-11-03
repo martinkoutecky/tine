@@ -4,8 +4,10 @@ import { t } from "../i18n";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { changed } from "../changeKeys";
 import type { PaneRouter } from "../router";
+import type { PageEntry } from "../types";
 import { allPages, pageListLabels } from "../pages";
 import { installPageIndex, referenceOnlyPages } from "../pageIndex";
+import { is_og_built_in_page } from "../render/wasm/lsdoc_wasm";
 import { createQuietRun } from "../querySubscription";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { openRouteInOtherPane } from "../panes";
@@ -18,7 +20,7 @@ import {
   arrangeAllPages,
   formatPageDay,
   formatUpdated,
-  countKey,
+  backlinkCountsByRow,
   listablePages,
   nextSort,
   visibleRange,
@@ -40,6 +42,15 @@ import {
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
 export const ALL_PAGES_ROW_HEIGHT = 32;
 
+/** A file All pages leaves out: one named like an OG built-in page. OG's All
+ *  pages (handler/page.cljs `get-all-pages`) drops such a page even when it
+ *  has a file, so a `pages/TODO.md` is not listed either; the same Rust answer
+ *  decides (`is_og_built_in_page`; CM step 2 batch 5 ruling). The file still
+ *  opens from search, links and its own route. */
+export function hiddenFromAllPages(page: PageEntry): boolean {
+  return is_og_built_in_page(page.name);
+}
+
 export function AllPages(props: { router: PaneRouter }): JSX.Element {
   installPageIndex();
   const [filter, setFilter] = createSignal("");
@@ -53,11 +64,14 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
 
-  // Files, then the reference-only pages, which OG lists too
-  // (D-20261102-CM4 CM-REFONLY; built-ins hidden by `referenceOnlyPages`).
+  // Files less `hiddenFromAllPages`, then the reference-only pages, which OG
+  // lists too (D-20261102-CM4 CM-REFONLY; built-ins hidden by
+  // `referenceOnlyPages`, the same rule).
   const listed = createMemo(() => {
     const pages = allPages();
-    return pages ? [...listablePages(pages, journals()), ...referenceOnlyPages()] : undefined;
+    if (!pages) return undefined;
+    const files = listablePages(pages, journals()).filter((page) => !hiddenFromAllPages(page));
+    return [...files, ...referenceOnlyPages()];
   });
   const labels = createMemo(() => pageListLabels(listed() ?? []));
   const rows = createMemo<AllPagesRow[]>(() => {
@@ -81,10 +95,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
     const owner = graphOwner(() => alive);
     void readOwned(owner, backend().pageBacklinkCounts()).then(result => {
       if (result.kind !== "current") return;
-      const [files, references] = result.value;
-      const counts = new Map(files);
-      for (const [name, count] of references) counts.set(countKey({ name, kind: "page", date_key: null, path: "" }), count);
-      setBacklinks(counts);
+      setBacklinks(backlinkCountsByRow(result.value));
     }).catch(() => {
       // Missing counts leave dashes; updated times stay independently available.
     }).finally(() => {

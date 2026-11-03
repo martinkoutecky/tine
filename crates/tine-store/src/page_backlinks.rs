@@ -1,7 +1,6 @@
 //! All pages backlink counts over one graph snapshot (D-20261102-CM4
 //! CM-COUNT): each page's count is the number of blocks its unfiltered Linked
-//! References panel lists, read from the snapshot's link table
-//! ([`crate::query::link_graph::LinkGraph::referring_blocks`]).
+//! References panel lists ([`crate::query::page_counts`]).
 use crate::store::WholeGraph;
 use tine_core::model::PageKind;
 use tine_core::refs;
@@ -15,23 +14,16 @@ impl WholeGraph {
     /// - `references`: one row per reference-only page (`inventory(All)`'s
     ///   absent entries without a `link`), by that entry's name.
     ///
-    /// Reads the snapshot's link table (built at most once per snapshot,
-    /// shared with TQL `links`/`near`, never persisted): O(P + B + R) on the
-    /// snapshot's first link read, then O(P + V) for P files and V
-    /// reference-only names; no file reads and no new record.
+    /// One forward walk per call, O(P + B + R + T), with its fold table
+    /// dropped on return; no file reads and no new record. All pages calls
+    /// it on the HK3 quiet signal, one call in flight.
     ///
-    /// I-12 exception (CM step 2 D2): the link table's pass and the panel's
+    /// I-12 exception (CM step 2): the counter and the panel's
     /// `backlinks_bounded` are two drivers of one reference rule. Retire: one
     /// forward target map (D3).
     pub fn page_backlink_counts(&self) -> (Vec<(String, usize)>, Vec<(String, usize)>) {
-        let Some(table) = self.graph.link_graph(&|| false) else {
-            return Default::default();
-        };
-        let count = |name: &str| {
-            table
-                .node(&refs::page_key(name))
-                .map_or(0, |node| table.referring_blocks(node) as usize)
-        };
+        let counts = crate::query::page_counts::referring_block_counts(&self.graph);
+        let count = |name: &str| counts.get(&refs::page_key(name)).map_or(0, |&n| n as usize);
         let mut files = Vec::new();
         for entry in self.list.iter() {
             let Some(path) = entry.rel_path.as_ref() else {
@@ -86,5 +78,22 @@ mod tests {
             references,
             vec![("link".to_owned(), 1), ("Ref only".to_owned(), 1)]
         );
+    }
+
+    /// CM step 2 batch 5 ruling: a block embed `{{embed ((uuid))}}` names no
+    /// page. Its panel would list nothing (the Linked References rule never
+    /// names it), so it is no reference-only page either.
+    #[test]
+    fn a_block_embed_names_no_reference_only_page() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        std::fs::write(
+            root.path().join("pages/A.md"),
+            "- {{embed ((00000000-0000-4000-8000-000000000001))}} [[Ref only]]\n- target\n  id:: 00000000-0000-4000-8000-000000000001\n",
+        )
+        .unwrap();
+        let (store, _, _) = crate::Store::open(root.path(), Default::default()).unwrap();
+        let (_, references) = store.whole_graph().unwrap().page_backlink_counts();
+        assert_eq!(references, vec![("Ref only".to_owned(), 1)]);
     }
 }

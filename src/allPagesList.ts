@@ -1,4 +1,4 @@
-import type { PageEntry } from "./types";
+import type { PageBacklinkCounts, PageEntry } from "./types";
 import { pageListLabels } from "./pages";
 
 // The All Pages view's list logic (GH #335): which rows, in what order, and which
@@ -29,6 +29,14 @@ export const DEFAULT_SORT: AllPagesSort = { key: "updated", desc: true };
  *  pages by name. */
 export function countKey(entry: PageEntry): string {
   return entry.path || `\0${entry.name}`;
+}
+
+/** The backend's counts by row key (`countKey`): files by path, reference-only
+ *  pages by name. */
+export function backlinkCountsByRow([files, references]: PageBacklinkCounts): Map<string, number> {
+  const counts = new Map(files);
+  for (const [name, count] of references) counts.set(countKey({ name, kind: "page", date_key: null, path: "" }), count);
+  return counts;
 }
 
 /** Unix seconds of each page file by graph-relative path (`PageEntry.path`), from `page_modified`. */

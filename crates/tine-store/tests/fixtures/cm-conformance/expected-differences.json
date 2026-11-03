@@ -23,7 +23,14 @@
   },
   "frontendCounts": {
     "fixtures": {
+      "c4-property-pages-excludelist": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "c5-property-pages-disabled": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)"
+      ],
       "c6-markers-and-priorities": [
+        "frontend all pages: file pages/todo.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"c\") is reference-only and has no row (hidden as an OG built-in page, A11)",
@@ -35,6 +42,7 @@
         "frontend all pages: model page (\"page\", \"waiting\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "c7-ref-only-page-queries": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"proj\") is reference-only and has no row",
         "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)",
@@ -94,16 +102,22 @@
         "frontend all pages: row pages/zed.md (count 2) owns no model page"
       ],
       "o2-alias-on-non-owner-twin": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/b.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"zed\") is reference-only and has no row",
         "frontend all pages: row pages/a.md (count 1) owns no model page",
         "frontend all pages: row pages/b.md (count —) owns no model page",
         "frontend page list: model page \"zed\" is not listed"
       ],
       "o2-date-alias-on-owner": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/b.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: row pages/A.md (count 1) owns no model page",
         "frontend all pages: row pages/b.md (count —) owns no model page"
       ],
       "o2-date-alias-on-twin": [
+        "frontend all pages: file pages/2026-10-26.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"journal\", \"oct 26th, 2026\") is reference-only and has no row",
         "frontend all pages: row pages/2026-10-26.md (count —) owns no model page",
         "frontend all pages: row pages/A.md (count 1) owns no model page",
@@ -130,17 +144,39 @@
         "frontend page list: model page \"a/b\" is not listed",
         "frontend page list: model page \"n\" is not listed"
       ],
+      "r2-alias-chain": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/B.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/C.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r3-indirect-declarer": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/B.md has no row (hidden as an OG built-in page, A11)"
+      ],
       "r4-journal-and-date-links": [
         "frontend all pages: model page (\"journal\", \"oct 27th, 2026\") is reference-only and has no row"
       ],
+      "r5-favorites-excluded": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)"
+      ],
       "r6-merge-self-link": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r6-onto-alias": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/b.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r6-onto-real-page": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/b.md has no row (hidden as an OG built-in page, A11)"
       ],
       "r6-rewrite-set": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r6-task-marker-page": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r7-and-not": [
@@ -151,6 +187,7 @@
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "r7-page-queries": [
+        "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ]
     }

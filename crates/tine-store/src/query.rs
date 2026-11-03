@@ -23,6 +23,7 @@ pub(crate) mod exec;
 pub(crate) mod index;
 pub(crate) mod link_graph;
 pub(crate) mod memo;
+pub(crate) mod page_counts;
 pub(crate) mod page_properties;
 #[cfg(test)]
 mod sample_seed_tests;
@@ -1019,10 +1020,10 @@ pub(crate) fn backlinks(graph: &ReadSnapshot, target: &str) -> Vec<RefGroup> {
 
 /// The Linked References panel's blocks for `target`.
 ///
-/// I-12 exception (CM step 2 D2, D-20261102-CM4 CM-COUNT): this walk and the
-/// link table's pass (`LinkGraph::build`, whose per-node count is the size of
-/// this panel unfiltered) are two drivers of one reference rule; the
-/// conformance harness compares them. Retire: one forward target map (D3).
+/// I-12 exception (CM step 2, D-20261102-CM4 CM-COUNT): this walk and the All
+/// pages counter (`query::page_counts::referring_block_counts`, whose count is
+/// the size of this panel unfiltered) are two drivers of one reference rule;
+/// the conformance harness compares them. Retire: one forward target map (D3).
 pub(crate) fn backlinks_bounded(
     graph: &ReadSnapshot,
     target: &str,
