@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/Zed.md": "alias:: Shared\n\n- z\n",
+  "pages/alpha.md": "alias:: Shared\n\n- a\n",
+  "pages/Notes.md": "- [[Shared]]\n"
+ }
+}

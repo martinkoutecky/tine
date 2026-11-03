@@ -69,9 +69,16 @@ describe("config-derived state has one producer", () => {
     expect(graphEpoch()).toBe(settled);
   });
 
+  it("re-dates what is on screen when the journal file-name format moves outside Tine (D-20261102-JDL)", () => {
+    setGraphMeta(meta);
+    const before = graphEpoch();
+    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, journal_file_name_format: "dd-MM-yyyy" } as GraphMeta });
+    expect(graphEpoch()).toBeGreaterThan(before);
+  });
+
   it("graph open and live change share the producer (source guard, I-12)", () => {
     const source = readFileSync("src/graph.ts", "utf8");
-    for (const setter of ["setWorkflow(", "setJournalTitleFormat(", "seedFavorites("]) {
+    for (const setter of ["setWorkflow(", "setJournalFormats(", "seedFavorites("]) {
       expect(source.split(setter).length - 1,
         `I-12: ${setter} must be called only from applyConfigDerivedState in src/graph.ts (master exemplar applyConfigDerivedState)`).toBe(1);
     }

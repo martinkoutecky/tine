@@ -1,0 +1,17 @@
+{
+  "config": {
+    "journalFileFormat": "dd-MM-yyyy"
+  },
+  "files": {
+    "journals/22-10-2026.md": "- day\n",
+    "pages/Notes.md": "- file form [[22-10-2026]]\n- title form [[Oct 22nd, 2026]]\n- iso form [[2026-10-22]]\n- other day [[23-10-2026]]\n",
+    "pages/Plan.md": "alias:: 24-10-2026\n\n- plan\n"
+  },
+  "navigate": ["24-10-2026", "25-10-2026"],
+  "queries": [
+    {"anchor": "block", "q": {"refs": "22-10-2026"}},
+    {"anchor": "block", "q": {"refs": "Oct 22nd, 2026"}},
+    {"anchor": "block", "q": {"page": {"name": "22-10-2026"}}},
+    {"anchor": "page", "q": {"name": "22-10-2026"}}
+  ]
+}

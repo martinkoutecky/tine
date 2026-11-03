@@ -167,11 +167,11 @@ async function loadHarness(
     journalTitle: journal?.journalTitle ?? (() => "Jul 10th, 2026"),
     appNow: () => new Date(),
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
-    setJournalTitleFormat: journal?.setJournalTitleFormat ?? vi.fn(),
+    setJournalFormats: journal ? (title: string | null | undefined) => journal.setJournalTitleFormat(title) : vi.fn(),
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));
-  vi.doMock("./pageIndex", () => ({ resetPageIndex, linkPageKind: () => "page" }));
+  vi.doMock("./pageIndex", () => ({ resetPageIndex, linkTarget: (name: string) => ({ name, kind: "page" }) }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
   vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));

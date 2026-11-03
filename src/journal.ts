@@ -1,9 +1,9 @@
 import { createEffect, createSignal, untrack } from "solid-js";
-import { format_journal_date, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import { absent_link_is_journal, format_journal_date, journal_day_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
 import { onAppReturn } from "./windowRealm";
 
 /** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
- * read the graph's active display format set by `setJournalTitleFormat`;
+ * read the graph's active formats set by `setJournalFormats`;
  * `formatJournal` and `parseJournalWith` take an explicit format. All operations
  * are independent of graph size and write no files. Parsing returns null for
  * unrecognized/invalid titles; a configured format defaults to "MMM do, yyyy".
@@ -12,6 +12,8 @@ import { onAppReturn } from "./windowRealm";
 
 export const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
+/** The configured `:journal/file-name-format`; "" means the default. */
+let fileFormat = "";
 
 /** The app's wall clock (GH #607). The backend's time-zone rules are the
  * calendar authority: journal membership, the feed's `as_of_day` and relative
@@ -155,6 +157,13 @@ export function setJournalTitleFormat(fmt: string | undefined | null): void {
   titleFormat = fmt && fmt.trim() ? fmt : DEFAULT_TITLE_FORMAT;
 }
 
+/// Set both journal formats from GraphMeta: the title format renders titles;
+/// both feed the one date answerer (`parseJournalTitle`).
+export function setJournalFormats(title: string | undefined | null, file: string | undefined | null): void {
+  setJournalTitleFormat(title);
+  fileFormat = file && file.trim() ? file : "";
+}
+
 /** Native format grammar with a bounded compiled-pattern cache. O(format + title), no I/O. */
 export function formatJournal(d: Date, fmt: string): string {
   return format_journal_date(d.getFullYear(), d.getMonth() + 1, d.getDate(), fmt);
@@ -190,21 +199,36 @@ export function parseJournalWith(s: string, fmt: string): JournalDateParts | nul
   return parts;
 }
 
-/** Parse a journal title as a local Date from the active format, default title
- * format, ISO or underscore date. Returns null on invalid/unrecognized input.
- * O(title length), independent of graph size; never reads a page. */
+const parsedDays: ({file:string; title:string; input:string; parts:JournalDateParts|null} | undefined)[] = Array(64);
+let parsedDaySlot = 0;
+
+/** The graph's one date answerer, `tine_core::date::JournalFormat::parse`
+ * run through wasm (the same Rust code the backend runs; D-20261102-JDL: the
+ * native list, the configured file-name format included). Explicit formats,
+ * for callers that are not the open graph (the browser mock). O(name), no I/O. */
+export function parseJournalDayIn(name: string, file: string, title: string): JournalDateParts | null {
+  const cached = parsedDays.find(entry => entry?.file === file && entry.title === title && entry.input === name);
+  if (cached) return cached.parts;
+  const parts = JSON.parse(journal_day_json(name, file, title)) as JournalDateParts | null;
+  if (parts) Object.freeze(parts);
+  parsedDays[parsedDaySlot] = {file, title, input:name, parts};
+  parsedDaySlot = (parsedDaySlot + 1) % parsedDays.length;
+  return parts;
+}
+
 function journalParts(name: string): JournalDateParts | null {
-  for (const fmt of [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd", "yyyy_MM_dd"]) {
-    const parts = parseJournalWith(name.trim(), fmt);
-    if (parts) return parts;
-  }
-  return null;
+  return parseJournalDayIn(name, fileFormat, titleFormat);
+}
+
+/** The kind of a link target the page inventory does not list (no file,
+ * alias or reference claims it): a journal iff the name is a date, decided by
+ * the Rust rule `JournalFormat::absent_link_is_journal` through wasm. */
+export function absentLinkIsJournal(name: string): boolean {
+  return absent_link_is_journal(name, fileFormat, titleFormat);
 }
 
 /// A `[[name]]` link / quick-switch pick opens the journal (not an empty page)
-/// when `name` is a journal date in the graph's title format or a common
-/// default: `pageIndex.linkPageKind` asks this. Mirrors the backend's
-/// `safe-journal-title-formatters` leniency.
+/// when `name` is a journal date by the graph's one date answerer.
 export function parseJournalTitle(name: string): Date | null {
   const parts = journalParts(name);
   return parts ? localCalendarDate(parts.y, parts.m - 1, parts.d) : null;

@@ -3,7 +3,7 @@ import { createStore, produce, unwrap } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
-import { resolvedTarget } from "../pageIndex";
+import { ownerPath, resolvedTarget } from "../pageIndex";
 import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { sheetConfigFromRaw } from "../sheet/config";
 import { beginResultsChange } from "../queryResultsEpoch";
@@ -328,8 +328,7 @@ export function formatForPage(name: string | undefined): Format {
   if (name) {
     const p = pageByName(name);
     if (p?.format) return p.format;
-    const target = resolvedTarget(name) ?? resolvedTarget(name, "journal");
-    const path = target?.kind === "existing" ? target.id : target?.kind === "alias" ? target.owners[0] : undefined;
+    const path = ownerPath(resolvedTarget(name) ?? resolvedTarget(name, "journal"));
     if (path) return page_file_format(path) as Format;
   }
   return graphMeta()?.preferred_format ?? "md";

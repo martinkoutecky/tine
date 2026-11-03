@@ -390,5 +390,14 @@ fn gh690_referenced_journals_follow_title_format_before_safe_defaults() {
         [(> ?d ?start)] [(< ?d ?next)]] :inputs [2026-11-01 2026-11-20]}"#,
     );
     assert!(result.supported, "{:?}", result.ignored);
-    assert_eq!(raws, ["TODO title [[2026_10_11]]"]);
+    // D-20261102-JDL (Martin): the configured file-name format is a date
+    // spelling too, a deliberate deviation from OG's title-only list, so the
+    // query's journal facts agree with what `[[10.11.2026]]` opens.
+    assert_eq!(
+        raws,
+        [
+            "TODO filename only [[10.11.2026]]",
+            "TODO title [[2026_10_11]]"
+        ]
+    );
 }

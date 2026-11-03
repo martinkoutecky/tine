@@ -16,7 +16,7 @@ import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes } from "./panes";
-import { journalTitle, localDayKey, setJournalTitleFormat, appNow } from "./journal";
+import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
 import { applyCustomCss, customCssVersion } from "./customCss";
@@ -86,11 +86,11 @@ export function applyCustomCssChange(change: CustomCssChange): void {
 export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | null): void {
   if (!previous || previous.preferred_workflow !== meta.preferred_workflow)
     setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
-  if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format)
-    setJournalTitleFormat(meta.journal_page_title_format);
+  const journalFormatsMoved = !previous || previous.journal_page_title_format !== meta.journal_page_title_format
+    || previous.journal_file_name_format !== meta.journal_file_name_format;
+  if (journalFormatsMoved) setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format);
   setGraphMeta(meta);
-  if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format
-      || previous.preferred_format !== meta.preferred_format) bumpGraphEpoch();
+  if (!previous || journalFormatsMoved || previous.preferred_format !== meta.preferred_format) bumpGraphEpoch();
   const incoming = meta.favorites ?? [];
   const alreadyShown = previous !== null && previous.favorites_page === meta.favorites_page
     && sameNames(favorites().map((item) => item.name), incoming);

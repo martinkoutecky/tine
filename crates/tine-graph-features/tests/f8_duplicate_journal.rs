@@ -333,3 +333,196 @@ fn opening_the_day_by_title_reads_the_file_the_queue_object_names() {
     assert_eq!(read.id.as_str(), object.page_path);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// An Org graph whose day has a date-stem file and a title-named stray, the
+/// shape the store's former test-only copy of `journal_conflicts` was tested
+/// on; its assertions now run against the production listing.
+fn org_title_format_graph(label: &str) -> PathBuf {
+    let root = graph(label);
+    fs::write(
+        root.join("logseq/config.edn"),
+        "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+    )
+    .unwrap();
+    root
+}
+
+/// Ported from `tine-store` model.rs `journal_conflicts_reports_duplicate_days`.
+#[test]
+fn journal_conflicts_reports_duplicate_days() {
+    let _integration_guard = crate::integration_lock();
+    let root = org_title_format_graph("dup-days");
+    fs::write(
+        root.join("journals/2026_06_26.org"),
+        "* canonical content\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("journals/Friday, 26-06-2026.org"),
+        "* stray content\n",
+    )
+    .unwrap();
+    // A clean day with one file: not a conflict.
+    fs::write(root.join("journals/2026_06_24.org"), "* fine\n").unwrap();
+    let store = open(&root);
+    store.whole_graph().unwrap();
+    let conflicts = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert_eq!(
+        conflicts.len(),
+        1,
+        "exactly one conflicted day: {conflicts:?}"
+    );
+    let c = &conflicts[0];
+    assert_eq!(c.title, "Friday, 26-06-2026");
+    assert_eq!(c.files.len(), 2);
+    // The date-stem file sorts first and is flagged; preview is the body line.
+    assert_eq!(c.files[0].name, "2026_06_26.org");
+    assert!(c.files[0].canonical);
+    assert_eq!(c.files[0].preview, "canonical content");
+    assert!(!c.files[1].canonical);
+    assert_eq!(c.files[1].name, "Friday, 26-06-2026.org");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// Ported from `tine-store` model.rs
+/// `journal_conflicts_reports_nested_duplicate_days`.
+#[test]
+fn journal_conflicts_reports_nested_duplicate_days() {
+    let _integration_guard = crate::integration_lock();
+    let root = org_title_format_graph("dup-days-nested");
+    fs::create_dir_all(root.join("journals/archive")).unwrap();
+    fs::write(
+        root.join("journals/archive/2026_06_26.org"),
+        "* canonical nested\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("journals/archive/Friday, 26-06-2026.org"),
+        "* stray nested\n",
+    )
+    .unwrap();
+    let store = open(&root);
+    store.whole_graph().unwrap();
+    let conflicts = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert_eq!(
+        conflicts.len(),
+        1,
+        "nested duplicate day is surfaced: {conflicts:?}"
+    );
+    let files = &conflicts[0].files;
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].path, "journals/archive/2026_06_26.org");
+    assert_eq!(files[1].path, "journals/archive/Friday, 26-06-2026.org");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// Ported from `tine-store` model.rs
+/// `journal_conflicts_expose_a_routable_path_per_file`.
+#[test]
+fn journal_conflicts_expose_a_routable_path_per_file() {
+    let _integration_guard = crate::integration_lock();
+    let root = org_title_format_graph("dup-days-path");
+    fs::write(root.join("journals/2026_06_26.org"), "* canonical body\n").unwrap();
+    fs::write(
+        root.join("journals/Friday, 26-06-2026.org"),
+        "* stray body\n",
+    )
+    .unwrap();
+    let store = open(&root);
+    store.whole_graph().unwrap();
+    let conflicts = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert_eq!(conflicts.len(), 1, "one duplicated day");
+    let files = &conflicts[0].files;
+    assert_eq!(files.len(), 2);
+    assert!(files[0].canonical);
+    assert_eq!(files[0].path, "journals/2026_06_26.org");
+    assert_eq!(files[1].path, "journals/Friday, 26-06-2026.org");
+    for f in files {
+        assert!(
+            store
+                .page(&tine_store::PageId::from(f.path.clone()))
+                .is_ok(),
+            "conflict path resolves: {}",
+            f.path
+        );
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// CM step 2 OW-2 (UI-CM-DUPLICATE-DAY-KEEPER, PQ-1): with `2026_10_26.md`
+/// (the stem the default format writes) and `2026-10-26.md` (an ISO stem,
+/// also a date name), the day opens `2026_10_26.md`. The duplicate-day list
+/// must name that file as the one keeper, so Settings offers Merge for the
+/// other and the conflict-queue merge keeps the page the user sees.
+#[test]
+fn the_duplicate_day_keeper_is_the_file_the_day_opens() {
+    let _integration_guard = crate::integration_lock();
+    let root = std::env::temp_dir().join(format!(
+        "tine-f8dj-ow2-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    for dir in ["pages", "journals", "assets"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    let opened_file = "journals/2026_10_26.md";
+    let iso_file = "journals/2026-10-26.md";
+    fs::write(
+        root.join(opened_file),
+        "- shared line\n- only in underscore\n",
+    )
+    .unwrap();
+    fs::write(root.join(iso_file), "- shared line\n- only in iso\n").unwrap();
+    let store = open(&root);
+    let host = crate::test_host(&store);
+    store.whole_graph().unwrap();
+    let conflicts = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+    let day = &conflicts[0];
+    let opened = store
+        .page_named(&day.title, PageKind::Journal)
+        .unwrap()
+        .expect("the day opens");
+    assert_eq!(opened.id.as_str(), opened_file, "claimant order");
+    let files: Vec<(&str, bool)> = day
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.canonical))
+        .collect();
+    assert_eq!(
+        files,
+        vec![(opened_file, true), (iso_file, false)],
+        "the keeper is the file the day opens, and the only canonical one"
+    );
+    // The merge keeps the opened file and folds the other into it.
+    let diff = conflicts::duplicate_journal_diff(&store, opened_file, iso_file)
+        .unwrap()
+        .expect("a same-format pair diffs");
+    let mut decisions = HashMap::new();
+    keep_both(&diff.rows, &mut decisions);
+    conflicts::resolve_duplicate_journal_day(
+        &store,
+        &host,
+        opened_file,
+        iso_file,
+        &decisions,
+        &diff.base_rev,
+        &diff.conflict_rev,
+        "union",
+    )
+    .unwrap();
+    let kept = fs::read_to_string(root.join(opened_file)).unwrap();
+    assert!(
+        kept.contains("only in underscore") && kept.contains("only in iso"),
+        "{kept:?}"
+    );
+    assert!(
+        !root.join(iso_file).exists(),
+        "the other file left the graph"
+    );
+    drop(host);
+    let _ = fs::remove_dir_all(&root);
+}

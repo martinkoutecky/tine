@@ -58,6 +58,14 @@ impl ParseConfig {
         DEFAULT.get_or_init(Self::default)
     }
 
+    /// The graph's journal date answerer, as [`crate::config::Config::journal_format`].
+    pub fn journal_format(&self) -> crate::date::JournalFormat {
+        crate::date::JournalFormat::new(
+            self.journal_file_name_format.as_deref(),
+            self.journal_page_title_format.as_deref(),
+        )
+    }
+
     /// The parse-relevant slice of `config`. O(configured keys).
     pub fn from_config(config: &crate::config::Config) -> ParseConfig {
         ParseConfig {

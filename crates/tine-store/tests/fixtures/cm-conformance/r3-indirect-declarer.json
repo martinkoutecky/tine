@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/A.md": "alias:: B\n\n- a\n",
+  "pages/B.md": "alias:: X\n\n- b\n",
+  "pages/Notes.md": "- [[X]]\n"
+ }
+}

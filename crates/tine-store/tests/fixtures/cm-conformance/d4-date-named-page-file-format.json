@@ -1,0 +1,13 @@
+{
+  "config": {
+    "journalFileFormat": "dd-MM-yyyy"
+  },
+  "files": {
+    "pages/25-10-2026.md": "- an ordinary page named like a day\n",
+    "pages/x.md": "- see [[25-10-2026]]\n- see [[Oct 25th, 2026]]\n"
+  },
+  "queries": [
+    {"anchor": "block", "q": {"refs": "25-10-2026"}},
+    {"anchor": "page", "q": {"name": "25-10-2026"}}
+  ]
+}

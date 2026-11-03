@@ -1,0 +1,135 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "project alpha",
+      "name": "Project Alpha",
+      "target": {
+        "id": "pages/Project Alpha.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    " Project Alpha ": {
+      "journal": [
+        "journal",
+        "project alpha"
+      ],
+      "page": [
+        "page",
+        "project alpha"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Project Alpha": {
+      "journal": [
+        "journal",
+        "project alpha"
+      ],
+      "page": [
+        "page",
+        "project alpha"
+      ]
+    },
+    "project alpha": {
+      "journal": [
+        "journal",
+        "project alpha"
+      ],
+      "page": [
+        "page",
+        "project alpha"
+      ]
+    }
+  },
+  "owner": {
+    " Project Alpha ": {
+      "journal": null,
+      "page": "pages/Project Alpha.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Project Alpha": {
+      "journal": null,
+      "page": "pages/Project Alpha.md"
+    },
+    "project alpha": {
+      "journal": null,
+      "page": "pages/Project Alpha.md"
+    }
+  },
+  "spellings": {
+    " Project Alpha ": {
+      "backend": [
+        "page",
+        "project alpha"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "project alpha"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Project Alpha": {
+      "backend": [
+        "page",
+        "project alpha"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "project alpha"
+      ]
+    },
+    "project alpha": {
+      "backend": [
+        "page",
+        "project alpha"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "project alpha"
+      ]
+    }
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "conflicts": [
+    "zed"
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "zed",
+      "name": "ZED",
+      "target": {
+        "id": "pages/zed.md",
+        "kind": "existing",
+        "others": [
+          "pages/a.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "zed",
+      "name": "zed",
+      "target": {
+        "id": "pages/zed.md",
+        "kind": "existing",
+        "others": [
+          "pages/a.md"
+        ]
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "ZED": {
+      "journal": [
+        "journal",
+        "zed"
+      ],
+      "page": [
+        "page",
+        "zed"
+      ]
+    },
+    "zed": {
+      "journal": [
+        "journal",
+        "zed"
+      ],
+      "page": [
+        "page",
+        "zed"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "ZED": {
+      "journal": null,
+      "page": "pages/zed.md"
+    },
+    "zed": {
+      "journal": null,
+      "page": "pages/zed.md"
+    }
+  },
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "ZED": {
+      "backend": [
+        "page",
+        "zed"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "zed"
+      ]
+    },
+    "zed": {
+      "backend": [
+        "page",
+        "zed"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "zed"
+      ]
+    }
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "conflicts": [],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/B.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "C",
+      "target": {
+        "id": "pages/C.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "d",
+      "link": {
+        "kind": "page",
+        "name": "C"
+      },
+      "name": "D",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/C.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    "C": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    "D": {
+      "journal": [
+        "journal",
+        "d"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "B": {
+      "journal": null,
+      "page": "pages/B.md"
+    },
+    "C": {
+      "journal": null,
+      "page": "pages/C.md"
+    },
+    "D": {
+      "journal": null,
+      "page": "pages/C.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    }
+  },
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    },
+    "C": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    },
+    "D": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    }
+  }
+}

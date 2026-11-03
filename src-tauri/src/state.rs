@@ -285,10 +285,7 @@ impl GraphSlot {
 
 pub(crate) fn graph_meta(slot: &GraphSlot) -> tine_core::model::GraphMeta {
     let config = slot.store.config();
-    let format = tine_core::date::JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    );
+    let format = config.journal_format();
     tine_core::model::GraphMeta::from_config(
         slot.root_key.display().to_string(),
         &config.config,

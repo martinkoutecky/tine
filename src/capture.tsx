@@ -51,10 +51,13 @@ import "@fontsource-variable/noto-emoji/wght.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
 import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
 import { installMiddleClickPasteGuard } from "./middleClickPaste";
+import { withoutPageInventory } from "./pageIndex";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/capture.css";
 
+// The capture WebView is granted no graph-wide read (no graph slot).
+withoutPageInventory();
 installEditableEmojiPlatform();
 installTextareaPrimarySelectionGuard();
 installMiddleClickPasteGuard();

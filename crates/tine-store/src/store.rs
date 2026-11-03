@@ -398,7 +398,7 @@ pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries}
 mod fold_save_tests;
 mod inventory;
 pub(crate) use inventory::InventoryDelta;
-pub use inventory::{Inventory, InventoryEntry, InventoryScope};
+pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
 #[cfg(test)]
@@ -1523,7 +1523,11 @@ impl Store {
                 };
                 add_trash_count(
                     &mut counts,
-                    TrashKind::from(classify_legacy_trash_entry(&entry.path(), kind)),
+                    TrashKind::from(classify_legacy_trash_entry(
+                        &entry.path(),
+                        kind,
+                        &self.graph.current_journal_format(),
+                    )),
                     bytes,
                 );
             }
@@ -1588,7 +1592,11 @@ impl Store {
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                     removed.0 += 1;
                 }
-            } else if classify_legacy_trash_entry(&entry.path(), file_type) == TrashEntryKind::Asset
+            } else if classify_legacy_trash_entry(
+                &entry.path(),
+                file_type,
+                &self.graph.current_journal_format(),
+            ) == TrashEntryKind::Asset
             {
                 let bytes = entry
                     .metadata()
@@ -2334,7 +2342,9 @@ pub enum Resolved {
     /// Name belongs to pages that declare it as an alias. Navigation can choose
     /// an owner; saving requires an actual owner's `PageId`, not the alias.
     Alias {
-        /// Alias owners in plain text order of graph-relative paths (AL2 opens the first).
+        /// Alias owners, each page once, in plain text order of graph-relative
+        /// paths. The first is the page the name opens (AL2/CI4); every reader
+        /// takes it rather than choosing again.
         owners: Vec<PageId>,
     },
     /// No claimant; this is the id a new page would use.
@@ -2850,16 +2860,9 @@ impl WholeGraph {
         } else {
             PageKind::Page
         };
-        let lookup = if is_journal {
-            self.journal_format
-                .parse(name)
-                .map(|date| self.journal_format.title(date))
-                .unwrap_or_else(|| name.to_owned())
-        } else {
-            name.to_owned()
-        };
-        let mut entries = self.name_claimants(&lookup, kind);
-        if entries.is_empty() && is_journal && self.journal_format.parse(name).is_some() {
+        let lookup = crate::model::claim_lookup(&self.journal_format, name, kind);
+        let mut entries = self.name_claimants(&lookup.name, kind);
+        if let Some(name) = lookup.page_fallback.filter(|_| entries.is_empty()) {
             entries = self.name_claimants(name, PageKind::Page);
         }
         if !entries.is_empty() {

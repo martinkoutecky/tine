@@ -18,9 +18,13 @@ it.each([
   ["Oct 26th, 2026", true, "journal"],
   ["2026-10-26", true, "journal"],
 ] as const)("clicking [[%s]] on a routed page (journal exists: %s) opens %s", async (name, journal, expected) => {
+  // The backend's link answer (`WholeGraph::link_target`, CM step 2): a date
+  // spelling opens that day's journal when its file exists, even over an
+  // ordinary page claiming the same spelling; the window routes by it.
   const entries: PageInventoryEntry[] = [{
     key: name.toLowerCase(), name, is_journal: false, day: null,
     target: { kind: "existing", id: "pages/imported.md", others: [] },
+    ...(journal ? { link: { name: "Oct 26th, 2026", kind: "journal" as const } } : {}),
   }];
   if (journal) entries.push({
     key: "oct 26th, 2026", name: "Oct 26th, 2026", is_journal: true, day: 20261026,
@@ -34,7 +38,7 @@ it.each([
   const dispose = render(() => <InlineText text={`[[${name}]]`} />, host);
   try {
     host.querySelector<HTMLElement>(".page-ref")!.click();
-    expect(router.route()).toMatchObject({ kind: "page", name, pageKind: expected });
+    expect(router.route()).toMatchObject({ kind: "page", name: journal ? "Oct 26th, 2026" : name, pageKind: expected });
     expect(host.querySelector(".page-ref")!.hasAttribute("data-missing-page")).toBe(false);
     expect(itemKind(name)).toBe(expected);
   } finally { dispose(); }

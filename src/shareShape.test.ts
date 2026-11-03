@@ -93,6 +93,11 @@ describe("helpers", () => {
     expect(captureTime(new Date(2026, 9, 10, 21, 7), "en-US")).toBe("21:07");
     expect(captureTime(new Date(2026, 9, 10, 9, 5), "en-US")).toBe("09:05");
   });
+  it("a system language that is not a language tag (Linux LANG=C gives navigator.language \"C\") still gives the time", () => {
+    // WebKitGTK reports the POSIX locale name as is; Intl rejects it with a RangeError.
+    expect(captureTime(new Date(2026, 9, 10, 21, 7), "C")).toBe("21:07");
+    expect(captureTime(new Date(2026, 9, 10, 9, 5), "POSIX")).toBe("09:05");
+  });
   it("multi-line content stays one block", () => {
     expect(asOutlineBlock("a\nb")).toBe("- a\n  b");
   });
