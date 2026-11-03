@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Typing a page link in Quick Capture no longer shows the red error "Couldn't refresh the page list. The last loaded list is kept." in the capture window. Nothing was lost: the capture window asked for a list of pages it is not given, and page completion there never needed it (UI-CAPTURE-NO-PAGE-INVENTORY).
+
 ## [0.9.0-beta.5] - 2026-11-02
 
 ### Changed
