@@ -63,3 +63,66 @@ fn single_page_print_does_no_graph_wide_disk_work() {
         "I-13: no directory walk per print"
     );
 }
+
+/// The app's whole print flow for one page that embeds a block and a page of
+/// another file and references a third block: sheet inputs, then the print
+/// document. Returns the counts and the HTML.
+fn full_print_counts(unrelated: usize) -> (cost_counters::Counts, String) {
+    let mut all: Vec<(String, String)> = (0..unrelated)
+        .map(|i| (format!("Other{i:04}.md"), format!("- unrelated {i}\n")))
+        .collect();
+    all.push((
+        "Source.md".into(),
+        "- embedded block text\n  id:: 6553f1a0-0000-4000-8000-000000000001\n- second\n".into(),
+    ));
+    all.push(("Whole.md".into(), "- embedded page text\n".into()));
+    all.push((
+        "Target.md".into(),
+        "- the printed page\n- {{embed ((6553f1a0-0000-4000-8000-000000000001))}}\n- {{embed [[Whole]]}}\n".into(),
+    ));
+    let dir = graph(&all);
+    let store = Store::open(&dir, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    cost_counters::reset();
+    let sheets = tine_graph_features::publish::sheet_export_inputs(
+        &store,
+        Some(&["Target".to_owned()]),
+        None,
+    )
+    .unwrap();
+    assert!(sheets.is_empty());
+    let html = print::page_print_html_with_sheets(&store, "Target", Default::default(), Vec::new())
+        .unwrap()
+        .unwrap();
+    let counts = cost_counters::snapshot();
+    store.close();
+    let _ = fs::remove_dir_all(&dir);
+    (counts, html)
+}
+
+/// Cost-model audit 2026-11-02 row 5 (D-10): printing one page (its sheet
+/// inputs and its document) costs the page and what it embeds, never a stat
+/// of every graph file or a copy of every page.
+#[test]
+fn whole_print_flow_with_embeds_does_no_graph_wide_work() {
+    let _integration_guard = crate::integration_lock();
+    let (few, few_html) = full_print_counts(20);
+    let (many, many_html) = full_print_counts(200);
+    eprintln!("full print cost: 20 pages {few:?}\n200 pages {many:?}");
+    for html in [&few_html, &many_html] {
+        assert!(html.contains("the printed page"));
+        assert!(html.contains("embedded block text"), "block embed resolves");
+        assert!(html.contains("embedded page text"), "page embed resolves");
+    }
+    assert_eq!(
+        many.stamps_by_path, few.stamps_by_path,
+        "a one-page print must not stat every graph file (sheet inputs refreshed the graph)"
+    );
+    assert_eq!(many.readdir, few.readdir, "no directory walk per print");
+    assert_eq!(
+        (few.corpus, many.corpus),
+        (0, 0),
+        "a one-page print must not copy every page into a corpus"
+    );
+}

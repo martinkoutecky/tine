@@ -167,7 +167,8 @@ pub(crate) struct Derived {
     /// Memoized `list_pages()`, keyed by `cache_gen` (which every page
     /// create, delete and rename bumps), so quick-switch and `[[` complete
     /// without re-walking the graph on every keystroke.
-    page_list_cache: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
+    /// A publication's patched list is adopted as is ([`Graph::adopt_name_index`]).
+    page_list_cache: RwLock<Option<(u64, Arc<EntryList>)>>,
     /// Memoized exact `find_entry(name, kind)` claimants, keyed by
     /// `cache_gen`. It keeps `find_entry`'s duplicate selection: the
     /// date-stem file first, else the first match of the walk.
@@ -568,11 +569,6 @@ impl Graph {
     }
 
     #[cfg(test)]
-    pub(super) fn claimant_memo_built(&self) -> bool {
-        self.derived.find_entry_cache.read().unwrap().is_some()
-    }
-
-    #[cfg(test)]
     pub(super) fn cache_index_built(&self) -> bool {
         self.derived.cache_index.read().unwrap().is_some()
     }
@@ -598,65 +594,6 @@ impl Graph {
             }
         }
         Certified(entries)
-    }
-
-    /// Cold journal inventory and its complete claimant index share one walk.
-    /// Only called at open, before the watcher and load worker start.
-    pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let entries = self.certify(
-            list_graph_pages_kind(self, Some(PageKind::Journal)),
-            Some(PageKind::Journal),
-        );
-        let mut index = FindEntryIndex::new();
-        index.entries = page_claimants(self, &entries.0);
-        index.mark_kind_loaded(PageKind::Journal);
-        *self.derived.find_entry_cache.write().unwrap() = Some((gen, index));
-        entries.0
-    }
-
-    /// The page list and the effective-name claimants, from one certified
-    /// inventory (R2): the snapshot's roots and the memos hold the same rows.
-    pub(crate) fn snapshot_name_index(
-        &self,
-    ) -> (
-        Arc<Vec<PageEntry>>,
-        HashMap<(PageKind, String), Vec<PageEntry>>,
-    ) {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let format = self.current_journal_format();
-        // The build that produced this generation already listed and named
-        // every file from its own reads (GH #623: one read per file); a
-        // later generation walks again.
-        let launch = self
-            .derived
-            .launch_listing
-            .write()
-            .unwrap()
-            .take()
-            .filter(|(listed_gen, _)| *listed_gen == gen);
-        let entries = match launch {
-            Some((_, entries)) => entries,
-            None => self.certify(list_graph_pages(self), None),
-        };
-        let claimants = page_claimants(self, &entries.0);
-        *self.derived.find_entry_cache.write().unwrap() = Some((
-            gen,
-            FindEntryIndex {
-                entries: claimants.clone(),
-                // Reuse known claims, but a first miss must discover files
-                // that arrived after this published snapshot.
-                pages_loaded: false,
-                journals_loaded: false,
-            },
-        ));
-        let list = Arc::new(dedup_journal_days(
-            entries.0,
-            &format,
-            self.current_config().file_name_format,
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
-        (list, claimants)
     }
 
     /// What a snapshot names the changed `path` (R2): from disk when no host
@@ -1003,7 +940,8 @@ impl Graph {
             &self.current_journal_format(),
             self.current_config().file_name_format,
         );
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::new(deduped)));
+        *self.derived.page_list_cache.write().unwrap() =
+            Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
@@ -1032,7 +970,7 @@ impl Graph {
         observed_mtimes: &Arc<SharedMap<String, std::time::SystemTime>>,
         failures: Vec<String>,
         (disk_revs, vcs_anchored): (Vec<(PathBuf, String)>, Vec<PathBuf>),
-        (cache_generation, list): (u64, Arc<Vec<PageEntry>>),
+        (cache_generation, list): (u64, Arc<EntryList>),
     ) -> Result<(), crate::store::checkpoint::Fallback> {
         use crate::store::checkpoint::Fallback;
         let index = build_page_cache_index(pages);
@@ -1124,13 +1062,6 @@ impl Graph {
         drop(guard);
     }
 
-    /// The forced rebuild re-reads the listing: the generation-keyed memos
-    /// go (dropping a memo is always safe).
-    pub(super) fn forget_name_memos(&self) {
-        *self.derived.page_list_cache.write().unwrap() = None;
-        *self.derived.find_entry_cache.write().unwrap() = None;
-    }
-
     /// A reconcile found no cache: bump the generation holding the lock the
     /// builders install under (a read guard excludes their install), so a
     /// build that read the earlier bytes declines. False when a cache was
@@ -1145,21 +1076,6 @@ impl Graph {
         *self.derived.cache_index.write().unwrap() = None;
         self.move_generation(true, &[path]);
         true
-    }
-
-    /// The generation-keyed memos at `before` stay valid at `after`: the
-    /// publication between them changed no listed name.
-    pub(super) fn retag_name_memos(&self, before: u64, after: u64) {
-        if let Some((gen, _)) = self.derived.page_list_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = after;
-            }
-        }
-        if let Some((gen, _)) = self.derived.find_entry_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = after;
-            }
-        }
     }
 
     /// Move the generation for a publication of `paths` that moved none.
@@ -1372,7 +1288,8 @@ impl Graph {
         let index = build_page_cache_index(&pages);
         *self.derived.cache.write().unwrap() = Some(Arc::new(pages));
         *self.derived.cache_index.write().unwrap() = Some(index);
-        *self.derived.page_list_cache.write().unwrap() = Some((0, Arc::new(entries)));
+        *self.derived.page_list_cache.write().unwrap() =
+            Some((0, Arc::new(EntryList::from(entries.as_slice()))));
     }
 }
 

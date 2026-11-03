@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/Foo.md": "- one\n",
+  "pages/other.md": "title:: foo\n\n- two\n",
+  "pages/Notes.md": "- [[Foo]]\n"
+ }
+}

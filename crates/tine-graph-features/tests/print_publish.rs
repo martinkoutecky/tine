@@ -136,7 +136,7 @@ fn external_visibility_edit_is_seen_after_corpus_warmup() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
+    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 1);
     atomic_fixture_write(
         &root.join("pages/Alpha.md"),
         "public:: false\n- after edit\n",

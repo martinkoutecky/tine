@@ -181,6 +181,10 @@ export interface PageInventoryEntry {
   is_journal: boolean;
   day: number | null;
   target: ResolvedPage;
+  /** What a `[[name]]` link opens, when that is not this entry itself: the
+   *  store's `WholeGraph::link_target` (an alias's owner, a date spelling's
+   *  journal). Absent means the entry itself. */
+  link?: { name: string; kind: PageKind };
 }
 
 /** What one publication changed in the `page_inventory` answer when no page
@@ -281,7 +285,7 @@ export interface JournalFile {
    *  when it shares a date with the canonical one (#21). */
   path: string;
   preview: string;
-  canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
+  canonical: boolean; // the file the day opens (claimant order) — the one to keep; exactly one per day
   /** Why the preview could not be read; the file stays listed. */
   preview_error?: string;
 }

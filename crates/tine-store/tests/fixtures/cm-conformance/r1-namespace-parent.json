@@ -1,0 +1,6 @@
+{
+ "files": {
+  "pages/n%2Fy.md": "- child\n",
+  "pages/Notes.md": "- [[a/b/c]]\n"
+ }
+}

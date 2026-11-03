@@ -296,6 +296,15 @@ impl Default for LogbookSettings {
 }
 
 impl Config {
+    /// The graph's journal date answerer: the one place the two config
+    /// strings become a [`crate::date::JournalFormat`] (I-12, CM step 2).
+    pub fn journal_format(&self) -> crate::date::JournalFormat {
+        crate::date::JournalFormat::new(
+            self.journal_file_name_format.as_deref(),
+            self.journal_page_title_format.as_deref(),
+        )
+    }
+
     /// Parse supported EDN keys independently, defaulting missing or malformed
     /// values. A journal date pattern with parts Tine does not support keeps its
     /// value and adds a `journal_config_diagnostics` entry (card g4czVA).

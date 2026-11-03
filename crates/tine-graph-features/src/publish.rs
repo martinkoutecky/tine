@@ -15,7 +15,7 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let corpus = whole.corpus();
+    let corpus = whole.corpus(None);
     let config = store.config();
     let graph = RenderGraph::new(&corpus, &whole, store, None);
     let mut count = 0;
@@ -62,20 +62,31 @@ fn page_keys<'a>(
 }
 
 /// The sheet blocks of the named pages (all pages when `None`), each with the
-/// data the app needs to compute it for a static export. Cost O(blocks of the
-/// pages); bounded per `render_sheets` limits.
+/// data the app needs to compute it for a static export; bounded per
+/// `render_sheets` limits. A print (names, no scope) reads only the named pages
+/// (fresh) and resolves the rest by key from the published view: cost O(those
+/// pages + what they embed). Publish scopes refresh and copy the corpus.
 pub fn sheet_export_inputs(
     store: &Store,
     pages: Option<&[String]>,
     scope: Option<&SheetScope>,
 ) -> io::Result<Vec<SheetInput>> {
+    if let (Some(names), None) = (pages, scope) {
+        // A print's sheets: the named pages only, read fresh as the print
+        // reads them, with no graph-wide refresh or corpus (I-13, D-10).
+        let Some((whole, corpus)) = crate::print::fresh_named_pages(store, names)? else {
+            return Ok(Vec::new());
+        };
+        let graph = RenderGraph::for_pages(&corpus, &whole, store, None);
+        return Ok(render::sheet_inputs(&corpus, pages, Some(&graph), None));
+    }
     store
         .refresh(tine_store::Depth::Stamps)
         .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let mut corpus = whole.corpus();
+    let mut corpus = whole.corpus(None);
     // Page order comes from directory enumeration, which differs by platform;
     // hand sheets over by page name so the handoff and its MAX_SHEETS cut are stable.
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));

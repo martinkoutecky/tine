@@ -440,7 +440,7 @@ fn sorted_alias_owners(
 }
 
 mod page_names;
-pub(crate) use page_names::{real_page_names, RealPageNames};
+pub(crate) use page_names::{real_page_names, RealPageNames, RealPageOwners};
 
 mod alias_relation;
 pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
@@ -450,7 +450,7 @@ pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
 /// normalized component is shared by backlinks, unlinked references, and their
 /// scoped-invalidation predicates so those paths cannot drift.
 fn equivalent_page_names(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
@@ -458,7 +458,7 @@ fn equivalent_page_names(
 }
 
 fn equivalent_page_names_with(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     edges: &AliasEdges,
     target: &str,
     widen: impl Fn(&str) -> Vec<String>,
@@ -500,11 +500,17 @@ fn equivalent_page_names_with(
     (canonical, component.into_iter().collect(), self_page)
 }
 
+/// `explicit`: the names serve explicit-reference matching (Linked
+/// References, tags, the link table), so referenced looser spellings of a
+/// journal's day join them ([`referenced_day_keys`]). Plain-text matching
+/// (Unlinked References) keeps the rendered spellings only: its answer must
+/// not depend on what other pages link.
 fn graph_equivalent_page_names(
     graph: &ReadSnapshot,
     target: &str,
+    explicit: bool,
 ) -> (String, Vec<String>, String) {
-    let format = journal_format(graph.config());
+    let format = graph.config().journal_format();
     graph_equivalent_page_names_with(
         &real_page_names(graph),
         &graph.alias_edges(),
@@ -518,23 +524,78 @@ fn graph_equivalent_page_names(
             JOURNAL_DAY_LOOKUPS.with(|count| count.set(count.get() + 1));
             graph.reference_journal_name(day)
         },
+        |day| {
+            if explicit {
+                referenced_day_keys(graph.explicit_reference_names(), &format, day)
+            } else {
+                Vec::new()
+            }
+        },
     )
 }
 
+/// The explicitly referenced name keys that denote `day` by the graph's one
+/// date answerer ([`JournalFormat::parse`]): `2026-10-2` and `October 22nd,
+/// 2026` reach the Oct 22nd journal because they parse to it, not because a
+/// list renders them. O(R) digit checks over the snapshot's explicit
+/// reference index, a parse only for digit-bearing names; no index of its own.
+pub(crate) fn referenced_day_keys<'a>(
+    names: impl Iterator<Item = &'a str>,
+    format: &JournalFormat,
+    day: JournalDate,
+) -> Vec<String> {
+    let may_spell = JournalFormat::day_spelling_prefilter(day);
+    names
+        .filter(|name| {
+            may_spell(name) && eval::reference_day(name, format) == Some(day.ordinal_key())
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
 /// [`graph_equivalent_page_names`] with its graph reads supplied: the real
-/// page names, the alias relation, the journal format and the FIRST journal
-/// page (page-list order) of a day. The link table resolves every page through
-/// this one body with a precomputed day lookup, so the Linked References panel
-/// and `links` / `linked_by` cannot drift (I-12).
+/// page names, the alias relation, the journal format, the FIRST journal
+/// page (page-list order) of a day, and the referenced keys that denote a day.
+/// The link table resolves every page through this one body with precomputed
+/// lookups, so the Linked References panel and `links` / `linked_by` cannot
+/// drift (I-12).
+///
+/// A journal's names are its spellings and every referenced name that parses
+/// to its day, whether the journal is the target or a member of the target's
+/// alias group (S5). An ordinary page named like a date keeps its own name
+/// only (P2, pending Martin).
 pub(crate) fn graph_equivalent_page_names_with(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     edges: &AliasEdges,
     format: &JournalFormat,
     target: &str,
-    journal_for_day: impl FnOnce(JournalDate) -> Option<String>,
+    journal_for_day: impl Fn(JournalDate) -> Option<String>,
+    referenced_for_day: impl Fn(JournalDate) -> Vec<String>,
 ) -> (String, Vec<String>, String) {
     let mut resolved = equivalent_page_names(real_pages, edges, target);
-    let Some(target_day) = format.parse(target) else {
+    let target_day = format.parse(target);
+    // Journals of the alias group other than the target's own day.
+    let members: Vec<(JournalDate, String)> = resolved
+        .1
+        .iter()
+        .filter_map(|key| {
+            let day = format.parse(key)?;
+            if Some(day) == target_day {
+                return None;
+            }
+            let journal = journal_for_day(day)?;
+            (refs::page_key(&journal) == *key).then_some((day, journal))
+        })
+        .collect();
+    for (day, journal) in members {
+        resolved
+            .1
+            .extend(journal_spelling_keys(format, day, &journal));
+        resolved.1.extend(referenced_for_day(day));
+    }
+    let Some(target_day) = target_day else {
+        resolved.1.sort();
+        resolved.1.dedup();
         return resolved;
     };
     let Some(journal_name) = journal_for_day(target_day) else {
@@ -544,19 +605,23 @@ pub(crate) fn graph_equivalent_page_names_with(
             let title = format.title(target_day);
             let spellings = journal_spelling_keys(format, target_day, &title);
             if spellings.iter().any(|name| real_pages.get(name).is_some()) {
+                resolved.1.sort();
+                resolved.1.dedup();
                 return resolved;
             }
             resolved.1.extend(spellings);
-            resolved.1.sort();
-            resolved.1.dedup();
+            resolved.1.extend(referenced_for_day(target_day));
             resolved.0 = title.clone();
             resolved.2 = title;
         }
+        resolved.1.sort();
+        resolved.1.dedup();
         return resolved;
     };
     resolved
         .1
         .extend(journal_spelling_keys(format, target_day, &journal_name));
+    resolved.1.extend(referenced_for_day(target_day));
     resolved.1.sort();
     resolved.1.dedup();
     resolved.0 = journal_name.clone();
@@ -564,34 +629,21 @@ pub(crate) fn graph_equivalent_page_names_with(
     resolved
 }
 
-/// The graph's journal date format (title/file patterns from its config).
-pub(crate) fn journal_format(config: &tine_core::config::Config) -> JournalFormat {
-    JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    )
-}
-
-/// Every spelling of a journal day a link may use to reach that journal (GH #481,
-/// master ee7730b48): its own name, the graph's title/file forms, the default
-/// title/file forms and ISO `yyyy-MM-dd`, as page keys. The one definition both
-/// query-time resolution and scoped invalidation use (I-12).
+/// The rendered spellings of a journal day (GH #481): its own name plus every
+/// rendering of the day in the graph's one parse list
+/// ([`JournalFormat::spellings`]), as page keys. Looser spellings a link may
+/// use (`2026-10-2`) are added where references are known
+/// ([`referenced_day_keys`]); scoped invalidation reads them from the changed
+/// page itself.
 pub(crate) fn journal_spelling_keys(
     format: &JournalFormat,
     day: JournalDate,
     journal_name: &str,
 ) -> Vec<String> {
-    [
-        journal_name.to_string(),
-        format.title(day),
-        format.file_stem(day),
-        day.title(),
-        day.file_stem(),
-        format!("{:04}-{:02}-{:02}", day.year, day.month, day.day),
-    ]
-    .iter()
-    .map(|spelling| refs::page_key(spelling))
-    .collect()
+    std::iter::once(journal_name.to_string())
+        .chain(format.spellings(day))
+        .map(|spelling| refs::page_key(&spelling))
+        .collect()
 }
 
 /// Scoped invalidation cannot see which journal pages exist, so a date-shaped
@@ -606,7 +658,7 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
 }
 
 fn invalidation_page_names(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
@@ -619,7 +671,7 @@ fn invalidation_page_names(
 /// The same conservative closure as scoped backlink/unlinked invalidation.
 /// Unlike query-time canonical journal selection, this never scans journals.
 pub(crate) fn reference_invalidation_names(graph: &ReadSnapshot, target: &str) -> Vec<String> {
-    let journal = journal_format(graph.config());
+    let journal = graph.config().journal_format();
     // Include aliases of day spellings, and day spellings reached via aliases.
     // This uses the same component traversal, visiting each key once.
     equivalent_page_names_with(
@@ -955,7 +1007,7 @@ fn collect_reference_occurrences_bounded(
 
 #[cfg(test)]
 pub(crate) fn backlinks(graph: &ReadSnapshot, target: &str) -> Vec<RefGroup> {
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target, true);
     collect_reference_occurrences(
         graph,
         &canonical,
@@ -971,7 +1023,7 @@ pub(crate) fn backlinks_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target, true);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
@@ -995,7 +1047,7 @@ pub(crate) fn tagged_pages_query(
     target: &str,
 ) -> tine_core::query::ir::Query {
     use tine_core::query::ir::{Anchor, Query, Source};
-    let (_, names_norm, _) = graph_equivalent_page_names(graph, target);
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, target, true);
     let filter = tine_core::query::og::page_tags_filter(names_norm);
     Query::new(Anchor::Page, filter, Source::Builder)
 }
@@ -1138,7 +1190,7 @@ pub(crate) fn backlink_filter_context(
     target: &str,
     targets: &[BacklinkFilterTarget],
 ) -> BacklinkFilterContext {
-    let (_, names_norm, _) = graph_equivalent_page_names(graph, target);
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, target, true);
     let excluded_refs = names_norm
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
@@ -1292,7 +1344,7 @@ pub(crate) fn block_referrers_bounded(
 /// with the corresponding occurrence evidence.
 #[cfg(test)]
 pub(crate) fn unlinked_refs(graph: &ReadSnapshot, target: &str) -> Vec<RefGroup> {
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target, false);
     collect_reference_occurrences(
         graph,
         &canonical,
@@ -1308,7 +1360,7 @@ pub(crate) fn unlinked_refs_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target, false);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
@@ -1349,7 +1401,7 @@ pub(crate) fn run_query_bounded(
 // the match predicates; result-level sampling and source admission can differ.
 
 pub(crate) fn page_affects_backlinks(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
@@ -1357,7 +1409,25 @@ pub(crate) fn page_affects_backlinks(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
+    let (canonical, mut names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
+    // Linked References read every referenced name that parses to a journal
+    // day of the group (`referenced_day_keys`); this page's own such names
+    // are the ones its edit can add or remove. A superset is safe.
+    let days: Vec<i64> = names_norm
+        .iter()
+        .filter_map(|name| eval::reference_day(name, journal))
+        .collect();
+    if !days.is_empty() {
+        names_norm.extend(
+            document_explicit_reference_names(entry, doc, config)
+                .into_iter()
+                .filter(|name| {
+                    eval::reference_day(name, journal).is_some_and(|d| days.contains(&d))
+                }),
+        );
+        names_norm.sort();
+        names_norm.dedup();
+    }
     // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
@@ -1394,7 +1464,7 @@ pub(crate) fn page_affects_backlinks(
 /// Whether page `doc` plain-text-mentions `target` unlinked — i.e. could be in
 /// `unlinked_refs(target)`. Mirrors `unlinked_refs`'s matcher.
 pub(crate) fn page_affects_unlinked(
-    real_pages: &RealPageNames,
+    real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
@@ -1474,10 +1544,14 @@ pub(crate) fn changed_page_affects_unlinked(
     let real = real_page_names(graph);
     let aliases = graph.alias_edges();
     let config = graph.config();
-    let (_, _, self_page) =
-        graph_equivalent_page_names_with(&real, &aliases, &journal_format(config), target, |day| {
-            graph.reference_journal_name(day)
-        });
+    let (_, _, self_page) = graph_equivalent_page_names_with(
+        &real,
+        &aliases,
+        &config.journal_format(),
+        target,
+        |day| graph.reference_journal_name(day),
+        |_| Vec::new(),
+    );
     if refs::ReferenceSourceExclusions::new(&self_page, config.favorites_page.as_deref())
         .excludes_name(&entry.name)
     {
@@ -4820,7 +4894,12 @@ mod tests {
             "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
-            equivalent_page_names(&RealPageNames::new(), &AliasEdges::new(&aliases), "Z").0,
+            equivalent_page_names(
+                &RealPageOwners::empty(&Default::default()),
+                &AliasEdges::new(&aliases),
+                "Z"
+            )
+            .0,
             "A"
         );
     }

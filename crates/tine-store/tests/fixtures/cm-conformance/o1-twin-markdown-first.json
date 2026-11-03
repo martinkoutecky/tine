@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/Foo.markdown": "- from the .markdown file\n",
+  "pages/foo.md": "- from the .md file\n",
+  "pages/Notes.md": "- [[foo]]\n"
+ }
+}

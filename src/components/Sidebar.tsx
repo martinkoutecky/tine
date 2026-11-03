@@ -16,7 +16,7 @@ import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type 
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { allPageNames, linkPageKind, navigationName } from "../pageIndex";
+import { allPageNames, linkTarget, navigationTarget } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
@@ -33,7 +33,7 @@ import { ResourceFailure } from "./ResourceFailure";
 import { queryAllWindows } from "../windowRealm";
 
 export function sidebarPageTarget(name: string, kind: PageKind): { name: string; kind: PageKind } {
-  return { name: kind === "page" ? navigationName(name) : name, kind };
+  return kind === "page" ? navigationTarget(name) : { name, kind };
 }
 
 export interface SidebarPageOpenDeps {
@@ -141,7 +141,7 @@ export function Sidebar(props: {
               classList={{ active: (() => { const r = route(); return r.kind === "page" && isHomeRouteName(r.name, home()); })() }}
               onClick={() => { goHome(); props.onActiveNavigationComplete?.(); }}
               onMouseDown={internalLinkMouseDown}
-              onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(home(), linkPageKind(home())))}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(linkTarget(home()).name, linkTarget(home()).kind))}
             >
               <HomeIcon />
               <span>{home()}</span>

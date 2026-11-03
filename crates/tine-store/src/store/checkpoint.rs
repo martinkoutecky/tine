@@ -575,8 +575,7 @@ impl ChangeFeed {
         let (evaluator, list) = self
             .graph
             .checkpoint_install(graph, (*config.config).clone())?;
-        *self.journal_ids.lock().unwrap() =
-            journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(&self.graph, list.iter());
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let mut snapshot = Snapshot {
@@ -591,6 +590,7 @@ impl ChangeFeed {
             unreadable: Arc::new(Vec::new()),
             answers: Default::default(),
             folds_only: false,
+            unparsed: std::sync::OnceLock::new(),
         };
         // The first publication carries every answer, as a cold one does.
         let (inventory, delta, counts) = snapshot.answer_changes(None, &[], true);

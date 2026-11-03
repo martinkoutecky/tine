@@ -52,6 +52,17 @@ pub(crate) struct PageInventoryEntryWire {
     is_journal: bool,
     day: Option<i64>,
     target: ResolvedWire,
+    /// What a `[[name]]` link opens when that is not this entry itself
+    /// (`WholeGraph::link_target`): sent only then, so most entries cost no
+    /// bytes. `PageRef` routes by it; the frontend decides nothing itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link: Option<LinkWire>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct LinkWire {
+    name: String,
+    kind: &'static str,
 }
 
 /// The page header's alias group (D-20261019-AL2): the other names with no
@@ -109,6 +120,10 @@ fn entry_wire(entry: &tine_store::InventoryEntry) -> PageInventoryEntryWire {
         is_journal: entry.is_journal,
         day: entry.day.map(|day| day.0),
         target: ResolvedWire::from(&entry.target),
+        link: entry.link.as_ref().map(|link| LinkWire {
+            name: link.name.clone(),
+            kind: if link.is_journal { "journal" } else { "page" },
+        }),
     }
 }
 
@@ -227,7 +242,7 @@ mod inventory_adapter_tests {
                 r#"{"key":"display beta","name":"Display Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]}}"#,
                 r#"{"key":"jun 26th, 2026","name":"Jun 26th, 2026","is_journal":true,"day":20260626,"target":{"kind":"existing","id":"journals/2026_06_26.md","others":["journals/Jun 26th, 2026.org"]}}"#,
                 r#"{"key":"only linked","name":"Only Linked","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Only Linked.md"}}"#,
-                r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]}}"#,
+                r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]},"link":{"name":"Display Alpha","kind":"page"}}"#,
                 r#"{"key":"team/child","name":"Team/Child","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Team%2FChild.md","others":[]}}"#,
             ]
         );

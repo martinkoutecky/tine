@@ -96,7 +96,7 @@ fn todays_journal_created_on_the_host_while_loading_waits_for_no_graph_build() {
     );
     fs::remove_file(&hold).unwrap();
     let view = store.whole_graph().unwrap();
-    let corpus = view.corpus();
+    let corpus = view.corpus(None);
     let found: Vec<_> = (corpus.pages.iter()).filter(|p| p.id == rel).collect();
     assert_eq!(found.len(), 1, "today's journal is in the view once");
     assert!(found[0].document.roots[0]
@@ -137,7 +137,7 @@ fn copy_tree(from: &Path, to: &Path) {
 /// Every page of a view: id, name and root text, sorted.
 fn fingerprint(store: &Store) -> Vec<(String, String, String)> {
     let view = store.whole_graph().unwrap();
-    let mut pages: Vec<_> = (view.corpus().pages.iter())
+    let mut pages: Vec<_> = (view.corpus(None).pages.iter())
         .map(|page| {
             let text: Vec<String> = (page.document.roots.iter())
                 .map(|root| root.raw().to_string())

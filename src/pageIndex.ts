@@ -4,7 +4,7 @@ import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
-import { journalTitle, parseJournalTitle } from "./journal";
+import { absentLinkIsJournal } from "./journal";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
@@ -259,23 +259,61 @@ export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedP
   return (kind === "journal" ? current?.journals : current?.pages)?.get(pageIdentityKey(name))?.target;
 }
 
-/** Date-shaped links prefer a journal file for the day, then a real ordinary
- *  page of this name. This is navigation only: file identity stays unchanged.
- *  Before inventory arrives the backend applies the same fallback. O(1), no IPC. */
-export function linkPageKind(name: string): PageKind {
-  const date = parseJournalTitle(name);
-  if (!date) return "page";
-  if (resolvedTarget(journalTitle(date), "journal")?.kind === "existing") return "journal";
-  return resolvedTarget(name, "page")?.kind === "existing" ? "page" : "journal";
+/** The file a resolved name opens: the claimant order's owner for
+ *  `existing` (its `id`), the page an alias-only name opens for `alias` (the
+ *  backend lists owners each once in relative-path order and the first is the
+ *  owner, D-20261019-AL2/CI4), nothing for `absent`. The backend decides; this
+ *  is the frontend's one reader of that answer (CM step 2, I-12; a guard test
+ *  forbids reading `owners[0]` anywhere else). */
+export function ownerPath(
+  target: ResolvedPage | { readonly kind: "alias"; readonly owners: readonly string[] } | null | undefined,
+): string | undefined {
+  if (target?.kind === "existing") return target.id;
+  if (target?.kind === "alias") return target.owners[0];
+  return undefined;
+}
+
+/** Where a link or a named route goes: a page name and its kind. */
+export interface LinkDestination { readonly name: string; readonly kind: PageKind }
+
+/** What `[[name]]` opens. The store's answer (`WholeGraph::link_target`,
+ *  carried as the inventory entry's `link`) for every name the inventory lists;
+ *  a name it does not list (unsaved text, before the first load) is claimed by
+ *  no file, alias or reference, so its answer is an absent page whose kind the
+ *  Rust rule `JournalFormat::absent_link_is_journal` gives (through wasm). This
+ *  module decides nothing itself. O(1), no IPC. */
+export function linkTarget(name: string): LinkDestination {
+  ensureInstalled();
+  const current = held();
+  const key = pageIdentityKey(name);
+  const page = current?.pages.get(key);
+  if (page) return page.link ?? { name: page.target.kind === "absent" ? name : page.name, kind: "page" };
+  const journal = current?.journals.get(key);
+  if (journal) return { name: journal.name, kind: "journal" };
+  return { name, kind: absentLinkIsJournal(name) ? "journal" : "page" };
+}
+
+/** A named ordinary-page route (not a link): an alias opens what the store
+ *  says its link opens (the owner, of the owner's kind: a journal's alias
+ *  opens the journal); any other name stays an ordinary page of that name. */
+export function navigationTarget(name: string): LinkDestination {
+  ensureInstalled();
+  const entry = held()?.pages.get(pageIdentityKey(name));
+  if (entry?.target.kind === "alias" && entry.link) return entry.link;
+  return { name: navigationName(name), kind: "page" };
 }
 
 /** The page name navigation opens for `name`: the file's own name for
- *  `existing`, the first owner's name for `alias`, else `name` unchanged. */
+ *  `existing`, the alias's owner (the store's `link`) for `alias`, else `name`
+ *  unchanged. */
 export function navigationName(name: string): string {
-  const target = resolvedTarget(name);
+  ensureInstalled();
+  const entry = held()?.pages.get(pageIdentityKey(name));
+  const target = entry?.target;
   if (!target || target.kind === "absent") return name;
-  const id = target.kind === "existing" ? target.id : target.owners[0];
-  return held()?.nameById.get(id) ?? name;
+  if (target.kind === "alias" && entry?.link) return entry.link.name;
+  const id = ownerPath(target);
+  return (id === undefined ? undefined : held()?.nameById.get(id)) ?? name;
 }
 
 /** Physical owner's display name, using the inventory's existing identity map. */

@@ -101,14 +101,18 @@ fn a_settings_rescan_keeps_the_graph_with_a_contained_page() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// A config edit rebuilds every index and names no page: a row only that build
-/// reaches costs that row.
+/// A build-relevant config edit rebuilds every index and names no page: a row
+/// only that build reaches costs that row.
 #[test]
 fn a_config_edit_contains_a_row_its_rebuild_panics_on() {
     let (root, store) = ready_graph_without_watcher("config-row");
     let path = store.graph.root.join("pages/Filler 00.md");
     fs::create_dir_all(root.join("logseq")).unwrap();
-    fs::write(root.join("logseq/config.edn"), "{:x 1}\n").unwrap();
+    fs::write(
+        root.join("logseq/config.edn"),
+        "{:property-pages/excludelist #{:unused}}\n",
+    )
+    .unwrap();
     TEST_ROW_PANIC_PATHS.lock().unwrap().push(path.clone());
     let refreshed = store.refresh(Depth::Bytes);
     let files = store
@@ -481,6 +485,84 @@ fn measure_the_probe_on_a_generated_graph() {
             if outcome.is_ok() { "Ready" } else { "Failed" },
             probing.as_millis(),
             load.as_millis(),
+        );
+        drop(store);
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// Review F1 of og-perf-publish: an own create whose capture panicked (on
+/// its row, contained; or with no row to blame, failing the graph), then
+/// `refresh()`. The claimant index, warm and complete before the create,
+/// names the created page afterwards, and a fresh view resolves it.
+#[test]
+fn an_own_create_a_capture_missed_is_named_after_refresh() {
+    for failed in [false, true] {
+        let tag = format!("create-missed-{failed}");
+        let (root, store) = ready_graph_without_watcher(&tag);
+        assert_eq!(store.graph.find_claimants("Good", PageKind::Page).len(), 1);
+        assert!(store
+            .graph
+            .find_claimants("Fresh", PageKind::Page)
+            .is_empty());
+        let rel = "pages/Fresh.md";
+        let path = store.graph.root.join(rel);
+        let canonical = fs::canonicalize(&root).unwrap();
+        if failed {
+            fs::create_dir_all(root.join("logseq")).unwrap();
+            let config = "{:property-pages/excludelist #{:unused}}\n";
+            fs::write(root.join("logseq/config.edn"), config).unwrap();
+            TEST_FULL_INDEX_PANIC_ROOTS
+                .lock()
+                .unwrap()
+                .push(canonical.clone());
+            let refreshed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                store.refresh(Depth::Bytes)
+            }));
+            assert!(refreshed.is_ok(), "{tag}: the refresh must not unwind");
+            assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+        } else {
+            TEST_ROW_PANIC_PATHS.lock().unwrap().push(path.clone());
+        }
+        let dto = (store.graph.page_dto_for_bytes(&path, b"- fresh\n"))
+            .unwrap()
+            .unwrap();
+        let saved = crate::test_host_writer::HostWriter::start(&store).save(
+            crate::EditKind::CreatePage,
+            &PageId::from(rel),
+            SaveBase::CreateNew,
+            &dto,
+        );
+        TEST_ROW_PANIC_PATHS.lock().unwrap().retain(|p| *p != path);
+        TEST_FULL_INDEX_PANIC_ROOTS
+            .lock()
+            .unwrap()
+            .retain(|r| *r != canonical);
+        assert!(saved.is_ok(), "{tag}");
+        if !failed {
+            assert_eq!(
+                listed(&store),
+                [rel],
+                "{tag}: the capture panicked on its row"
+            );
+        }
+        store.refresh(Depth::Stamps).unwrap();
+        assert!(matches!(settled(&store), Ok(true)), "{tag}");
+        let claimants = store.graph.find_claimants("Fresh", PageKind::Page);
+        assert_eq!(
+            claimants
+                .iter()
+                .map(|entry| &entry.path)
+                .collect::<Vec<_>>(),
+            [&path],
+            "{tag}"
+        );
+        assert!(
+            matches!(
+                store.whole_graph().unwrap().resolve("Fresh", false),
+                crate::Resolved::Existing { .. }
+            ),
+            "{tag}"
         );
         drop(store);
         let _ = fs::remove_dir_all(&root);

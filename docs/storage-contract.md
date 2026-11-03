@@ -62,6 +62,22 @@ Stamp-invisible in-place writes and changes after this final observation can
 still race the move. Only set-aside files are read and parsed again; they are
 not added to backlinks or query indexes.
 
+The guard and the inventory answer parsed pages from an in-memory
+asset-reference index of the published view (per page, the names the same
+collector finds, with a per-name page count), never persisted or checkpointed.
+A view builds it on first use with one walk of its pages, before the trash takes
+the Store writer, and each later publication carries it by the files it changed,
+so a trash holds the writer for a lookup plus the set-aside files' reads, not a
+walk of the graph (cost-model audit 2026-11-02, row 9a; D-10). The set of
+set-aside files is carried the same way. The answer protects exactly what the
+full scan protected; tine-store's own unit tests (`cfg(test)`) compare the index with a full scan on every use; other builds do not.
+
+Printing a page (and its sheet inputs) reads the printed page through
+`Store::page`, which publishes an external edit already on disk, and resolves
+embeds, block references and queries from the last published view, which the
+watcher keeps current. It runs no graph-wide stamp refresh: an external edit to
+an embedded page that the watcher has not yet published prints as before it.
+
 `Store::read_is_current` compares a streaming descriptor with a fresh validated
 open using the existing cross-platform file-identity primitive, O(1). Verification
 uses it after hashing and requires successful metadata reads; a displaced
@@ -146,6 +162,12 @@ bytes. A promoted journal whose parse or projection panics is isolated as one
 unreadable file, just as at launch; unrelated indexed pages and later writer
 operations remain available. Each event visits only the affected day buckets,
 never a graph walk.
+Every reader of "which file owns this name" takes that order's winner (CM step
+2, I-12): `resolve`, the inventory, `page_named` (also while loading), the
+real-name table behind Linked References (`RealPageOwners::get`; the persisted
+claimant tree is unchanged), and the duplicate-day keeper. A name only aliases
+claim opens its first declarer by relative path (AL2/CI4,
+`AliasRelation::owner_path`), each owner listed once.
 Icons follow the winning ordinary claimant, including absence of an icon;
 page-slot allocation and config rebuild order cannot change the answer.
 
@@ -631,6 +653,32 @@ never from rereading every page's preamble. Proof:
 `crates/tine-store/src/store/page_open_tests.rs`,
 `crates/tine-graph-features/tests/br3_page_open_before_ready.rs`.
 
+A page create, delete or rename, the first save of a day's journal included,
+patches the published name index with the names it changed, and the live name
+lookups (claimants for twin checks, the page list, the journal day index) adopt
+that index: the next lookup or listing opens no other page file and lists no
+directory (cost-model audit 2026-11-02 row 3). The day index patches every
+journal file the capture took, whatever kind the publication gave it, so it
+names what the page list names. A path read of a live file its name's
+claimants lack, before the watcher publishes it, adds it only when no other
+name can claim that file: a journal (its file name is its name) or a page
+path the current page list does not list. Any other such read drops the
+claimant memo, and the next lookup lists again. A read of a file a host holds
+changes no memo: its owner's bytes name it, not the file ((G)). A lookup that
+lists, or a read that adds, outside the writer changes a memo only at the
+generation and held epoch it began at (a release or an open's hold moves the
+held map and no generation); the writer's own listings need no such check,
+since every hold and release takes the writer. The first lookup of an absent
+name of each kind after launch still lists once, because the launch index does
+not vouch for files that arrived after it. Proof:
+`crates/tine-store/tests/og_perf_publish.rs`,
+`crates/tine-store/src/model/derived_tests.rs`
+(`a_journal_only_the_capture_names_joins_the_day_index`,
+`a_name_walk_during_a_release_keeps_the_released_page`,
+`a_path_read_of_a_held_file_does_not_join_the_claimant_memo`),
+`crates/tine-store/src/store/panic_isolation_tests.rs`
+(`an_own_create_a_capture_missed_is_named_after_refresh`).
+
 While a page host holds a page (STEP3 §5, amendment A-V4), its publication
 consumer is the page's only index writer
 (R13). Invariant (G) (A-H2): every installed row about a held page (its
@@ -745,6 +793,30 @@ owners of an alias key are read in plain text order of their graph-relative
 paths, and every resolver opens the first (the owner rule); the stored owner
 map and its checkpoint encoding are unchanged. Proof:
 `crates/tine-store/tests/alias_groups.rs`.
+
+What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
+(`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
+the graph's journal answerer parses (`JournalFormat::parse`: the configured
+title and file-name formats plus the fixed fallbacks, D-20261102-JDL) opens that
+day's journal, else a page file claiming the name, else the alias owner. An
+alias owned by a journal opens the journal. A name nothing claims or aliases is
+a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
+exported to the frontend through wasm so the unknown-name fallback runs the same
+code). `page_inventory` entries carry the answer as an optional
+`link: {name, kind}`, sent only when it differs from the entry itself (most
+entries carry nothing). The field is in-memory and derived per read: nothing is
+persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
+delta's `rev` (a link depends on the key's alias owners, which travel in the
+delta, and on file claims, whose change refetches). The published snapshot
+(quick share generation 1, `docs/contracts/quick-share.md`) does not carry it:
+its document is frozen, so adding the answer there is a format decision still
+open (CM step 2 receipt). Proof: `crates/tine-store/tests/inventory_delta.rs`
+`a_delta_keeps_the_link_answer_fresh`, `src/cmConformanceNavigate.test.ts`.
+
+Which references name a journal day (Linked References, `[[day]]` backlink
+counts' needles) is every spelling the journal answerer accepts for that day:
+the spellings it renders plus every explicitly referenced name it parses to the
+day, read from the in-memory explicit-reference index (no stored index).
 
 Every per-page index of a generation (this relation, the explicit-reference
 index, the candidate signatures, the name keys and the rest) is patched by the
@@ -1378,7 +1450,7 @@ by I-9's typed failure paths.
 | `tine-store::transaction` undo of a replaced file | Disk full, a disk error, or a crash while rolling back a failed multi-file save (C3 L07): undo stages the file's pre-transaction bytes as a `tx-old` conflict-trash copy before it withdraws the transaction's bytes, and removes that copy once the old bytes are back live. If the copy cannot be written it withdraws nothing, leaves the transaction's bytes live and reports the file in `undo_failed` (proof `c3s_content_loss.rs`). |
 | `tine-graph-features::conflicts::resolve_sync_conflict` pairing | Sync-service delivery (Dropbox, Syncthing, Seafile) of a conflict copy whose base page is missing or whose page name holds parentheses (C3 L01): a copy is merged only into the page its own name shadows (`sync_copy_winner`); any other pairing is refused before anything is written or trashed, and the copy stays for its real reconcile (proof `crates/tine-graph-features/tests/c3s_sync_copy_base.rs`). |
 | `src-tauri::capture_target::resolve` native capture into a named graph (og H1b) | An Android photo or voice memo that finishes after the window switched graphs has its only copy in the app cache: it is written into the graph it was started in, named by the frontend, through the ordinary asset transaction, never into the new graph, and the user is told where it went. The caller must still be a live bound window. A named root that is not a known graph on this device is refused before anything is written (scenario: plugin or web content in the WebView naming an arbitrary directory; an honest capture always names a graph this device opened). A root that no longer resolves to a folder (moved or deleted by sync or the user mid-capture) is refused by path acquisition. In both cases the capture stays in the cache and the failure is reported (proof `src-tauri/src/capture_target.rs` tests, `src/components/Block.mobileCapture.test.tsx` "stopped after a graph switch"). |
-| `tine-graph-features::conflicts::resolve_duplicate_journal_day` pairing (master 9dc54e4a7) | A duplicate journal day (a date-stem file plus a title-named one, left by a journal date-format change or delivered by sync) folds only a stray of the SAME day into that day's canonical file: a stale review after sync-service delivery, an external rename or a date-format change that re-sorted the day refuses before anything is written or trashed, so the command can never merge two unrelated pages; a Markdown/Org pair of one day (malformed pairing: one body would be rewritten in the other format) is refused and offers no row choices. Past the pairing guard it is the sync-copy fold (`fold_pair`): the same revision guards, Org round-trip firewall and recoverable trash (proof `crates/tine-graph-features/tests/f8_duplicate_journal.rs`). With a page host, the duplicate-day fold is one host operation (P3): winner write and stray delete, with `moved = (winner, stray)`. After a crash, relaunch completes the stray's deletion. |
+| `tine-graph-features::conflicts::resolve_duplicate_journal_day` pairing (master 9dc54e4a7) | A duplicate journal day (a date-stem file plus a title-named one, left by a journal date-format change or delivered by sync) folds only a stray of the SAME day into that day's canonical file, the file the day opens (the claimant order's winner; the duplicate-day list marks it alone as canonical and lists it first, CM step 2 OW-2): a stale review after sync-service delivery, an external rename or a date-format change that re-sorted the day refuses before anything is written or trashed, so the command can never merge two unrelated pages; a Markdown/Org pair of one day (malformed pairing: one body would be rewritten in the other format) is refused and offers no row choices. Past the pairing guard it is the sync-copy fold (`fold_pair`): the same revision guards, Org round-trip firewall and recoverable trash (proof `crates/tine-graph-features/tests/f8_duplicate_journal.rs`). With a page host, the duplicate-day fold is one host operation (P3): winner write and stray delete, with `moved = (winner, stray)`. After a crash, relaunch completes the stray's deletion. |
 | `tine-graph-features::conflicts::union_pre` page-property merge (og C3W W5) | Honest multi-device divergence: both devices set the same page property (or an Org drawer line) to different values and the user resolves with the page properties on "both (merge)". The copy's other pre-block lines, list members and free text are kept; a value that cannot be kept twice refuses the resolve naming the key, before anything is written or trashed, so the user chooses mine or theirs (proof `crates/tine-graph-features/tests/c3w_union_pre.rs`). |
 | `tine-graph-features::pages::rename_page_after_inventory` unreadable page (og C3W W2) | Malformed imported or sync-delivered content (non-UTF-8, over the size or outline-depth cap) in a page the rename must move or rewrite: the rename refuses naming the file, before anything is written, instead of skipping it while rewriting its referrers (proof `crates/tine-graph-features/tests/c3w_rename_unreadable.rs`). |
 | `tine-graph-features::pages_rename_plan::plan_rename` listed-unreadable referrer (REG-PANIC-RENAME-UNINDEXED-REFERRER) | Malformed imported or sync-delivered content, or a page an index stage panicked on: a file Tine could not index has no reference row, so a rename would leave its `[[Old]]` dangling with no word, and it is not safe to rewrite. The rename refuses naming the file, before anything is written, when the file holds a reference the rename rewrites; a file over the size or depth cap, or that panics the rewriter, is searched for the renamed name itself under page identity's folding (case and Unicode normal form), and an unreadable one refuses. A listed path Tine has no permission to read, a file or a folder, refuses every rename until access returns (disk error or permission state: its contents cannot be checked, and renaming anyway would leave a link in it dangling with no word once it is readable again). A listed file without the name blocks nothing. Recovery: repair, restore access to or remove the file, then rename (proof `crates/tine-graph-features/tests/c3w_rename_unreadable.rs`). |
@@ -1615,9 +1687,13 @@ displayed breadcrumbs therefore also subscribes to its contributing source
 page; this can over-invalidate an unrelated edit within that source, but keeps
 ancestor edits live without a graph walk or a second Markdown parser.
 
-Initial publication, rebuild/config change, alias change, create/rename/delete,
+Initial publication, rebuild, a change of a build-relevant config setting
+(`checkpoint::config_key`), alias change, create/rename/delete,
 unavailable old/new pages, unreadable-inventory changes, more than 32 edited
-pages, or a day change since the previous publication set `full`. An own
+pages, or a day change since the previous publication set `full`. Any other
+config change (favorites, templates, display settings) rebuilds no name or
+index and publishes no reader key: settings readers follow `graphMeta`
+(`docs/contracts/config-live-reload.md`). An own
 publication has no external page-reload entries: its answers arrive in an
 empty `graph-changed-bulk` envelope. External publications attach the answers
 once, on their first `graph-changed` entry or their bulk envelope. The frontend
@@ -1655,7 +1731,8 @@ Full runtime graph-text scans with unchanged configuration enumerate metadata ou
 They validate the cache generation and publication revision after acquiring the
 writer, retrying an observation crossed by an own edit or another publication.
 Only changed or racy paths are sorted for reconciliation; unchanged files retain
-their known revisions. Config changes enumerate and reparse under the writer.
+their known revisions. A change of a build-relevant config setting enumerates
+and reparses under the writer; any other config change enumerates nothing.
 Failed-load recovery retains its synchronous full parse followed by writer-ordered
 reconciliation. Applying detected changes remains writer-ordered, including
 racy rehashes, unreadable subtree retention and ordinary external publication.
@@ -1971,7 +2048,7 @@ rewrite has no separate stage-2 read: the final pre-rename guard compares the
 same file with the same baseline and refuses a mismatch as the same conflict
 (external-editor or sync race), after writing only a temporary file.
 Publication names the page from the bytes it read, and the name index reuses
-that entry unless the transaction changed `config.edn`. The own-write stamp
+that entry unless the transaction changed a build-relevant `config.edn` setting. The own-write stamp
 takes its metadata from the publication read's handle; the watcher re-hashes
 the file only when a later `symlink_metadata` differs from it, and a racy
 stamp is reread on the next poll as for every other file.

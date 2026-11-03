@@ -1,6 +1,24 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
 /**
+ * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+ * @param {string} name
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {boolean}
+ */
+function __tine_raw_absent_link_is_journal(name, file_format, title_format) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.absent_link_is_journal(ptr0, len0, ptr1, len1, ptr2, len2);
+    return ret !== 0;
+}
+
+/**
  * Parser-boundary negative-only prefilter; true still needs drawer ownership.
  * @param {string} raw
  * @returns {boolean}
@@ -322,6 +340,33 @@ function __tine_raw_is_render_hidden_prop(key, user_hidden, pre_block) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1, pre_block);
     return ret !== 0;
+}
+
+/**
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+ * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ * @param {string} name
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {string}
+ */
+function __tine_raw_journal_day_json(name, file_format, title_format) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.journal_day_json(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -1486,6 +1531,7 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
     }
   };
 }
+export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __tine_raw_absent_link_is_journal);
 export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
@@ -1502,6 +1548,7 @@ export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_i
 export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
+export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
 export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);

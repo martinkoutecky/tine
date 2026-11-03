@@ -618,6 +618,48 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// D-S1 (CM step 2): a journal's Linked References list every spelling the
+/// date answerer accepts for its day, including a lenient one no format
+/// renders (`October 22nd, 2026`), and a primed memo is invalidated when such
+/// a link is typed (`page_affects_backlinks` reads the edited page's own
+/// referenced names, not only the rendered spellings).
+#[test]
+fn journal_backlinks_follow_a_newly_typed_lenient_spelling() {
+    let root = mk("lenientbacklinks");
+    std::fs::write(root.join("journals").join("2026_10_22.md"), "- day\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Note.md"),
+        "- see [[Oct 22nd, 2026]]\n",
+    )
+    .unwrap();
+    let store = std::sync::Arc::new(store_at(&root));
+    let total = |r: &[tine_core::RefGroup]| r.iter().map(|g| g.blocks.len()).sum::<usize>();
+    let journal = "Oct 22nd, 2026";
+    assert_eq!(
+        total(&store.whole_graph().unwrap().backlinks(journal).unwrap()),
+        1
+    );
+    save_named(&store, "Note", |page| {
+        page.blocks[0].raw = "see [[October 22nd, 2026]] and [[2026-10-22]]".into()
+    });
+    let groups = store.whole_graph().unwrap().backlinks(journal).unwrap();
+    assert_eq!(total(&groups), 1, "{groups:?}");
+    save_named(&store, "Note", |page| page.blocks[0].raw = "no link".into());
+    assert_eq!(
+        total(&store.whole_graph().unwrap().backlinks(journal).unwrap()),
+        0
+    );
+    save_named(&store, "Note", |page| {
+        page.blocks[0].raw = "late [[October 22nd, 2026]]".into()
+    });
+    assert_eq!(
+        total(&store.whole_graph().unwrap().backlinks(journal).unwrap()),
+        1,
+        "a lenient spelling typed after the memo was primed reaches Linked References"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn write_highlights_preserves_externally_added_ones() {
     use tine_core::pdf::{Highlight, Position, Rect};

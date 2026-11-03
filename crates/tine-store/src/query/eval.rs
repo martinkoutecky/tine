@@ -193,8 +193,8 @@ fn planning_text<'a>(
 pub(crate) struct EvalCache {
     atoms: RefCell<AtomSlots>,
     likes: RefCell<HashMap<String, Rc<LikePattern>>>,
-    /// The journal spellings a reference name is read in ([`reference_day`]),
-    /// compiled once per execution: the configuration is fixed for it.
+    /// The graph's date answerer ([`reference_day`]), compiled once per
+    /// execution: the configuration is fixed for it.
     reference_format: OnceCell<tine_core::date::JournalFormat>,
     /// Reference name -> the journal day it denotes, for the digit-bearing
     /// names only (every other name is no day without a parse).
@@ -238,9 +238,9 @@ impl EvalCache {
         if let Some(day) = self.reference_days.borrow().get(name) {
             return *day;
         }
-        let format = self.reference_format.get_or_init(|| {
-            tine_core::date::JournalFormat::new(config.journal_page_title_format.as_deref(), None)
-        });
+        let format = self
+            .reference_format
+            .get_or_init(|| config.journal_format());
         let day = reference_day(name, format);
         let mut days = self.reference_days.borrow_mut();
         if days.len() < Self::MAX_ENTRIES {
@@ -603,9 +603,10 @@ fn quantify<T>(
 
 /// The journal day a referenced page NAME denotes: OG graph-parser
 /// `block.cljs::page-name->map` gives a referenced journal its day even before
-/// a journal file exists. `format` puts the configured TITLE first, followed by
-/// OG's safe defaults (`JournalFormat::new(title, None)`): a custom FILENAME
-/// format must not turn an ordinary page reference into a journal reference.
+/// a journal file exists. `format` is the graph's one date answerer
+/// (`Config::journal_format`, the native list incl. the configured file-name
+/// format: D-20261102-JDL, a deliberate deviation from OG's title-only list),
+/// so the query `journal`/`day` facts agree with what the link opens.
 ///
 /// Every accepted spelling has a numeric year and day (`Format::parse` reads
 /// both as ASCII digits), so a name without a digit is never a day. That is

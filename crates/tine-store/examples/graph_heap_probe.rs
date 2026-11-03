@@ -71,7 +71,7 @@ fn count(blocks: &[tine_core::DocBlock]) -> usize {
 }
 
 fn host_probe(root: &std::path::Path, store: tine_store::Store, view: tine_store::WholeGraph) {
-    let corpus = view.corpus();
+    let corpus = view.corpus(None);
     let files = corpus.pages.len();
     let blocks: usize = corpus.pages.iter().map(|p| count(&p.document.roots)).sum();
     let mut pages: Vec<_> = corpus
@@ -168,7 +168,7 @@ fn main() {
         store.close();
         return;
     }
-    let corpus = view.corpus();
+    let corpus = view.corpus(None);
     let files = corpus.pages.len();
     let blocks: usize = corpus.pages.iter().map(|p| count(&p.document.roots)).sum();
     let mut names: Vec<_> = corpus
@@ -207,7 +207,7 @@ fn main() {
     drop(result);
     // Only the attribution pass retains an owned corpus table. Its entries
     // share documents; the measured opening/query stages retain no such table.
-    let mut corpus = view.corpus();
+    let mut corpus = view.corpus(None);
     let store_before = LIVE.load(SeqCst);
     drop(view);
     store.close();

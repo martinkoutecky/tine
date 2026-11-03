@@ -1,0 +1,12 @@
+{
+  "files": {
+    "pages/x.md": "- ex\n",
+    "pages/q.md": "- see [[x]]\n"
+  },
+  "renames": [
+    {
+      "old": "x",
+      "new": "n/y"
+    }
+  ]
+}

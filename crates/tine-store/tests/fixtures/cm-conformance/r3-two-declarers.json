@@ -1,0 +1,7 @@
+{
+ "files": {
+  "pages/Alpha.md": "alias:: Shared\n\n- a\n",
+  "pages/Beta.md": "alias:: Shared\n\n- b\n",
+  "pages/Notes.md": "- [[Shared]]\n"
+ }
+}
