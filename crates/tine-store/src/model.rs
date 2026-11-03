@@ -1893,8 +1893,8 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
         .pre_block
         .as_deref()
         .map(|pre| {
-            let mut text = crate::query::page_property_raw(pre, is_org);
-            if let Some(range) = tine_core::page_properties::preamble_content_range(pre, is_org) {
+            let (mut text, prose) = tine_core::page_properties::pre_block_parts(pre, is_org);
+            if let Some(range) = prose {
                 text.push('\n');
                 text.push_str(&pre[range]);
             }

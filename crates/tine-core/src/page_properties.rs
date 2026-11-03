@@ -9,7 +9,14 @@ use crate::doc::{DocBlock, Document};
 /// Page properties owned by lsdoc, including Org directives and head drawers.
 /// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
 pub fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    crate::block_regions::parse_document(text, is_org)
+    property_lines_in(&crate::block_regions::parse_document(text, is_org), is_org)
+}
+
+fn property_lines_in(
+    regions: &crate::block_regions::BlockRegions,
+    is_org: bool,
+) -> Vec<(String, String)> {
+    regions
         .page_properties()
         .map(|p| {
             (
@@ -40,7 +47,10 @@ pub fn page_document_is_org(doc: &Document) -> bool {
 /// Project only parser-owned page properties into native block syntax. Keeping
 /// the whole Org drawer preserves parser ownership for reference evidence.
 pub fn page_property_raw(pre: &str, is_org: bool) -> String {
-    let entries = page_property_lines(pre, is_org);
+    raw_from_lines(&page_property_lines(pre, is_org), is_org)
+}
+
+fn raw_from_lines(entries: &[(String, String)], is_org: bool) -> String {
     if entries.is_empty() {
         return String::new();
     }
@@ -115,10 +125,35 @@ pub fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
 ///
 /// O(pre-block bytes); `None` when there is no prose.
 pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range<usize>> {
+    preamble_range_in(
+        pre,
+        is_org,
+        &crate::block_regions::parse_document(pre, is_org),
+    )
+}
+
+/// Both parts of a pre-block from one parse: the projected page-property
+/// header text ([`page_property_raw`], empty when none) and the prose range
+/// ([`preamble_content_range`]). For the per-page walkers (whole-graph build,
+/// candidate signatures, reference questions), so the prose costs no second
+/// parse of the pre-block.
+pub fn pre_block_parts(pre: &str, is_org: bool) -> (String, Option<std::ops::Range<usize>>) {
+    let regions = crate::block_regions::parse_document(pre, is_org);
+    (
+        raw_from_lines(&property_lines_in(&regions, is_org), is_org),
+        preamble_range_in(pre, is_org, &regions),
+    )
+}
+
+fn preamble_range_in(
+    pre: &str,
+    is_org: bool,
+    regions: &crate::block_regions::BlockRegions,
+) -> Option<std::ops::Range<usize>> {
     if !is_org {
-        return tine_outline::page_preamble::page_preamble_content(pre).map(|r| r.0..r.1);
+        return tine_outline::page_preamble::page_preamble_content_in(pre, regions)
+            .map(|r| r.0..r.1);
     }
-    let regions = crate::block_regions::parse_document(pre, true);
     if regions.quarantined {
         // A refused pre-block has no readable references in either part.
         return None;
@@ -168,9 +203,20 @@ pub fn document_preamble_block(doc: &Document) -> Option<DocBlock> {
 /// The pre-block's blocks every reference question reads, in page order:
 /// the page-property header block, then the prose block.
 pub fn document_pre_blocks(doc: &Document) -> impl Iterator<Item = DocBlock> {
-    document_page_property_block(doc)
-        .into_iter()
-        .chain(document_preamble_block(doc))
+    let mut out = Vec::new();
+    if let Some(pre) = doc.pre_block.as_deref() {
+        let is_org = page_document_is_org(doc);
+        let (raw, prose) = pre_block_parts(pre, is_org);
+        if !raw.is_empty() {
+            out.push(property_projection(&raw, is_org));
+        }
+        if let Some(range) = prose {
+            let mut block = DocBlock::new(&pre[range]);
+            block.set_org(is_org);
+            out.push(block);
+        }
+    }
+    out.into_iter()
 }
 
 /// Count each projected block reference once per referring block. The one

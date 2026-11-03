@@ -799,35 +799,37 @@ fn page_property_block_with_config(
     Some(block)
 }
 
-/// The pre-block's prose as the page's first block for every reference
-/// question (`page_properties::preamble_content_range`, CM step 2 batch 8),
-/// with a page-scoped identity like the header block's.
-fn page_preamble_block_with_config(
-    entry: &PageEntry,
-    pre: &str,
-    config: &tine_core::query::atom::ParseConfig,
-) -> Option<DocBlock> {
-    let is_org = Format::from_path(&entry.path) == Format::Org;
-    let mut block = tine_core::page_properties::preamble_block_with_config(pre, is_org, config)?;
-    block.uuid = format!(
-        "page-preamble:{:?}:{}",
-        entry.kind,
-        refs::page_key(&entry.name)
-    );
-    Some(block)
-}
-
 /// The pre-block's blocks a reference question reads, in page order: the
-/// page-property header block, then the prose block. The ordinal of both in
-/// the reference candidate signatures is 0 (`model.rs reference_signatures`).
+/// page-property header block (identity `page-property:…`), then the prose
+/// before the first block (`page_properties::preamble_content_range`, CM step
+/// 2 batch 8; identity `page-preamble:…`), both from one parse of the
+/// pre-block (`page_properties::pre_block_parts`). The ordinal of both in the
+/// reference candidate signatures is 0 (`model.rs reference_signatures`).
 fn pre_blocks_with_config(
     entry: &PageEntry,
     pre: &str,
     config: &tine_core::query::atom::ParseConfig,
 ) -> impl Iterator<Item = DocBlock> {
-    page_property_block_with_config(entry, pre, config)
-        .into_iter()
-        .chain(page_preamble_block_with_config(entry, pre, config))
+    let is_org = Format::from_path(&entry.path) == Format::Org;
+    let (raw, prose) = tine_core::page_properties::pre_block_parts(pre, is_org);
+    let key = refs::page_key(&entry.name);
+    let mut out = Vec::with_capacity(2);
+    if !raw.is_empty() {
+        let mut block =
+            tine_core::page_properties::property_projection_with_config(&raw, is_org, config);
+        block.uuid = format!("page-property:{:?}:{key}", entry.kind);
+        out.push(block);
+    }
+    if let Some(range) = prose {
+        let mut block = tine_core::page_properties::property_projection_with_config(
+            &pre[range],
+            is_org,
+            config,
+        );
+        block.uuid = format!("page-preamble:{:?}:{key}", entry.kind);
+        out.push(block);
+    }
+    out.into_iter()
 }
 
 /// A reference row for one of [`pre_blocks_with_config`]'s blocks: the
