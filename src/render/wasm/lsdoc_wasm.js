@@ -320,6 +320,20 @@ function __tine_raw_install_panic_hook() {
 }
 
 /**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_is_editable_linkable_built_in(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_editable_linkable_built_in(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Whether All pages hides this name as an OG built-in page (I-12: the one
  * answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
  * @param {string} name
@@ -1622,6 +1636,7 @@ export const format_journal_date = __tineGuard("format_journal_date", __tine_raw
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
 export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
+export const is_editable_linkable_built_in = __tineGuard("is_editable_linkable_built_in", __tine_raw_is_editable_linkable_built_in);
 export const is_og_built_in_page = __tineGuard("is_og_built_in_page", __tine_raw_is_og_built_in_page);
 export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);

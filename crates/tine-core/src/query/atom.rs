@@ -37,6 +37,7 @@ use unicode_normalization::UnicodeNormalization;
 
 // Also compiled into lsdoc-wasm, with the reference walker.
 mod parse_config;
+pub use parse_config::is_editable_linkable_built_in;
 pub use parse_config::ParseConfig;
 use parse_config::EDITABLE_LINKABLE_BUILT_IN_PROPERTIES;
 pub(crate) use parse_config::{reference_parsing_suppressed, separated_by_commas};
@@ -119,19 +120,6 @@ pub struct Atom {
     /// Position within the key's flattened atom list, renumbered `0..n` by the
     /// registry producer (§5.8); the atomizer numbers within one value.
     pub ordinal: u32,
-}
-
-/// True for OG's built-in keys whose values are page references
-/// (`editable-linkable-built-in-properties`: `alias`, `aliases`, `tags`), in any
-/// case. The one list (I-12, census Q7): search facets, the sync-conflict member
-/// union and the reference walker ask this; the configured
-/// `:property/separated-by-commas` keys come on top through
-/// [`linkable_property_keys`] where config applies.
-pub fn is_editable_linkable_built_in(key: &str) -> bool {
-    let key = property_key_norm(key);
-    EDITABLE_LINKABLE_BUILT_IN_PROPERTIES
-        .iter()
-        .any(|candidate| property_key_norm(candidate) == key)
 }
 
 /// The normalized keys whose value shows each comma item as a page link on

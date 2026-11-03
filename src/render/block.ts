@@ -9,6 +9,7 @@ import { utf8ToUtf16Cursor } from "./utf16Cursor";
 import {
   split_linkable_property as splitLinkableProperty,
   is_render_hidden_prop as isRenderHiddenPropNative,
+  is_editable_linkable_built_in as isEditableLinkableBuiltIn,
 } from "./wasm/lsdoc_wasm.js";
 import { propertyKeyNorm } from "../propertyKey";
 export { splitLinkableProperty };
@@ -51,11 +52,12 @@ export function pageProperties(
   return pagePropertyEntries(preBlock, format).map((entry) => [entry.key, entry.value]);
 }
 
-/** Built-in page-property values that Logseq treats as page references even
- * without explicit `[[...]]` syntax. Custom properties stay ordinary text. */
+/** Built-in page-property values that Logseq treats as page references
+ * without explicit `[[...]]` syntax (`alias`, `aliases`, `tags`): the store's
+ * list, through wasm (`is_editable_linkable_built_in`, census Q7). Custom
+ * properties stay ordinary text. */
 export function isImplicitPageRefProperty(key: string): boolean {
-  const normalized = propertyKeyNorm(key);
-  return normalized === "alias" || normalized === "aliases" || normalized === "tags";
+  return isEditableLinkableBuiltIn(key);
 }
 
 /** OG `property-cp`: a property in `linkable` (the backend's effective

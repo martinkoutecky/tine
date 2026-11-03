@@ -80,6 +80,13 @@ export function hide_policy_hides(policy: string, key: string, properties: strin
 export function install_panic_hook(): void;
 
 /**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ */
+export function is_editable_linkable_built_in(key: string): boolean;
+
+/**
  * Whether All pages hides this name as an OG built-in page (I-12: the one
  * answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
  */
@@ -358,6 +365,7 @@ export interface InitOutput {
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
+    readonly is_editable_linkable_built_in: (a: number, b: number) => number;
     readonly is_og_built_in_page: (a: number, b: number) => number;
     readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;

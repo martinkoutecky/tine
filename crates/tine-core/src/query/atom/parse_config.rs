@@ -71,6 +71,20 @@ fn contains_key(list: &[&str], key: &str) -> bool {
         .any(|candidate| property_key_norm(candidate) == key)
 }
 
+/// True for OG's built-in keys whose values are page references
+/// (`editable-linkable-built-in-properties`: `alias`, `aliases`, `tags`), in any
+/// case. The one list (I-12, census Q7): search facets, the sync-conflict member
+/// union and the frontend's fallback without the graph's answer
+/// (`render/block.ts isImplicitPageRefProperty`, through lsdoc-wasm) ask this;
+/// configured `:property/separated-by-commas` keys come on top through
+/// [`separated_by_commas`] where config applies.
+pub fn is_editable_linkable_built_in(key: &str) -> bool {
+    contains_key(
+        EDITABLE_LINKABLE_BUILT_IN_PROPERTIES,
+        &property_key_norm(key),
+    )
+}
+
 fn contains_config_key(list: &[String], key: &str) -> bool {
     list.iter()
         .any(|candidate| property_key_norm(candidate.trim_start_matches(':')) == key)
