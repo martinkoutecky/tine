@@ -1,0 +1,101 @@
+{
+  "about": "CM step 2 batch 4 (census Q12, harness gap H1): what the favorites list is after a rename or merge. Each scenario is a small graph, one operation and the proposed one answer (`target`). Three entries run every scenario and record where they differ from `target` in expected-differences.json: `rust` (tine-graph-features `pages::rename_or_merge_page`, the entry the app and the CLI owner both call), `owner` (the headless CLI owner's `page.rename` verb, src-tauri owner tests: `tine serve` has no window, so nothing in TypeScript runs after it) and `frontend` (src/favorites.ts `renameFavorite`, reached as graph.ts `refreshAfterRename` reaches it after an app rename or a CLI rename a window hears about). `target` is the manager's stated goal (favorites follow a rename; a merged-away page's favorite ends on the survivor) plus OG's namespace behaviour; `pending` names a target that is a proposal awaiting a ruling (see the design note cm-step2-favorites-design.md). Names avoid the owner test graph's seed pages (a, b, ns, ns/child, dup).",
+  "scenarios": [
+    {
+      "id": "f1-plain",
+      "about": "A favorite page is renamed; another favorite stays.",
+      "config": "{:favorites [\"Alpha\" \"Other\"]}\n",
+      "files": { "pages/Alpha.md": "- alpha body\n", "pages/Other.md": "- see [[Alpha]]\n" },
+      "op": { "kind": "rename", "old": "Alpha", "new": "Omega" },
+      "target": { "favorites": ["Omega", "Other"], "favoritesPage": null },
+      "og": "rename-page-aux: unfavorite-page! old, favorite-page! new-page-name (lower-cased, moved to the front): [\"omega\" \"Other\"]"
+    },
+    {
+      "id": "f2-other-spelling",
+      "about": "The favorite is stored under another case spelling of the renamed page.",
+      "config": "{:favorites [\"alpha\"]}\n",
+      "files": { "pages/Alpha.md": "- alpha body\n" },
+      "op": { "kind": "rename", "old": "Alpha", "new": "Omega" },
+      "target": { "favorites": ["Omega"], "favoritesPage": null },
+      "og": "favorited? compares lower-cased names: [\"omega\"]"
+    },
+    {
+      "id": "f3-namespace",
+      "about": "Renaming a namespace parent moves its descendants; a favorite descendant follows too.",
+      "config": "{:file/name-format :triple-lowbar :favorites [\"proj/child\" \"proj\"]}\n",
+      "files": { "pages/proj.md": "- parent\n", "pages/proj___child.md": "- child\n" },
+      "op": { "kind": "rename", "old": "proj", "new": "work" },
+      "target": { "favorites": ["work/child", "work"], "favoritesPage": null },
+      "og": "rename-namespace-pages! calls rename-page-aux for every namespace page, so each favorite follows: [\"work\" \"work/child\"] (front-insertion order)"
+    },
+    {
+      "id": "f4-merge",
+      "about": "A favorite page is merged into an existing page that is not a favorite.",
+      "config": "{:favorites [\"Src\" \"Other\"]}\n",
+      "files": { "pages/Src.md": "- from src\n", "pages/Dst.md": "- in dst\n", "pages/Other.md": "- other\n" },
+      "op": { "kind": "merge", "old": "Src", "new": "Dst", "into": "pages/Dst.md" },
+      "target": { "favorites": ["Dst", "Other"], "favoritesPage": null },
+      "pending": "FAV-MERGE: OG drops the merged-away page's favorite (merge-pages! -> delete! -> unfavorite-page!); the brief's goal moves it to the survivor, as Tine's TypeScript does today.",
+      "og": "merge-pages! does not call rename-page-aux; delete! of the source calls unfavorite-page!: [\"Other\"]"
+    },
+    {
+      "id": "f5-merge-both-favorites",
+      "about": "Both the merged-away page and the survivor are favorites: one survivor favorite remains, in the survivor's place.",
+      "config": "{:favorites [\"Dst\" \"Src\"]}\n",
+      "files": { "pages/Src.md": "- from src\n", "pages/Dst.md": "- in dst\n" },
+      "op": { "kind": "merge", "old": "Src", "new": "Dst", "into": "pages/Dst.md" },
+      "target": { "favorites": ["Dst"], "favoritesPage": null },
+      "og": "the source's favorite is dropped: [\"Dst\"]"
+    },
+    {
+      "id": "f6-alias-spelling",
+      "about": "The favorite is stored under an alias of the renamed page. The alias stays declared in the moved file, so the stored spelling still opens the renamed page.",
+      "config": "{:favorites [\"Al\"]}\n",
+      "files": { "pages/Alpha.md": "alias:: Al\n\n- alpha body\n" },
+      "op": { "kind": "rename", "old": "Alpha", "new": "Omega" },
+      "target": { "favorites": ["Al"], "favoritesPage": null },
+      "pending": "FAV-ALIAS: keep the stored alias spelling (it still opens the page; a rename maps page names, not aliases) or rewrite it to the new page name, as Tine's TypeScript does today (favoriteKey resolves the alias through navigationName).",
+      "og": "favorited? compares the stored name with the old page name only; an alias spelling is not matched and stays: [\"Al\"]",
+      "frontendInventory": [
+        { "key": "alpha", "name": "Alpha", "is_journal": false, "day": null, "target": { "kind": "existing", "id": "pages/Alpha.md", "others": [] } },
+        { "key": "al", "name": "Al", "is_journal": false, "day": null, "target": { "kind": "alias", "owners": ["pages/Alpha.md"] }, "link": { "name": "Alpha", "kind": "page" } }
+      ]
+    },
+    {
+      "id": "f7-reference-only",
+      "about": "A favorite with no file, only references, is renamed (the rename repoints its references).",
+      "config": "{:favorites [\"Ghost\"]}\n",
+      "files": { "pages/Holder.md": "- see [[Ghost]]\n" },
+      "op": { "kind": "rename", "old": "Ghost", "new": "Spirit" },
+      "target": { "favorites": ["Spirit"], "favoritesPage": null },
+      "og": "rename-page-aux requires a page entity; a referenced name is a page in OG's DB, so it follows: [\"spirit\"]"
+    },
+    {
+      "id": "f8-home-and-favorite",
+      "about": "The renamed page is both the home page and a favorite: both follow, in one config.edn write.",
+      "config": "{:default-home {:page \"Alpha\"} :favorites [\"Alpha\"]}\n",
+      "files": { "pages/Alpha.md": "- alpha body\n" },
+      "op": { "kind": "rename", "old": "Alpha", "new": "Omega" },
+      "target": { "favorites": ["Omega"], "favoritesPage": null, "home": "Omega" },
+      "og": "both: :default-home {:page \"Omega\"}, [\"omega\"]"
+    },
+    {
+      "id": "f9-arrangement-links",
+      "about": "A favorite listed on the Favorites arrangement page is renamed: the page's link and :favorites follow.",
+      "config": "{:favorites [\"Alpha\"] :tine/favorites-page \"Favorites\"}\n",
+      "files": { "pages/Alpha.md": "- alpha body\n", "pages/Favorites.md": "tine.favorites:: true\n\n- Work\n\t- [[Alpha]]\n" },
+      "op": { "kind": "rename", "old": "Alpha", "new": "Omega" },
+      "target": { "favorites": ["Omega"], "favoritesPage": "Favorites", "pages": { "pages/Favorites.md": "tine.favorites:: true\n\n- Work\n\t- [[Omega]]\n" } },
+      "og": "OG has no arrangement page: [\"omega\"]"
+    },
+    {
+      "id": "f10-arrangement-page-renamed",
+      "about": "The Favorites arrangement page itself is renamed: :tine/favorites-page follows it.",
+      "config": "{:favorites [\"Alpha\"] :tine/favorites-page \"Favorites\"}\n",
+      "files": { "pages/Alpha.md": "- alpha body\n", "pages/Favorites.md": "tine.favorites:: true\n\n- Work\n\t- [[Alpha]]\n" },
+      "op": { "kind": "rename", "old": "Favorites", "new": "Faves" },
+      "target": { "favorites": ["Alpha"], "favoritesPage": "Faves", "pages": { "pages/Faves.md": "tine.favorites:: true\n\n- Work\n\t- [[Alpha]]\n" } },
+      "og": "OG has no arrangement page"
+    }
+  ]
+}
