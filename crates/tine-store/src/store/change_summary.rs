@@ -511,11 +511,7 @@ impl Snapshot {
                 );
                 for target in unlinked_targets {
                     if crate::query::changed_page_affects_unlinked(
-                        graph,
-                        target,
-                        entry,
-                        &selected,
-                        header.as_ref(),
+                        graph, target, entry, &selected, &header,
                     ) {
                         summary.text_to.insert(page_key(target));
                     }

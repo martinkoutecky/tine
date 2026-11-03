@@ -30,7 +30,7 @@ import { bumpGraphEpoch } from "./graphSession";
 import { allPageNames, refreshPageIndex, resetPageIndex } from "./pageIndex";
 import { resetStore } from "./document";
 import { initParser } from "./render/parse";
-import { is_og_built_in_page } from "./render/wasm/lsdoc_wasm";
+import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
 import { setJournalFormats } from "./journal";
 import { resetReferenceSectionState } from "./referenceSectionState";
 import { AllPages, hiddenFromAllPages } from "./components/AllPages";
@@ -197,7 +197,7 @@ async function runCase(c: Case): Promise<string[]> {
     const cell = rows.get(row);
     if (cell === undefined) {
       diffs.push(p.owner === null
-        ? `frontend all pages: model page ${show(p)} is reference-only and has no row${is_og_built_in_page(p.name) ? " (hidden as an OG built-in page, A11)" : ""}`
+        ? `frontend all pages: model page ${show(p)} is reference-only and has no row${hidden_from_all_pages(p.name) ? " (hidden as an OG built-in page, A11)" : ""}`
         : `frontend all pages: model page ${show(p)} (${p.owner}) has no row`);
       continue;
     }

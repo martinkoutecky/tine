@@ -1820,6 +1820,11 @@ fn visit_document_referenced_names(
         block.set_org(crate::query::page_properties::page_document_is_org(doc));
         visit_block_property_and_evidence_names(&block, config, f);
     }
+    // CM step 2, batch 8: the prose before the first block is the page's
+    // first block (OG `with-pre-block-if-exists`), so its names count too.
+    if let Some(preamble) = tine_core::page_properties::document_preamble_block(doc) {
+        visit_block_referenced_names(&preamble, config, f);
+    }
     for block in &doc.roots {
         visit(block, config, f, baseline);
     }
@@ -1862,8 +1867,9 @@ fn snapshot_index_shard(bytes: &[u8]) -> usize {
 }
 
 /// One signature per block, in the order the reference walk visits them: slot 0
-/// is the page-property pseudo-block (as `query::page_property_block` projects
-/// it), then the blocks in pre-order.
+/// is the pre-block (the page-property pseudo-block as
+/// `query::page_property_block` projects it, and the preamble's prose block),
+/// then the blocks in pre-order.
 fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSignature>> {
     fn add_blocks(out: &mut Vec<BlockSignature>, blocks: &[DocBlock]) {
         for block in blocks {
@@ -1880,10 +1886,20 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
     #[cfg(test)]
     index_probe::test_row_fault(&entry.path);
     let is_org = Format::from_path(&entry.path) == Format::Org;
+    // Slot 0 covers both pre-blocks (the header and the preamble's prose,
+    // `query::pre_blocks_with_config`): one text holding both has every
+    // feature of each, so the filter keeps no false negative.
     let mut out = vec![doc
         .pre_block
         .as_deref()
-        .map(|pre| BlockSignature::of_text(&crate::query::page_property_raw(pre, is_org)))
+        .map(|pre| {
+            let (mut text, prose) = tine_core::page_properties::pre_block_parts(pre, is_org);
+            if let Some(range) = prose {
+                text.push('\n');
+                text.push_str(&pre[range]);
+            }
+            BlockSignature::of_text(&text)
+        })
         .unwrap_or_default()];
     add_blocks(&mut out, &doc.roots);
     out.shrink_to_fit();

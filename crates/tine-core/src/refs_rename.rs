@@ -205,11 +205,27 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
     settle(edits).collect()
 }
 
-/// The edits of a pre-block, in its own offsets. The page's references there
-/// are its page properties, which the store reads as a synthesized block
-/// (`page_properties::page_property_raw`); its sites map back to each
-/// property's key and value in `pre`.
+/// The edits of a pre-block, in its own offsets: its page properties' and its
+/// prose's (the two blocks the store reads there, batch 8), unsettled.
 fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
+    let mut edits = property_edits(pre, is_org, renames);
+    if let Some(range) = crate::page_properties::preamble_content_range(pre, is_org) {
+        let raw = &pre[range.clone()];
+        let mut block = DocBlock::new(raw);
+        block.set_org(is_org);
+        edits.extend(
+            block_edits(raw, is_org, &block, renames)
+                .into_iter()
+                .map(|(r, to)| (r.start + range.start..r.end + range.start, to)),
+        );
+    }
+    edits
+}
+
+/// The edits of a pre-block's page properties, in its own offsets. The store
+/// reads them as a synthesized block (`page_properties::page_property_raw`);
+/// its sites map back to each property's key and value in `pre`.
+fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
     let raw = crate::page_properties::page_property_raw(pre, is_org);
     if raw.is_empty() {
         return Vec::new();

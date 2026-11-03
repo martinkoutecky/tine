@@ -201,6 +201,29 @@ fn pre_reference_only_checkpoints_are_rebuilt() {
     store.close();
 }
 
+/// FORMAT 23 (CM step 2 batch 8): a format-22 checkpoint's reference indexes
+/// never read the prose before a page's first block; it must rebuild, so a
+/// warm launch over unchanged files lists that prose in Linked References.
+#[test]
+fn pre_preamble_reference_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(root.path().join("pages/Prose.md"), "[[Target]] in prose\n").unwrap();
+    fs::write(root.path().join("pages/Target.md"), "- target\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&22_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    let linked = graph.backlinks("Target").unwrap();
+    assert_eq!(linked.len(), 1, "{linked:?}");
+    assert_eq!(linked[0].page, "Prose");
+    store.close();
+}
+
 #[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
@@ -1087,7 +1110,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (22, GOLDEN),
+        (23, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

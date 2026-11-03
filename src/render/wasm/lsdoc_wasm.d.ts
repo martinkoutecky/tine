@@ -73,6 +73,13 @@ export function format_journal_date(year: number, month: number, day: number, pa
 export function header_tokens_json(raw: string, is_org: boolean): string;
 
 /**
+ * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+ * page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+ * with tine-core).
+ */
+export function hidden_from_all_pages(name: string): boolean;
+
+/**
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  */
 export function hide_policy_hides(policy: string, key: string, properties: string): boolean;
@@ -85,12 +92,6 @@ export function install_panic_hook(): void;
  * frontend's fallback when the graph's `linkable_property_keys` is absent.
  */
 export function is_editable_linkable_built_in(key: string): boolean;
-
-/**
- * Whether All pages hides this name as an OG built-in page (I-12: the one
- * answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
- */
-export function is_og_built_in_page(name: string): boolean;
 
 /**
  * OG built-ins excluded from default query-table property columns.
@@ -194,6 +195,14 @@ export function page_header_json(raw: string): string;
  * Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
  */
 export function page_identity_key(name: string): string;
+
+/**
+ * The prose of a Markdown page preamble after its page header, as UTF-8 byte
+ * offsets `[start, end]`, or `null` (I-12: the one answerer,
+ * `page_preamble::page_preamble_content`, which the store's reference answer
+ * reads too).
+ */
+export function page_preamble_content_json(raw: string): string;
 
 /**
  * Whole-preamble property ownership, with parser-owned literals excluded.
@@ -363,10 +372,10 @@ export interface InitOutput {
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
+    readonly hidden_from_all_pages: (a: number, b: number) => number;
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
     readonly is_editable_linkable_built_in: (a: number, b: number) => number;
-    readonly is_og_built_in_page: (a: number, b: number) => number;
     readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -388,6 +397,7 @@ export interface InitOutput {
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
+    readonly page_preamble_content_json: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];

@@ -166,11 +166,21 @@ pub fn is_og_built_in_property(key: &str) -> bool {
     og_built_in::is_og_built_in_property(key)
 }
 
-/// Whether All pages hides this name as an OG built-in page (I-12: the one
-/// answerer, `og_built_in::is_og_built_in_page`, shared with tine-core).
+/// Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+/// page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+/// with tine-core).
 #[wasm_bindgen]
-pub fn is_og_built_in_page(name: &str) -> bool {
-    og_built_in::is_og_built_in_page(name)
+pub fn hidden_from_all_pages(name: &str) -> bool {
+    og_built_in::hidden_from_all_pages(name)
+}
+
+/// The prose of a Markdown page preamble after its page header, as UTF-8 byte
+/// offsets `[start, end]`, or `null` (I-12: the one answerer,
+/// `page_preamble::page_preamble_content`, which the store's reference answer
+/// reads too).
+#[wasm_bindgen]
+pub fn page_preamble_content_json(raw: &str) -> String {
+    serde_json::to_string(&tine_outline::page_preamble::page_preamble_content(raw).map(|r| [r.0, r.1])).unwrap()
 }
 
 /// Whether a block property key is hidden from rendered chips (I-12: the one

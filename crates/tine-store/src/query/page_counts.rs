@@ -38,7 +38,7 @@ use tine_core::doc::{property_key_norm, DocBlock};
 use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
-use super::{page_property_block_with_config, PanelResolver};
+use super::{pre_blocks_with_config, PanelResolver};
 use crate::model::ReadSnapshot;
 
 /// Referring blocks per panel, by the panel's canonical page key. A key that
@@ -138,10 +138,11 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
                     });
                 }
             };
-            if let Some(block) = doc
+            for block in doc
                 .pre_block
                 .as_deref()
-                .and_then(|pre| page_property_block_with_config(entry, pre, &parse_config))
+                .into_iter()
+                .flat_map(|pre| pre_blocks_with_config(entry, pre, &parse_config))
             {
                 collect(&block);
             }

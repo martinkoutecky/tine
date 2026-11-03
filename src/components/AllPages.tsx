@@ -7,7 +7,7 @@ import type { PaneRouter } from "../router";
 import type { PageEntry } from "../types";
 import { allPages, pageListLabels } from "../pages";
 import { installPageIndex, referenceOnlyPages } from "../pageIndex";
-import { is_og_built_in_page } from "../render/wasm/lsdoc_wasm";
+import { hidden_from_all_pages } from "../render/wasm/lsdoc_wasm";
 import { createQuietRun } from "../querySubscription";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { openRouteInOtherPane } from "../panes";
@@ -42,13 +42,14 @@ import {
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
 export const ALL_PAGES_ROW_HEIGHT = 32;
 
-/** A file All pages leaves out: one named like an OG built-in page. OG's All
- *  pages (handler/page.cljs `get-all-pages`) drops such a page even when it
- *  has a file, so a `pages/TODO.md` is not listed either; the same Rust answer
- *  decides (`is_og_built_in_page`; CM step 2 batch 5 ruling). The file still
+/** A file All pages leaves out: one named like an OG built-in page, a UUID or
+ *  a drawing (`draws/…`). OG's All pages (handler/page.cljs `get-all-pages`)
+ *  drops such a page even when it has a file, so a `pages/TODO.md` is not
+ *  listed either; the same Rust answer decides (`hidden_from_all_pages`; CM
+ *  step 2 batch 5 ruling, batch 8). The file still
  *  opens from search, links and its own route. */
 export function hiddenFromAllPages(page: PageEntry): boolean {
-  return is_og_built_in_page(page.name);
+  return hidden_from_all_pages(page.name);
 }
 
 export function AllPages(props: { router: PaneRouter }): JSX.Element {

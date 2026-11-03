@@ -14,8 +14,8 @@ import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { graphOwner } from "../owned";
-import { openBlockInSidebar } from "../ui";
-import { openInNewTab, type Route } from "../router";
+import { openBlockInSidebar, openPageInSidebar } from "../ui";
+import { openInNewTab, openPageTarget, type Route } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { PagePropertyValue } from "./PagePropertyValue";
@@ -154,9 +154,18 @@ function RefBlock(props: {
       if (owner()) setLocalFold(next);
     } finally { folding = false; }
   };
+  // A preamble row (CM step 2 batch 8) is the source page's prose before its
+  // first block: no outline identity until the page promotes it (GH #85), so
+  // every gesture that would open the block opens its page.
   const openRefRoute = (open: (route: Route) => unknown): void => {
     const t = refTarget();
-    open({ kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid });
+    open(props.block.page_preamble
+      ? { kind: "page", name: t.page, pageKind: t.pageKind }
+      : { kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid });
+  };
+  const openPreamblePage = (): void => {
+    const t = refTarget();
+    openPageTarget({ name: t.page, pageKind: t.pageKind, ...(t.path ? { path: t.path } : {}) });
   };
   return (
     <div
@@ -196,6 +205,13 @@ function RefBlock(props: {
               // read-only reference has no equivalent of, so a plain click keeps
               // doing nothing.
               const dest = internalLinkDest(e);
+              if (props.block.page_preamble && (dest === "sidebar" || (dest === "default" && props.onOpenBlock))) {
+                e.stopPropagation();
+                const t = refTarget();
+                if (dest === "sidebar") openPageInSidebar({ name: t.page, pageKind: t.pageKind, ...(t.path ? { path: t.path } : {}) });
+                else openPreamblePage();
+                return;
+              }
               if (dest === "default") {
                 if (props.onOpenBlock) { e.stopPropagation(); props.onOpenBlock(blockDtoExternalId(props.block)); }
                 return;
@@ -214,7 +230,8 @@ function RefBlock(props: {
         </div>
         <div class="block-content-wrapper">
           <BlockRenderBoundary raw={props.block.raw} onOpen={() => {
-              if (props.onOpenBlock) props.onOpenBlock(blockDtoExternalId(props.block));
+              if (props.block.page_preamble) openPreamblePage();
+              else if (props.onOpenBlock) props.onOpenBlock(blockDtoExternalId(props.block));
               else openRefRoute(openInNewTab);
             }}>
           <div

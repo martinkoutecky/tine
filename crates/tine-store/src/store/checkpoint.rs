@@ -80,7 +80,12 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// excluded) and referenced task-marker and priority pages, so reference-only
 /// pages and page-anchored query rows change for unchanged graph files. The
 /// serialized layout stays unchanged; older indexes rebuild.
-pub(crate) const FORMAT: u32 = 22;
+/// 23 (CM step 2 batch 8): prose before a page's first block is a referencing
+/// block, so the explicit reference-name index, the reference candidate
+/// signatures (slot 0 now covers that prose) and cached backlink answers
+/// change for unchanged graph files. The serialized layout stays unchanged;
+/// older indexes rebuild.
+pub(crate) const FORMAT: u32 = 23;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

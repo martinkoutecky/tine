@@ -9,7 +9,7 @@ import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
-import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
+import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -188,7 +188,11 @@ export function caretOnPropertyLine(raw: string, caret: number): boolean {
 }
 
 /** Split a Markdown page preamble into real page-property lines and ordinary
- * content. Property-looking text inside a fenced code block stays content. */
+ * content. Property-looking text inside a fenced code block stays content.
+ * `content` is the prose the page shows as its first block row: the Rust
+ * answer (`page_preamble::page_preamble_content`), which the store's Linked
+ * References, All pages counts and rename read as that block too (CM step 2
+ * batch 8, I-12). */
 export function splitPagePreamble(raw: string | null | undefined): {
   properties: string | null;
   content: string | null;
@@ -201,9 +205,29 @@ export function splitPagePreamble(raw: string | null | undefined): {
   const remainder = entries.length ? raw.slice(end) || null : raw;
   return {
     properties: entries.length ? raw.slice(0, end) : null,
-    content: remainder?.replace(/^\n+|\n+$/g, "") || null,
+    content: preambleContent(raw, entries.length > 0, remainder),
     remainder,
   };
+}
+
+/** The preamble prose (see {@link splitPagePreamble}). Without a parser (not
+ * yet ready, or a trap) the header is unread, and the whole text, trimmed of
+ * edge newlines, shows as ordinary text, the answer an unparseable header
+ * has in Rust too. */
+function preambleContent(raw: string, headed: boolean, remainder: string | null): string | null {
+  const unread = () => (headed ? null : remainder?.replace(/^\n+|\n+$/g, "") || null);
+  if (!parserReady()) return unread();
+  let json: string;
+  try {
+    json = page_preamble_content_json(raw);
+  } catch (error) {
+    reportUiFailure("page-header-read", error);
+    return unread();
+  }
+  const range = JSON.parse(json) as [number, number] | null;
+  if (!range) return null;
+  const at = utf8ToUtf16Cursor(raw);
+  return raw.slice(at(range[0]), at(range[1]));
 }
 
 /** Which accepted primary properties an editor hides: the outline kernel's

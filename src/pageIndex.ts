@@ -5,7 +5,7 @@ import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import { absentLinkIsJournal } from "./journal";
-import { is_og_built_in_page } from "./render/wasm/lsdoc_wasm";
+import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
@@ -253,15 +253,16 @@ function ensureInstalled() {
     });
     // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
     // the backend's absent entries that open themselves (no `link`: not a
-    // date spelling of a day, not an alias), less OG's built-in pages by the
-    // Rust answer (`is_og_built_in_page`, OG `get-all-pages`). A patch that
+    // date spelling of a day, not an alias), less what OG's `get-all-pages`
+    // drops (built-in pages, UUID names, drawings) by the Rust answer
+    // (`hidden_from_all_pages`; CM step 2 batches 5 and 8). A patch that
     // leaves this list equal leaves All pages alone. O(entries).
     const referenceOnlyPages = createMemo<PageEntry[]>(() => {
       const current = held();
       if (!current) return [];
       const rows: PageEntry[] = [];
       for (const entry of current.entries) {
-        if (entry.target.kind !== "absent" || entry.link || entry.is_journal || is_og_built_in_page(entry.name)) continue;
+        if (entry.target.kind !== "absent" || entry.link || entry.is_journal || hidden_from_all_pages(entry.name)) continue;
         rows.push({ name: entry.name, kind: "page", date_key: null, path: "" });
       }
       return rows;

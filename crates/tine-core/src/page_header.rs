@@ -89,7 +89,20 @@ pub fn is_alias_key(key: &str) -> bool {
 /// Page properties owned by lsdoc, including Org directives and head drawers.
 /// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
 pub fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    tine_outline::block_regions::parse_document(text, is_org)
+    page_property_lines_in(
+        &tine_outline::block_regions::parse_document(text, is_org),
+        is_org,
+    )
+}
+
+/// [`page_property_lines`] over an already parsed document, so a caller that
+/// also needs the pre-block's prose (`page_properties::pre_block_parts`)
+/// parses once. O(page-property entries).
+pub fn page_property_lines_in(
+    regions: &tine_outline::block_regions::BlockRegions,
+    is_org: bool,
+) -> Vec<(String, String)> {
+    regions
         .page_properties()
         .map(|p| {
             (
