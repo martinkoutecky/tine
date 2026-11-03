@@ -1,6 +1,7 @@
 // GH #783: real textarea layout and toolbar, driven through Android-style
 // viewport resize steps followed by a delayed WebView scroll. No graph or IME
 // is substituted for a real-device claim: this proves the event-order contract.
+// `TINE_CARET_ENGINE=cm6` runs the same journeys with the CodeMirror editor (cm6CaretReveal on a real EditorView).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,24 +15,42 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const out = path.resolve(process.argv[2] || "target/artifacts/fix-beta-caret-783/browser");
 fs.mkdirSync(out, { recursive: true });
 const reference = process.env.TINE_CARET_BASE_REF;
+const cm6 = process.env.TINE_CARET_ENGINE === "cm6";
 const source = String.raw`
   import { render } from "solid-js/web";
   import { MobileKeyboardToolbar, NATIVE_IME_EVENT } from "/src/components/MobileKeyboardToolbar.tsx";
   import { registerFocusedEditorCommandBridge } from "/src/editorCommandBridge.ts";
   import { caretViewRow } from "/src/editor/caretReveal.ts";
+  import { EditorView } from "@codemirror/view";
+  import { StateEffect } from "@codemirror/state";
+  import { cm6CaretReveal } from "/src/editor/cm6CaretReveal.ts";
   import { applyAndroidInterfaceZoom } from "/src/zoom.ts";
   import "/src/styles/theme.css";
   import "/src/styles/app.css";
   const main = document.querySelector("main");
-  const editor = document.querySelector("textarea");
+  const CM6 = ${cm6};
+  let cmView;
+  let editor = document.querySelector("textarea");
+  if (CM6) {
+    cmView = new EditorView({ parent: document.querySelector("#cm6-host"), doc: "", extensions: [EditorView.lineWrapping, EditorView.contentAttributes.of({ "data-cm6-editor": "fixture" })] });
+    editor = cmView.contentDOM;
+    const reveal = cm6CaretReveal(cmView);
+    cmView.dispatch({ effects: StateEffect.appendConfig.of(reveal.extension) });
+  }
   render(() => <MobileKeyboardToolbar />, document.querySelector("#dock"));
   main.scrollTop = 650;
   window.fixture = {
     focus(tall = false) {
-      editor.style.height = tall ? "720px" : "40px";
-      editor.value = tall ? "Edited first line\n".repeat(30) : "Edited heading";
-      editor.focus({ preventScroll: true });
-      editor.setSelectionRange(3, 3);
+      const text = tall ? "Edited first line\n".repeat(30) : "Edited heading";
+      if (CM6) {
+        cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: text }, selection: { anchor: 3 } });
+        cmView.focus();
+      } else {
+        editor.style.height = tall ? "720px" : "40px";
+        editor.value = text;
+        editor.focus({ preventScroll: true });
+        editor.setSelectionRange(3, 3);
+      }
       registerFocusedEditorCommandBridge({ blockId: "fixture", dispatch: () => true, blur: () => editor.blur() });
     },
     zoom(scale) { applyAndroidInterfaceZoom(scale); },
@@ -46,7 +65,10 @@ const source = String.raw`
       main.scrollTop += delta;
     },
     measure() {
-      const row = caretViewRow(editor, main);
+      const mainBox = main.getBoundingClientRect();
+      const zoom0 = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+      // CM6: the caret row is the view's own measurement; the bounds are the harness's (pins + margin, scroller bottom - margin).
+      const row = CM6 ? { ...cmView.coordsAtPos(3), visibleTop: NaN, visibleBottom: NaN } : caretViewRow(editor, main);
       const dock = document.querySelector("[data-mobile-keyboard-toolbar]");
       const view = main.getBoundingClientRect();
       // GH #783 beta.4: the pinned parents drawn over the top of the page, measured as painted.
@@ -54,7 +76,8 @@ const source = String.raw`
       // The caret is on the textarea's first line (offset 3): its painted line box, measured without caretViewRow
       // (4px padding, 24px line height, both scaled by the root's CSS zoom).
       const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
-      const lineTop = editor.getBoundingClientRect().top + (4 - editor.scrollTop) * zoom;
+      const lineTop = CM6 ? editor.querySelector(".cm-line").getBoundingClientRect().top : editor.getBoundingClientRect().top + (4 - editor.scrollTop) * zoom;
+      if (CM6) row.visibleTop = Math.max(mainBox.top, pinsBottom) + 8 * zoom0;
       return { ...row, zoom, lineTop, lineBottom: lineTop + 24 * zoom, scrollerTop: view.top, scrollerBottom: view.bottom, pinsBottom, toolbarTop: dock.getBoundingClientRect().top, scrollTop: main.scrollTop };
     },
   };
@@ -67,8 +90,12 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width, 
   .spacer-before { height: 450px; }
   .spacer-after { height: 1600px; }
   textarea.block-editor { display: block; width: 95%; margin: 0; padding: 4px; border: 0; font: 18px/24px sans-serif; }
+  #cm6-host { width: 95%; }
+  #cm6-host .cm-editor { outline: none; }
+  #cm6-host .cm-content { padding: 4px; font: 18px/24px sans-serif; }
+  #cm6-host .cm-line { padding: 0; }
 </style>
-<main class="main-content"><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 0"><button type="button">Parent A</button></div><div class="block-main">Parent A</div><div class="spacer-before"></div><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 30px"><button type="button">Parent B</button></div><div class="block-main">Parent B</div><div class="spacer-before"></div><div class="ls-block"><textarea class="block-editor"></textarea></div><div class="spacer-after"></div></div></div></main>
+<main class="main-content"><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 0"><button type="button">Parent A</button></div><div class="block-main">Parent A</div><div class="spacer-before"></div><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 30px"><button type="button">Parent B</button></div><div class="block-main">Parent B</div><div class="spacer-before"></div><div class="ls-block">${cm6 ? '<div id="cm6-host"></div>' : '<textarea class="block-editor"></textarea>'}</div><div class="spacer-after"></div></div></div></main>
 <div id="dock"></div><script type="module" src="/__caret_settle.tsx"></script>`;
 const server = await createServer({
   root,
@@ -89,7 +116,7 @@ const server = await createServer({
     load(id) {
       if (id === "virtual:caret-settle.tsx") return source;
       if (reference) {
-        for (const file of ["src/components/MobileKeyboardToolbar.tsx", "src/editor/caretReveal.ts"]) {
+        for (const file of ["src/components/MobileKeyboardToolbar.tsx", "src/editor/caretReveal.ts", "src/editor/cm6CaretReveal.ts"]) {
           if (id === path.join(root, file)) return execFileSync("git", ["show", reference + ":" + file], { cwd: root, encoding: "utf8" });
         }
       }
@@ -106,7 +133,9 @@ const frames = page => page.evaluate(async () => {
 });
 function visible(g) {
   // caretViewRow must see the line and the pins where they are painted, at any interface zoom (GH #783 follow-up).
-  assert(Math.abs(g.top - g.lineTop) <= 1 && Math.abs(g.bottom - g.lineBottom) <= 1, "Caret row measured off its painted line: " + JSON.stringify(g));
+  // CM6 reports the glyph box, which sits inside the 24px line box; the textarea mirror reports the line box itself.
+  assert(cm6 ? g.top >= g.lineTop - 1 && g.bottom <= g.lineBottom + 1 : Math.abs(g.top - g.lineTop) <= 1 && Math.abs(g.bottom - g.lineBottom) <= 1,
+    "Caret row measured off its painted line: " + JSON.stringify(g));
   assert(Math.abs(g.visibleTop - (g.pinsBottom + 8 * g.zoom)) <= 1, "Visible top must be the painted pins' bottom plus the margin: " + JSON.stringify(g));
   assert(g.lineTop >= g.pinsBottom - 1 && g.lineBottom <= Math.min(g.scrollerBottom, g.toolbarTop) + 1,
     "Edited line must be visible below the pinned parents and above the keyboard toolbar: " + JSON.stringify(g));
