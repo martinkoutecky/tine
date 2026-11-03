@@ -48,8 +48,14 @@ it("shares native filename round trips in both naming formats", () => {
     for (const title of ["a/b", "a___b", "a_/b", "%2F", "a:b", "CON", "LPT³", "trailing dot.", "trailing space ", "Release 1.0", "é/字"]) {
       expect(decode_page_name(encode_page_name(title, legacy), legacy)).toBe(title);
     }
-    expect(decode_page_name("A%3AB%ZZ", legacy)).toBe("A:B%ZZ");
+    // OG's codecs (D-20261103-CMA CM-NAMES): Legacy decodes the whole stem or
+    // nothing; triple-lowbar decodes each escape and keeps a malformed one.
+    expect(decode_page_name("A%3AB%ZZ", legacy)).toBe(legacy ? "A%3AB%ZZ" : "A:B%ZZ");
+    expect(decode_page_name("bad%E9", legacy)).toBe("bad%E9");
   }
+  expect(decode_page_name("___lead", false)).toBe("lead");
+  expect(decode_page_name("a______b", false)).toBe("a/b");
+  expect(decode_page_name("caf%C3%A9", false)).toBe("café");
   expect(decode_page_name("Parent.Child", true)).toBe("Parent/Child");
   expect(decode_page_name("Parent___Child", false)).toBe("Parent/Child");
   setFileNameFormat("triple-lowbar");

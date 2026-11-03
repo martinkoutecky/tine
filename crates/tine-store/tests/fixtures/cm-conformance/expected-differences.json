@@ -672,14 +672,8 @@
   },
   "names": {
     "fixtures": {
-      "n1-legacy-codec": [
-        "pages/50%25 of 100%.md: OG names it \"50%25 of 100%\", Tine Some(\"50% of 100%\")"
-      ],
       "n2-triple-lowbar-codec": [
-        "pages/___lead.md: OG names it \"lead\", Tine Some(\"/lead\")",
-        "pages/bad%E9.md: OG names it \"bad%E9\", Tine Some(\"bad�\")",
-        "pages/caf%C3%A9.md: OG names it \"caf%C3%A9\", Tine Some(\"café\")",
-        "pages/x______y.md: OG names it \"x/y\", Tine Some(\"x//y\")"
+        "pages/caf%C3%A9.md: OG names it \"caf%C3%A9\", Tine Some(\"café\")"
       ],
       "n5-title-differs-from-stem": [
         "journals/2026_10_27.md: OG names it \"Release day\", Tine Some(\"Oct 27th, 2026\")",
@@ -722,8 +716,8 @@
   },
   "notes": {
     "d4-date-named-page-file-format": "pending P2 (Martin, veto item): an ordinary page named like a date (pages/25-10-2026.md) is reached only by its own spelling in Tine; the model opens it for every spelling of that day because the harness's key function (`fold`, handed to the model as `keys`) folds every date spelling to the day. Tine's rule is kept in code until P2 is ruled.",
-    "n1-legacy-codec": "pending Q-N1 (Martin): OG keeps \"%25\" undecoded in a legacy file name (\"50%25 of 100%\"); Tine percent-decodes it (\"50% of 100%\"). Today's behaviour is kept until Q-N1 is ruled. (\"contents\" -> \"Contents\" was fixed in batch 3, REG-CM-CONTENTS-PAGE-NAME.)",
-    "n2-triple-lowbar-codec": "pending Q-N1 (Martin): decode differences from OG's triple-lowbar codec (a leading \"___\", percent-decoding, \"______\"). Today's behaviour is kept until Q-N1 is ruled.",
+    "n1-legacy-codec": "Q-N1 ruled (D-20261103-CMA CM-NAMES (1)): the Legacy codec is OG's legacy-title-parsing, one decodeURIComponent over the whole stem, kept undecoded when any escape is malformed (\"50%25 of 100%\", \"%E9\"). No difference left. (\"contents\" -> \"Contents\" was fixed in batch 3, REG-CM-CONTENTS-PAGE-NAME.)",
+    "n2-triple-lowbar-codec": "Q-N1 ruled (D-20261103-CMA CM-NAMES (1)): malformed escapes and empty namespace parts now get OG's name (\"%E9\", \"bad%E9\", \"lead\", \"trail\", \"x/y\"). The one line left is Martin's deliberate difference: escapes that together spell UTF-8 decode (\"caf%C3%A9\" is \"café\"; OG decodes each escape alone and keeps it literal). tine-outline page_filename.rs decode_page_name.",
     "n4-org-file-links-triple-lowbar": "A finding, not a decision (CM step 2 batch 6): `nearestLink` (follow link, Ctrl/Cmd+O) caches each block's link candidates per parsed AST (`candidatesByAst`), so after the graph's `:file/name-format` changes at runtime a block parsed before the change keeps the old format's page name for an Org file link. This test reads the same texts under legacy first, then triple-lowbar. Pre-existing; surfaced when this test moved off `pageRefsInText` (deleted). Fix: key the cache by the file-name format.",
     "n5-title-differs-from-stem": "pending Q-N3 (Martin): OG names a journal file with `title::` by its title (\"Release day\"); Tine names every journal by its date. Today's behaviour is kept until Q-N3 is ruled. The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "n6-title-rename": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
@@ -1717,9 +1711,7 @@
         "query \"[[October 22nd, 2026]]\": model has block (\"journals/2026_10_22.md\", 0), Tine does not"
       ],
       "n1-legacy-codec": [],
-      "n2-triple-lowbar-codec": [
-        "pages: model has (\"page\", \"\"), Tine does not"
-      ],
+      "n2-triple-lowbar-codec": [],
       "n3-org-file-links-legacy": [],
       "n4-org-file-links-triple-lowbar": [],
       "n5-title-differs-from-stem": [
