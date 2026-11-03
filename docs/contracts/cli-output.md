@@ -64,7 +64,9 @@ Kind `status`.
 
 `tine page show NAME`. The page as the page host sees it: a held page's buffer (unsaved text
 included), else its file. Kind `page`. Errors: `not-found`, `ambiguous` (an alias of several
-pages, `detail.candidates`), `too-large` (over the 64 MiB parse bound), `busy`.
+pages, `detail.candidates`), `too-large` (over the 64 MiB parse bound), `busy`. A name that several
+files claim reads the file that owns it (`id` says which), as the app opens it; a write to that name
+refuses (see *Writes*).
 
 `tine journal [DATE]` answers the same payload, kind `journal`. `DATE` is `YYYY-MM-DD`,
 `YYYY_MM_DD`, `today`, or a title in the graph's journal format; absent means today. Errors
@@ -230,6 +232,14 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
 - **Blocks** are named by a **handle**: `PAGE/POS~FP` as a read prints it (see "The text outline"), or a block's
   `id::` UUID (graph-wide). The position is used when its fingerprint still matches; otherwise the one block on the
   page with that fingerprint; otherwise `stale`. A bare `PAGE/POS` (no fingerprint) is accepted only with `--rev`.
+- **A page name several files claim** (CLI-DUPNAME, D-20261103-CMA): every write that names its page, by a
+  handle's `PAGE/`, by `--page`, by `--journal` (a day with a Markdown and an Org file, say), or by an `id::`
+  UUID on such a page, refuses `ambiguous` and writes nothing. The message and `detail.candidates` name every
+  file (the owning file first); `detail.admitted` is `false`. `page rename` and `page delete` refuse the same
+  way. In-scope threat: sync delivery or an external editor leaving two files that claim one name (a conflict
+  copy, a case twin, a `title::` collision); a write to the owning file would edit one twin while the agent never
+  learns of the other. Recovery: resolve the duplicate in the app (merge, or rename or remove one file), then
+  retry. Reads keep answering the owning file.
 - **`--rev REV`** (optional, every write): write only if the page is still at that rev; else `stale` with the
   current `detail.rev`.
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
@@ -544,7 +554,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | code | exit | meaning |
 |---|---|---|
 | `not-found` | 3 | the page, block or journal day does not exist |
-| `ambiguous` | 3 | a name matched several pages, or a write's `id::` UUID is on several pages (nothing is written) |
+| `ambiguous` | 3 | a name matched several pages (a read: an alias of several pages; a write: also a name several files claim), or a write's `id::` UUID is on several pages (nothing is written) |
 | `busy` | 4 | the owner is yielding or stopping; not admitted. Reads retry for 30 s first |
 | `unknown-verb` | 2 | the owner does not know the verb (an older Tine) |
 | `bad-args` | 2 | arguments invalid for the verb; also a query that does not parse |
