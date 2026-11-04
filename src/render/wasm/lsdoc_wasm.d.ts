@@ -12,6 +12,14 @@ export function absent_link_is_journal(name: string, file_format: string, title_
 export function block_may_have_logbook(raw: string): boolean;
 
 /**
+ * Every page name one block's source references, in source order (may
+ * repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+ * over the same block parse, under the default parse config. O(block bytes)
+ * plus one inline parse per property value or macro argument; no I/O.
+ */
+export function block_reference_names(raw: string, is_org: boolean): string[];
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  */
 export function canonical_group_field(value: string): string | undefined;
@@ -65,11 +73,25 @@ export function format_journal_date(year: number, month: number, day: number, pa
 export function header_tokens_json(raw: string, is_org: boolean): string;
 
 /**
+ * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+ * page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+ * with tine-core).
+ */
+export function hidden_from_all_pages(name: string): boolean;
+
+/**
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  */
 export function hide_policy_hides(policy: string, key: string, properties: string): boolean;
 
 export function install_panic_hook(): void;
+
+/**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ */
+export function is_editable_linkable_built_in(key: string): boolean;
 
 /**
  * OG built-ins excluded from default query-table property columns.
@@ -150,6 +172,15 @@ export function outline_max_depth(): number;
 export function outline_reads_json(verb: string): string;
 
 /**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ */
+export function page_alias_spellings(pre_block: string | null | undefined, first_root: string | null | undefined, is_org: boolean): string[];
+
+/**
  * The native file-format answer, including mixed-case Org extensions.
  */
 export function page_file_format(path: string): string;
@@ -164,6 +195,14 @@ export function page_header_json(raw: string): string;
  * Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
  */
 export function page_identity_key(name: string): string;
+
+/**
+ * The prose of a Markdown page preamble after its page header, as UTF-8 byte
+ * offsets `[start, end]`, or `null` (I-12: the one answerer,
+ * `page_preamble::page_preamble_content`, which the store's reference answer
+ * reads too).
+ */
+export function page_preamble_content_json(raw: string): string;
 
 /**
  * Whole-preamble property ownership, with parser-owned literals excluded.
@@ -322,6 +361,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly block_may_have_logbook: (a: number, b: number) => number;
+    readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
@@ -332,8 +372,10 @@ export interface InitOutput {
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
+    readonly hidden_from_all_pages: (a: number, b: number) => number;
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
+    readonly is_editable_linkable_built_in: (a: number, b: number) => number;
     readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -351,9 +393,11 @@ export interface InitOutput {
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
     readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
+    readonly page_alias_spellings: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
+    readonly page_preamble_content_json: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
@@ -382,9 +426,9 @@ export interface InitOutput {
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
-    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

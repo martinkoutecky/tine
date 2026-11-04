@@ -205,10 +205,10 @@ pub fn guide_link_renames() -> HashMap<String, String> {
 
 pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>) -> String {
     // Markdown has no `file:` page links, so the filename format is not consulted.
-    crate::refs::rename_refs_multi(
+    crate::refs::rename_rewrite_keyed(
         markdown,
-        renames,
         false,
+        renames,
         crate::config::FileNameFormat::TripleLowbar,
     )
 }
@@ -735,7 +735,9 @@ mod parity_guide_tests {
             "**Related pages in this alias group** lists the other names that do have their own page",
             "Their blocks are never merged into one view",
             "opens the page whose file path comes first in plain character order",
-            "A name with its own page file always opens that file",
+            "A name with its own page file opens that file",
+            // EMPTY-ALIAS (D-20261103-CMA): an empty page yields to the alias.
+            "A page file with no real content (no text and no properties, at most one empty bullet) gives its name to the alias",
         ] {
             assert!(guide.contains(phrase), "Guide missing {phrase}");
         }
@@ -2010,6 +2012,10 @@ mod og_20d_guide_tests {
             "**Page** (name)",
             "**Show journals**",
             "**Journal date**",
+            // D-20261102-CM4: reference-only pages are listed, and the count
+            // is the size of the page's Linked References.
+            "pages with no file of their own",
+            "the number of blocks the page's Linked References lists",
         ] {
             assert!(
                 map.contains(detail),
@@ -2091,6 +2097,8 @@ mod og_20d_guide_tests {
             "strict `>` / `<`",
             "reversed bounds return nothing",
             "`direct_ref('project')`",
+            "A reference finds the page by any of its names",
+            "A journal answers to every spelling of its date",
             "20,000 rows",
             "Tine 0.6 (stable)",
         ] {

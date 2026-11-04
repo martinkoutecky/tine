@@ -1,6 +1,22 @@
 {
+  "backlinks": {
+    "Notes": []
+  },
   "conflicts": [
     "foo"
+  ],
+  "counts": [
+    [
+      [
+        "pages/Foo.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
+    ],
+    []
   ],
   "inventory": [
     {
@@ -43,6 +59,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Foo": "foo",
+    "Notes": "notes",
+    "foo": "foo"
+  },
   "open": {
     "Foo": {
       "journal": [
@@ -89,6 +110,15 @@
       "page": "pages/Foo.md"
     }
   },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "Foo": {
       "backend": [

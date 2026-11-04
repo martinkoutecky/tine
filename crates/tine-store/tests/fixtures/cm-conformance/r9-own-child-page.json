@@ -1,0 +1,13 @@
+{
+  "files": {
+    "pages/Foo.md": "- foo\n",
+    "pages/Foo%2Fbar.md": "- bar\n",
+    "pages/p.md": "- see [[Foo]] and [[Foo/bar]]\n"
+  },
+  "renames": [
+    {
+      "old": "Foo",
+      "new": "Foo/bar"
+    }
+  ]
+}

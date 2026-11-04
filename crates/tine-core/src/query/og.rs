@@ -27,6 +27,7 @@ use crate::query::ir::{
 };
 
 use super::QUERY_NESTING_MAX;
+use std::ops::Range;
 
 pub(crate) const DATE_WINDOW_REFUSAL: &str = "Logseq ignores scheduled/deadline date windows in this query form, so this query cannot run here as written. Convert it to a Tine query to keep its date-window meaning.";
 
@@ -334,7 +335,11 @@ fn read_string(src: &str, at: usize) -> (Option<String>, usize) {
 /// delimiter. A nested collection has no `name` in OG (the query throws), and an
 /// unterminated or mismatched collection is a reader error; both are `Err` with
 /// the offset to resume from.
-fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String, usize)> {
+#[allow(clippy::type_complexity)]
+fn read_collection(
+    src: &str,
+    at: usize,
+) -> Result<(Vec<(String, Range<usize>)>, usize), (String, usize)> {
     let (close, mut i) = if src[at..].starts_with("#{") {
         ('}', at + 2)
     } else if src[at..].starts_with('[') {
@@ -358,11 +363,11 @@ fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String
             ));
         } else if src[i..].starts_with("[[") {
             let (name, end) = read_page_ref(src, i);
-            names.push(name);
+            names.push((name, i..end));
             i = end;
         } else if src[i..].starts_with("#[[") {
             let (name, end) = read_page_ref(src, i + 1);
-            names.push(name);
+            names.push((name, i..end));
             i = end;
         } else if matches!(c, '[' | '(' | '{') || src[i..].starts_with("#{") {
             return Err((
@@ -371,7 +376,8 @@ fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String
             ));
         } else if c == '"' {
             let (text, end) = read_string(src, i);
-            names.push(text.ok_or_else(|| ("invalid EDN string in query".to_string(), end))?);
+            let text = text.ok_or_else(|| ("invalid EDN string in query".to_string(), end))?;
+            names.push((text, i..end));
             i = end;
         } else {
             let mut j = i;
@@ -385,7 +391,7 @@ fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String
             let word = &src[i..j];
             // `#tag` is a page ref; a keyword's `name` has no colon.
             let word = word.strip_prefix('#').unwrap_or(word);
-            names.push(word.trim_start_matches(':').to_string());
+            names.push((word.trim_start_matches(':').to_string(), i..j));
             i = j.max(i + c.len_utf8());
         }
     }
@@ -430,6 +436,12 @@ struct OgParse<'a> {
     diagnostics: Vec<Diagnostic>,
     /// OG's `blocks?` atom (`build-query:388-393`): the anchor rule.
     blocks: bool,
+    /// Every argument the parse read as a page name, as (authored byte range
+    /// of its token, name): a `[[x]]`/`#x` page ref anywhere, the name of
+    /// `(page x)`, `(page-ref x)`, `(tag x)`, `(namespace x)` and each name of
+    /// `(page-tags …)`, and a page-ref property value. A rename rewrites
+    /// exactly these (D-20261031-CMQ); a bare search string is none of them.
+    page_names: Vec<(Range<usize>, String)>,
 }
 
 /// Wrap a page-row filter so it reads through a block's owning page. At the
@@ -489,6 +501,14 @@ impl<'a> OgParse<'a> {
         Some(value)
     }
 
+    /// [`Self::name`], recorded as a page-name argument.
+    fn page_name(&mut self) -> Option<String> {
+        let token = self.toks.get(self.pos).map(|t| t.start..t.end)?;
+        let name = self.name()?;
+        self.page_names.push((token, name.clone()));
+        Some(name)
+    }
+
     fn opt_word_or_string(&mut self) -> Option<String> {
         match self.peek() {
             Some(Tok::Word(_)) | Some(Tok::Str(_)) => self.name(),
@@ -518,7 +538,8 @@ impl<'a> OgParse<'a> {
     /// variadic. Elements go through `name`, so a keyword loses its `:`
     /// (`(task :todo)`), while a quoted string keeps it. Commas are whitespace
     /// to Clojure's reader.
-    fn vector_or_names(&mut self) -> Vec<String> {
+    /// `pages` records each name as a page-name argument.
+    fn vector_or_names(&mut self, pages: bool) -> Vec<String> {
         let opens = self.toks.get(self.pos).is_some_and(|t| {
             let rest = &self.src[t.start..];
             t.tok == Tok::LParen
@@ -526,7 +547,7 @@ impl<'a> OgParse<'a> {
                 || (rest.starts_with('[') && !rest.starts_with("[["))
         });
         if !opens {
-            return self.variadic_names();
+            return self.variadic_names(pages);
         }
         let at = self.toks[self.pos].start;
         let (names, end) = match read_collection(self.src, at) {
@@ -551,7 +572,14 @@ impl<'a> OgParse<'a> {
         // Whatever follows the collection is ignored by OG; consume it so the
         // form still closes cleanly (an ignored argument may itself be a list).
         self.skip_args();
-        names
+        if pages {
+            self.page_names.extend(
+                names
+                    .iter()
+                    .map(|(name, range)| (range.clone(), name.clone())),
+            );
+        }
+        names.into_iter().map(|(name, _)| name).collect()
     }
 
     /// Skip every argument up to, not including, the `)` that closes the form
@@ -572,11 +600,12 @@ impl<'a> OgParse<'a> {
     /// The variadic spelling: every remaining name token. A bare keyword
     /// (`:todo`) is a Clojure keyword, whose `name` has no colon; a quoted
     /// string is a string and is taken as written.
-    fn variadic_names(&mut self) -> Vec<String> {
+    fn variadic_names(&mut self, pages: bool) -> Vec<String> {
         let mut out = Vec::new();
         loop {
             let keyword = matches!(self.peek(), Some(Tok::Word(w)) if w.starts_with(':'));
-            match self.name() {
+            let name = if pages { self.page_name() } else { self.name() };
+            match name {
                 Some(name) if keyword => out.push(name.trim_start_matches(':').to_string()),
                 Some(name) => out.push(name),
                 None => break,
@@ -627,8 +656,8 @@ impl<'a> OgParse<'a> {
         }
         let tok = self.toks.get(self.pos)?.tok.clone();
         match tok {
-            Tok::PageRef(name) => {
-                self.pos += 1;
+            Tok::PageRef(_) => {
+                let name = self.page_name()?;
                 self.blocks = true;
                 Some(Filter::page_ref(name))
             }
@@ -696,12 +725,12 @@ impl<'a> OgParse<'a> {
             // structurally ([`Filter::is_dropped_clause`], D-18, GH #422).
             "task" | "todo" => {
                 self.blocks = true;
-                let markers = self.vector_or_names();
+                let markers = self.vector_or_names(false);
                 Filter::attr(Attr::Task, CmpOp::In, text_list(markers))
             }
             "priority" => {
                 self.blocks = true;
-                let levels = self.vector_or_names();
+                let levels = self.vector_or_names(false);
                 Filter::attr(Attr::Priority, CmpOp::In, text_list(levels))
             }
             // Tine-only spellings of a bare `[[x]]` / `#x`. OG's `blocks?` rule
@@ -709,14 +738,14 @@ impl<'a> OgParse<'a> {
             // themselves — every one of them tests a BLOCK row.
             "page-ref" | "tag" => {
                 self.blocks = true;
-                Filter::page_ref(self.name()?)
+                Filter::page_ref(self.page_name()?)
             }
             "page" => {
                 self.blocks = true;
                 through_page(Filter::attr(
                     Attr::Name,
                     CmpOp::Eq,
-                    Value::text(self.name()?),
+                    Value::text(self.page_name()?),
                 ))
             }
             // OG's simple-query `(namespace x)` is the IMMEDIATE-parent rule
@@ -727,7 +756,7 @@ impl<'a> OgParse<'a> {
             "namespace" => through_page(Filter::attr(
                 Attr::Namespace,
                 CmpOp::Eq,
-                Value::text(self.name()?),
+                Value::text(self.page_name()?),
             )),
             "property" => {
                 self.blocks = true;
@@ -740,7 +769,7 @@ impl<'a> OgParse<'a> {
                 let value = self.opt_property_value();
                 property_leaf(key, value)
             }),
-            "page-tags" | "tags" => through_page(page_tags_filter(self.vector_or_names())),
+            "page-tags" | "tags" => through_page(page_tags_filter(self.vector_or_names(true))),
             // OG `build-all-page-tags` (`:322-325`) + `rules.cljc:96-98`
             // `[_ :block/tags ?p]`: every page that some page uses as a tag.
             // The relation is INCOMING (the page is named by another page's
@@ -862,7 +891,8 @@ impl<'a> OgParse<'a> {
     /// exactly as OG's `parse-property-value` unwraps it.
     fn opt_property_value(&mut self) -> Option<String> {
         match self.peek() {
-            Some(Tok::Word(_)) | Some(Tok::Str(_)) | Some(Tok::PageRef(_)) => {
+            Some(Tok::PageRef(_)) => self.page_name().map(|raw| parse_property_value(&raw)),
+            Some(Tok::Word(_)) | Some(Tok::Str(_)) => {
                 self.name().map(|raw| parse_property_value(&raw))
             }
             _ => None,
@@ -1091,18 +1121,10 @@ pub(crate) fn plain_like_substring(pattern: &str) -> Option<String> {
     Some(out)
 }
 
-/// Parse one OG `{{query …}}` macro argument into the IR and its view settings.
-///
-/// `text` is the macro argument (or, from the `macro_query` dispatch, the form
-/// slice it already split). The trailing OG options map is split off by the one
-/// shared `split_trailing_map` (§4.3.1 W3) and preserved verbatim in
-/// `Source::Og.og_options`; `Source::Og.original` is the exact FORM slice
-/// without it (§3.1), so a caller re-emits the pair rather than re-deriving the
-/// boundary. Splitting a form that has no trailing map is a no-op, so the
-/// dispatch may split first and still call in here.
-pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings) {
-    let (form, og_options) = split_trailing_map(text);
-    let mut toks = tokenize(&form);
+/// Tokenize and read one OG DSL form (no trailing options map): the parse
+/// state and the top-level filters, in order.
+fn read(form: &str) -> (OgParse<'_>, Vec<Filter>) {
+    let mut toks = tokenize(form);
     // OG reader/read-string reads the first form; the trailing table marker
     // selects presentation in components/query.cljs, never another predicate.
     if toks.len() > 1 && matches!(toks.last().map(|t| &t.tok), Some(Tok::Word(w)) if w == "table") {
@@ -1113,16 +1135,17 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
         .filter(|t| t.tok == Tok::InvalidString)
         .map(|t| {
             Diagnostic::new(DiagnosticKind::Syntax, "invalid EDN string in query")
-                .with_span(Some(Span::from_byte_range(&form, t.start, t.end)))
+                .with_span(Some(Span::from_byte_range(form, t.start, t.end)))
         })
         .collect();
     let mut parse = OgParse {
         toks,
         pos: 0,
-        src: &form,
+        src: form,
         view: ViewSettings::default(),
         diagnostics,
         blocks: false,
+        page_names: Vec::new(),
     };
     let mut items = Vec::new();
     while parse.pos < parse.toks.len() {
@@ -1149,6 +1172,33 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
             }
         }
     }
+    (parse, items)
+}
+
+/// The page-name arguments of one OG DSL form (no trailing options map), as
+/// (authored byte range of the token, name) in source order: what the parse
+/// reads as a page name ([`OgParse::page_names`]). The rename reads these so it
+/// rewrites a query's page names and leaves its search text (D-20261031-CMQ).
+/// One tokenize and parse of `form`, O(form).
+pub(crate) fn page_name_arguments(form: &str) -> Vec<(Range<usize>, String)> {
+    let mut names = read(form).0.page_names;
+    names.sort_by_key(|(range, _)| (range.start, range.end));
+    names.dedup();
+    names
+}
+
+/// Parse one OG `{{query …}}` macro argument into the IR and its view settings.
+///
+/// `text` is the macro argument (or, from the `macro_query` dispatch, the form
+/// slice it already split). The trailing OG options map is split off by the one
+/// shared `split_trailing_map` (§4.3.1 W3) and preserved verbatim in
+/// `Source::Og.og_options`; `Source::Og.original` is the exact FORM slice
+/// without it (§3.1), so a caller re-emits the pair rather than re-deriving the
+/// boundary. Splitting a form that has no trailing map is a no-op, so the
+/// dispatch may split first and still call in here.
+pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings) {
+    let (form, og_options) = split_trailing_map(text);
+    let (parse, items) = read(&form);
     let had_clauses = !items.is_empty();
     let items = lift_directives(items);
     // OG parses a query made only of directives (`(sort-by x)`, `(sample 3)`,

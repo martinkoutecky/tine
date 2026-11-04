@@ -130,6 +130,8 @@ fn gh538_asset_create_and_move_work_where_the_flag_is_refused() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Pages: a host operation's no-replace publication onto a page that appeared
+/// after its guard is `production_tests::create_race_after_guard_is_no_replace_and_then_observes_conflict`.
 #[test]
 fn gh538_occupied_destination_is_still_refused_where_the_flag_is_refused() {
     let root = fixture("occupied");

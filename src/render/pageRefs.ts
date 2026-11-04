@@ -1,14 +1,10 @@
-// The page names a block's text references, read off the ONE lsdoc parse (never a
-// regex re-scan of raw). It answers the question the backend rename answers with
-// `refs::rename_refs_multi` + `rename_tags_property_multi`: `[[page]]`, `#tag`,
-// `#[[page]]`, Org `[[file:…/page.org]]` links, bare `tags::` values, and those
-// same references inside property values and macro arguments. References inside
-// code are literal, as in the backend. Names are returned as written; compare them
-// with `pageIdentityKey`. `blockRefsInText` answers the sibling question for `((uuid))`
-// from the same walk.
-import { reference_target_name, nested_reference_names, linkable_property_names } from "./wasm/lsdoc_wasm.js";
-import { parseBody, inlineText } from "./facets";
-import { isQuotedPagePropertyValue, propertyKeyNorm } from "./block";
+// Link targets and block references, read off the ONE lsdoc parse (never a regex
+// re-scan of raw). Which PAGES a block references is not answered here: that is
+// the reference evidence's walk (`reference_evidence/walk.rs`), which the window
+// asks through wasm (`block_reference_names`) and a rename asks natively
+// (`rename_would_change`), conceptual model step 2 batch 6.
+import { reference_target_name } from "./wasm/lsdoc_wasm.js";
+import { parseBody } from "./facets";
 import type { Block, Format, Inline, ListItem } from "./ast";
 
 /** The graph's `:file/name-format` is legacy (the default). Set only by
@@ -27,32 +23,22 @@ export function linkTargetName(kind: string, value: string, label: string, org: 
   return reference_target_name(kind, value, label, org, true, legacyFileNames);
 }
 
-/** Every page name `raw` references, in source order (may repeat). One lsdoc parse
- *  of `raw`, plus one per property value or macro argument that could hold a
- *  reference. */
-export function pageRefsInText(raw: string, format: Format): string[] {
-  const out: Found = { pages: [], blocks: [] };
-  collectRaw(raw, format, out, true);
-  return out.pages;
-}
-
-/** Every block uuid `raw` references with `((uuid))`, in source order (may repeat), off the
- *  same lsdoc parse: a lookalike inside code is literal and is not a reference. */
+/** Every block uuid `raw` references with `((uuid))`, in source order (may repeat), off
+ *  one lsdoc parse (plus one per property value or macro argument that could hold one):
+ *  a lookalike inside code is literal and is not a reference. */
 export function blockRefsInText(raw: string, format: Format): string[] {
-  const out: Found = { pages: [], blocks: [] };
+  const out: string[] = [];
   collectRaw(raw, format, out, true);
-  return out.blocks;
+  return out;
 }
 
-interface Found { pages: string[]; blocks: string[] }
-
-function collectRaw(raw: string, format: Format, out: Found, properties: boolean): void {
-  // Only '[', '(' and '#' open an inline reference; bare tags need `::`.
-  if (!raw.includes("[") && !raw.includes("(") && !raw.includes("#") && !raw.includes("::")) return;
+function collectRaw(raw: string, format: Format, out: string[], properties: boolean): void {
+  // Only '[' and '(' open an inline block reference.
+  if (!raw.includes("[") && !raw.includes("(")) return;
   for (const block of parseBody(raw, format)) collectBlock(block, format, out, properties);
 }
 
-function collectBlock(block: Block, format: Format, out: Found, properties: boolean): void {
+function collectBlock(block: Block, format: Format, out: string[], properties: boolean): void {
   switch (block.kind) {
     case "paragraph":
     case "heading":
@@ -72,50 +58,30 @@ function collectBlock(block: Block, format: Format, out: Found, properties: bool
       block.rows.forEach((row) => row.forEach((cell) => collectInlines(cell, format, out)));
       break;
     case "properties":
-      if (!properties) break;
-      for (const [key, value] of block.props) {
-        // A value's own `[[…]]`/`#…` references (a nested parse never recurses
-        // into properties again, so this is bounded).
-        const found: Found = { pages: [], blocks: [] };
-        collectRaw(value, format, found, false);
-        out.pages.push(...found.pages);
-        out.blocks.push(...found.blocks);
-        if (propertyKeyNorm(key) !== "tags" || isQuotedPagePropertyValue(value)) continue;
-        const explicit = new Set(found.pages);
-        out.pages.push(...linkable_property_names(value, format === "org").filter(name => !explicit.has(name)));
-      }
+      // A value's own references (a nested parse never recurses into
+      // properties again, so this is bounded).
+      if (properties) for (const [, value] of block.props) collectRaw(value, format, out, false);
       break;
   }
 }
 
-function collectItem(item: ListItem, format: Format, out: Found, properties: boolean): void {
+function collectItem(item: ListItem, format: Format, out: string[], properties: boolean): void {
   if (item.name) collectInlines(item.name, format, out);
   item.content.forEach((block) => collectBlock(block, format, out, properties));
   item.items.forEach((child) => collectItem(child, format, out, properties));
 }
 
-function collectInlines(inlines: readonly Inline[], format: Format, out: Found): void {
+function collectInlines(inlines: readonly Inline[], format: Format, out: string[]): void {
   for (const inline of inlines) {
     switch (inline.k) {
-      case "tag":
-        out.pages.push(inlineText(inline.children));
-        break;
       case "emphasis":
       case "subscript":
       case "superscript":
         collectInlines(inline.children, format, out);
         break;
       case "link":
-        // FilenameCandidates is the established rename-candidate policy:
-        // Org file links select decoded stems, native evidence selects labels.
-        const name = linkTargetName(inline.url.type, "v" in inline.url ? inline.url.v : "",
-          inline.label ? inlineText(inline.label) : "", format === "org");
-        if (name) out.pages.push(name);
-        if (inline.url.type === "block_ref") out.blocks.push(inline.url.v);
+        if (inline.url.type === "block_ref") out.push(inline.url.v);
         if (inline.label) collectInlines(inline.label, format, out);
-        break;
-      case "nested_link":
-        out.pages.push(...nested_reference_names(inline.content));
         break;
       case "macro":
         for (const arg of inline.args) collectRaw(arg, format, out, false);

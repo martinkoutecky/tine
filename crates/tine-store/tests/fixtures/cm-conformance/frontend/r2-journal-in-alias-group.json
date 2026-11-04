@@ -1,5 +1,82 @@
 {
+  "backlinks": {
+    "Launch": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Journal:oct 26th, 2026",
+            "raw": "alias:: Launch",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "39c78c23-dc52-8b67-a31a-f3964843dad2",
+            "raw": "see [[2026-10-26]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "37047b18-956d-868b-bb22-82e4960d08d0",
+            "raw": "see [[Oct 26th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "n"
+      }
+    ],
+    "Oct 26th, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "39c78c23-dc52-8b67-a31a-f3964843dad2",
+            "raw": "see [[2026-10-26]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "37047b18-956d-868b-bb22-82e4960d08d0",
+            "raw": "see [[Oct 26th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "n"
+      }
+    ],
+    "n": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Launch.md",
+        3
+      ],
+      [
+        "pages/n.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        2
+      ]
+    ],
+    []
+  ],
   "inventory": [
     {
       "day": null,
@@ -51,6 +128,12 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-26": "oct 26th, 2026",
+    "Launch": "launch",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "n": "n"
+  },
   "open": {
     "2026-10-26": {
       "journal": [
@@ -111,6 +194,29 @@
       "page": "pages/n.md"
     }
   },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 2,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md"
+    },
+    {
+      "key": "launch",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "Launch",
+      "owner": "pages/Launch.md"
+    },
+    {
+      "key": "n",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "n",
+      "owner": "pages/n.md"
+    }
+  ],
   "spellings": {
     "2026-10-26": {
       "backend": [

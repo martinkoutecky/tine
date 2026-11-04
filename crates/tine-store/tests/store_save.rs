@@ -140,7 +140,10 @@ fn a_page_save_with_an_empty_kind_list_is_refused_before_writing() {
 #[test]
 fn page_save_transaction_crash_worker() {
     let _integration_guard = crate::test_transactions::integration_lock();
-    let Ok(root) = std::env::var("TINE_PAGE_SAVE_TX_CRASH_ROOT") else {
+    let (Ok(root), Ok(app_data)) = (
+        std::env::var("TINE_PAGE_SAVE_TX_CRASH_ROOT"),
+        std::env::var("TINE_PAGE_SAVE_TX_CRASH_APP"),
+    ) else {
         return;
     };
     let store = Arc::new(Store::open(Path::new(&root), Default::default()).unwrap().0);
@@ -161,8 +164,8 @@ fn page_save_transaction_crash_worker() {
         .collect();
     // A kill between the first page's write and the second's.
     abort_before(Phase::PageRename, 1);
-    let writer = HostWriter::start(&store);
-    let _ = writer.apply(plan_all(&store, &entries).unwrap());
+    let host = crate::PageHost::start_for_tests(&store, Path::new(&app_data)).unwrap();
+    let _ = host.apply(plan_all(&store, &entries).unwrap());
     panic!("page save transaction crash fault did not abort");
 }
 
@@ -173,10 +176,12 @@ fn a_page_save_transaction_crash_between_steps_keeps_earlier_disk_write() {
     for name in ["A", "B", "C"] {
         fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
     }
+    let app_data = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
         .arg("test_transactions::store_save::page_save_transaction_crash_worker")
         .env("TINE_PAGE_SAVE_TX_CRASH_ROOT", &fixture.0)
+        .env("TINE_PAGE_SAVE_TX_CRASH_APP", app_data.path())
         .output()
         .unwrap();
     assert!(!output.status.success(), "fault must abort between steps");
@@ -185,6 +190,37 @@ fn a_page_save_transaction_crash_between_steps_keeps_earlier_disk_write() {
         .contains("new A"));
     assert_eq!(fixture.files()["pages/B.md"], b"- old B\n");
     assert_eq!(fixture.files()["pages/C.md"], b"- old C\n");
+    // The host promises no multi-page rollback: the operation is completed
+    // from its draft at relaunch. The graph opens, and every page shows the
+    // operation's bytes, A's earlier disk write among them.
+    let reopened = Arc::new(Store::open(&fixture.0, Default::default()).unwrap().0);
+    let host = crate::PageHost::start_for_tests(&reopened, app_data.path()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while ["B", "C"]
+        .iter()
+        .any(|name| !fixture.files()[&format!("pages/{name}.md")].starts_with(b"- new"))
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "relaunch did not complete the operation: {:?}",
+            fixture.files()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let view = reopened.whole_graph().unwrap();
+    assert!(view.unreadable_files().is_empty());
+    for name in ["A", "B", "C"] {
+        let read = reopened
+            .page(&PageId::from(format!("pages/{name}.md")))
+            .unwrap();
+        assert_eq!(
+            read.doc.blocks[0].raw,
+            format!("new {name}"),
+            "after relaunch"
+        );
+    }
+    drop((view, host));
+    reopened.close();
 }
 
 #[derive(Clone, Copy, Debug)]

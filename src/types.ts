@@ -13,6 +13,9 @@ export interface BlockDto {
   breadcrumb?: string[];
   /** Synthetic read-only backlink row sourced from page-level properties. */
   page_property?: boolean;
+  /** Synthetic read-only reference row: the source page's prose before its
+   *  first block (CM step 2 batch 8). No outline id; it opens its page. */
+  page_preamble?: boolean;
   // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
   // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
   // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).
@@ -182,6 +185,15 @@ export interface RenameTouchedPage {
   moved: boolean;
 }
 
+/** One text an unsaved page holds (its pre-block, or one block's raw body),
+ *  asked of `rename_would_change`. */
+export interface RenameProbeText {
+  raw: string;
+  org: boolean;
+  /** The page's pre-block (page properties), rewritten as a pre-block is. */
+  preBlock: boolean;
+}
+
 /** `page_alias_group`: the other members of one page's alias group
  *  (D-20261019-AL1/AL2), each list sorted case-insensitively. */
 export interface AliasGroup {
@@ -208,6 +220,15 @@ export interface PageInventoryEntry {
    *  store's `WholeGraph::link_target` (an alias's owner, a date spelling's
    *  journal). Absent means the entry itself. */
   link?: { name: string; kind: PageKind };
+  /** Set when the entry exists only as the namespace parent of a listed name
+   *  (`n` for `n/y`; conceptual model rule 1, `InventoryEntry::namespace_parent`).
+   *  Absent means false. */
+  namespace_parent?: boolean;
+  /** EMPTY-ALIAS (D-20261103-CMA, as Logseq): this name's file has no real
+   *  content and some page declares the name as an alias, so `link` is that
+   *  owner and a named route opens it too (`InventoryEntry::empty_alias`).
+   *  Only a route to the exact file opens the empty page. Absent means false. */
+  empty_alias?: boolean;
 }
 
 /** What one publication changed in the `page_inventory` answer when no page
@@ -227,6 +248,14 @@ export interface PageInventory {
    *  names but never failing the inventory. */
   unreadable?: string[];
 }
+
+/** `page_backlink_counts` result (D-20261102-CM4 CM-COUNT): how many blocks
+ *  each page's unfiltered Linked References panel lists, as `[files,
+ *  references]`. `files` holds one row per file that owns its name, by
+ *  graph-relative path (a non-owner twin has none: All pages shows a dash);
+ *  `references` one row per reference-only page, by the name its inventory
+ *  entry carries. */
+export type PageBacklinkCounts = [files: [string, number][], references: [string, number][]];
 
 /** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
  *  file whose last-modified time the store holds. A file with no time is absent. */

@@ -162,6 +162,12 @@ impl ReferencedNameTable {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &KeyReferrers)> {
         self.keys.iter().map(|(key, referrers)| (key, referrers))
     }
+
+    /// The keys at least `from` with their referrers, in key order. O(log V)
+    /// to start.
+    pub(crate) fn iter_from(&self, from: &str) -> impl Iterator<Item = (&String, &KeyReferrers)> {
+        self.keys.iter_from(from)
+    }
 }
 
 /// The table and its readers (moved beside the table to keep `model.rs`
@@ -201,6 +207,51 @@ impl ReadSnapshot {
     #[cfg(test)]
     pub(crate) fn referenced_name_table_fresh(&self) -> ReferencedNameTable {
         ReferencedNameTable::build(&self.pages, self.referenced_name_index())
+    }
+
+    /// The reference-only pages: every referenced name no file (page or
+    /// journal) claims and no page declares as an alias, by its table
+    /// spelling, in key order. Exactly the names `inventory(All)` lists with
+    /// an absent target (`store::inventory`'s reference-only rule over the
+    /// same table), read here for the page-anchored query rows
+    /// (D-20261102-CM4 CM-REFONLY, conformance S13), less the names that
+    /// spell a date: `[[2026-10-26]]` opens that day's journal, real or not
+    /// (`store::inventory::link_target_in`, so the inventory entry carries a
+    /// `link`), so it is not a page of its own, and All pages, which lists
+    /// absent entries without a `link`, does not list it either.
+    /// Namespace parents (`namespace_parents.rs`: a seed key no reference
+    /// names directly) are listed by the same rules, in key order with the
+    /// rest: they are the fileless pages `inventory(All)` lists with
+    /// `namespace_parent` set.
+    /// O(V log P + F) for V referenced names and F file claims; nothing is
+    /// built beyond the resident table.
+    pub(crate) fn reference_only_page_names(&self) -> Vec<&str> {
+        let format = self.config.journal_format();
+        let table = self.referenced_name_table();
+        let listed = |key: &str, spelling: &str| {
+            self.real_page_names.owners(key).next().is_none()
+                && self
+                    .alias_owner_paths(key)
+                    .is_none_or(|owners| owners.is_empty())
+                && !format.absent_link_is_journal(spelling)
+        };
+        let mut names: Vec<(&str, &str)> = table
+            .iter()
+            .filter(|(key, referrers)| listed(key, &referrers.spelling))
+            .map(|(key, referrers)| (key.as_str(), referrers.spelling.as_str()))
+            .collect();
+        let seeds = self.namespace_seeds(table);
+        let before = names.len();
+        names.extend(
+            seeds
+                .iter()
+                .filter(|(key, spelling)| table.get(key).is_none() && listed(key, spelling))
+                .map(|(key, spelling)| (key.as_str(), *spelling)),
+        );
+        if names.len() > before {
+            names.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        }
+        names.into_iter().map(|(_, spelling)| spelling).collect()
     }
 
     pub(crate) fn referenced_page_names(&self) -> Vec<String> {
@@ -249,7 +300,11 @@ impl ReadSnapshot {
                     .entry(slot)
                     .or_insert(None);
             }
-            for name in collect_document_referenced_names_with_baseline(doc, Some((id, original))) {
+            for name in collect_document_referenced_names_with_baseline(
+                doc,
+                Some((id, original)),
+                &self.config,
+            ) {
                 let key = tine_core::refs::page_key(&name);
                 *affected.entry(key).or_default().entry(slot).or_default() = Some(name);
             }
@@ -365,7 +420,11 @@ impl ReadSnapshot {
             probe(1);
             let names = match baseline {
                 Some((owner, id, original)) if entry.name == owner => {
-                    collect_document_referenced_names_with_baseline(doc, Some((id, original)))
+                    collect_document_referenced_names_with_baseline(
+                        doc,
+                        Some((id, original)),
+                        &self.config,
+                    )
                 }
                 _ => index.get(&entry.path).cloned().unwrap_or_default(),
             };

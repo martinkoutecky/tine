@@ -35,7 +35,8 @@ vi.mock("../backend", () => ({
   }),
 }));
 vi.mock("./Macro", () => ({
-  QueryMacro: (props: { body: string; title?: string }) => <div class="q" data-body={props.body} data-title={props.title ?? ""} />,
+  QueryMacro: (props: { body: string; title?: string; hostRaw?: { raw: string; format: string } }) =>
+    <div class="q" data-body={props.body} data-title={props.title ?? ""} data-host-raw={props.hostRaw?.raw ?? ""} />,
 }));
 vi.mock("./BeginQuery", () => ({
   inspectBeginQuery: (raw: string) => raw.startsWith("#+BEGIN_QUERY") ? { kind: "query", query: raw } : null,
@@ -43,7 +44,7 @@ vi.mock("./BeginQuery", () => ({
 }));
 vi.mock("./Rendered", () => ({
   detectMacro: (raw: string) => {
-    const m = /^\{\{((?:tine-)?query .*)\}\}$/.exec(raw);
+    const m = /^\{\{((?:tine-)?query .*)\}\}(?:\n[\s\S]*)?$/.exec(raw);
     return m ? { kind: "query", inner: m[1] } : null;
   },
 }));
@@ -292,6 +293,17 @@ describe("today's sections (GH #605)", () => {
     expect(bodies(div)).toEqual(["query (task LATER)", "#+BEGIN_QUERY\n{:query (task NOW)}\n#+END_QUERY", "tine-query tasks"]);
     expect(div.textContent).not.toContain("a note to self");
     expect(div.textContent).not.toContain("Customize");
+    dispose();
+  });
+
+  it("GH #855: each query section gets its block's text, so its View properties (sort, group) apply on the feed", async () => {
+    h.marked = ["My sections"];
+    const viewed = "{{tine-query task = 'TODO'}}\ntine.group-field:: tags\ntine.sort:: priority asc";
+    h.pages.set("My sections", { name: "My sections", kind: "page", title: "My sections", pre_block: "tine.journal-sections:: true", format: "md",
+      blocks: [block(viewed), block("{{query (task LATER)}}")] });
+    const { div, dispose } = await mount();
+    expect(bodies(div)).toEqual(["tine-query task = 'TODO'", "query (task LATER)"]);
+    expect([...div.querySelectorAll(".q")].map((e) => e.getAttribute("data-host-raw"))).toEqual([viewed, "{{query (task LATER)}}"]);
     dispose();
   });
 

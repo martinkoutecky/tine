@@ -26,6 +26,8 @@
 use std::cell::{OnceCell, RefCell};
 
 mod hierarchy;
+pub(crate) mod ref_classes;
+use ref_classes::RefClasses;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -199,6 +201,11 @@ pub(crate) struct EvalCache {
     /// Reference name -> the journal day it denotes, for the digit-bearing
     /// names only (every other name is no day without a parse).
     reference_days: RefCell<HashMap<String, Option<i64>>>,
+    /// This execution's reference classes with the snapshot's referenced
+    /// spellings of each journal day ([`RefClasses::build`] `spelled`), so a
+    /// reference compares by key, not by a date parse. Unset outside an
+    /// execution (a memo carry or touch test reads the plan's own classes).
+    ref_classes: OnceCell<RefClasses>,
 }
 
 /// Indexed by `format == Org`, then source key, then value; looked up by
@@ -207,6 +214,18 @@ type AtomSlots = ([HashMap<String, HashMap<String, Rc<[Atom]>>>; 2], usize);
 
 impl EvalCache {
     const MAX_ENTRIES: usize = 65_536;
+
+    /// Fix this execution's reference classes over `graph` (the snapshot it
+    /// runs on). Called once, before any page is evaluated.
+    pub(crate) fn spell_ref_classes(&self, graph: &crate::model::ReadSnapshot, filter: &Filter) {
+        let _ = self.ref_classes.set(RefClasses::build(graph, filter, true));
+    }
+
+    /// This execution's reference classes, when [`Self::spell_ref_classes`]
+    /// fixed them.
+    pub(crate) fn ref_classes(&self) -> Option<&RefClasses> {
+        self.ref_classes.get()
+    }
 
     fn get(&self, key: &str, value: &str, format: AtomFormat, config: &ParseConfig) -> Rc<[Atom]> {
         let org = usize::from(format == AtomFormat::Org);
@@ -303,6 +322,9 @@ pub(crate) struct EvalCtx<'a> {
     /// `None`: look the node up by `page_key`.
     pub(crate) link_node: Option<u32>,
     pub(crate) cache: &'a EvalCache,
+    /// What each reference operand of the plan names (its alias class and
+    /// journal days, D-20261019-Q8); [`RefClasses::none`] compares literally.
+    pub(crate) ref_classes: &'a RefClasses,
 }
 
 impl<'a> EvalCtx<'a> {
@@ -321,6 +343,7 @@ impl<'a> EvalCtx<'a> {
         tag_targets: &'a HashSet<String>,
         links: &'a super::link_graph::LinkAnswers,
         cache: &'a EvalCache,
+        ref_classes: &'a RefClasses,
     ) -> Self {
         EvalCtx {
             hierarchy: OnceCell::new(),
@@ -340,6 +363,7 @@ impl<'a> EvalCtx<'a> {
             links,
             link_node: None,
             cache,
+            ref_classes,
         }
     }
 
@@ -526,7 +550,12 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                     }
                 }
                 Attr::Namespace => {
-                    // The immediate parent segment (Tine-only, M20).
+                    // The immediate parent segment (Tine-only, M20). Declared
+                    // different question (I-12, census Q10): "which page is my
+                    // direct parent", not namespace closure
+                    // (`refs::namespace_refs`, which every reference leaf
+                    // walks); the advanced `namespace` rule matches every
+                    // depth on purpose.
                     let parent = ctx
                         .page_key
                         .rsplit_once('/')
@@ -693,11 +722,69 @@ fn eval_direct_ref(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
             ctx.cache.reference_day(name, ctx.config),
             ctx.today,
         ),
+        _ => eval_ref_element(pred, name, ctx),
+    }
+}
+
+/// A reference element (`refs`, `direct_refs`) exposes its name; `name = A`
+/// holds for every name of A's alias group and every spelling of a journal
+/// day in it (D-20261019-Q8, S10/S12; [`RefClasses`]).
+/// `direct_refs` (TQL `direct_ref`, advanced `:block/refs`) expands the same
+/// way: "references A through the block's own refs" is still a reference
+/// to A (QL-3, ruled 2026-11-03).
+fn eval_ref_element(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
+    match pred {
+        Filter::And { items } => items.iter().all(|item| eval_ref_element(item, name, ctx)),
+        Filter::Or { items } => items.iter().any(|item| eval_ref_element(item, name, ctx)),
+        Filter::Not { inner } => !eval_ref_element(inner, name, ctx),
+        Filter::Leaf {
+            leaf:
+                Leaf::Attr {
+                    attr: Attr::Name,
+                    op: CmpOp::Eq,
+                    value: Value::Text { text },
+                },
+        } => match ctx.ref_classes.class(text) {
+            Some(class) => class.holds(&refs::page_key(name), |key| {
+                ctx.cache.reference_day(key, ctx.config)
+            }),
+            None => refs::page_key(name) == refs::page_key(text),
+        },
         _ => eval_name_element(pred, name),
     }
 }
 
-/// Path-ref and tag elements expose only their name.
+/// Whether the path-refs closure of a block (its own references with their
+/// namespace prefixes, its ancestors', and its page) holds a name of the
+/// operand's class: the `[[A]]` fast path of [`eval_refs`].
+fn closure_holds(
+    operand: &str,
+    page_key: &str,
+    own: &[String],
+    ancestors: &PathRefCounts,
+    ctx: &EvalCtx,
+) -> bool {
+    let Some(class) = ctx.ref_classes.class(operand) else {
+        return closure_contains(page_key, own, ancestors, &refs::normalize(operand));
+    };
+    if class
+        .keys()
+        .any(|key| closure_contains(page_key, own, ancestors, key))
+    {
+        return true;
+    }
+    class.has_days()
+        && own
+            .iter()
+            .flat_map(|name| refs::namespace_refs(name))
+            .chain(ancestors.keys().map(String::as_str))
+            .chain(std::iter::once(page_key))
+            .any(|name| class.holds(name, |key| ctx.cache.reference_day(key, ctx.config)))
+}
+
+/// Tag elements expose only their name, compared literally: block
+/// `tag("x")` is a declared different question from `refs` (I-12), like
+/// `(page-tags x)` (KI2).
 fn eval_name_element(pred: &Filter, name: &str) -> bool {
     match pred {
         Filter::True => true,
@@ -728,14 +815,16 @@ fn eval_refs(
 ) -> bool {
     let own = &block.projection().refs_norm();
     if let Some(name) = single_ref_name(pred) {
-        let hit = closure_contains(&ctx.page_key, own, ancestor_refs, &refs::normalize(name));
+        let hit = closure_holds(name, &ctx.page_key, own, ancestor_refs, ctx);
         return match quant {
             Quant::Any | Quant::Every => hit,
             Quant::None => !hit,
         };
     }
     let names = closure_names(&ctx.page_key, own, ancestor_refs);
-    quantify(quant, names.iter(), |name| eval_name_element(pred, name))
+    quantify(quant, names.iter(), |name| {
+        eval_ref_element(pred, name, ctx)
+    })
 }
 
 /// The `name = 'x'` shape both `[[x]]` and `#x` produce.
@@ -1049,22 +1138,33 @@ fn eval_optional_text(op: CmpOp, value: &Value, actual: Option<&str>, ctx: &Eval
     }
 }
 
+/// `name` / `page` compare the literal name (no alias expansion,
+/// D-20261019-Q8) through the page key, which folds a date spelling onto its
+/// journal (S12): `(page "2026-10-26")` names the Oct 26th, 2026 journal,
+/// read by the graph's one date answerer ([`reference_day`]). An ordinary
+/// page named like a date keeps its own name (P2).
 fn eval_page_name(op: CmpOp, value: &Value, page_name: &str, ctx: &EvalCtx) -> bool {
     let key = refs::page_key(page_name);
     let text = value.as_text();
+    let names = |text: &str| {
+        key == refs::page_key(text)
+            || (ctx.is_journal
+                && ctx.journal.is_some()
+                && ctx.cache.reference_day(text, ctx.config) == ctx.journal)
+    };
     let listed = || {
-        value.as_list().map(|items| {
-            items.iter().any(|item| {
-                item.as_text()
-                    .is_some_and(|text| key == refs::page_key(text))
-            })
-        })
+        value
+            .as_list()
+            .map(|items| items.iter().any(|item| item.as_text().is_some_and(names)))
     };
     match op {
-        CmpOp::Eq => text.is_some_and(|text| key == refs::page_key(text)),
-        CmpOp::NotEq => text.is_some_and(|text| key != refs::page_key(text)),
+        CmpOp::Eq => text.is_some_and(names),
+        CmpOp::NotEq => text.is_some_and(|text| !names(text)),
         CmpOp::StartsWith => text.is_some_and(|text| key.starts_with(&page_prefix_key(text))),
         // A LIKE pattern keeps its boundary slashes: they are pattern text.
+        // Declared different question (I-12, census Q1): this folds a PATTERN
+        // to match against the page_key, it does not name a page, so it keeps
+        // edge whitespace and slashes that page_key would strip.
         CmpOp::Like => text.is_some_and(|text| {
             ctx.cache
                 .like(&key, &text.to_lowercase().nfc().collect::<String>())

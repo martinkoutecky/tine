@@ -188,61 +188,119 @@ fn claimants(target: Resolved) -> Vec<PageId> {
     }
 }
 
-/// Every page holding an export definition block whose page selector names
-/// one of `olds`, found by the definitions query
-/// (`tine_core::export_definition::definitions_query`) over the planning view
-/// and the selectors of the blocks it returns: O(P + B) in memory, memoized
-/// per generation, no file read, so a definition page the rename does not
-/// touch is not read. A view with more definition blocks than one bounded
-/// answer carries refuses the rename before anything is written, rather than
-/// leave a definition naming the old page (scenario: malformed or generated
-/// input; a later page with the old name would then be the one exported).
-fn export_definition_pages(
+/// Every page with a block the rename rewrites although no reference names
+/// the page (so no referrers row selects it): a `{{query}}` page-name argument
+/// (D-20261031-CMQ), a `[[link]]` in another macro's argument (cloze,
+/// renderer, plugin macros) or an Org `[[file:…]]` link (its label, not its
+/// file, is the reference). Found by scanning the planning view's parsed
+/// blocks and pre-blocks in memory, with no index (D-10; no persisted record,
+/// I-25): O(B) substring checks, plus the rename's own rewrite of each text
+/// that may hold a target. Exact: a page is selected only when one of its
+/// texts would change.
+///
+/// A macro's target spells its page's name in the text itself, so a text
+/// holding `{{` is rewritten (one parse) only when its folded text contains a
+/// renamed page's key. That is a necessary condition except for an escaped
+/// spelling (a `\` in the text, EDN `\"`; a quote in the name, SQL `''`),
+/// which takes the rewrite unfiltered, as an Org `[[file:` link (its encoded
+/// file stem) always does. Realistic-10k: ~10k embed and query blocks, of
+/// which a rename parses the few that spell the name.
+fn rewrite_target_pages(
     graph: &tine_store::WholeGraph,
-    olds: &[String],
-) -> io::Result<Vec<PageId>> {
-    use tine_core::query::ir::{ExecutionContext, QueryRows, ViewSettings};
-    use tine_store::{IrAnswer, IrRequest};
-    let parsed = tine_core::query::wire_parse::parse_query_pair(
-        &tine_core::export_definition::definitions_query(),
-        tine_core::query::wire_parse::QueryTextDialect::Og,
-        &[],
-        tine_core::query::registry::Registry::none(),
-    );
-    let answer = graph
-        .query_ir(
-            IrRequest::Run {
-                query: &parsed.query,
-                view: &ViewSettings::default(),
-                context: &ExecutionContext::default(),
-            },
-            &tine_store::Cancel::default(),
-        )
-        .map(|answer| answer.expect("never cancelled"))
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let IrAnswer::Result(result) = answer else {
-        return Err(io::Error::other("query run returned another answer"));
-    };
-    if result.exceeded {
-        return Err(error(
-            io::ErrorKind::InvalidData,
-            "too many export definitions to rename their pages safely",
-        ));
+    renames: &HashMap<String, String>,
+    format: tine_core::config::FileNameFormat,
+) -> Vec<PageId> {
+    // A key containing another key is found through that one.
+    let mut keys: Vec<&str> = renames.keys().map(String::as_str).collect();
+    keys.sort_by_key(|key| key.len());
+    let mut needles: Vec<&str> = Vec::new();
+    for key in keys {
+        if !needles.iter().any(|needle| key.contains(needle)) {
+            needles.push(key);
+        }
     }
-    let QueryRows::Block { groups } = result.rows else {
-        return Ok(Vec::new());
+    let quoted = needles.iter().any(|key| key.contains(['\'', '"']));
+    let spells_a_key = |raw: &str| {
+        quoted || raw.contains('\\') || {
+            let folded = refs::page_key(raw);
+            needles.iter().any(|key| folded.contains(key))
+        }
     };
-    let olds: HashSet<String> = olds.iter().map(|old| refs::normalize(old)).collect();
-    Ok(groups
-        .iter()
-        .filter(|group| {
-            group.blocks.iter().any(|block| {
-                tine_core::export_definition::selected_names(&block.raw)
-                    .iter()
-                    .any(|name| olds.contains(&refs::normalize(name)))
-            })
+    graph
+        .corpus(None)
+        .pages
+        .into_iter()
+        .filter(|page| {
+            let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+            let may_hold = |raw: &str| {
+                (raw.contains("{{") && spells_a_key(raw)) || (org && raw.contains("[[file:"))
+            };
+            if let Some(pre) = page.document.pre_block.as_deref() {
+                if may_hold(pre) && refs::rename_pre_block(pre, org, renames, format) != pre {
+                    return true;
+                }
+            }
+            let mut stack: Vec<_> = page.document.roots.iter().collect();
+            while let Some(block) = stack.pop() {
+                let raw = block.raw();
+                if may_hold(raw) && refs::rename_block_raw(raw, org, renames, format) != raw {
+                    return true;
+                }
+                stack.extend(block.children.iter());
+            }
+            false
         })
-        .flat_map(|group| existing(graph.resolve(&group.page, group.kind == PageKind::Journal)))
+        .map(|page| page.id)
+        .collect()
+}
+
+/// One text an unsaved page holds, as the window asks about it
+/// ([`rename_would_change`]): its pre-block, or one block's raw body.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameProbeText {
+    pub raw: String,
+    pub org: bool,
+    /// The page's pre-block (its page properties).
+    pub pre_block: bool,
+}
+
+/// Per text, whether renaming `old` to `new` would rewrite it: the rename's
+/// own name map (`old` and every namespace descendant a file owns, as
+/// [`plan_rename`] pairs them) and its own rewrite, so the window's check
+/// before a rename that must leave a stuck page alone (GH #535) cannot
+/// disagree with what the rename writes. Read-only: one view, one inventory
+/// of `old`'s namespace, then O(text bytes) per text.
+pub fn rename_would_change(
+    store: &Store,
+    old: &str,
+    new: &str,
+    texts: &[RenameProbeText],
+) -> io::Result<Vec<bool>> {
+    let graph = view(store)?;
+    let old_key = refs::normalize(old);
+    let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
+    let mut renames: HashMap<String, String> = owned
+        .0
+        .iter()
+        .filter(|entry| !entry.is_journal)
+        .map(|entry| {
+            let to = format!("{new}{}", namespace_suffix(&entry.name, &old_key));
+            (refs::normalize(&entry.name), to)
+        })
+        .collect();
+    renames.insert(old_key, new.to_owned());
+    let format = store.config().file_name_format;
+    Ok(texts
+        .iter()
+        .map(|text| {
+            let after = if text.pre_block {
+                refs::rename_pre_block(&text.raw, text.org, &renames, format)
+            } else {
+                refs::rename_block_raw(&text.raw, text.org, &renames, format)
+            };
+            after != text.raw
+        })
         .collect())
 }
 
@@ -1349,7 +1407,13 @@ fn merged_survivor(
     }
     let (header, blocks) = merge_payload::payload(&doc, &source, renames, org, format);
     if let Some(header) = header {
-        doc.pre_block = Some(header);
+        // Back where the survivor's header was: a header written as the
+        // first bullet stays that bullet (a pre-block above it would demote
+        // it to an ordinary block and drop its aliases).
+        match merge_payload::header_of(&doc).map(|(at, _)| at) {
+            Some(merge_payload::HeaderAt::FirstRoot) => doc.blocks[0].raw = header,
+            _ => doc.pre_block = Some(header),
+        }
     }
     doc.blocks.extend(blocks);
     Ok(Survivor {
@@ -1359,24 +1423,15 @@ fn merged_survivor(
     })
 }
 
+/// The merge survivor's own references to the merged page follow it: the
+/// same rewrite a rename applies to a page (`refs::rename_rewrite`), block by
+/// block.
 fn rename_doc(
     doc: &mut PageDto,
     renames: &HashMap<String, String>,
     org: bool,
     format: tine_core::config::FileNameFormat,
 ) {
-    fn rewrite(
-        raw: &mut String,
-        renames: &HashMap<String, String>,
-        org: bool,
-        format: tine_core::config::FileNameFormat,
-    ) {
-        *raw = refs::rename_tags_property_multi(
-            &refs::rename_refs_multi(raw, renames, org, format),
-            renames,
-            org,
-        );
-    }
     fn walk(
         blocks: &mut [tine_core::model::BlockDto],
         renames: &HashMap<String, String>,
@@ -1384,12 +1439,12 @@ fn rename_doc(
         format: tine_core::config::FileNameFormat,
     ) {
         for block in blocks {
-            rewrite(&mut block.raw, renames, org, format);
+            block.raw = refs::rename_block_raw(&block.raw, org, renames, format);
             walk(&mut block.children, renames, org, format);
         }
     }
     if let Some(pre) = doc.pre_block.as_mut() {
-        rewrite(pre, renames, org, format);
+        *pre = refs::rename_pre_block(pre, org, renames, format);
     }
     walk(&mut doc.blocks, renames, org, format);
 }

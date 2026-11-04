@@ -14,7 +14,7 @@ import { FloatingPortal } from "./FloatingPortal";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { InlineText } from "../render/inline";
-import { aliasNamesOf, visibleBody } from "../render/block";
+import { visibleBody } from "../render/block";
 import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -22,7 +22,7 @@ import { EmojiText } from "../render/emoji";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
-import { emptyPage, ensurePageLoaded, pageByName, readPageProperties, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
+import { emptyPage, ensurePageLoaded, pageByName, pageAliasNames, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { AliasGroupHeader } from "./AliasGroup";
@@ -441,7 +441,7 @@ function PageItem(props: {
                 sidebar keeps its properties block, so a click here edits nothing. */}
             <AliasGroupHeader
               name={page()!.name}
-              declared={aliasNamesOf(readPageProperties(page()!.name), page()!.format)}
+              declared={pageAliasNames(page()!)}
               inGraph={!page()!.guide}
             />
             <BlockList ids={page()!.roots} />

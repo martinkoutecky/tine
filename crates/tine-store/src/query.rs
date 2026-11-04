@@ -23,12 +23,13 @@ pub(crate) mod exec;
 pub(crate) mod index;
 pub(crate) mod link_graph;
 pub(crate) mod memo;
+pub(crate) mod page_counts;
 pub(crate) mod page_properties;
 #[cfg(test)]
 mod sample_seed_tests;
+use page_properties::page_document_is_org;
 pub(crate) use page_properties::page_facets;
-use page_properties::{page_document_is_org, page_property_lines};
-pub(crate) use tine_core::page_properties::{document_page_property_block, page_property_raw};
+pub(crate) use tine_core::page_properties::page_property_raw;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -262,7 +263,7 @@ pub(crate) fn crumb_line(b: &DocBlock) -> String {
 fn collect(
     graph: &ReadSnapshot,
     keep: impl FnMut(&DocBlock) -> bool,
-    keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    keep_page_properties: impl FnMut(&PageEntry, &str) -> Vec<BlockDto>,
     exclude: Option<&str>,
 ) -> Vec<RefGroup> {
     collect_bounded(
@@ -279,7 +280,7 @@ fn collect(
 fn collect_bounded(
     graph: &ReadSnapshot,
     mut keep: impl FnMut(&DocBlock) -> bool,
-    mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Vec<BlockDto>,
     exclude: Option<&str>,
     max_rows: usize,
     max_bytes: usize,
@@ -296,7 +297,7 @@ fn collect_bounded(
             }
             let mut matched: Vec<BlockDto> = Vec::new();
             if let Some(pre) = doc.pre_block.as_deref() {
-                if let Some(property_ref) = keep_page_properties(entry, pre) {
+                for property_ref in keep_page_properties(entry, pre) {
                     if budget.admit_estimated(
                         &entry.name,
                         tine_core::model::block_dto_estimated_bytes(&property_ref),
@@ -360,14 +361,6 @@ fn collect_bounded(
     }
 }
 
-/// True when a block's raw text is only page-header properties (OG treats such
-/// a FIRST block as the page-properties (pre-)block). One answerer: the parser's
-/// page header, minus the block-scoped exemption (GH #210/#540): the shared
-/// `model::is_page_header_candidate`, the same answerer save-time promotion uses.
-fn is_properties_only(raw: &str) -> bool {
-    crate::model::is_page_header_candidate(raw.trim_end_matches(['\n', '\r']))
-}
-
 /// Map of `alias::` → canonical page name (original case). The alias key is
 /// normalized for lookup. Page-level `alias::` comes from the page pre-block
 /// (Logseq's on-disk file convention) OR — when the user typed it as the first
@@ -389,41 +382,33 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
+/// The text a page's own properties are read from: the one header rule,
+/// `tine_core::page_header::page_header_text` (pre-block, else a
+/// properties-only first root). Kept as the store's name for it; the merge
+/// asks it here.
+pub fn page_header_text<'a>(
+    pre_block: Option<&'a str>,
+    first_root: Option<&'a str>,
+) -> Option<&'a str> {
+    tine_core::page_header::page_header_text(pre_block, first_root)
+}
+
+/// Whether a page-header key declares aliases (`alias`, `aliases`; a named
+/// OG difference): `tine_core::page_header::is_alias_key`.
+pub fn is_alias_key(key: &str) -> bool {
+    tine_core::page_header::is_alias_key(key)
+}
+
 /// Authored spellings for display/insertion. Identity consumers use
 /// `document_aliases` or `page_key`; case-only edits must refresh this projection.
+/// The answer is `tine_core::page_header::page_alias_spellings`, the same code
+/// the frontend's page header runs through wasm.
 pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
-    let alias_text: Option<&str> = match &doc.pre_block {
-        Some(pre) => Some(pre.as_str()),
-        // No pre-block: a properties-only FIRST block is the page-properties
-        // block in OG (it gets written back as a pre-block on save there).
-        None => doc
-            .roots
-            .first()
-            .filter(|b| is_properties_only(b.raw()))
-            .map(|b| b.raw()),
-    };
-    let Some(text) = alias_text else {
-        return Vec::new();
-    };
-    let mut aliases = Vec::new();
-    for (k, v) in page_property_lines(text, page_document_is_org(doc)) {
-        let key = property_key_norm(&k);
-        if key == "alias" || key == "aliases" {
-            let trimmed = v.trim();
-            if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-                continue;
-            }
-            aliases.extend(tine_core::property_refs::linkable_names(
-                &v,
-                page_document_is_org(doc),
-            ));
-        }
-    }
-    // Collapse duplicate identities while retaining a deterministic spelling.
-    aliases.sort_unstable();
-    let mut seen = std::collections::HashSet::new();
-    aliases.retain(|alias| seen.insert(refs::page_key(alias)));
-    aliases
+    tine_core::page_header::page_alias_spellings(
+        doc.pre_block.as_deref(),
+        doc.roots.first().map(|b| b.raw()),
+        page_document_is_org(doc),
+    )
 }
 
 #[cfg(test)]
@@ -534,6 +519,74 @@ fn graph_equivalent_page_names(
     )
 }
 
+/// The names a query reference leaf (`[[A]]`, `refs`, `#A`, TQL `ref` /
+/// `direct_ref`) matches for `target` (D-20261019-Q8, conformance S10/S12):
+/// exactly the Linked References panel's names
+/// ([`graph_equivalent_page_names`] with `explicit` set, the one answerer of
+/// "which names denote this page"), returned as the page keys of the alias
+/// class and the journal-day spellings. The panel also takes the referenced
+/// names that parse to a journal day of the class ([`referenced_day_keys`]):
+///
+/// - `spelled` (one execution over `graph`): so does this, and `days` is
+///   empty. A reference then matches by key, with no date parse per
+///   reference; the answer is the panel's over this snapshot.
+/// - otherwise (a plan's own classes, read by the memo carry and the
+///   mounted-query touch test across later generations): the DAYS are kept
+///   instead, and each reference is asked whether it parses to one
+///   ([`eval::reference_day`], the test `referenced_day_keys` applies). The
+///   test is then a function of the evaluated page alone, so a link typed
+///   elsewhere cannot make it stale.
+///
+/// Cost: O(component log P) plus one title lookup per journal day reached;
+/// `spelled` adds `referenced_day_keys`' O(R) digit checks per day.
+///
+/// A date spelling other than the journal's title (`[[22.10.2026]]` under a
+/// file-name format) names the journal itself (the page key folds the date,
+/// S12), so the journal's alias group joins: the class is the union of the
+/// spelling's and the journal's.
+pub(crate) fn reference_class(
+    graph: &ReadSnapshot,
+    target: &str,
+    spelled: bool,
+) -> (Vec<String>, Vec<i64>) {
+    let format = graph.config().journal_format();
+    let real = real_page_names(graph);
+    let edges = graph.alias_edges();
+    let days = std::cell::RefCell::new(Vec::new());
+    let class_of = |name: &str| {
+        graph_equivalent_page_names_with(
+            &real,
+            &edges,
+            &format,
+            name,
+            |day| graph.reference_journal_name(day),
+            |day| {
+                if spelled {
+                    referenced_day_keys(graph.explicit_reference_names(), &format, day)
+                } else {
+                    days.borrow_mut().push(day.ordinal_key());
+                    Vec::new()
+                }
+            },
+        )
+        .1
+    };
+    let mut keys = class_of(target);
+    if let Some(journal) = format
+        .parse(target)
+        .and_then(|day| graph.reference_journal_name(day))
+        .filter(|journal| refs::page_key(journal) != refs::page_key(target))
+    {
+        keys.extend(class_of(&journal));
+        keys.sort();
+        keys.dedup();
+    }
+    let mut days = days.into_inner();
+    days.sort_unstable();
+    days.dedup();
+    (keys, days)
+}
+
 /// The explicitly referenced name keys that denote `day` by the graph's one
 /// date answerer ([`JournalFormat::parse`]): `2026-10-2` and `October 22nd,
 /// 2026` reach the Oct 22nd journal because they parse to it, not because a
@@ -551,6 +604,93 @@ pub(crate) fn referenced_day_keys<'a>(
         })
         .map(str::to_owned)
         .collect()
+}
+
+/// The panel's resolver for many targets of one snapshot: the reads
+/// [`graph_equivalent_page_names_with`] needs, gathered once, so a bulk
+/// driver resolves each target as the Linked References panel does without a
+/// per-target scan. The one setup the link table (`LinkGraph::build`) and the
+/// All pages counter (`page_counts::referring_block_counts`) share.
+///
+/// Built in O(P + R) for P listed pages and R explicit reference names; holds
+/// one name per journal day and the referenced day spellings, dropped with
+/// it (nothing cached past the caller, D-10).
+///
+/// The day's journal is the FIRST journal page of the day in page-list order.
+/// This agrees with batch 2's duplicate-day keeper: the snapshot's page list
+/// is built from `dedup_journal_days` (claimant order `compare_page_claimants`,
+/// launch build and incremental upsert alike), so it holds one journal per day,
+/// the keeper, and "first" has nothing to choose between. It would disagree
+/// only if the list ever held two journals of one day: then this pick follows
+/// list order, not the claimant order. The panel itself asks
+/// `ReadSnapshot::reference_journal_name` (claimants of the day's title key),
+/// which over the same deduplicated list names the same page.
+pub(crate) struct PanelResolver {
+    real: RealPageOwners,
+    edges: std::sync::Arc<AliasEdges>,
+    format: JournalFormat,
+    first_journal: std::collections::HashMap<i64, String>,
+    referenced_by_day: std::collections::HashMap<i64, Vec<String>>,
+}
+
+impl PanelResolver {
+    pub(crate) fn new(graph: &ReadSnapshot) -> Self {
+        let format = graph.config().journal_format();
+        // The panel's `find` over the page list, once: the FIRST journal page
+        // of each day in page-list order.
+        let mut first_journal = std::collections::HashMap::new();
+        for entry in graph.page_list_arc().iter() {
+            if entry.kind == PageKind::Journal {
+                if let Some(day) = format.parse(&entry.name) {
+                    first_journal
+                        .entry(day.ordinal_key())
+                        .or_insert_with(|| entry.name.clone());
+                }
+            }
+        }
+        // Referenced names by the day they denote (the one date answerer),
+        // once: what `referenced_day_keys` finds per target.
+        let mut referenced_by_day: std::collections::HashMap<i64, Vec<String>> =
+            std::collections::HashMap::new();
+        for name in graph.explicit_reference_names() {
+            if let Some(day) = eval::reference_day(name, &format) {
+                referenced_by_day
+                    .entry(day)
+                    .or_default()
+                    .push(name.to_owned());
+            }
+        }
+        PanelResolver {
+            real: real_page_names(graph),
+            edges: graph.alias_edges(),
+            format,
+            first_journal,
+            referenced_by_day,
+        }
+    }
+
+    /// The graph's journal format, as the resolver reads dates.
+    pub(crate) fn format(&self) -> &JournalFormat {
+        &self.format
+    }
+
+    /// `(canonical, names, self_page)` for `target`, exactly
+    /// [`graph_equivalent_page_names`] with `explicit` set.
+    pub(crate) fn resolve(&self, target: &str) -> (String, Vec<String>, String) {
+        graph_equivalent_page_names_with(
+            &self.real,
+            &self.edges,
+            &self.format,
+            target,
+            |day| self.first_journal.get(&day.ordinal_key()).cloned(),
+            |day| {
+                self.referenced_by_day
+                    .get(&day.ordinal_key())
+                    .cloned()
+                    .unwrap_or_default()
+            },
+        )
+    }
 }
 
 /// [`graph_equivalent_page_names`] with its graph reads supplied: the real
@@ -711,15 +851,57 @@ fn page_property_block_with_config(
     Some(block)
 }
 
-/// The header pre-block when it references block `uuid`, as a page-property row.
-fn page_property_referrer(entry: &PageEntry, pre: &str, uuid: &str) -> Option<BlockDto> {
-    let block = page_property_block(entry, pre)?;
-    if !block.projection().block_refs().iter().any(|r| r == uuid) {
-        return None;
+/// The pre-block's blocks a reference question reads, in page order: the
+/// page-property header block (identity `page-property:…`), then the prose
+/// before the first block (`page_properties::preamble_content_range`, CM step
+/// 2 batch 8; identity `page-preamble:…`), both from one parse of the
+/// pre-block (`page_properties::pre_block_parts`). The ordinal of both in the
+/// reference candidate signatures is 0 (`model.rs reference_signatures`).
+fn pre_blocks_with_config(
+    entry: &PageEntry,
+    pre: &str,
+    config: &tine_core::query::atom::ParseConfig,
+) -> impl Iterator<Item = DocBlock> {
+    let is_org = Format::from_path(&entry.path) == Format::Org;
+    let (raw, prose) = tine_core::page_properties::pre_block_parts(pre, is_org);
+    let key = refs::page_key(&entry.name);
+    let mut out = Vec::with_capacity(2);
+    if !raw.is_empty() {
+        let mut block =
+            tine_core::page_properties::property_projection_with_config(&raw, is_org, config);
+        block.uuid = format!("page-property:{:?}:{key}", entry.kind);
+        out.push(block);
     }
-    let mut dto = block_to_shallow_dto(&block);
-    dto.page_property = true;
-    Some(dto)
+    if let Some(range) = prose {
+        let mut block = tine_core::page_properties::property_projection_with_config(
+            &pre[range],
+            is_org,
+            config,
+        );
+        block.uuid = format!("page-preamble:{:?}:{key}", entry.kind);
+        out.push(block);
+    }
+    out.into_iter()
+}
+
+/// A reference row for one of [`pre_blocks_with_config`]'s blocks: the
+/// header one is a page-property row, the prose one a preamble row.
+fn pre_block_dto(block: &DocBlock) -> BlockDto {
+    let mut dto = block_to_shallow_dto(block);
+    if block.uuid.starts_with("page-preamble:") {
+        dto.page_preamble = true;
+    } else {
+        dto.page_property = true;
+    }
+    dto
+}
+
+/// A pre-block referencing block `uuid`, as a page-property or preamble row.
+fn page_property_referrers(entry: &PageEntry, pre: &str, uuid: &str) -> Vec<BlockDto> {
+    pre_blocks_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
+        .filter(|block| block.projection().block_refs().iter().any(|r| r == uuid))
+        .map(|block| pre_block_dto(&block))
+        .collect()
 }
 
 /// Parser-owned explicit page-reference targets contributed by one physical
@@ -777,12 +959,13 @@ fn explicit_reference_names_where(
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc
+    for block in doc
         .pre_block
         .as_deref()
         .filter(|_| include_header)
-        .and_then(|pre| {
-            page_property_block_with_config(
+        .into_iter()
+        .flat_map(|pre| {
+            pre_blocks_with_config(
                 entry,
                 pre,
                 &tine_core::query::atom::ParseConfig::from_config(config),
@@ -891,12 +1074,15 @@ fn collect_reference_occurrences_bounded(
             }
             let mut blocks = Vec::new();
             let mut evidence = Vec::new();
-            if let Some(mut block) = doc
+            // Both pre-blocks (header, then the preamble's prose) share
+            // signature slot 0.
+            for mut block in doc
                 .pre_block
                 .as_deref()
                 .filter(|_| candidate_pages.admits(page, 0))
-                .and_then(|pre| {
-                    page_property_block_with_config(
+                .into_iter()
+                .flat_map(|pre| {
+                    pre_blocks_with_config(
                         entry,
                         pre,
                         &tine_core::query::atom::ParseConfig::from_config(config),
@@ -910,8 +1096,7 @@ fn collect_reference_occurrences_bounded(
                 } else if let Some(hit) =
                     block_reference_evidence(&block, canonical, &needles, kind, config)
                 {
-                    let mut dto = block_to_shallow_dto(&block);
-                    dto.page_property = true;
+                    let dto = pre_block_dto(&block);
                     let estimated = tine_core::model::block_dto_estimated_bytes(&dto)
                         .saturating_add(reference_evidence_estimated_bytes(&hit));
                     if budget.admit_estimated(&entry.name, estimated) {
@@ -1017,6 +1202,12 @@ pub(crate) fn backlinks(graph: &ReadSnapshot, target: &str) -> Vec<RefGroup> {
     )
 }
 
+/// The Linked References panel's blocks for `target`.
+///
+/// I-12 exception (CM step 2, D-20261102-CM4 CM-COUNT): this walk and the All
+/// pages counter (`query::page_counts::referring_block_counts`, whose count is
+/// the size of this panel unfiltered) are two drivers of one reference rule;
+/// the conformance harness compares them. Retire: one forward target map (D3).
 pub(crate) fn backlinks_bounded(
     graph: &ReadSnapshot,
     target: &str,
@@ -1144,10 +1335,7 @@ fn backlink_filter_entry(
         // property boundary and explicit reference tokens are parser-owned;
         // top-level plain text supplies the additional comma-separated names.
         for (key, value) in projection.properties() {
-            if !(key.eq_ignore_ascii_case("tags")
-                || key.eq_ignore_ascii_case("alias")
-                || key.eq_ignore_ascii_case("aliases"))
-            {
+            if !tine_core::query::atom::is_editable_linkable_built_in(key) {
                 continue;
             }
             let quoted = value.trim();
@@ -1215,7 +1403,7 @@ pub(crate) fn backlink_filter_context(
                 continue;
             };
             if let Some(pre) = document.pre_block.as_deref() {
-                if let Some(block) = page_property_block_with_config(
+                for block in pre_blocks_with_config(
                     page,
                     pre,
                     &tine_core::query::atom::ParseConfig::from_config(graph.config()),
@@ -1310,7 +1498,7 @@ pub(crate) fn block_referrers(graph: &ReadSnapshot, uuid: &str) -> Vec<RefGroup>
     collect(
         graph,
         |b| b.projection().block_refs().iter().any(|r| r == u),
-        |entry, pre| page_property_referrer(entry, pre, u),
+        |entry, pre| page_property_referrers(entry, pre, u),
         None,
     )
 }
@@ -1332,7 +1520,7 @@ pub(crate) fn block_referrers_bounded(
     collect_bounded(
         graph,
         |b| b.projection().block_refs().iter().any(|r| r == u),
-        |entry, pre| page_property_referrer(entry, pre, u),
+        |entry, pre| page_property_referrers(entry, pre, u),
         None,
         max_rows,
         max_bytes,
@@ -1431,12 +1619,12 @@ pub(crate) fn page_affects_backlinks(
     // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block_with_config(
+        pre_blocks_with_config(
             entry,
             pre,
             &tine_core::query::atom::ParseConfig::from_config(config),
         )
-        .is_some_and(|block| {
+        .any(|block| {
             block_reference_evidence(
                 &block,
                 &canonical,
@@ -1475,12 +1663,12 @@ pub(crate) fn page_affects_unlinked(
     let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block_with_config(
+        pre_blocks_with_config(
             entry,
             pre,
             &tine_core::query::atom::ParseConfig::from_config(config),
         )
-        .is_some_and(|block| {
+        .any(|block| {
             block_reference_evidence(&block, &canonical, &needles, ReferenceKind::Plain, &config)
                 .is_some()
         })
@@ -1506,7 +1694,7 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     if uuid.is_empty() {
         return false;
     }
-    if document_page_property_block(doc).is_some_and(|block| {
+    if tine_core::page_properties::document_pre_blocks(doc).any(|block| {
         block
             .projection()
             .block_refs()
@@ -1539,7 +1727,7 @@ pub(crate) fn changed_page_affects_unlinked(
     target: &str,
     entry: &PageEntry,
     blocks: &[&DocBlock],
-    header: Option<&DocBlock>,
+    header: &[DocBlock],
 ) -> bool {
     let real = real_page_names(graph);
     let aliases = graph.alias_edges();
@@ -1560,7 +1748,8 @@ pub(crate) fn changed_page_affects_unlinked(
     let names = reference_invalidation_names(graph, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names);
     if header
-        .is_some_and(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+        .iter()
+        .any(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
     {
         return true;
     }
@@ -1576,7 +1765,7 @@ pub(crate) fn changed_reference_source_blocks<'a>(
     config: &tine_core::config::Config,
     changed: &std::collections::BTreeSet<String>,
     header_changed: bool,
-) -> (Option<DocBlock>, Vec<&'a DocBlock>) {
+) -> (Vec<DocBlock>, Vec<&'a DocBlock>) {
     fn select<'a>(
         roots: &'a [DocBlock],
         changed: &std::collections::BTreeSet<String>,
@@ -1595,13 +1784,15 @@ pub(crate) fn changed_reference_source_blocks<'a>(
         .pre_block
         .as_deref()
         .filter(|_| header_changed)
-        .and_then(|pre| {
-            page_property_block_with_config(
+        .into_iter()
+        .flat_map(|pre| {
+            pre_blocks_with_config(
                 entry,
                 pre,
                 &tine_core::query::atom::ParseConfig::from_config(config),
             )
-        });
+        })
+        .collect();
     (header, blocks)
 }
 
@@ -1614,7 +1805,7 @@ pub(crate) fn changed_block_reference_targets(
 ) -> Vec<String> {
     let mut targets = Vec::new();
     if header_changed {
-        if let Some(block) = document_page_property_block(doc) {
+        for block in tine_core::page_properties::document_pre_blocks(doc) {
             targets.extend(block.projection().block_refs().iter().cloned());
         }
     }
@@ -4353,7 +4544,7 @@ mod tests {
             let facts = index.facts(entry, doc);
             let config = index.parse_config();
             let touches =
-                |plan: std::sync::Arc<exec::Plan>| plan.touches(entry, doc, &facts, config);
+                |plan: std::sync::Arc<exec::Plan>| plan.touches(&graph, entry, doc, &facts, config);
             assert!(touches(
                 exec::run_query_bounded(&graph, "(and (task TODO) [[Target]])", 20, 1 << 20).1
             ));

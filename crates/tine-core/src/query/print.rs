@@ -962,7 +962,7 @@ fn is_bare_date_token(text: &str) -> bool {
 
 /// A DSL double-quoted string with `\` and `"` escaped, so a value containing a
 /// quote round-trips through `og::read_string`.
-fn quote_str(text: &str) -> String {
+pub(crate) fn quote_str(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -975,7 +975,9 @@ fn needs_quote(text: &str) -> bool {
             .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '"'))
 }
 
-fn word(text: &str) -> String {
+/// `text` as one OG DSL word: bare when the reader keeps it whole, else an
+/// EDN string.
+pub(crate) fn word(text: &str) -> String {
     if needs_quote(text) {
         quote_str(text)
     } else {

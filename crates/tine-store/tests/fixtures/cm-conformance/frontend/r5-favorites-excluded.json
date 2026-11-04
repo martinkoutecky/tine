@@ -1,5 +1,41 @@
 {
+  "backlinks": {
+    "A": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "cc27b5e9-7374-8e8c-8d3b-c1cd0851767c",
+            "raw": "[[A]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "x"
+      }
+    ],
+    "Favs": [],
+    "x": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Favs.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        1
+      ],
+      [
+        "pages/x.md",
+        0
+      ]
+    ],
+    []
+  ],
   "inventory": [
     {
       "day": null,
@@ -37,6 +73,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "Favs": "favs",
+    "x": "x"
+  },
   "open": {
     "A": {
       "journal": [
@@ -83,6 +124,29 @@
       "page": "pages/x.md"
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "A",
+      "owner": "pages/A.md"
+    },
+    {
+      "key": "favs",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Favs",
+      "owner": "pages/Favs.md"
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "x",
+      "owner": "pages/x.md"
+    }
+  ],
   "spellings": {
     "A": {
       "backend": [

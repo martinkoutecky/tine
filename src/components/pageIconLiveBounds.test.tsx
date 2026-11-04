@@ -55,7 +55,7 @@ it("updates namespace roots and descendants on unsaved edits and unloaded-page p
   load("![](../assets/a.png)", "Top/Child");
   const icons = vi.spyOn(backend(), "pageIcons").mockResolvedValue({ Top: "RT", "Top/Child": "![](../assets/a.png)" });
   vi.spyOn(backend(), "readAsset").mockResolvedValue(png);
-  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [{ key: "top/child", name: "Top/Child", is_journal: false, day: null, target: { kind: "existing", id: "pages/Image.md", others: [] } }] });
+  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [{ key: "top/child", name: "Top/Child", is_journal: false, day: null, target: { kind: "existing", id: "pages/Image.md", others: [] } }, { key: "top", name: "Top", is_journal: false, day: null, namespace_parent: true, target: { kind: "absent", id: "pages/Top.md" } }] });
   await refreshPageIndex(); dispose = render(() => <NamespaceMacro root="Top" />, root);
   await vi.waitFor(() => expect(root.querySelectorAll("img[data-page-image-icon]")).toHaveLength(1));
   setPageProperty("Top/Child", "icon", "AB");

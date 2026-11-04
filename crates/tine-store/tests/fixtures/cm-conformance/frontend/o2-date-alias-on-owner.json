@@ -1,6 +1,22 @@
 {
+  "backlinks": {
+    "Notes": []
+  },
   "conflicts": [
     "a"
+  ],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        1
+      ]
+    ],
+    []
   ],
   "inventory": [
     {
@@ -59,6 +75,12 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-26": "oct 26th, 2026",
+    "A": "a",
+    "Notes": "notes",
+    "a": "a"
+  },
   "open": {
     "2026-10-26": {
       "journal": [
@@ -119,6 +141,15 @@
       "page": "pages/A.md"
     }
   },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "2026-10-26": {
       "backend": [

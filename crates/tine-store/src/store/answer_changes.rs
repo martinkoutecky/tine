@@ -1,5 +1,6 @@
 //! I-12/I-25: the publication owns derived-answer deltas. Compare only changed
 //! parsed pages through the existing native answerers; never rebuild inventory.
+use super::inventory::content_free;
 use super::*;
 use serde::ser::SerializeStruct;
 use std::collections::BTreeSet;
@@ -46,6 +47,21 @@ impl Snapshot {
         };
         let full = names_changed || self.unreadable != old.unreadable;
         let mut own_names_changed = false;
+        let mut empty_alias_moved = false;
+        // Whether some page declares `key` (the resident alias relation; a
+        // generation without it is answered conservatively: yes).
+        let declared = |snapshot: &Self, key: &str| {
+            !snapshot.graph.alias_list_built() || snapshot.graph.alias_owner_path(key).is_some()
+        };
+        // Whether a file claims `key` and every claimant is content-free.
+        let claimed_content_free = |snapshot: &Self, key: &str| {
+            [false, true].into_iter().any(|journal| {
+                snapshot
+                    .claimants
+                    .get(&(journal, key.to_owned()))
+                    .is_some_and(|claimants| snapshot.claim_content_free(claimants))
+            })
+        };
         let mut keys: BTreeSet<String> = BTreeSet::new();
         let mut targets = HashSet::new();
         for path in paths {
@@ -76,9 +92,29 @@ impl Snapshot {
             if full {
                 continue;
             }
+            // EMPTY-ALIAS: the page's own file entry links to its alias owner
+            // while the file is content-free. Typing its first character (or
+            // clearing it) moves that link when the name is declared; the
+            // delta carries no file-claimed entry, so the window refetches.
+            // Rare (a flip of an aliased page) and O(1) to detect.
+            let free = |doc: Option<&tine_core::doc::Document>| doc.is_some_and(content_free);
+            if free(before.as_deref()) != free(after.as_deref()) {
+                let named = |snapshot: &Self| {
+                    let slot = *snapshot.graph.pages.positions.get(path)?;
+                    snapshot
+                        .graph
+                        .pages
+                        .get(slot)
+                        .map(|(entry, _)| tine_core::refs::page_key(&entry.name))
+                };
+                for key in [named(old), named(self)].into_iter().flatten() {
+                    empty_alias_moved |= declared(old, &key) || declared(self, &key);
+                }
+            }
             // Each key this page aliases or references, with the page's own
             // spelling of a reference (the spelling the graph-wide table may use).
-            let names = |doc: Option<&tine_core::doc::Document>| {
+            let names = |doc: Option<&tine_core::doc::Document>,
+                         config: &tine_core::config::Config| {
                 let mut aliases = BTreeSet::new();
                 let mut references = BTreeMap::new();
                 if let Some(doc) = doc {
@@ -87,26 +123,40 @@ impl Snapshot {
                             .iter()
                             .map(|alias| tine_core::refs::page_key(alias)),
                     );
-                    for name in crate::model::collect_document_referenced_names(doc) {
+                    for name in crate::model::collect_document_referenced_names(doc, config) {
                         references.insert(tine_core::refs::page_key(&name), name);
                     }
                 }
                 (aliases, references)
             };
-            let (aliases_before, references_before) = names(before.as_deref());
-            let (aliases_after, references_after) = names(after.as_deref());
-            keys.extend(aliases_before.symmetric_difference(&aliases_after).cloned());
+            let (aliases_before, references_before) = names(before.as_deref(), old.graph.config());
+            let (aliases_after, references_after) = names(after.as_deref(), self.graph.config());
+            for key in aliases_before.symmetric_difference(&aliases_after) {
+                // EMPTY-ALIAS: declaring (or dropping) an alias that a
+                // content-free file claims moves that file entry's link.
+                empty_alias_moved |=
+                    claimed_content_free(old, key) || claimed_content_free(self, key);
+                keys.insert(key.clone());
+            }
             // A page that moved slot can change which page spells a key.
             let moved = old.graph.pages.positions.get(path) != self.graph.pages.positions.get(path);
-            keys.extend(
-                references_before
-                    .iter()
-                    .chain(references_after.iter())
-                    .filter(|(key, _)| {
-                        moved || references_before.get(*key) != references_after.get(*key)
-                    })
-                    .map(|(key, _)| key.clone()),
-            );
+            // A changed name also changes its namespace parents' entries
+            // (`model::namespace_parents`): a parent appears with its first
+            // child, goes with its last, and can change spelling.
+            for (key, name) in references_before
+                .iter()
+                .chain(references_after.iter())
+                .filter(|(key, _)| {
+                    moved || references_before.get(*key) != references_after.get(*key)
+                })
+            {
+                keys.insert(key.clone());
+                if name.contains('/') {
+                    keys.extend(
+                        crate::model::namespace_parents::parent_prefixes(name).map(|(_, key)| key),
+                    );
+                }
+            }
         }
         own_names_changed |= !keys.is_empty();
         // The delta reads only what both generations already hold: the name
@@ -122,7 +172,7 @@ impl Snapshot {
                 .referenced_name_table_built()
                 .filter(|_| snapshot.graph.alias_list_built())
         }
-        let (inventory, delta) = if full {
+        let (inventory, delta) = if full || empty_alias_moved {
             (true, None)
         } else if !own_names_changed {
             (false, None)

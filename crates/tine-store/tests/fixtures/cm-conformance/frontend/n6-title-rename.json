@@ -1,5 +1,55 @@
 {
+  "backlinks": {
+    "Custom Name": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[Custom Name]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "Shown Title": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[Custom Name]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "linker": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/stem-name.md",
+        1
+      ],
+      [
+        "pages/linker.md",
+        0
+      ],
+      [
+        "pages/custom.md",
+        1
+      ]
+    ],
+    []
+  ],
   "inventory": [
     {
       "day": null,
@@ -37,6 +87,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "Custom Name": "custom name",
+    "Shown Title": "shown title",
+    "linker": "linker"
+  },
   "open": {
     "Custom Name": {
       "journal": [
@@ -83,6 +138,29 @@
       "page": "pages/linker.md"
     }
   },
+  "pages": [
+    {
+      "key": "custom name",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Custom Name",
+      "owner": "pages/custom.md"
+    },
+    {
+      "key": "linker",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "linker",
+      "owner": "pages/linker.md"
+    },
+    {
+      "key": "shown title",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Shown Title",
+      "owner": "pages/stem-name.md"
+    }
+  ],
   "spellings": {
     "Custom Name": {
       "backend": [

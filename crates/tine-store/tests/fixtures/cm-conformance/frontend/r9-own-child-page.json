@@ -1,0 +1,199 @@
+{
+  "backlinks": {
+    "Foo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[Foo]] and [[Foo/bar]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "Foo/bar": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[Foo]] and [[Foo/bar]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "p": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Foo.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/Foo%2Fbar.md",
+        1
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo",
+      "name": "Foo",
+      "target": {
+        "id": "pages/Foo.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo/bar",
+      "name": "Foo/bar",
+      "target": {
+        "id": "pages/Foo%2Fbar.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Foo": "foo",
+    "Foo/bar": "foo/bar",
+    "p": "p"
+  },
+  "open": {
+    "Foo": {
+      "journal": [
+        "journal",
+        "foo"
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    },
+    "Foo/bar": {
+      "journal": [
+        "journal",
+        "foo/bar"
+      ],
+      "page": [
+        "page",
+        "foo/bar"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  },
+  "owner": {
+    "Foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    },
+    "Foo/bar": {
+      "journal": null,
+      "page": "pages/Foo%2Fbar.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "foo",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Foo",
+      "owner": "pages/Foo.md"
+    },
+    {
+      "key": "foo/bar",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Foo/bar",
+      "owner": "pages/Foo%2Fbar.md"
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    }
+  ],
+  "spellings": {
+    "Foo": {
+      "backend": [
+        "page",
+        "foo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo"
+      ]
+    },
+    "Foo/bar": {
+      "backend": [
+        "page",
+        "foo/bar"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo/bar"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    }
+  }
+}

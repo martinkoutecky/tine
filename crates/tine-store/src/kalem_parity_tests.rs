@@ -31,7 +31,8 @@ const EXPECTED_DIFFERENCES: &[(&str, &str)] = &[
     ("logseq-md/backlinks/pages/contents.md", "(c) Logseq-created page absent on disk, recorded as NotFound rather than skipped"),
     ("logseq-md/backlinks/whiteboards/Design.edn", "(d) whiteboards are not graph text pages; store.rs::validated_page"),
     ("logseq-md/graph_view", "(d) no production graph-view builder; docs/BACKLOG.md Graph view"),
-    ("logseq-org/query/07", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
+    ("logseq-org/query/07", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits; D-20261019-Q8: a reference leaf matches the alias group (Kalem #+alias: Editor), a deliberate divergence from OG rules.cljc:140 exact match"),
+    ("logseq-org/query/08", "(b) D-20261019-Q8: a reference leaf matches the alias group (Kalem #+alias: Editor), a deliberate divergence from OG rules.cljc:140 exact match; Editor's group includes Kalem, so Kalem's own blocks match by path ref"),
     ("logseq-org/query/09", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-org/query/10", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-org/query/12", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
@@ -39,9 +40,9 @@ const EXPECTED_DIFFERENCES: &[(&str, &str)] = &[
     ("logseq-org/query/18", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-org/query/19", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-org/query/20", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
-    ("logseq-org/query/22", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
+    ("logseq-org/query/22", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits; D-20261019-Q8: a reference leaf matches the alias group (Kalem #+alias: Editor), a deliberate divergence from OG rules.cljc:140 exact match"),
     ("logseq-org/query/24", "(b) BACKLOG Advanced Datalog queries: page journal pull is outside the bounded subset; optional page-anchor extension"),
-    ("logseq-org/query/26", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
+    ("logseq-org/query/26", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits; D-20261019-Q8: a reference leaf matches the alias group (Kalem #+alias: Editor), a deliberate divergence from OG rules.cljc:140 exact match"),
     ("logseq-org/graph_view", "(d) no production graph-view builder; docs/BACKLOG.md Graph view"),
 ];
 

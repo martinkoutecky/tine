@@ -32,6 +32,8 @@ mod answer_changes;
 mod c3s_content_loss;
 #[path = "../tests/change_summary.rs"]
 mod change_summary;
+#[path = "../tests/cm_preamble_refs.rs"]
+mod cm_preamble_refs;
 #[path = "../tests/conformance_fixture.rs"]
 pub(crate) mod conformance_f3;
 #[path = "../tests/f8_vcs_markers.rs"]

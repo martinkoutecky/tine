@@ -30,6 +30,11 @@ const referenced = (name: string): PageInventoryEntry => ({
 const inventory = (rev: number, ...entries: PageInventoryEntry[]): PageInventory => ({ rev: String(rev), entries });
 
 async function loadInventory() {
+  // `vi.resetModules` gives each test a fresh wasm module: initialize it as
+  // main.tsx does before the page index runs (its reference-only rows ask the
+  // Rust answer, `hidden_from_all_pages`).
+  const { initParser } = await import("./render/parse");
+  await initParser();
   const ui = await import("./graphSession");
   const pages = await import("./pages");
   return { ...ui, ...pages };

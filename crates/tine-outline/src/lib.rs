@@ -16,6 +16,7 @@ pub mod lsdoc_block_parse;
 pub mod outline;
 pub mod page_filename;
 pub mod page_format;
+pub mod page_preamble;
 pub mod property_line;
 pub mod property_refs;
 pub mod property_visibility;

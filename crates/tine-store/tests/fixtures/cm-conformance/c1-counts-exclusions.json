@@ -1,0 +1,9 @@
+{
+  "favoritesPage": "Favs",
+  "files": {
+    "pages/Hub.md": "alias:: H\n\n- own [[Hub]]\n- own alias [[H]]\n",
+    "pages/Favs.md": "- [[Hub]]\n- [[H]]\n",
+    "pages/x.md": "- via alias [[H]]\n- direct [[Hub]]\n  - child also [[Hub]]\n- both [[Hub]] [[H]]\n",
+    "journals/2026_10_26.md": "- #Hub today\n- topic\n  topic:: [[Hub]]\n"
+  }
+}

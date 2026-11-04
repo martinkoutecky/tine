@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { aliasNamesOf, isPropertyLine, isRenderHiddenProp, pageProperties, visibleBody } from "./block";
+import { isPropertyLine, isRenderHiddenProp, pageProperties, visibleBody } from "./block";
+import { page_alias_spellings } from "./wasm/lsdoc_wasm.js";
 import type { Format } from "../types";
 
-const aliasNames = (text: string | null, format?: Format) => aliasNamesOf(pageProperties(text, format));
+// The page header's alias list is the store's answer (census Q7): the wasm
+// build of tine-core `page_header::page_alias_spellings`, sorted, one spelling
+// per page identity.
+const aliasNames = (text: string | null, format?: Format) => page_alias_spellings(text ?? undefined, undefined, format === "org");
 
 describe("visibleBody (body text for labels / reference render)", () => {
   it("uses whole-block task recognition before extracting the first visible line", () => {
@@ -21,7 +25,7 @@ describe("visibleBody (body text for labels / reference render)", () => {
 
 describe("aliasNames", () => {
   it("parses a comma-separated alias:: line", () => {
-    expect(aliasNames("alias:: Foo, Bar Baz, qux")).toEqual(["Foo", "Bar Baz", "qux"]);
+    expect(aliasNames("alias:: Foo, Bar Baz, qux")).toEqual(["Bar Baz", "Foo", "qux"]);
   });
   it("is case-insensitive on the key and ignores other properties", () => {
     expect(aliasNames("tags:: x\nAlias:: Foo\npublic:: true")).toEqual(["Foo"]);
@@ -33,12 +37,18 @@ describe("aliasNames", () => {
     expect(aliasNames("alias:: , ,")).toEqual([]);
   });
   it("reads org #+ALIAS: / :alias: drawer", () => {
-    expect(aliasNames("#+TITLE: P\n#+ALIAS: foo, bar", "org")).toEqual(["foo", "bar"]);
+    expect(aliasNames("#+TITLE: P\n#+ALIAS: foo, bar", "org")).toEqual(["bar", "foo"]);
     expect(aliasNames(":PROPERTIES:\n:alias: baz\n:END:", "org")).toEqual(["baz"]);
   });
   it("accepts aliases:: and full-width separators while quoted values suppress refs", () => {
-    expect(aliasNames("aliases:: Foo， Bar, Baz")).toEqual(["Foo", "Bar", "Baz"]);
+    expect(aliasNames("aliases:: Foo， Bar, Baz")).toEqual(["Bar", "Baz", "Foo"]);
     expect(aliasNames('alias:: "Foo, Bar"')).toEqual([]);
+  });
+  it("reads every alias line, and a properties-only first block only when there is no pre-block", () => {
+    expect(aliasNames("alias:: A\nalias:: B")).toEqual(["A", "B"]);
+    expect(page_alias_spellings(undefined, "alias:: B", false)).toEqual(["B"]);
+    expect(page_alias_spellings("alias:: A", "alias:: B", false)).toEqual(["A"]);
+    expect(page_alias_spellings(undefined, "alias:: B\nid:: 6539", false)).toEqual([]);
   });
 });
 

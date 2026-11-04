@@ -492,6 +492,14 @@ pub struct BlockDto {
     /// `raw` as an outline block because this flag is only result metadata.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_property: bool,
+    /// Synthetic, read-only result row representing the source page's prose
+    /// before its first block (`page_properties::preamble_content_range`), which
+    /// every reference question reads as the page's first block (CM step 2
+    /// batch 8). It has no outline identity until the page promotes it (GH #85):
+    /// the window opens the source page for it. Same save caveat as
+    /// `page_property`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page_preamble: bool,
     // --- M1: block-header facets, computed ONCE off the lsdoc projection (the one
     // grammar source) and shipped so the frontend never re-derives them with its
     // own scanner. Derived (not authoritative — `raw` round-trips); the frontend

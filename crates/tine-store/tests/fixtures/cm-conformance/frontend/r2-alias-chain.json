@@ -1,5 +1,152 @@
 {
+  "backlinks": {
+    "A": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:b",
+            "raw": "alias:: C",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "B"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:c",
+            "raw": "alias:: D",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "C"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "see [[D]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "B": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:a",
+            "raw": "alias:: B",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:c",
+            "raw": "alias:: D",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "C"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "see [[D]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "C": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:a",
+            "raw": "alias:: B",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:b",
+            "raw": "alias:: C",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "B"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "see [[D]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/C.md",
+        3
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        3
+      ],
+      [
+        "pages/B.md",
+        3
+      ]
+    ],
+    []
+  ],
   "inventory": [
     {
       "day": null,
@@ -64,6 +211,13 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "B": "b",
+    "C": "c",
+    "D": "d",
+    "Notes": "notes"
+  },
   "open": {
     "A": {
       "journal": [
@@ -138,6 +292,36 @@
       "page": "pages/Notes.md"
     }
   },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "A",
+      "owner": "pages/A.md"
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "B",
+      "owner": "pages/B.md"
+    },
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "C",
+      "owner": "pages/C.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
   "spellings": {
     "A": {
       "backend": [

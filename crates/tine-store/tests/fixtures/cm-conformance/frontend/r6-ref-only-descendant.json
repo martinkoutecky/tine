@@ -1,5 +1,63 @@
 {
+  "backlinks": {
+    "old": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[old/child]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "376b5cbd-782f-8eb3-93c9-5938d5a03905",
+            "raw": "and [[old]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "old/child": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[old/child]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "p": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/old.md",
+        2
+      ]
+    ],
+    [
+      [
+        "old/child",
+        1
+      ]
+    ]
+  ],
   "inventory": [
     {
       "day": null,
@@ -36,6 +94,11 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "old": "old",
+    "old/child": "old/child",
+    "p": "p"
+  },
   "open": {
     "old": {
       "journal": [
@@ -82,6 +145,29 @@
       "page": "pages/p.md"
     }
   },
+  "pages": [
+    {
+      "key": "old",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "old",
+      "owner": "pages/old.md"
+    },
+    {
+      "key": "old/child",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "old/child",
+      "owner": null
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    }
+  ],
   "spellings": {
     "old": {
       "backend": [

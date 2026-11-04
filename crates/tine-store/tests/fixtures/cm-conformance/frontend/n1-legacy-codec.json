@@ -1,15 +1,171 @@
 {
+  "backlinks": {
+    "%E9": [],
+    "50%25 of 100%": [],
+    "Contents": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ba510475-8484-88e9-9da5-e56565e25199",
+            "raw": "[[a/b]] [[Ten___Child]] [[café]] [[Contents]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "links"
+      }
+    ],
+    "Ten___Child": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ba510475-8484-88e9-9da5-e56565e25199",
+            "raw": "[[a/b]] [[Ten___Child]] [[café]] [[Contents]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "links"
+      }
+    ],
+    "___lead": [],
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ba510475-8484-88e9-9da5-e56565e25199",
+            "raw": "[[a/b]] [[Ten___Child]] [[café]] [[Contents]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "links"
+      }
+    ],
+    "a/b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ba510475-8484-88e9-9da5-e56565e25199",
+            "raw": "[[a/b]] [[Ten___Child]] [[café]] [[Contents]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "links"
+      }
+    ],
+    "café": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ba510475-8484-88e9-9da5-e56565e25199",
+            "raw": "[[a/b]] [[Ten___Child]] [[café]] [[Contents]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "links"
+      }
+    ],
+    "links": []
+  },
   "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/%E9.md",
+        0
+      ],
+      [
+        "pages/Ten___Child.md",
+        1
+      ],
+      [
+        "pages/50%25 of 100%.md",
+        0
+      ],
+      [
+        "pages/contents.md",
+        1
+      ],
+      [
+        "pages/a.b.md",
+        1
+      ],
+      [
+        "pages/links.md",
+        0
+      ],
+      [
+        "pages/___lead.md",
+        0
+      ],
+      [
+        "pages/caf%C3%A9.md",
+        1
+      ]
+    ],
+    [
+      [
+        "a",
+        1
+      ]
+    ]
+  ],
   "inventory": [
     {
       "day": null,
       "is_journal": false,
-      "key": "50% of 100%",
-      "name": "50% of 100%",
+      "key": "%e9",
+      "name": "%E9",
+      "target": {
+        "id": "pages/%E9.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "50%25 of 100%",
+      "name": "50%25 of 100%",
       "target": {
         "id": "pages/50%25 of 100%.md",
         "kind": "existing",
         "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "___lead",
+      "name": "___lead",
+      "target": {
+        "id": "pages/___lead.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
       }
     },
     {
@@ -70,15 +226,36 @@
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
+  "keyOf": {
+    "%E9": "%e9",
+    "50%25 of 100%": "50%25 of 100%",
+    "Contents": "contents",
+    "Ten___Child": "ten___child",
+    "___lead": "___lead",
+    "a": "a",
+    "a/b": "a/b",
+    "café": "café",
+    "links": "links"
+  },
   "open": {
-    "50% of 100%": {
+    "%E9": {
       "journal": [
         "journal",
-        "50% of 100%"
+        "%e9"
       ],
       "page": [
         "page",
-        "50% of 100%"
+        "%e9"
+      ]
+    },
+    "50%25 of 100%": {
+      "journal": [
+        "journal",
+        "50%25 of 100%"
+      ],
+      "page": [
+        "page",
+        "50%25 of 100%"
       ]
     },
     "Contents": {
@@ -99,6 +276,16 @@
       "page": [
         "page",
         "ten___child"
+      ]
+    },
+    "___lead": {
+      "journal": [
+        "journal",
+        "___lead"
+      ],
+      "page": [
+        "page",
+        "___lead"
       ]
     },
     "a": {
@@ -143,7 +330,11 @@
     }
   },
   "owner": {
-    "50% of 100%": {
+    "%E9": {
+      "journal": null,
+      "page": "pages/%E9.md"
+    },
+    "50%25 of 100%": {
       "journal": null,
       "page": "pages/50%25 of 100%.md"
     },
@@ -154,6 +345,10 @@
     "Ten___Child": {
       "journal": null,
       "page": "pages/Ten___Child.md"
+    },
+    "___lead": {
+      "journal": null,
+      "page": "pages/___lead.md"
     },
     "a": {
       "journal": null,
@@ -172,16 +367,92 @@
       "page": "pages/links.md"
     }
   },
+  "pages": [
+    {
+      "key": "%e9",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "%E9",
+      "owner": "pages/%E9.md"
+    },
+    {
+      "key": "50%25 of 100%",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "50%25 of 100%",
+      "owner": "pages/50%25 of 100%.md"
+    },
+    {
+      "key": "___lead",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "___lead",
+      "owner": "pages/___lead.md"
+    },
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "a/b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a/b",
+      "owner": "pages/a.b.md"
+    },
+    {
+      "key": "café",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "café",
+      "owner": "pages/caf%C3%A9.md"
+    },
+    {
+      "key": "contents",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Contents",
+      "owner": "pages/contents.md"
+    },
+    {
+      "key": "links",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "links",
+      "owner": "pages/links.md"
+    },
+    {
+      "key": "ten___child",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Ten___Child",
+      "owner": "pages/Ten___Child.md"
+    }
+  ],
   "spellings": {
-    "50% of 100%": {
+    "%E9": {
       "backend": [
         "page",
-        "50% of 100%"
+        "%e9"
       ],
       "day": null,
       "model": [
         "page",
-        "50% of 100%"
+        "%e9"
+      ]
+    },
+    "50%25 of 100%": {
+      "backend": [
+        "page",
+        "50%25 of 100%"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "50%25 of 100%"
       ]
     },
     "Contents": {
@@ -204,6 +475,17 @@
       "model": [
         "page",
         "ten___child"
+      ]
+    },
+    "___lead": {
+      "backend": [
+        "page",
+        "___lead"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "___lead"
       ]
     },
     "a": {

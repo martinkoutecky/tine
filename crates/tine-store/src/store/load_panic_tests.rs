@@ -576,21 +576,31 @@ fn recovered_good(root: &Path, store: &Store, no_row: NoRowExplains) -> String {
 /// REG-FAILED-LOAD-RACED-OBSERVATION-KEPT, the reconcile: a raced observation
 /// stamps the file with its current metadata and the published revision, so
 /// recovery's diff must hash it, or its row stays on the old bytes for good.
+/// A recovery that fails again consumes the race; the row it cached then
+/// carries the delivery to the next one.
 #[test]
 fn a_raced_delivery_while_the_load_failed_reaches_the_index_after_recovery() {
-    let (root, store, no_row) = failed_at_the_index_stage("raced-reconcile");
-    let path = store.graph.root.join("pages/Good.md");
-    let published = FileRev::from_file(&path).unwrap();
-    deliver_with_old_mtime(&path, "- delivered\n");
-    let id = FileId::from("pages/Good.md".to_owned());
-    let raced = store
-        .watch
-        .note_own_observed(&[(id, Some(published))], &HashMap::new());
-    assert!(raced.contains(&path));
-    store.watch.reconcile_raced(&raced);
-    assert_eq!(recovered_good(&root, &store, no_row), "delivered");
-    drop(store);
-    let _ = fs::remove_dir_all(&root);
+    for second_failure in [false, true] {
+        let (root, store, no_row) = failed_at_the_index_stage("raced-reconcile");
+        let path = store.graph.root.join("pages/Good.md");
+        let published = FileRev::from_file(&path).unwrap();
+        deliver_with_old_mtime(&path, "- delivered\n");
+        let id = FileId::from("pages/Good.md".to_owned());
+        let raced = store
+            .watch
+            .note_own_observed(&[(id, Some(published))], &HashMap::new());
+        assert!(raced.contains(&path));
+        store.watch.reconcile_raced(&raced);
+        if second_failure {
+            assert!(
+                store.refresh(Depth::Stamps).is_err(),
+                "no row explains it yet"
+            );
+        }
+        assert_eq!(recovered_good(&root, &store, no_row), "delivered");
+        drop(store);
+        let _ = fs::remove_dir_all(&root);
+    }
 }
 
 /// REG-FAILED-LOAD-RACED-OBSERVATION-KEPT, the publication's early return.

@@ -458,7 +458,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async pageModified() {
       return { rev: "0", modified: [] };
     },
-    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
+    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], []]; },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);

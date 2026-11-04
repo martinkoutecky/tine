@@ -19,6 +19,12 @@ const existing = (name: string): PageInventoryEntry => ({
   key: name.toLowerCase(), name, is_journal: false, day: null,
   target: { kind: "existing", id: `pages/${name.replaceAll("/", "___")}.md`, others: [] },
 });
+// A namespace parent as the backend lists it (CM step 2 batch 10, model rule 1):
+// an absent entry that opens itself, flagged `namespace_parent`.
+const parent = (name: string): PageInventoryEntry => ({
+  key: name.toLowerCase(), name, is_journal: false, day: null, namespace_parent: true,
+  target: { kind: "absent", id: `pages/${name.replaceAll("/", "___")}.md` },
+});
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0)); };
 // EmojiText may draw an emoji as an image; compare the user's logical label.
 const logical = (node: Node): string => node.nodeType === 3 ? node.textContent ?? "" : (node as Element).tagName === "IMG" ? (node as Element).getAttribute("alt") ?? "" : [...node.childNodes].map(logical).join("");
@@ -33,11 +39,13 @@ const setFilter = async (host: HTMLElement, text: string) => {
   await settle();
 };
 
-const SMALL = ["Project", "Project/Roadmap", "Project/Roadmap/2026", "Project/Notes", "Archive/Old/Notes", "Archive/Old/Plans", "Other/Notes", "Plain"];
+const SMALL_FILES = ["Project", "Project/Roadmap", "Project/Roadmap/2026", "Project/Notes", "Archive/Old/Notes", "Archive/Old/Plans", "Other/Notes", "Plain"];
+const SMALL = () => [...SMALL_FILES.map(existing), ...["Archive", "Archive/Old", "Other"].map(parent)];
 const BIG = 4000;
 const big = () => [
   ...Array.from({ length: BIG }, (_, i) => existing(`Area ${String(i % 20).padStart(2, "0")}/Page ${String(i).padStart(5, "0")}`)),
   existing("Plain"),
+  ...Array.from({ length: 20 }, (_, i) => parent(`Area ${String(i).padStart(2, "0")}`)),
 ];
 
 function stubRouter() {
@@ -86,12 +94,13 @@ afterEach(() => {
 
 describe("the Namespaces view", () => {
   it("opens with the top-level namespaces expanded one level and shows each namespace's size", async () => {
-    const { host, dispose } = await mountNamespaces(SMALL.map(existing));
+    const { host, dispose } = await mountNamespaces(SMALL());
     try {
       expect(rowLabels(host)).toEqual(["Archive", "Old", "Other", "Notes", "Project", "Notes", "Roadmap"]);
-      // Archive and Archive/Old have no page of their own, Project does; sizes count pages below.
-      expect(counts(host)).toEqual(["2", "2", "1", "", "3", "", "1"]);
-      expect(host.querySelector(".all-pages-count")!.textContent).toBe("7 pages in 5 namespaces");
+      // Archive and Archive/Old have no file of their own but are pages (namespace
+      // parents, model rule 1); sizes count the pages below.
+      expect(counts(host)).toEqual(["3", "2", "1", "", "3", "", "1"]);
+      expect(host.querySelector(".all-pages-count")!.textContent).toBe("10 pages in 5 namespaces");
       const rows = [...host.querySelectorAll(".ns-view-row")];
       expect(rows.map((row) => row.getAttribute("aria-level"))).toEqual(["1", "2", "1", "2", "1", "2", "2"]);
       expect(rows[0].getAttribute("aria-expanded")).toBe("true");
@@ -100,7 +109,7 @@ describe("the Namespaces view", () => {
   });
 
   it("expands and collapses a namespace from its disclosure, and all at once", async () => {
-    const { host, dispose } = await mountNamespaces(SMALL.map(existing));
+    const { host, dispose } = await mountNamespaces(SMALL());
     try {
       host.querySelector<HTMLButtonElement>('.ns-view-row[aria-level="1"] .ns-view-toggle')!.click(); // Archive
       await settle();
@@ -117,7 +126,7 @@ describe("the Namespaces view", () => {
   });
 
   it("filters by full path, lists each match with the path above it, and returns to the remembered tree", async () => {
-    const { host, dispose } = await mountNamespaces(SMALL.map(existing));
+    const { host, dispose } = await mountNamespaces(SMALL());
     try {
       button(host, "Collapse all").click();
       await settle();
@@ -138,7 +147,7 @@ describe("the Namespaces view", () => {
   });
 
   it("opens a namespace by the ordinary link gestures", async () => {
-    const { host, router, dispose } = await mountNamespaces(SMALL.map(existing));
+    const { host, router, dispose } = await mountNamespaces(SMALL());
     try {
       const rows = [...host.querySelectorAll<HTMLElement>(".ns-view-open")];
       const project = rows.find((el) => el.title === "Project")!;
@@ -151,7 +160,7 @@ describe("the Namespaces view", () => {
   });
 
   it("shows a page's icon before its name", async () => {
-    const { host, dispose } = await mountNamespaces(SMALL.map(existing), { Project: "🚩" });
+    const { host, dispose } = await mountNamespaces(SMALL(), { Project: "🚩" });
     try {
       await vi.waitFor(() => expect(rowLabels(host)).toContain("🚩 Project"));
     } finally { dispose(); }

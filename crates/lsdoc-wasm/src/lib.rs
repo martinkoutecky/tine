@@ -106,13 +106,81 @@ pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
+#[path = "../../tine-core/src/page_header.rs"]
+mod page_header;
+
+/// The alias spellings a page declares (census Q7): the store's own answer,
+/// `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+/// properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+/// one spelling per page identity). The page header's alias list shows this.
+/// O(header bytes).
+#[wasm_bindgen]
+pub fn page_alias_spellings(pre_block: Option<String>, first_root: Option<String>, is_org: bool) -> Vec<String> {
+    page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
+}
+
 #[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
 mod og_built_in;
+
+// The reference evidence's walker and the config slice it reads, compiled
+// from tine-core's own files (I-12: one answer for "what does this block
+// reference"). They reach their outside names through `super::`, provided
+// here: `block_regions`, `og_built_in`, `is_query_macro_name` (above and
+// below), and these. Only part of each module is used here.
+#[allow(dead_code)]
+#[path = "../../tine-core/src/query/atom/parse_config.rs"]
+mod parse_config;
+use parse_config::{reference_parsing_suppressed, separated_by_commas, ParseConfig};
+
+/// OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+/// `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+/// frontend's fallback when the graph's `linkable_property_keys` is absent.
+#[wasm_bindgen]
+pub fn is_editable_linkable_built_in(key: &str) -> bool {
+    parse_config::is_editable_linkable_built_in(key)
+}
+use tine_outline::editor_text::property_key_norm;
+use tine_outline::lsdoc_block_parse::parse_inline_bounded;
+#[allow(dead_code)]
+#[path = "../../tine-core/src/reference_evidence/walk.rs"]
+mod walk;
+
+/// Every page name one block's source references, in source order (may
+/// repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+/// over the same block parse, under the default parse config. O(block bytes)
+/// plus one inline parse per property value or macro argument; no I/O.
+#[wasm_bindgen]
+pub fn block_reference_names(raw: &str, is_org: bool) -> Vec<String> {
+    let blocks = lsdoc_block_parse::parse_projection(raw, is_org).blocks;
+    let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    walk::project_with_config(raw, is_org, &blocks, &regions, ParseConfig::default_ref())
+        .explicit
+        .into_iter()
+        .map(|reference| reference.name)
+        .collect()
+}
 
 /// OG built-ins excluded from default query-table property columns.
 #[wasm_bindgen]
 pub fn is_og_built_in_property(key: &str) -> bool {
     og_built_in::is_og_built_in_property(key)
+}
+
+/// Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+/// page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+/// with tine-core).
+#[wasm_bindgen]
+pub fn hidden_from_all_pages(name: &str) -> bool {
+    og_built_in::hidden_from_all_pages(name)
+}
+
+/// The prose of a Markdown page preamble after its page header, as UTF-8 byte
+/// offsets `[start, end]`, or `null` (I-12: the one answerer,
+/// `page_preamble::page_preamble_content`, which the store's reference answer
+/// reads too).
+#[wasm_bindgen]
+pub fn page_preamble_content_json(raw: &str) -> String {
+    serde_json::to_string(&tine_outline::page_preamble::page_preamble_content(raw).map(|r| [r.0, r.1])).unwrap()
 }
 
 /// Whether a block property key is hidden from rendered chips (I-12: the one
