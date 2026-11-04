@@ -565,7 +565,9 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
             Some((key, value)) => match mine_props.get(key) {
                 None => extra_props.push(line.to_owned()),
                 Some((_, mine_value)) if mine_value.trim() == value.trim() => {}
-                Some((at, mine_value)) if matches!(key.as_str(), "tags" | "alias" | "aliases") => {
+                Some((at, mine_value))
+                    if tine_core::query::atom::is_editable_linkable_built_in(key) =>
+                {
                     let split = |v: &str| -> Vec<String> {
                         v.split(tine_core::refs::is_linkable_property_separator)
                             .map(|m| m.trim().to_owned())

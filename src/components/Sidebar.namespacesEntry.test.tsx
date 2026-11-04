@@ -28,7 +28,11 @@ afterEach(() => {
 
 describe("the sidebar Namespaces section", () => {
   it("keeps its inline tree, offers the full view only when expanded, and completes navigation when it opens", async () => {
-    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: ["Project/Roadmap", "Project/Notes"].map(existing) });
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
+      ...["Project/Roadmap", "Project/Notes"].map(existing),
+      // The namespace parent, as the backend lists it (CM step 2 batch 10).
+      { key: "project", name: "Project", is_journal: false, day: null, namespace_parent: true, target: { kind: "absent", id: "pages/Project.md" } },
+    ] });
     bumpGraphEpoch();
     const completion = vi.fn();
     const root = document.createElement("div");

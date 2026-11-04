@@ -125,7 +125,15 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 11)
+## Identity (ceiling: 13)
+# REG-CM-MERGE-LOSES-ALIASES: a merge must keep both pages' aliases, which the
+# alias answer reads from the page header (pre-block, else a properties-only
+# first root) under the keys alias/aliases. No existing item answers either
+# question for a page the caller holds as text (`resolve` answers names in the
+# published graph, not a merge's two parsed pages); exposing the answer's own
+# two rules keeps the merge from restating them (I-12).
+fn query::page_header_text
+fn query::is_alias_key
 # GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
 # candidates. Expose the existing Unicode case-only predicate so the pull
 # planner and host/transaction publication share one candidate policy;
@@ -346,7 +354,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 22)
+## WholeGraph: Names (ceiling: 24)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
@@ -362,6 +370,17 @@ field store::InventoryEntry.day
 # frontend routes every rendered link by it. 17 -> 21, and 22 for the
 # test-faults-gated per-name oracle below.
 field store::InventoryEntry.link
+# CM step 2 batch 10 (S8, model rule 1): a namespace parent `n` of a listed
+# name `n/y` is an inventory entry like any reference-only name; why it exists
+# is a flag on the same entry (sent only when true), not a sibling method or
+# scope: every entry carries it and the namespace views nest by it. 22 -> 23.
+field store::InventoryEntry.namespace_parent
+# CM step 2 EMPTY-ALIAS (S14, D-20261103-CMA): a name whose files are all
+# content-free yields to its alias owner; that this is why `link` differs is a
+# flag on the same entry (sent only when true), not a sibling method or scope:
+# `link` alone cannot say it (a date-shaped name's link also moves), and named
+# routes follow `link` only for alias entries and these. 23 -> 24.
+field store::InventoryEntry.empty_alias
 struct store::LinkTarget
 field store::LinkTarget.name
 field store::LinkTarget.is_journal

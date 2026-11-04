@@ -1,0 +1,162 @@
+[
+  {
+    "key": "über",
+    "name": "Über"
+  },
+  {
+    "key": "über",
+    "name": "über"
+  },
+  {
+    "key": "über",
+    "name": "Über"
+  },
+  {
+    "key": "über",
+    "name": "über"
+  },
+  {
+    "key": "über",
+    "name": "ÜBER"
+  },
+  {
+    "key": "über",
+    "name": " Über "
+  },
+  {
+    "key": "über",
+    "name": "Über/"
+  },
+  {
+    "key": "über",
+    "name": "/Über"
+  },
+  {
+    "key": "über",
+    "name": "/Über/"
+  },
+  {
+    "key": "/über/",
+    "name": "//Über//"
+  },
+  {
+    "key": "foo",
+    "name": "Foo"
+  },
+  {
+    "key": "foo",
+    "name": "foo"
+  },
+  {
+    "key": "foo",
+    "name": " Foo"
+  },
+  {
+    "key": "foo",
+    "name": "Foo "
+  },
+  {
+    "key": "foo",
+    "name": "/Foo"
+  },
+  {
+    "key": "foo",
+    "name": "Foo/"
+  },
+  {
+    "key": "foo",
+    "name": "/Foo/"
+  },
+  {
+    "key": "/foo/",
+    "name": "//Foo//"
+  },
+  {
+    "key": " foo ",
+    "name": "/ Foo /"
+  },
+  {
+    "key": "foo",
+    "name": "　Foo"
+  },
+  {
+    "key": "foo",
+    "name": "Foo "
+  },
+  {
+    "key": "foo/bar",
+    "name": "Foo/Bar"
+  },
+  {
+    "key": "foo/bar",
+    "name": "foo/bar/"
+  },
+  {
+    "key": "οδος",
+    "name": "ΟΔΟΣ"
+  },
+  {
+    "key": "οδος",
+    "name": "οδος"
+  },
+  {
+    "key": "οδοσ",
+    "name": "οδοσ"
+  },
+  {
+    "key": "i̇stanbul",
+    "name": "İstanbul"
+  },
+  {
+    "key": "i̇stanbul",
+    "name": "i̇stanbul"
+  },
+  {
+    "key": "istanbul",
+    "name": "istanbul"
+  },
+  {
+    "key": "straße",
+    "name": "Straße"
+  },
+  {
+    "key": "strasse",
+    "name": "STRASSE"
+  },
+  {
+    "key": "strasse",
+    "name": "strasse"
+  },
+  {
+    "key": "ǆemal",
+    "name": "ǅemal"
+  },
+  {
+    "key": "ǆemal",
+    "name": "ǆemal"
+  },
+  {
+    "key": "ｔｉｎｅ",
+    "name": "Ｔｉｎｅ"
+  },
+  {
+    "key": "tine",
+    "name": "tine"
+  },
+  {
+    "key": "å",
+    "name": "Å"
+  },
+  {
+    "key": "å",
+    "name": "Å"
+  },
+  {
+    "key": "å",
+    "name": "å"
+  },
+  {
+    "key": "å",
+    "name": "Å"
+  }
+]

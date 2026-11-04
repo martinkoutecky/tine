@@ -1,4 +1,4 @@
-use crate::test_host_writer::{HostWriter, SaveRefused};
+use crate::test_host_writer::HostWriter;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tine_core::model::{BlockDto, PageDto, PageKind};
@@ -121,31 +121,20 @@ fn page_resolution_and_force_save_preserve_the_live_revision_guard() {
         "alias:: Shortcut\n- changed outside\n",
     )
     .unwrap();
-    // Keep mine: the save guards on the bytes it reads now, not the editor's.
-    let writer = HostWriter::start(&store);
-    let (_, current) = store.read(&alias.id.file(), None).unwrap();
-    writer
-        .save(
-            tine_store::EditKind::ReplacePage,
-            &alias.id,
-            SaveBase::Existing(current),
-            &doc,
-        )
-        .unwrap();
+    // Keep mine, through the host as the window sends it: the save guards on
+    // the disk bytes the user reviewed, not the editor's base.
+    let reviewed = std::fs::read(fixture.0.join("pages/Note.md")).unwrap();
+    let reviewed = String::from(tine_store::FileRev::from_bytes(&reviewed));
+    crate::l9_live_safety::save_guarded(&store, &alias.id, &doc, &reviewed).unwrap();
     assert!(std::fs::read_to_string(fixture.0.join("pages/Note.md"))
         .unwrap()
         .contains("kept by force"));
     std::fs::write(fixture.0.join("pages/Note.md"), [0xff]).unwrap();
     // Keep mine over bytes that are not text refuses: nothing to keep them by.
-    let (_, undecodable) = store.read(&alias.id.file(), None).unwrap();
+    let undecodable = String::from(tine_store::FileRev::from_bytes(&[0xff]));
     assert!(matches!(
-        writer.save(
-            tine_store::EditKind::ReplacePage,
-            &alias.id,
-            SaveBase::Existing(undecodable),
-            &doc,
-        ),
-        Err(SaveRefused::Planned(_))
+        crate::l9_live_safety::save_guarded(&store, &alias.id, &doc, &undecodable),
+        Err(tine_store::PageRefusal::Undecodable)
     ));
     assert_eq!(
         std::fs::read(fixture.0.join("pages/Note.md")).unwrap(),

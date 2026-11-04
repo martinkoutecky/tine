@@ -133,6 +133,18 @@ async function seedNamespaceInventory(names: string[]) {
     key: pageIdentityKey(name), name, is_journal: false, day: null,
     target: { kind: "existing", id: `pages/${name.replaceAll("/", "___")}.md`, others: [] },
   }));
+  // The namespace parents the backend lists (CM step 2 batch 10, model rule 1).
+  const listed = new Set(entries.map((entry) => entry.key));
+  for (const name of names) {
+    const segs = name.split("/");
+    for (let k = 1; k < segs.length; k++) {
+      const prefix = segs.slice(0, k).join("/");
+      const key = pageIdentityKey(prefix);
+      if (listed.has(key)) continue;
+      listed.add(key);
+      entries.push({ key, name: prefix, is_journal: false, day: null, namespace_parent: true, target: { kind: "absent", id: `pages/${prefix.replaceAll("/", "___")}.md` } });
+    }
+  }
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   resetPageIndex();
   await refreshPageIndex();

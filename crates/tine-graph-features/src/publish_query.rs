@@ -28,6 +28,7 @@ use tine_core::query::macro_text::query_macro_extents;
 use tine_core::query::wire_parse::{
     anchored_view, parse_query_pair, ParsedQuery, QueryTextDialect,
 };
+use tine_core::refs::page_key;
 use tine_store::Resolved;
 use tine_store::{IrAnswer, IrRequest, Store, WholeGraph};
 
@@ -339,13 +340,13 @@ fn resolve_plan_review(
         result.matched_total = Some(result.total);
     }
     let corpus = graph.corpus(None);
-    // Owner files by (kind, ASCII-folded name), built once rather than per group.
+    // Owner files by (kind, page_key), built once rather than per group. Page
+    // identity is `page_key` everywhere here (census Q1), as in the reader
+    // (`publishedBackend.ts pageByName`): two files claiming one key are an
+    // ambiguous owner for every name, not only an ASCII one.
     let mut owners: HashMap<_, Vec<&str>> = HashMap::new();
     for page in &corpus.pages {
-        (owners
-            .entry((page.kind, page.name.to_ascii_lowercase()))
-            .or_default())
-        .push(page.id.as_str());
+        (owners.entry((page.kind, page_key(&page.name))).or_default()).push(page.id.as_str());
     }
     let mut paths = HashSet::new();
     let anchor = match &result.rows {
@@ -357,7 +358,7 @@ fn resolve_plan_review(
         }
         QueryRows::Block { groups } => {
             for group in groups {
-                match owners.get(&(group.kind, group.page.to_ascii_lowercase())) {
+                match owners.get(&(group.kind, page_key(&group.page))) {
                     Some(files) if files.len() == 1 => paths.insert(files[0].to_owned()),
                     _ => return Err(refusal("query result has an ambiguous page owner")),
                 };
@@ -400,7 +401,7 @@ fn resolve_plan_review(
     let selects_host_page = request.current_page.as_deref().is_some_and(|host| {
         chosen
             .iter()
-            .any(|page| page.name.to_lowercase() == host.to_lowercase())
+            .any(|page| page_key(&page.name) == page_key(host))
     });
     let selected = tine_core::Corpus { pages: chosen };
     // The answer is closed to the exported pages too, so neither a ticked
@@ -410,7 +411,7 @@ fn resolve_plan_review(
         let names: HashSet<_> = selected
             .pages
             .iter()
-            .map(|p| (p.kind, p.name.to_lowercase()))
+            .map(|p| (p.kind, page_key(&p.name)))
             .collect();
         result = close_query_result(result, &paths, &names);
     }
@@ -557,7 +558,7 @@ fn close_query_result(
     match &mut result.rows {
         QueryRows::Page { pages } => pages.retain(|page| paths.contains(page.path.as_str())),
         QueryRows::Block { groups } => {
-            groups.retain(|group| names.contains(&(group.kind, group.page.to_lowercase())))
+            groups.retain(|group| names.contains(&(group.kind, page_key(&group.page))))
         }
     }
     result.total = match &result.rows {
@@ -589,7 +590,7 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
     let names: HashSet<_> = corpus
         .pages
         .iter()
-        .map(|page| (page.kind, page.name.to_lowercase()))
+        .map(|page| (page.kind, page_key(&page.name)))
         .collect();
     let mut records = Vec::new();
     let registry = ir_registry(graph)?;
@@ -665,7 +666,7 @@ pub(crate) fn snapshot_at(
     let selected: HashSet<_> = corpus
         .pages
         .iter()
-        .map(|p| (p.kind, p.name.to_lowercase()))
+        .map(|p| (p.kind, page_key(&p.name)))
         .collect();
     let inventory = graph.inventory(tine_store::InventoryScope::All);
     // One pass over the inventory, not one per page (I-15).
@@ -766,7 +767,7 @@ pub(crate) fn snapshot_at(
             .map_err(|e| io::Error::other(format!("{e:?}")))?;
         let closed: Vec<_> = groups
             .iter()
-            .filter(|g| selected.contains(&(g.kind, g.page.to_lowercase())))
+            .filter(|g| selected.contains(&(g.kind, page_key(&g.page))))
             .cloned()
             .collect();
         if !closed.is_empty() {
@@ -1016,13 +1017,13 @@ pub fn publish_query_with_sheets(
         .selected
         .pages
         .iter()
-        .map(|p| p.name.to_lowercase())
+        .map(|p| page_key(&p.name))
         .collect();
     let mut home = request.name.trim().to_owned();
-    if taken.contains(&home.to_lowercase()) {
+    if taken.contains(&page_key(&home)) {
         home.push_str(" (export)");
     }
-    while !taken.insert(home.to_lowercase()) {
+    while !taken.insert(page_key(&home)) {
         home.push_str(" 2");
     }
     let snap = snapshot(

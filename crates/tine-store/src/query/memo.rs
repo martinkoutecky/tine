@@ -239,8 +239,12 @@ impl QueryMemo {
     /// Carry `previous`'s answers into this (new) snapshot's memo, dropping
     /// every answer one of `edits` (entry, old document, new document) can
     /// change. `parse_config` is the new snapshot's.
+    /// `graph` is the snapshot `previous` belongs to (its plans' reference
+    /// classes are that generation's; a carry happens only when no alias
+    /// and no page name moved).
     pub(crate) fn carry_from(
         &self,
+        graph: &crate::model::ReadSnapshot,
         previous: &QueryMemo,
         parse_config: &ParseConfig,
         edits: &[(PageEntry, Arc<Document>, Arc<Document>)],
@@ -260,6 +264,7 @@ impl QueryMemo {
                 };
                 !(cached.contains(entry)
                     || plan.touches_edit(
+                        graph,
                         entry,
                         before,
                         after,

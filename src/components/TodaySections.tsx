@@ -145,7 +145,10 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
                 <Switch>
                   <Match when={item.kind === "upcoming"}>{props.upcoming}</Match>
                   <Match when={item.kind === "query" && detectMacro(item.raw, item.format)}>
-                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty />}
+                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty
+                      // GH #855: the section block's View properties (sort, group) apply here
+                      // too; the feed is read-only, View edits happen on the sections page.
+                      hostRaw={{ raw: item.raw, format: item.format }} />}
                   </Match>
                   <Match when={item.kind === "begin-query" && inspectBeginQuery(item.raw, item.format)}>
                     {(match) => <BeginQuery match={match()} currentPage={props.today} hideWhenEmpty />}

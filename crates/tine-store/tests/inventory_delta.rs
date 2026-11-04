@@ -101,9 +101,10 @@ fn assert_fresh(root: &Path, store: Arc<Store>, what: &str, restart: bool) -> Ar
         .filter(|(_, target)| !target.starts_with("Absent"))
         .map(|((_, key, _), _)| key)
         .collect();
+    // Namespace parents are absent too, but come from no reference.
     let absent: Vec<&String> = live
         .iter()
-        .filter(|(_, target)| target.starts_with("Absent"))
+        .filter(|(_, target)| target.starts_with("Absent") && !target.ends_with(" parent"))
         .map(|((_, key, _), _)| key)
         .collect();
     let expected: Vec<&String> = walk.keys().filter(|key| !listed.contains(key)).collect();
@@ -163,8 +164,25 @@ fn image(entries: &[InventoryEntry]) -> BTreeMap<(bool, String, String), String>
                     entry.name.clone(),
                 ),
                 // `link` is part of the answer the window holds: a delta that
-                // left it stale would route a link to the wrong page.
-                format!("{:?} {:?} {:?}", entry.target, entry.day, entry.link),
+                // left it stale would route a link to the wrong page; so is
+                // why a fileless entry exists (a namespace parent), and
+                // whether an empty file yields its name (EMPTY-ALIAS).
+                format!(
+                    "{:?} {:?} {:?}{}{}",
+                    entry.target,
+                    entry.day,
+                    entry.link,
+                    if entry.namespace_parent {
+                        " parent"
+                    } else {
+                        ""
+                    },
+                    if entry.empty_alias {
+                        " empty-alias"
+                    } else {
+                        ""
+                    }
+                ),
             )
         })
         .collect()
@@ -349,6 +367,120 @@ fn deltas_track_aliases_spellings_journals_and_namespaces() {
     }
     // Removing B's references leaves C's spelling.
     assert_patch(&store, "pages/B.md", "nothing");
+    store.close();
+}
+
+/// The namespace parents `inventory(All)` lists (model rule 1, SPEC §3.2,
+/// CM3-3; conformance S8): (name, flag) of every fileless, non-alias entry.
+fn fileless(store: &Store) -> Vec<(String, bool)> {
+    store
+        .whole_graph()
+        .unwrap()
+        .inventory(InventoryScope::All)
+        .0
+        .iter()
+        .filter(|entry| matches!(entry.target, crate::Resolved::Absent { .. }))
+        .map(|entry| (entry.name.clone(), entry.namespace_parent))
+        .collect()
+}
+
+/// CM step 2 batch 10 (S8): `n/y` makes `n` a page, from a page file's name
+/// (title or file name, journals too) and from a reference, at every level;
+/// a blank file supplies its own page only (OG `extract` skips blank
+/// content); a parent some file claims, some page declares as an alias or
+/// some reference names is listed as that, not as a parent.
+#[test]
+fn namespace_parents_are_listed_pages() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/x.md", "title:: Work/Plan\n- body\n"),
+        ("pages/Notes.md", "- [[Area/Sub/Leaf]] [[topic]]\n"),
+        ("pages/Empty%2FChild.md", ""),
+        ("pages/Owned%2FChild.md", "- c\n"),
+        ("pages/Owned.md", "- the parent has its own file\n"),
+        (
+            "pages/Holder.md",
+            "alias:: Nick\n- [[nick/sub]] [[Topic/Sub]]\n",
+        ),
+    ]);
+    let mut listed = fileless(&store);
+    listed.sort();
+    assert_eq!(
+        listed,
+        [
+            ("Area".to_owned(), true),
+            ("Area/Sub".to_owned(), true),
+            ("Area/Sub/Leaf".to_owned(), false),
+            ("Topic/Sub".to_owned(), false),
+            ("Work".to_owned(), true),
+            ("nick/sub".to_owned(), false),
+            ("topic".to_owned(), false),
+        ]
+    );
+    // The answer page queries and All Pages' counts read lists them too.
+    let view = store.whole_graph().unwrap();
+    let mut names = view.graph.reference_only_page_names();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "Area",
+            "Area/Sub",
+            "Area/Sub/Leaf",
+            "Topic/Sub",
+            "Work",
+            "nick/sub",
+            "topic"
+        ]
+    );
+    // `[[Work]]` opens the parent page itself.
+    assert_eq!(
+        view.link_target("work"),
+        crate::LinkTarget {
+            name: "work".to_owned(),
+            is_journal: false
+        }
+    );
+    store.close();
+}
+
+/// A live edit that names the first child of a namespace lists its parents,
+/// one that removes the last child drops them, and a parent's spelling
+/// follows its children: all as a delta, equal to a fresh read.
+#[test]
+fn deltas_track_namespace_parents() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/A.md", "- start\n"),
+        ("pages/B.md", "- [[team/child]]\n"),
+        ("pages/Docs%2FGuide.md", "- guide\n"),
+    ]);
+    let parents = |store: &Store| -> Vec<String> {
+        let mut names: Vec<String> = fileless(store)
+            .into_iter()
+            .filter(|(_, parent)| *parent)
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(parents(&store), ["Docs", "team"]);
+    let id = "pages/A.md";
+    assert_patch(&store, id, "[[Proj/Sub/Leaf]]");
+    assert_eq!(parents(&store), ["Docs", "Proj", "Proj/Sub", "team"]);
+    // A second spelling: the least one names the parent.
+    assert_patch(&store, id, "[[Proj/Sub/Leaf]] [[TEAM/other]]");
+    assert_eq!(parents(&store), ["Docs", "Proj", "Proj/Sub", "TEAM"]);
+    // Naming a parent directly makes it an ordinary reference-only page.
+    assert_patch(&store, id, "[[Proj/Sub/Leaf]] [[Proj]]");
+    assert_eq!(parents(&store), ["Docs", "Proj/Sub", "team"]);
+    // A child under a file-supplied parent, then the last reference child
+    // goes: the file still supplies its parent.
+    assert_patch(&store, id, "[[docs/faq]]");
+    assert_patch(&store, id, "plain");
+    assert_eq!(parents(&store), ["Docs", "team"]);
+    assert_patch(&store, "pages/B.md", "plain");
+    assert_eq!(parents(&store), ["Docs"]);
     store.close();
 }
 
@@ -780,6 +912,146 @@ fn names_table_resident_probe() {
     println!(
         "names table: pages={pages} keys={keys} referrer_slots={slots} bytes={bytes} bytes_per_page={:.1}",
         bytes as f64 / pages as f64
+    );
+    store.close();
+}
+
+/// What `[[name]]` opens, as the window reads it: the `All` entry's `link`,
+/// else the entry itself; with the entry's `empty_alias` bit.
+fn window_link(store: &Store, name: &str) -> (String, bool, bool) {
+    let key = tine_core::refs::page_key(name);
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let entry = inventory
+        .0
+        .iter()
+        .find(|entry| !entry.is_journal && tine_core::refs::page_key(&entry.name) == key)
+        .unwrap_or_else(|| panic!("{name} listed"))
+        .clone();
+    let link = entry.link.clone().unwrap_or(crate::LinkTarget {
+        name: entry.name.clone(),
+        is_journal: entry.is_journal,
+    });
+    // The per-name oracle is the same answer.
+    assert_eq!(
+        view.link_target(name),
+        link,
+        "link_target({name}) vs inventory"
+    );
+    (link.name, link.is_journal, entry.empty_alias)
+}
+
+/// EMPTY-ALIAS (D-20261103-CMA, OG `page-empty-or-dummy?`): with `Machine
+/// Learning` declaring `alias:: ML`, `[[ML]]` opens Machine Learning while
+/// `pages/ML.md` has no real content, and `ML.md` once it has any. The empty
+/// page stays a real, listed page (its entry is `Existing`).
+#[test]
+fn empty_alias_page_yields_its_name_to_the_alias_owner() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let owner = ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n");
+    let notes = ("pages/Notes.md", "- [[ML]]\n");
+    // (ML.md text, does `[[ML]]` open Machine Learning?)
+    let cases: [(&str, &str, bool); 8] = [
+        ("no blocks", "", true),
+        ("a blank line", "\n", true),
+        ("one empty block", "- \n", true),
+        ("one block with a space", "-  \n", false),
+        ("two empty blocks", "- \n- \n", false),
+        ("page properties only", "tags:: x\n", false),
+        ("a title only", "title:: ML\n", false),
+        ("content", "- my own ML notes\n", false),
+    ];
+    for (what, text, yields) in cases {
+        let (_dir, store) = fixture(&[owner, notes, ("pages/ML.md", text)]);
+        let (name, journal, empty_alias) = window_link(&store, "ML");
+        let want = if yields { "Machine Learning" } else { "ML" };
+        assert_eq!(
+            (name.as_str(), journal),
+            (want, false),
+            "{what}: [[ML]] opens"
+        );
+        assert_eq!(empty_alias, yields, "{what}: empty_alias");
+        // Still a real page: listed with its own file.
+        let view = store.whole_graph().unwrap();
+        assert!(
+            matches!(view.resolve("ML", false), crate::Resolved::Existing { ref id, .. } if id.as_str() == "pages/ML.md"),
+            "{what}: ML.md is still the page named ML"
+        );
+        store.close();
+    }
+    // No page declares the name: the empty file opens itself.
+    let (_dir, store) = fixture(&[notes, ("pages/ML.md", "")]);
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
+    store.close();
+    // The declarer's kind does not matter: a journal declaring `alias:: n/y`
+    // wins over an empty `n/y` page (model C-g).
+    let (_dir, store) = fixture(&[
+        ("journals/2026_10_27.md", "alias:: n/y\n\n- see [[A]]\n"),
+        ("pages/N%2Fy.md", ""),
+    ]);
+    assert_eq!(
+        window_link(&store, "N/y"),
+        ("Oct 27th, 2026".into(), true, true)
+    );
+    store.close();
+}
+
+/// EMPTY-ALIAS follows live edits without a restart: typing the first
+/// character into the empty `ML.md` makes `[[ML]]` open it, clearing it again
+/// makes `[[ML]]` open Machine Learning, and dropping or adding the alias
+/// moves it too. The window's held inventory (patched by deltas, or refetched
+/// when a publication carries none) always equals a fresh read.
+#[test]
+fn empty_alias_follows_live_edits() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n"),
+        ("pages/Notes.md", "- [[ML]]\n"),
+        ("pages/ML.md", ""),
+    ]);
+    let step = |store: &Arc<Store>, id: &str, edit: &dyn Fn(&mut tine_core::model::PageDto)| {
+        let mut held = inventory(store);
+        let (changed, deltas) = save(store, id, |doc| edit(doc));
+        match deltas {
+            Some(deltas) => deltas.iter().for_each(|delta| apply(&mut held, delta)),
+            None => held = inventory(store),
+        }
+        let fresh = inventory(store);
+        assert_eq!(held, fresh, "the window's inventory after saving {id}");
+        changed
+    };
+    assert_eq!(window_link(&store, "ML").0, "Machine Learning");
+    let typed = |text: &'static str| {
+        move |doc: &mut tine_core::model::PageDto| {
+            doc.blocks = vec![tine_core::model::BlockDto {
+                raw: text.to_owned(),
+                ..Default::default()
+            }];
+        }
+    };
+    assert!(
+        step(&store, "pages/ML.md", &typed("m")),
+        "first character signals"
+    );
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
+    assert!(step(&store, "pages/ML.md", &typed("")), "clearing signals");
+    assert_eq!(
+        window_link(&store, "ML"),
+        ("Machine Learning".into(), false, true)
+    );
+    let pre = |text: Option<&'static str>| {
+        move |doc: &mut tine_core::model::PageDto| doc.pre_block = text.map(str::to_owned)
+    };
+    assert!(step(&store, "pages/Machine Learning.md", &pre(None)));
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
+    assert!(step(
+        &store,
+        "pages/Machine Learning.md",
+        &pre(Some("alias:: ML"))
+    ));
+    assert_eq!(
+        window_link(&store, "ML"),
+        ("Machine Learning".into(), false, true)
     );
     store.close();
 }

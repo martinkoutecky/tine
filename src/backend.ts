@@ -315,7 +315,7 @@ class TauriBackend implements Backend {
     return this.call<import("./types").PageModified>("page_modified");
   }
   pageBacklinkCounts() {
-    return this.call<[string, number][]>("page_backlink_counts");
+    return this.call<import("./types").PageBacklinkCounts>("page_backlink_counts");
   }
   journalFeedPage(limit: number, beforeDay: number | null, waitForReferences = false, throughDay: number | null = null) {
     return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay, waitForReferences, throughDay });
@@ -426,6 +426,9 @@ class TauriBackend implements Backend {
     dropDisplayedFor({ name: old });
     if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
+  }
+  renameWouldChange(old: string, next: string, texts: import("./types").RenameProbeText[]) {
+    return this.call<boolean[]>("rename_would_change", { old, new: next, texts });
   }
   followPageIdentity(path: string, old: string) {
     return this.call<import("./types").IdentityFollow>("follow_page_identity", { path, old });

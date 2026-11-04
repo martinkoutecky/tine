@@ -2,25 +2,21 @@ import { createEffect, onCleanup, untrack } from "solid-js";
 import { attachBlockSwipe, swipeDisabledByTags, type BlockSwipeAction } from "../blockSwipe";
 import { graphMeta } from "../graphSession";
 import { pageIdentityKey } from "../pageIdentity";
-import { pageRefsInText } from "../render/pageRefs";
+import { block_reference_names } from "../render/wasm/lsdoc_wasm.js";
 import { canIndentBlock, childIds, pageRoots, nextVisible, clearSelection, indentSelection, node as docNode, outdentSelection, pageByName, selectBlock } from "../document";
 import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
 import { touchGestures } from "../inputCapability";
 import type { Format } from "../render/ast";
-import { facetsOf } from "../render/facets";
 import { openContextMenu } from "../ui";
 
 /** A block's own refs for OG's `:mobile :gestures/disabled-in-block-with-tags`,
- *  case-folded: OG's `with-page-refs` joins headline tags, references, the task
- *  marker and the priority. The parse is the cached one (`facetsOf`) plus the
- *  one reference walk. */
+ *  case-folded: OG's `with-page-refs` joins headline tags, references, property
+ *  keys, the task marker and the priority. That is the reference evidence's one
+ *  answer (`reference_evidence/walk.rs`, compiled into wasm): one parse of `raw`
+ *  plus one per property value or macro argument. */
 export function swipeRefNames(raw: string, format: Format): string[] {
-  const { tags, marker, priority } = facetsOf(raw, format);
-  const refs = [...pageRefsInText(raw, format), ...tags];
-  if (marker) refs.push(marker);
-  if (priority) refs.push(priority);
-  return [...new Set(refs.map(pageIdentityKey))];
+  return [...new Set(block_reference_names(raw, format === "org").map(pageIdentityKey))];
 }
 
 export interface BlockRowSwipeDeps {

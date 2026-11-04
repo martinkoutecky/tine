@@ -174,6 +174,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setGuideAnnounced",
   "deletePage",
   "renamePage",
+  "renameWouldChange",
   "revealExport",
   "readCssFile",
   "saveCssFile",

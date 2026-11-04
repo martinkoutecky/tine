@@ -1,0 +1,793 @@
+{
+  "backlinks": {
+    "Oct 26th, 2026": [],
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "30cc8702-cd7c-87f6-960e-512e77053090",
+            "raw": "[#A] urgent",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "376b5cbd-782f-8eb3-93c9-5938d5a03905",
+            "raw": "TODO [#A] call",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "e91a4b4b-2414-86f2-9ce7-a5174b2b4a8f",
+            "raw": "LATER [#B] plan",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "c": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "6f36dc6b-0e7d-88ff-b5fb-b8df75322c27",
+            "raw": "DONE [#C] shipped",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "canceled": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "4c1f4cac-56b3-8615-98bf-bde5ec23fc8e",
+            "raw": "CANCELED trip",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "doing": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1db45489-f00c-80a8-9d55-69b5311f8e24",
+            "raw": "DOING draft",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "done": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "6f36dc6b-0e7d-88ff-b5fb-b8df75322c27",
+            "raw": "DONE [#C] shipped",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "later": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "e91a4b4b-2414-86f2-9ce7-a5174b2b4a8f",
+            "raw": "LATER [#B] plan",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "now": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "bc1b0c94-e2e6-89da-8e31-af1dd6aa4a58",
+            "raw": "NOW go",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "p": [],
+    "todo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "TODO write",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "376b5cbd-782f-8eb3-93c9-5938d5a03905",
+            "raw": "TODO [#A] call",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "waiting": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "987b3e21-701e-8c32-8e3e-0df142041701",
+            "raw": "WAITING reply",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/todo.md",
+        2
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
+    ],
+    [
+      [
+        "A",
+        2
+      ],
+      [
+        "B",
+        1
+      ],
+      [
+        "C",
+        1
+      ],
+      [
+        "CANCELED",
+        1
+      ],
+      [
+        "DOING",
+        1
+      ],
+      [
+        "DONE",
+        1
+      ],
+      [
+        "LATER",
+        1
+      ],
+      [
+        "NOW",
+        1
+      ],
+      [
+        "WAITING",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/B.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "C",
+      "target": {
+        "id": "pages/C.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "canceled",
+      "name": "CANCELED",
+      "target": {
+        "id": "pages/CANCELED.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "doing",
+      "name": "DOING",
+      "target": {
+        "id": "pages/DOING.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "done",
+      "name": "DONE",
+      "target": {
+        "id": "pages/DONE.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "later",
+      "name": "LATER",
+      "target": {
+        "id": "pages/LATER.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "now",
+      "name": "NOW",
+      "target": {
+        "id": "pages/NOW.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "todo",
+      "target": {
+        "id": "pages/todo.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "waiting",
+      "name": "WAITING",
+      "target": {
+        "id": "pages/WAITING.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "B": "b",
+    "C": "c",
+    "CANCELED": "canceled",
+    "DOING": "doing",
+    "DONE": "done",
+    "LATER": "later",
+    "NOW": "now",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "WAITING": "waiting",
+    "p": "p",
+    "todo": "todo"
+  },
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    "C": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    "CANCELED": {
+      "journal": [
+        "journal",
+        "canceled"
+      ],
+      "page": [
+        "page",
+        "canceled"
+      ]
+    },
+    "DOING": {
+      "journal": [
+        "journal",
+        "doing"
+      ],
+      "page": [
+        "page",
+        "doing"
+      ]
+    },
+    "DONE": {
+      "journal": [
+        "journal",
+        "done"
+      ],
+      "page": [
+        "page",
+        "done"
+      ]
+    },
+    "LATER": {
+      "journal": [
+        "journal",
+        "later"
+      ],
+      "page": [
+        "page",
+        "later"
+      ]
+    },
+    "NOW": {
+      "journal": [
+        "journal",
+        "now"
+      ],
+      "page": [
+        "page",
+        "now"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "TODO": {
+      "journal": [
+        "journal",
+        "todo"
+      ],
+      "page": [
+        "page",
+        "todo"
+      ]
+    },
+    "WAITING": {
+      "journal": [
+        "journal",
+        "waiting"
+      ],
+      "page": [
+        "page",
+        "waiting"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    },
+    "todo": {
+      "journal": [
+        "journal",
+        "todo"
+      ],
+      "page": [
+        "page",
+        "todo"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": null
+    },
+    "B": {
+      "journal": null,
+      "page": null
+    },
+    "C": {
+      "journal": null,
+      "page": null
+    },
+    "CANCELED": {
+      "journal": null,
+      "page": null
+    },
+    "DOING": {
+      "journal": null,
+      "page": null
+    },
+    "DONE": {
+      "journal": null,
+      "page": null
+    },
+    "LATER": {
+      "journal": null,
+      "page": null
+    },
+    "NOW": {
+      "journal": null,
+      "page": null
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "TODO": {
+      "journal": null,
+      "page": "pages/todo.md"
+    },
+    "WAITING": {
+      "journal": null,
+      "page": null
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    },
+    "todo": {
+      "journal": null,
+      "page": "pages/todo.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md"
+    },
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "b",
+      "owner": null
+    },
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "c",
+      "owner": null
+    },
+    {
+      "key": "canceled",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "canceled",
+      "owner": null
+    },
+    {
+      "key": "doing",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "doing",
+      "owner": null
+    },
+    {
+      "key": "done",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "done",
+      "owner": null
+    },
+    {
+      "key": "later",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "later",
+      "owner": null
+    },
+    {
+      "key": "now",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "now",
+      "owner": null
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    },
+    {
+      "key": "todo",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "todo",
+      "owner": "pages/todo.md"
+    },
+    {
+      "key": "waiting",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "waiting",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    },
+    "C": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    },
+    "CANCELED": {
+      "backend": [
+        "page",
+        "canceled"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "canceled"
+      ]
+    },
+    "DOING": {
+      "backend": [
+        "page",
+        "doing"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "doing"
+      ]
+    },
+    "DONE": {
+      "backend": [
+        "page",
+        "done"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "done"
+      ]
+    },
+    "LATER": {
+      "backend": [
+        "page",
+        "later"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "later"
+      ]
+    },
+    "NOW": {
+      "backend": [
+        "page",
+        "now"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "now"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "TODO": {
+      "backend": [
+        "page",
+        "todo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "todo"
+      ]
+    },
+    "WAITING": {
+      "backend": [
+        "page",
+        "waiting"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "waiting"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    },
+    "todo": {
+      "backend": [
+        "page",
+        "todo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "todo"
+      ]
+    }
+  }
+}

@@ -84,6 +84,21 @@ pub fn unbracket(value: &str) -> &str {
 }
 
 pub fn nested_reference_names(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = nested_reference_ranges(content)
+        .into_iter()
+        .map(|range| content[range].to_string())
+        .collect();
+    if out.is_empty() && !content.trim().is_empty() {
+        out.push(unbracket(content).to_string());
+    }
+    out
+}
+
+/// The byte range of each name a nested link's source `content` holds (each
+/// balanced `[[…]]` body, inner first), in closing order: the one scan behind
+/// [`nested_reference_names`], kept with offsets for a rename that respells a
+/// name in place.
+pub fn nested_reference_ranges(content: &str) -> Vec<std::ops::Range<usize>> {
     let mut starts = Vec::new();
     let mut out = Vec::new();
     let bytes = content.as_bytes();
@@ -95,16 +110,13 @@ pub fn nested_reference_names(content: &str) -> Vec<String> {
         } else if bytes[index] == b']' && bytes[index + 1] == b']' {
             if let Some(start) = starts.pop() {
                 if start <= index {
-                    out.push(content[start..index].to_string());
+                    out.push(start..index);
                 }
             }
             index += 2;
         } else {
             index += content[index..].chars().next().map_or(1, char::len_utf8);
         }
-    }
-    if out.is_empty() && !content.trim().is_empty() {
-        out.push(unbracket(content).to_string());
     }
     out
 }
@@ -707,44 +719,7 @@ pub struct PageHeader {
     pub entries: Vec<HeaderEntry>,
 }
 
-/// The page header of a Markdown page preamble or first root block: the parser's
-/// accepted properties (`parse_document`; literals and no-space `key::value`
-/// excluded) that form the leading run of the text, joined only by empty lines.
-/// Named Tine policies over that answer: the run starts at byte 0, every line
-/// starts at column zero, and a key may not start with `#` (a `#tag::` line is
-/// prose that merely parses). A parser-refused input has no header. O(bytes).
-pub fn page_header(raw: &str) -> PageHeader {
-    let regions = parse_document(raw, false);
-    let mut header = PageHeader::default();
-    if regions.quarantined {
-        return header;
-    }
-    let (mut at, mut line_no) = (0, 0);
-    for p in regions.properties.iter().filter(|p| p.primary) {
-        let gap = &raw[at..p.line.0.max(at)];
-        let eligible = p.line.0 >= at
-            && gap.bytes().all(|b| b == b'\n' || b == b'\r')
-            && p.key_range.0 == p.line.0
-            && !p.key.starts_with('#')
-            && (!header.entries.is_empty() || p.line.0 == 0);
-        if !eligible {
-            break;
-        }
-        line_no += gap.matches('\n').count();
-        let end = p.line.1 - usize::from(raw.as_bytes()[p.line.1 - 1] == b'\n');
-        header.entries.push(HeaderEntry {
-            key: p.key.clone(),
-            value: p.value.clone(),
-            line: line_no,
-            start: p.line.0,
-            end,
-        });
-        header.end = end;
-        at = p.line.1;
-        line_no += 1;
-    }
-    header
-}
+pub use crate::page_preamble::{page_header, page_header_in};
 
 /// The page header of `raw` when the text is nothing but header properties (no
 /// leading or trailing newline, at least one entry). Single answerer (I-12) for

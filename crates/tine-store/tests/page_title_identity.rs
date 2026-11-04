@@ -452,3 +452,76 @@ fn rename_keeps_a_heading_blocks_title_property() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// CM-NAMES (1), D-20261103-CMA: a file name with a malformed percent escape
+/// or (triple-lowbar) an empty namespace part gets OG's page name
+/// (graph_parser/util.cljs `tri-lb-title-parsing`, `legacy-title-parsing` at
+/// OG 6e7afa8eb); valid UTF-8 escapes stay decoded ("café", a deliberate
+/// difference from OG's triple-lowbar codec). A page Tine creates under such a
+/// name round-trips: the file it proposes reads back as the same page.
+#[test]
+fn file_names_with_malformed_escapes_and_empty_namespace_parts_get_ogs_name() {
+    let _integration_guard = crate::integration_lock();
+    let cases: [(&str, &str, &str); 8] = [
+        // (file stem, triple-lowbar name, Legacy name)
+        ("%E9", "%E9", "%E9"),
+        ("bad%E9", "bad%E9", "bad%E9"),
+        ("___lead", "lead", "___lead"),
+        ("a___", "a", "a___"),
+        ("a______b", "a/b", "a______b"),
+        ("caf%C3%A9", "café", "café"),
+        ("50%25 of 100%", "50% of 100%", "50%25 of 100%"),
+        ("x%2F%2Fy", "x/y", "x//y"),
+    ];
+    for (config, triple) in [
+        (Some("{:file/name-format :triple-lowbar}\n"), true),
+        (Some("{:file/name-format :legacy}\n"), false),
+        (None, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pages")).unwrap();
+        if let Some(config) = config {
+            fs::create_dir_all(dir.path().join("logseq")).unwrap();
+            fs::write(dir.path().join("logseq/config.edn"), config).unwrap();
+        }
+        for (stem, ..) in cases {
+            fs::write(dir.path().join(format!("pages/{stem}.md")), "- body\n").unwrap();
+        }
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let graph = store.whole_graph().unwrap();
+        for (stem, tri_name, legacy_name) in cases {
+            let want = if triple { tri_name } else { legacy_name };
+            let id = PageId::from(format!("pages/{stem}.md"));
+            let read = store.page(&id).unwrap();
+            assert_eq!(read.doc.name, want, "{stem}.md ({config:?})");
+            match graph.resolve(want, false) {
+                Resolved::Existing { id: found, .. } => {
+                    assert_eq!(found, id, "{want:?} ({config:?})")
+                }
+                _ => panic!("{want:?} does not resolve to {stem}.md ({config:?})"),
+            }
+        }
+        // Creating such a page: the proposed file reads back as that page.
+        for name in ["%E9", "bad%E9", "lead", "50%25 of 100%"] {
+            let Resolved::Absent { id } = graph.resolve(&format!("{name} new"), false) else {
+                panic!("{name} new exists");
+            };
+            let stem = id
+                .as_str()
+                .strip_prefix("pages/")
+                .and_then(|s| s.strip_suffix(".md"))
+                .unwrap()
+                .to_owned();
+            let format = if triple {
+                tine_core::config::FileNameFormat::TripleLowbar
+            } else {
+                tine_core::config::FileNameFormat::Legacy
+            };
+            assert_eq!(
+                tine_core::model::decode_page_name(&stem, format),
+                format!("{name} new"),
+                "{stem} ({config:?})"
+            );
+        }
+    }
+}

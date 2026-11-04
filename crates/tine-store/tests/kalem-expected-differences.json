@@ -469,7 +469,44 @@
     },
     "source": "[[Kalem]]",
     "supported": true,
-    "tine_only": []
+    "tine_only": [
+      [
+        "oct 3rd, 2026",
+        "todo write to [[editor]]"
+      ]
+    ]
+  },
+  "logseq-org/query/08": {
+    "logseq_only": [],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Editor]]",
+    "supported": true,
+    "tine_only": [
+      [
+        "kalem",
+        "an editor of [[org]] files #software"
+      ],
+      [
+        "kalem",
+        "code is no link"
+      ],
+      [
+        "kalem",
+        "todo [#a] read the book"
+      ],
+      [
+        "project/plugins",
+        "a file link: [[file:./kalem.org][kalem]] and a web one [[https://example.com][site]]"
+      ],
+      [
+        "project/plugins",
+        "the plugins of [[kalem]] :plugins:"
+      ]
+    ]
   },
   "logseq-org/query/09": {
     "logseq_only": [
@@ -611,7 +648,12 @@
     },
     "source": "[:find (pull ?b [*]) :where (page-ref ?b \"kalem\")]",
     "supported": true,
-    "tine_only": []
+    "tine_only": [
+      [
+        "oct 3rd, 2026",
+        "todo write to [[editor]]"
+      ]
+    ]
   },
   "logseq-org/query/24": {
     "logseq_only": [
@@ -653,6 +695,11 @@
     },
     "source": "[:find (pull ?b [*]) :where [?b :block/path-refs ?p] [?p :block/name \"kalem\"]]",
     "supported": true,
-    "tine_only": []
+    "tine_only": [
+      [
+        "oct 3rd, 2026",
+        "todo write to [[editor]]"
+      ]
+    ]
   }
 }

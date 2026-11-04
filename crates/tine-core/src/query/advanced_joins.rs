@@ -236,6 +236,14 @@ pub(super) fn lower_date_disjunctions(
 /// `:current-page` input to blocks. This is deliberately not a general join
 /// engine: one page-name identity pattern must feed one `:block/refs` or
 /// `:block/page` pattern, and every other shape remains visibly unsupported.
+///
+/// One reference rule (D-20261019-Q8, ruled for advanced queries as QL-1 on
+/// 2026-11-03): the `:block/refs` and `:block/path-refs` shapes lower to the
+/// same reference leaves as `[[A]]` / `(page-ref A)`, so they match A's whole
+/// alias group, although OG's DataScript joins one `:block/name` entity. The
+/// IR carries no "raw Datalog, stay literal" mark on purpose: that would be a
+/// second rule for one question (I-12). `:block/page` lowers to `Rel::Page`
+/// and stays literal, like `(page A)`.
 pub(super) fn lower_current_page_patterns(
     groups: &[String],
     inputs: &std::collections::HashMap<String, AdvancedInput>,

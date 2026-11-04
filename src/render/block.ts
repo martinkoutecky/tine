@@ -8,8 +8,8 @@ import { blockRegions, parserReady } from "./parse";
 import { utf8ToUtf16Cursor } from "./utf16Cursor";
 import {
   split_linkable_property as splitLinkableProperty,
-  linkable_property_names,
   is_render_hidden_prop as isRenderHiddenPropNative,
+  is_editable_linkable_built_in as isEditableLinkableBuiltIn,
 } from "./wasm/lsdoc_wasm.js";
 import { propertyKeyNorm } from "../propertyKey";
 export { splitLinkableProperty };
@@ -52,26 +52,12 @@ export function pageProperties(
   return pagePropertyEntries(preBlock, format).map((entry) => [entry.key, entry.value]);
 }
 
-/** The alias names declared in already-read `[key, value]` page properties
- *  (`alias::` in markdown, `#+ALIAS:` / `:alias:` in org), parser-tokenized.
- *  Empty if none. Read the properties through the one answerer
- *  (`pageHeaderProperties` for a loaded page). */
-export function aliasNamesOf(properties: [string, string][], format: Format = "md"): string[] {
-  const out: string[] = [];
-  for (const [k, v] of properties) {
-    const key = propertyKeyNorm(k);
-    if (key !== "alias" && key !== "aliases") continue;
-    if (isQuotedPagePropertyValue(v)) continue;
-    out.push(...linkable_property_names(v, format === "org"));
-  }
-  return out;
-}
-
-/** Built-in page-property values that Logseq treats as page references even
- * without explicit `[[...]]` syntax. Custom properties stay ordinary text. */
+/** Built-in page-property values that Logseq treats as page references
+ * without explicit `[[...]]` syntax (`alias`, `aliases`, `tags`): the store's
+ * list, through wasm (`is_editable_linkable_built_in`, census Q7). Custom
+ * properties stay ordinary text. */
 export function isImplicitPageRefProperty(key: string): boolean {
-  const normalized = propertyKeyNorm(key);
-  return normalized === "alias" || normalized === "aliases" || normalized === "tags";
+  return isEditableLinkableBuiltIn(key);
 }
 
 /** OG `property-cp`: a property in `linkable` (the backend's effective

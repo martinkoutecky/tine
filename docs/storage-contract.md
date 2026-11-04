@@ -492,7 +492,7 @@ AVL with entries inside shared nodes; other spellings keep exact string keys.
 The writer and loader share the page namespace and child-id derivation.
 Warm launch decodes those rows without rebuilding the index
 from blocks. A malformed owner slot declines the whole disposable checkpoint
-and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once. FORMAT 20 (GH #741 F2: a bare marker title before a LOGBOOK drawer parses as a task) supersedes 19 once; the body shape is unchanged.
+and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once. FORMAT 20 (GH #741 F2: a bare marker title before a LOGBOOK drawer parses as a task) supersedes 19 once; the body shape is unchanged. FORMAT 22 (D-20261102-CM4 CM-REFONLY: the referenced-name inventory also holds property-key, task-marker and priority pages, and no longer a block embed's uuid) supersedes the earlier formats once; the body shape is unchanged, and on the realistic 10k graph the file grows by 25,881 bytes (45,037,578 to 45,063,459, +0.06%). FORMAT 23 (CM step 2 batch 8: prose before a page's first block is a referencing block, so the reference indexes and cached backlink answers change for unchanged files) supersedes 22 once; the body shape is unchanged. FORMAT 24 (D-20261019-Q8, CM step 2 batch 9: a reference query matches the whole alias group and a date spelling names its journal, so memoized query answers change for unchanged files; a memo entry's byte charge now counts the plan's reference classes) supersedes 23 once; the body shape is unchanged and no field is added. FORMAT 25 (D-20261103-CMA CM-NAMES (1), CM step 2 batch 11: the file-name decoder gives OG's name for malformed percent escapes and empty triple-lowbar namespace parts, so persisted claimants, `name_by_path` and name-derived indexes change for unchanged files) supersedes 24 once; the body shape is unchanged and no field is added. None of 23, 24 or 25 has shipped beyond development builds, so a user upgrading from 22 rebuilds once.
 There is no additional per-edit file or byte write: the page save protocol
 is unchanged. The checkpoint remains one postcard+zstd app-data file, rewritten
 on the existing idle cadence (60 s quiet, at least 5 min between writes,
@@ -798,7 +798,13 @@ What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
 (`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
 the graph's journal answerer parses (`JournalFormat::parse`: the configured
 title and file-name formats plus the fixed fallbacks, D-20261102-JDL) opens that
-day's journal, else a page file claiming the name, else the alias owner. An
+day's journal, else a page file claiming the name, else the alias owner. A
+claimant with no real content (`inventory.rs::content_free` over its parsed
+document: no pre-block text, and no blocks or one block with empty raw text)
+yields the name to the alias owner when some page declares it (D-20261103-CMA,
+OG `page-empty-or-dummy?`); such entries carry `empty_alias: true` and named
+routes (`navigationTarget`) follow their `link`, while exact-path opens (All
+pages, search hits, the alias group's Related pages row) still open the file. An
 alias owned by a journal opens the journal. A name nothing claims or aliases is
 a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
 exported to the frontend through wasm so the unknown-name fallback runs the same
@@ -807,11 +813,15 @@ code). `page_inventory` entries carry the answer as an optional
 entries carry nothing). The field is in-memory and derived per read: nothing is
 persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
 delta's `rev` (a link depends on the key's alias owners, which travel in the
-delta, and on file claims, whose change refetches). The published snapshot
+delta, and on file claims, whose change refetches; a claimant flipping between
+content-free and content while its name is declared, or an alias edit naming a
+content-free claimant, also refetches). The published snapshot
 (quick share generation 1, `docs/contracts/quick-share.md`) does not carry it:
 its document is frozen, so adding the answer there is a format decision still
 open (CM step 2 receipt). Proof: `crates/tine-store/tests/inventory_delta.rs`
-`a_delta_keeps_the_link_answer_fresh`, `src/cmConformanceNavigate.test.ts`.
+`a_delta_keeps_the_link_answer_fresh`,
+`empty_alias_page_yields_its_name_to_the_alias_owner`,
+`empty_alias_follows_live_edits`, `src/cmConformanceNavigate.test.ts`.
 
 Which references name a journal day (Linked References, `[[day]]` backlink
 counts' needles) is every spelling the journal answerer accepts for that day:
@@ -1640,6 +1650,26 @@ inventory's reference-only names and `[[` completion lives in memory only
 inherited by later generations through per-page patches, never persisted or
 checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
 `crates/tine-store/tests/inventory_delta.rs`, `src/pageIndex.test.ts`).
+
+Namespace parents have one answerer, `model/namespace_parents.rs` (conceptual
+model rule 1, CM3-3; CM step 2 batch 10). A name `n/y` makes `n` a page: every
+proper `/`-prefix of a non-blank page file's name (journals and twins included;
+a blank file supplies its own page only, as OG's `extract` skips blank content)
+and of every referenced name is a page, unless a file claims it, a page aliases
+it or a reference names it directly. `page_inventory` lists each as an absent
+entry with `namespace_parent: true` (sent only when true), spelled by the least
+prefix spelling of its seeds so the whole answer and an `inventoryDelta`'s
+one-key answer agree. The delta carries a parent's key whenever a changed
+reference name lies under it, so a live edit that adds or removes its last
+child updates it. A parent opens itself (`Absent`, no `link`), is listed in All
+pages and in page queries' page sets (`reference_only_page_names`), and its
+Linked References are the blocks under it by the namespace closure of
+references (Q6, `namespace_refs`), unchanged. Nothing is persisted: it is
+derived per read from the claims and the in-memory referenced-name table.
+Proof: `crates/tine-store/tests/inventory_delta.rs`, the conformance harness
+(`cm_conformance_tests.rs`, `src/cmConformanceNamespaces.test.ts`). The
+frontend's namespace views (sidebar tree, Namespaces, `{{namespace}}`,
+Hierarchy) nest the listed names by `/` and add no level of their own.
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

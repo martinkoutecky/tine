@@ -14,16 +14,30 @@ import { routeTitle, sameRoute } from "./router";
 
 // GH #335: the list logic of the Namespaces view. Pure: no backend, no DOM.
 
+// The inventory's names (CM step 2 batch 10): it lists every namespace parent,
+// so "Archive", "Archive/Old" and "Other" are listed although no file has them.
 const NAMES = [
   "Project", // a page that is also a namespace
   "Project/Roadmap",
   "Project/Roadmap/2026",
   "Project/Notes",
-  "Archive/Old/Notes", // "Archive" and "Archive/Old" have no page of their own
+  "Archive/Old/Notes",
   "Archive/Old/Plans",
+  "Archive", // namespace parents: pages of their own (model rule 1)
+  "Archive/Old",
   "plain",
   "Other/Notes",
+  "Other",
 ];
+/** `names` plus every namespace parent, as the inventory lists them. */
+const withParents = (names: string[]) => {
+  const all = new Set(names);
+  for (const name of names) {
+    const segs = name.split("/");
+    for (let k = 1; k < segs.length; k++) all.add(segs.slice(0, k).join("/"));
+  }
+  return [...all];
+};
 const index = () => indexNamespaces(buildNamespaceTree(NAMES));
 const fulls = (entries: ReturnType<typeof index>, rows: number[]) => rows.map((i) => entries[i].node.full);
 
@@ -39,15 +53,15 @@ describe("indexNamespaces", () => {
     expect(entries.map((e) => e.parent)).toEqual([-1, 0, 1, 1, -1, 4, -1, 6, 6, 8]);
   });
 
-  it("counts the listed names below each entry: a level with no page of its own is not a page", () => {
+  it("counts the pages below each entry: a namespace parent is a page (model rule 1)", () => {
     const entries = index();
     const count = (full: string) => entries.find((e) => e.node.full === full)!.count;
-    expect(count("Archive")).toBe(2); // Old/Notes and Old/Plans; neither Archive nor Archive/Old is listed
+    expect(count("Archive")).toBe(3); // Old (a namespace parent), Old/Notes and Old/Plans
     expect(count("Archive/Old")).toBe(2);
     expect(count("Project")).toBe(3); // itself is listed but not counted below itself
     expect(count("Project/Roadmap")).toBe(1);
     expect(count("Project/Notes")).toBe(0);
-    expect(namespaceTotals(entries)).toEqual({ pages: 8 - 1, namespaces: 5 }); // "plain" has no namespace
+    expect(namespaceTotals(entries)).toEqual({ pages: 10, namespaces: 5 }); // "plain" has no namespace
   });
 
   it("builds the same tree for the same name list object once", () => {
@@ -57,7 +71,7 @@ describe("indexNamespaces", () => {
 
   it("is iterative: a thousand-level name does not overflow the stack", () => {
     const deep = Array.from({ length: 2000 }, (_, i) => `s${i}`).join("/");
-    const entries = indexNamespaces(buildNamespaceTree([deep]));
+    const entries = indexNamespaces(buildNamespaceTree(withParents([deep])));
     expect(entries).toHaveLength(2000);
     expect(entries[1999].depth).toBe(1999);
     expect(entries[0].end).toBe(2000);
@@ -129,7 +143,7 @@ describe("cost on a 30k-page graph", () => {
   for (let a = 0; a < 30; a++) for (let b = 0; b < 40; b++) for (let c = 0; c < 25; c++) names.push(`Area ${a}/Topic ${b}/Note ${c}`);
   it("indexes, filters and re-walks 30,000 namespaced pages", () => {
     const t0 = performance.now();
-    const entries = indexNamespaces(buildNamespaceTree(names));
+    const entries = indexNamespaces(buildNamespaceTree(withParents(names)));
     const t1 = performance.now();
     const hits = matchingEntries(entries, "topic 7/note 1");
     const t2 = performance.now();

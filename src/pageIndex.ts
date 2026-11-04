@@ -5,6 +5,7 @@ import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import { absentLinkIsJournal } from "./journal";
+import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
@@ -192,7 +193,11 @@ export function resetPageIndex(): void {
   setHeld(null);
 }
 
-let installed: { allPages: () => PageEntry[] | undefined; allPageNames: () => string[] } | null = null;
+let installed: {
+  allPages: () => PageEntry[] | undefined;
+  allPageNames: () => string[];
+  referenceOnlyPages: () => PageEntry[];
+} | null = null;
 
 /** Start the refresh triggers (idempotent). App calls it at mount; every view
  *  calls it too, so a view mounted without App still loads. */
@@ -229,24 +234,43 @@ function ensureInstalled() {
     const allPageNames = createMemo(() => {
       const current = held();
       if (!current) return [];
-      // Physical display spellings win case-insensitively; alias and
-      // reference-only names then fill gaps.
+      // Physical display spellings win per page identity (`pageIdentityKey`,
+      // the store's `page_key`); alias and reference-only names then fill gaps.
       const seen = new Set<string>();
       const names: string[] = [];
+      const keys: string[] = [];
       const add = (name: string) => {
-        const key = name.toLowerCase();
+        const key = pageIdentityKey(name);
         if (!seen.has(key)) {
           seen.add(key);
           names.push(name);
+          keys.push(key);
         }
       };
       for (const page of allPages() ?? []) add(page.name);
       for (const entry of current.entries) {
         if (entry.target.kind !== "existing") add(entry.name);
       }
+      keysOfNames.set(names, keys);
       return names;
     });
-    return { allPages, allPageNames };
+    // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
+    // the backend's absent entries that open themselves (no `link`: not a
+    // date spelling of a day, not an alias), less what OG's `get-all-pages`
+    // drops (built-in pages, UUID names, drawings) by the Rust answer
+    // (`hidden_from_all_pages`; CM step 2 batches 5 and 8). A patch that
+    // leaves this list equal leaves All pages alone. O(entries).
+    const referenceOnlyPages = createMemo<PageEntry[]>(() => {
+      const current = held();
+      if (!current) return [];
+      const rows: PageEntry[] = [];
+      for (const entry of current.entries) {
+        if (entry.target.kind !== "absent" || entry.link || entry.is_journal || hidden_from_all_pages(entry.name)) continue;
+        rows.push({ name: entry.name, kind: "page", date_key: null, path: "" });
+      }
+      return rows;
+    }, [], { equals: (a, b) => a.length === b.length && a.every((row, at) => row.name === b[at].name) });
+    return { allPages, allPageNames, referenceOnlyPages };
   });
   return installed;
 }
@@ -295,11 +319,14 @@ export function linkTarget(name: string): LinkDestination {
 
 /** A named ordinary-page route (not a link): an alias opens what the store
  *  says its link opens (the owner, of the owner's kind: a journal's alias
- *  opens the journal); any other name stays an ordinary page of that name. */
+ *  opens the journal), and so does a content-free file the store marks
+ *  `empty_alias` (EMPTY-ALIAS, as Logseq's `get-redirect-page-name`); any
+ *  other name stays an ordinary page of that name. A route carrying the
+ *  file's path never comes here (the router keeps an exact owner). */
 export function navigationTarget(name: string): LinkDestination {
   ensureInstalled();
   const entry = held()?.pages.get(pageIdentityKey(name));
-  if (entry?.target.kind === "alias" && entry.link) return entry.link;
+  if ((entry?.target.kind === "alias" || entry?.empty_alias) && entry.link) return entry.link;
   return { name: navigationName(name), kind: "page" };
 }
 
@@ -327,7 +354,21 @@ export function allPages(): PageEntry[] | undefined {
   return ensureInstalled().allPages();
 }
 
+/** The reference-only pages All pages lists, path `""` (they have no file). */
+export function referenceOnlyPages(): PageEntry[] {
+  return ensureInstalled().referenceOnlyPages();
+}
+
 /** Physical, alias and reference-only page names (`[]` until loaded). */
 export function allPageNames(): string[] {
   return ensureInstalled().allPageNames();
+}
+
+const keysOfNames = new WeakMap<readonly string[], readonly string[]>();
+
+/** The page keys (`pageIdentityKey`) of an `allPageNames()` result, index for
+ *  index, already computed by its dedup; undefined for any other array. Lets a
+ *  view that nests names (the namespace tree) skip a second key call per name. */
+export function allPageNameKeys(names: readonly string[]): readonly string[] | undefined {
+  return keysOfNames.get(names);
 }

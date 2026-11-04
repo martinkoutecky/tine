@@ -51,14 +51,24 @@ mod c3w_keep_both_ids;
 
 #[path = "c3w_rename_refs.rs"]
 mod c3w_rename_refs;
+#[path = "cm_rename_bytes.rs"]
+mod cm_rename_bytes;
+#[path = "rename_would_change.rs"]
+mod rename_would_change;
 
 #[path = "cm_conformance_rename.rs"]
 mod cm_conformance_rename;
 
 #[path = "cm_conformance_names.rs"]
 mod cm_conformance_names;
+
+#[path = "cm_alias_merge.rs"]
+mod cm_alias_merge;
+
 #[path = "cm_favorites_rename.rs"]
 mod cm_favorites_rename;
+#[path = "cm_keys_publish.rs"]
+mod cm_keys_publish;
 
 #[path = "c3w_rename_unreadable.rs"]
 mod c3w_rename_unreadable;
@@ -167,6 +177,9 @@ mod og_c5_p2_bad_file;
 
 #[path = "og_c5_p2_merge_rename.rs"]
 mod og_c5_p2_merge_rename;
+
+#[path = "merge_keeps_aliases.rs"]
+mod merge_keeps_aliases;
 
 #[path = "og_dupal2_format.rs"]
 mod og_dupal2_format;

@@ -83,39 +83,37 @@ never an alias.
 
 ## Renames
 
-A query macro creates no page reference (OG `graph_parser/block.cljs`), so the
-reference rewrite of a rename never sees a quoted name. Renaming a page also
-rewrites, **inside definition blocks only**, every quoted page name of an active
-TQL `name` comparison (`=`, `!=`, `in`, `not in`, and a block row's
-`page.name`) that names a renamed page, namespace descendants included. A new
-page created under the old name is therefore not what the definition shares.
+A query macro creates no page reference (OG `graph_parser/block.cljs`), but a
+rename rewrites the page-name arguments of **every** query like links
+(D-20261031-CMQ; what a rename rewrites is the module doc of
+`crates/tine-core/src/refs_rename.rs`).
+For a definition this means every quoted page name of an active TQL `name`
+comparison (`=`, `!=`, `in`, `not in`, and a block row's `page.name`) that
+names a renamed page, namespace descendants included. A new page created under
+the old name is therefore not what the definition shares.
 
 - Found by the TQL parser (`tine_core::query::tql::page_name_literals`) inside
   the macro extents of blocks the outline parser delimits, Markdown and Org; the
   rest of the file is byte-identical.
 - Part of `tine_core::refs::rename_rewrite`, the one rename rewrite the planner,
   the store transaction and the page host share, so the rename's existing guarded
-  write path writes it. The planner adds to its candidates the pages holding a
-  definition whose selector names a renamed page: `definitions_query()` over
-  the planning view, then `selected_names` over the returned blocks, in memory,
-  so a definition page the rename does not change is not read.
-- Not rewritten, deliberately: an ordinary (non-definition) query block, as in
-  OG; any `{{query}}` text; `like`, `namespace` and property comparisons; a
+  write path writes it. The planner adds to its candidates every page holding a
+  query macro whose argument spells a renamed name (an in-memory scan of the
+  planning view's parsed blocks), so a page the rename does not change is read,
+  not written.
+- Not rewritten, deliberately: `like`, `namespace` and property comparisons; a
   selector naming an alias; a macro whose new argument would no longer be one
   macro (a new name containing `}`), which stays as it was.
-- A view whose definitions exceed one bounded query answer (20 000 rows or
-  32 MiB) refuses the rename before writing (scenario: malformed or generated input, where a later page
-  with the old name would otherwise be exported).
 
 Unit cost: no new persisted record, file or transport record; a rename writes
-the definition pages whose selectors change, through the existing rename
-transaction. Planning adds one in-memory definitions query, O(pages + blocks),
-memoized per graph generation, plus one TQL parse per returned definition
-block; the rewrite adds one outline and TQL parse per candidate page holding a
-`{{tine-query` macro.
+the pages whose query arguments change, through the existing rename
+transaction. Planning adds one in-memory scan: O(blocks) checks for `{{`, a
+case fold of each block holding one, and one block parse only where that fold
+contains a renamed name (or the name is escaped); the rewrite adds one outline
+and query parse per candidate page holding a query macro.
 
 Tests: `crates/tine-graph-features/tests/query_publication.rs` (left-out pages, exports page, query text) and `crates/tine-core/src/export_definition.rs` (spelling, round trip,
 Markdown, Org, CRLF, scope) and
 `crates/tine-graph-features/tests/share_selector.rs` (empty page exported; a
-rename through the page host carries definitions, leaves an ordinary query and
+rename through the page host carries definitions and ordinary queries, leaves
 an alias, and a new page under the old name is not selected).

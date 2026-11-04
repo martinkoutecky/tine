@@ -29,10 +29,10 @@ fn k1_org_reference_rename_handles_unicode_directives() {
         let raw = format!("* Example [[Old]]\n{directive}\n");
         let renames = HashMap::from([(refs::normalize("Old"), "New".to_string())]);
         assert_eq!(
-            refs::rename_refs_multi(
+            refs::rename_rewrite_keyed(
                 &raw,
-                &renames,
                 true,
+                &renames,
                 tine_core::config::FileNameFormat::TripleLowbar
             ),
             format!("* Example [[New]]\n{directive}\n")

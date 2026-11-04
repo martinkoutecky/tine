@@ -514,6 +514,9 @@ export interface NamedAutocompleteItem<T> {
   matchClass?: ObjectiveMatchClass;
 }
 
+/** Sort key for completion rows (presentation: shorter, then lexical). Not
+ * page identity: whether a row IS the typed page is `pageIdentityKey`, the
+ * wasm build of the store's `page_key` (I-12, census Q1). */
 function canonicalName(name: string): string {
   return name.normalize("NFC").toLowerCase();
 }
@@ -533,10 +536,12 @@ export function orderAcItems<T>(
   createItem: NamedAutocompleteItem<T>,
   opts: { query: string; policy: LinkAutocompletePolicy; removeAccents?: boolean },
 ): T[] {
-  const query = canonicalName(opts.query.trim());
+  if (!opts.query.trim()) return [];
+  // The typed text names a page by the store's identity key, so `Foo/`,
+  // `/Foo` or ` Foo ` typed with page Foo existing defaults to Foo.
+  const query = pageIdentityKey(opts.query);
   const removeAccents = opts.removeAccents !== false;
   const foldedQuery = searchFold(opts.query.trim(), removeAccents);
-  if (!query) return [];
   // Keep the existing Create policy entirely inside the native band. Both
   // inline completion and Capture pass the backend's explicit expansion class.
   const expansions = matches.filter((match) => match.matchClass === "transliteration");
@@ -544,9 +549,9 @@ export function orderAcItems<T>(
     return [...orderAcItems(matches.filter((match) => match.matchClass !== "transliteration"), createItem, opts),
       ...expansions.map((match) => match.item)];
   }
-  const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
+  const exact = matches.filter((match) => pageIdentityKey(match.name) === query).sort(canonicalCompare);
   const remaining = exact.length
-    ? matches.filter((match) => canonicalName(match.name) !== query)
+    ? matches.filter((match) => pageIdentityKey(match.name) !== query)
     : matches;
 
   const prefix = remaining.filter((match) => searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);

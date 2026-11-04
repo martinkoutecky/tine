@@ -277,9 +277,9 @@ fn referrer(
         } else {
             "unrelated [[Elsewhere/Kid]]".into()
         },
-        // Tine's existing RenameMap contract scans bracketed query arguments
-        // in an already selected file. OG selects individual ref-bearing
-        // blocks; this fixture certifies Tine's current file-level policy.
+        // A query's page-name arguments follow the rename like links, on
+        // every page (D-20261031-CMQ); OG rewrites them only in a block that
+        // also links the page.
         format!("{{{{query [[{name}]]}}}}"),
     ];
     order
@@ -288,11 +288,13 @@ fn referrer(
         .collect()
 }
 
-fn definition(name: &str, original: &str, org: bool) -> String {
+/// An export definition and an ordinary query naming `name`: since
+/// D-20261031-CMQ a rename rewrites both.
+fn definition(name: &str, org: bool) -> String {
     if org {
-        format!("* {{{{tine-query @page name = '{name}'}}}}\n:PROPERTIES:\n:tine.export: site\n:END:\n* {{{{tine-query @page name = '{original}'}}}}\n")
+        format!("* {{{{tine-query @page name = '{name}'}}}}\n:PROPERTIES:\n:tine.export: site\n:END:\n* {{{{tine-query @page name = '{name}'}}}}\n")
     } else {
-        format!("- {{{{tine-query @page name = '{name}'}}}}\n  tine.export:: site\n- {{{{tine-query @page name = '{original}'}}}}\n")
+        format!("- {{{{tine-query @page name = '{name}'}}}}\n  tine.export:: site\n- {{{{tine-query @page name = '{name}'}}}}\n")
     }
 }
 
@@ -416,8 +418,8 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                     format!("{bullet} journal [[{after}]]\n").into_bytes(),
                 );
                 let def = format!("pages/Definition.{ext}");
-                before.insert(def.clone(), definition(&old, &old, org).into_bytes());
-                expected.insert(def, definition(after, &old, org).into_bytes());
+                before.insert(def.clone(), definition(&old, org).into_bytes());
+                expected.insert(def, definition(after, org).into_bytes());
                 // Persisted id and its references must survive every rename/merge.
                 let id_body = if org {
                     format!("* identity\n:PROPERTIES:\n:ID: {UUID}\n:END:\n")
@@ -432,9 +434,10 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                 fresh(&graph.store, &graph.root, &probes, &at);
                 assert_ref_query(&graph.store, &old, "Ref0", true, &at);
                 // Merge fixtures share the alias Shared, so the link table
-                // already connects both physical owners via alias references.
-                // A literal Simple query still has no new-name block yet.
-                assert_query_controls(&graph.store, &new, "Ref0", false, mode >= 2, &at);
+                // already connects both physical owners via alias references,
+                // and so does the Simple query: `[[New]]` matches New's alias
+                // group (D-20261019-Q8, transitive AL1), which reaches Old.
+                assert_query_controls(&graph.store, &new, "Ref0", mode >= 2, mode >= 2, &at);
                 assert_alias_query(&graph.store, &alias, &at);
                 assert_incoming_query(&graph.store, &old, &at);
                 let host =
@@ -475,11 +478,14 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                 }
                 fresh(&graph.store, &graph.root, &probes, &at);
                 assert_ref_query(&graph.store, after, "Ref0", true, &at);
+                // After the legacy merge (mode 3) New holds Former and Shared,
+                // which Ref0 still links: the Simple query's alias group
+                // (D-20261019-Q8) finds it as the link table does.
                 assert_query_controls(
                     &graph.store,
                     if mode == 3 { &new } else { &old },
                     "Ref0",
-                    false,
+                    mode == 3,
                     mode == 3,
                     &at,
                 );

@@ -682,7 +682,12 @@ fn the_page_anchor_returns_page_rows() {
         "@page and name like 'proj%'",
         QueryDialect::Tql,
     );
-    assert_eq!(page_names(&result).len(), 1, "{:?}", result.rows);
+    // `Proj` is the namespace parent of `Proj/Sub`: a page (conceptual model
+    // rule 1, CM3-3; OG creates its page entity), so page queries see it
+    // (CM step 2 batch 10, CM-REFONLY).
+    let mut names = page_names(&result);
+    names.sort();
+    assert_eq!(names, vec!["Proj", "Proj/Sub"], "{:?}", result.rows);
 }
 
 /// GH #619 c6: a `page` hop read from a page row is that row (the OG parser's
@@ -857,8 +862,17 @@ fn all_page_tags_round_trips_through_tql() {
     let today = JournalDate::today();
 
     for (source, expected) in [
-        ("(all-page-tags)", set(&["alpha"])),
-        ("(not (all-page-tags))", set(&["absent", "blank", "tagged"])),
+        // `beta` has no file: a reference-only page (D-20261102-CM4
+        // CM-REFONLY), and OG's `:all-page-tags` rule (deps/db rules.cljc,
+        // `[_ :block/tags ?p]`) lists it too.
+        ("(all-page-tags)", set(&["alpha", "beta"])),
+        // The reference-only pages `TODO` (a task marker) and `block-only`
+        // (a block's tag) are pages that are no page's tag; OG has both as
+        // page entities, so `(not (all-page-tags))` lists them too.
+        (
+            "(not (all-page-tags))",
+            set(&["TODO", "absent", "blank", "block-only", "tagged"]),
+        ),
     ] {
         let (query, view) = parse_query_text(source, QueryDialect::Og, today);
         assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);

@@ -81,9 +81,15 @@ fn save_preparation_parses_old_document_once() {
         .split("fn prepare_page_content(")
         .nth(1)
         .unwrap()
-        .split("/// Properties that describe the block they sit on")
+        // The section ends where the page-header predicate is imported (it
+        // moved to tine-core page_header.rs, census Q7).
+        .split("pub(crate) use tine_core::page_header::is_page_header_candidate;")
         .next()
         .unwrap();
+    assert!(
+        preparation.len() < source.len() / 2,
+        "the prepare_page_content section marker is missing from model.rs"
+    );
     assert!(!preparation.contains("doc::parse"), "I-25/I-12: parse old source once through parse_doc and pass the Document to every validator; exemplar model/layout_retention.rs");
     let layout = include_str!("../src/model/layout_retention.rs");
     assert!(

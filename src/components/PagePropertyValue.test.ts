@@ -1,8 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { linkable_property_names } from "../render/wasm/lsdoc_wasm.js";
-import { aliasNamesOf } from "../render/block";
-import { pageRefsInText } from "../render/pageRefs";
+import { block_reference_names, linkable_property_names, page_alias_spellings } from "../render/wasm/lsdoc_wasm.js";
 
 describe("parser-owned linkable property values", () => {
   beforeAll(initParser);
@@ -17,10 +15,10 @@ describe("parser-owned linkable property values", () => {
     expect(linkable_property_names("`hidden` [[shown]]", false)).toEqual(["shown"]);
   });
   it("alias labels use the same token boundaries as tags", () => {
-    expect(aliasNamesOf([["aliases", "[[First alias]] [[Second alias]]"]])).toEqual(["First alias", "Second alias"]);
+    expect(page_alias_spellings("aliases:: [[First alias]] [[Second alias]]", undefined, false)).toEqual(["First alias", "Second alias"]);
   });
   it("reference candidates do not invent a combined name from mixed property text", () => {
-    const refs = pageRefsInText("tags:: plain text #a #[[multi word]]", "md");
+    const refs = block_reference_names("tags:: plain text #a #[[multi word]]", false);
     expect(new Set(refs)).toEqual(new Set(["plain text", "a", "multi word"]));
   });
 });

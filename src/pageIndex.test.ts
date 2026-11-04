@@ -192,6 +192,27 @@ describe("page index: the one frontend name answerer", () => {
     await vi.waitFor(() => expect(navigationName("shared")).toBe("Alpha"));
   });
 
+  // EMPTY-ALIAS (D-20261103-CMA, as Logseq): an empty `ML.md` beside
+  // `Machine Learning` (`alias:: ML`) yields its name. The store marks the
+  // entry; a link and a named route open the owner, while the file is still
+  // the page that owns the name (All Pages, writes, the exact-path route).
+  it("routes an empty alias page's name to the alias owner", async () => {
+    backendMock.pageInventory.mockResolvedValue(inventory(1,
+      file("Machine Learning"),
+      { ...file("ML"), link: { name: "Machine Learning", kind: "page" }, empty_alias: true },
+      { ...file("2026-10-26"), link: { name: "Oct 26th, 2026", kind: "journal" } },
+    ));
+    const { installPageIndex, linkTarget, navigationTarget, navigationName, resolvedTarget, ownerPath } = await load();
+    installPageIndex();
+    await vi.waitFor(() => expect(linkTarget("ML")).toEqual({ name: "Machine Learning", kind: "page" }));
+    expect(navigationTarget("ml")).toEqual({ name: "Machine Learning", kind: "page" });
+    expect(navigationName("ML")).toBe("ML");
+    expect(ownerPath(resolvedTarget("ML"))).toBe("pages/ML.md");
+    // A date-named page with content keeps its named route (its link moves
+    // for the day, not for an alias).
+    expect(navigationTarget("2026-10-26")).toEqual({ name: "2026-10-26", kind: "page" });
+  });
+
   // The frontend half of the Rust `page_inventory_wire_matches_legacy_fixture`
   // (formerly the list_pages / page_aliases / referenced_page_names adapters):
   // All Pages lists every physical file (a duplicate-day journal only its

@@ -349,6 +349,14 @@ impl Snapshot {
             dirty_query_plans(query_targets);
             return summary;
         };
+        // An alias edit regroups pages: a reference query matches a page's
+        // whole alias group (D-20261019-Q8), so it can change an answer on a
+        // page the edit never touched. Decided before the query readers are
+        // classified, so they fire and renew their plans (CM step 2 batch 9).
+        summary.full |= edits.iter().any(|(_, before, after)| {
+            crate::query::document_alias_spellings(before)
+                != crate::query::document_alias_spellings(after)
+        });
         let config = ParseConfig::from_config(self.graph.config());
         // No query work when no reader is registered. Otherwise derive one
         // facts pair per edited page, shared by all mounted queries.
@@ -392,7 +400,15 @@ impl Snapshot {
                             QuerySubscription::Registry => was.registry_rows_differ(now),
                             QuerySubscription::Query { .. } | QuerySubscription::Source { .. } => {
                                 target.plan.as_ref().is_none_or(|plan| {
-                                    plan.touches_edit(entry, before, after, was, now, &config)
+                                    plan.touches_edit(
+                                        &self.graph,
+                                        entry,
+                                        before,
+                                        after,
+                                        was,
+                                        now,
+                                        &config,
+                                    )
                                 })
                             }
                         }
@@ -431,8 +447,6 @@ impl Snapshot {
                 }
             }
             changed_blocks(&before, &after, &mut summary.blocks);
-            summary.full |= crate::query::document_alias_spellings(&before)
-                != crate::query::document_alias_spellings(&after);
             let properties = |doc: &Document| {
                 let mut result: BTreeMap<String, Vec<String>> = BTreeMap::new();
                 for (key, value) in crate::query::page_properties::page_facets(doc).0 {
@@ -497,11 +511,7 @@ impl Snapshot {
                 );
                 for target in unlinked_targets {
                     if crate::query::changed_page_affects_unlinked(
-                        graph,
-                        target,
-                        entry,
-                        &selected,
-                        header.as_ref(),
+                        graph, target, entry, &selected, &header,
                     ) {
                         summary.text_to.insert(page_key(target));
                     }

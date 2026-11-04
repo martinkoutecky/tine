@@ -24,6 +24,9 @@ pub mod media_mime;
 pub mod model;
 pub mod org;
 mod outline;
+pub mod page_header;
+// `crate::page_identity`, the path `page_header.rs` uses, as in `lsdoc-wasm`.
+pub(crate) use refs::page_identity;
 pub mod page_properties;
 pub mod pdf;
 pub mod projection;
