@@ -1139,3 +1139,73 @@ fn change_summary_bulk_rebuild_and_config_fallbacks() {
     );
     store.close();
 }
+
+/// CM step 2 batch 9 (S10, D-20261019-Q8): a reference query matches the
+/// referenced page's whole alias group, so an `alias::` edit on a page the
+/// answer never contained can change it. The mounted reader must fire and the
+/// memoized answer must follow, without a restart.
+#[test]
+fn an_alias_edit_refreshes_a_reference_query_it_does_not_touch() {
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(1);
+    edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "see [[Target]]".into()
+    });
+    let parsed = parse_query_pair(
+        "(and [[Extra]] (page \"A\"))",
+        QueryTextDialect::MacroQuery,
+        &[],
+        tine_core::query::registry::Registry::none(),
+    );
+    let rows = |store: &Store| {
+        let IrAnswer::Result(result) = store
+            .whole_graph()
+            .unwrap()
+            .query_ir(
+                IrRequest::Run {
+                    query: &parsed.query,
+                    view: &parsed.view,
+                    context: &Default::default(),
+                },
+                &Cancel::default(),
+            )
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("query answer");
+        };
+        let tine_core::query::ir::QueryRows::Block { groups } = result.rows else {
+            panic!("block rows");
+        };
+        groups
+            .iter()
+            .flat_map(|group| group.blocks.iter().map(|block| block.raw.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert!(rows(&store).is_empty(), "no page is named Extra yet");
+    store
+        .register_query_subscription(
+            "extra".into(),
+            Some(crate::QuerySubscription::Query {
+                query: parsed.query.clone(),
+                context: Default::default(),
+            }),
+            None,
+        )
+        .unwrap();
+    let wire = edit(&store, "pages/Target.md", |doc| {
+        doc.pre_block = Some("alias:: Shortcut, Extra\nicon:: T".into())
+    });
+    assert!(
+        strings(&wire["summary"]["queryTo"]).contains("extra"),
+        "the alias edit must refresh the mounted query: {}",
+        wire["summary"]
+    );
+    assert_eq!(rows(&store), vec!["see [[Target]]".to_owned()]);
+    let wire = edit(&store, "pages/Target.md", |doc| {
+        doc.pre_block = Some("alias:: Shortcut\nicon:: T".into())
+    });
+    assert!(strings(&wire["summary"]["queryTo"]).contains("extra"));
+    assert!(rows(&store).is_empty(), "removing the alias drops the row");
+}

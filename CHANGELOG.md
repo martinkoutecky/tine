@@ -11,7 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A namespace page that has no file of its own, such as `Work` for a page titled `Work/Plan` or a link `[[Work/Plan]]`, is now a page everywhere, as in Logseq: it has a row in All pages, page queries find it, and it appears or goes as soon as its first child appears or its last child goes. Before, only the namespace tree showed it, and it was missing from All pages and queries. The Namespaces view now counts it among the pages below a namespace (REG-CM-NAMESPACE-PARENTS-INVENTORY, UI-CM-NAMESPACE-PARENTS).
+- Page queries find a journal by any spelling of its date: `(page "2026-10-26")`, `[[2026-10-26]]` and Tine query `@page and name = '2026-10-26'` now find the Oct 26th, 2026 journal and its blocks, as the link `[[2026-10-26]]` opens it; before they found nothing unless written in the journal's title format (internal REG-CM-QUERY-DATE-SPELLING-FOLD).
 - Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
+
+### Changed
+
+- A query for a page reference finds the page by any of its names (discussion #825, rule 7): with `alias:: ML` on Machine Learning, `{{query [[ML]]}}` and `{{query [[Machine Learning]]}}` both list every block that links `[[ML]]` or `[[Machine Learning]]` and the page's own blocks, exactly what its Linked References shows. This holds for `[[A]]`, `#A`, `(page-ref A)` and Tine query `ref('A')` and `direct_ref('A')`, and `(not [[A]])` leaves all of them out. Saved queries that name an aliased page can show more results than before; `(page …)`, `name = …` and `(page-tags …)` still name one page. A live query follows an `alias::` edit at once (internal REG-CM-QUERY-REFS-ALIAS-CLASS).
 
 ### Added
 

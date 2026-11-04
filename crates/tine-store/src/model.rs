@@ -1168,7 +1168,7 @@ impl ReadSnapshot {
         let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
         self.memos
             .query
-            .carry_from(&old.memos.query, &parse_config, edits);
+            .carry_from(old, &old.memos.query, &parse_config, edits);
         for (entry, previous, current) in edits {
             // GH #623 item 3: a fold changes no predicate (collapse_only.rs),
             // so only answers holding this page's blocks are dropped and the

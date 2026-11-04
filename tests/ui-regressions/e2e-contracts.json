@@ -699,6 +699,24 @@
       ],
       "stability": "stable"
     },
+    "scripts/e2e-cm-query-alias.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With Machine Learning carrying alias:: ML and Notes holding `also [[Machine Learning]]`, typing {{query [[ML]]}} on another page lists that block (and not a block naming no page of the group); editing Machine Learning's first block to alias:: AI in the app drops the block from the mounted query, and restoring alias:: ML lists it again, without reopening the page.",
+          "blocking": true,
+          "authority": "D-20261019-Q8 (Martin): a query's [[A]] / refs matches A's whole alias group; CM step 2 batch 9 (S10)"
+        }
+      ],
+      "acceptableVariations": [
+        "Refresh latency, row order and the result's layout may vary while the listed blocks are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-date-links.mjs": {
       "contracts": [
         {

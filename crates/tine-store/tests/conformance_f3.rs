@@ -434,9 +434,10 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                 fresh(&graph.store, &graph.root, &probes, &at);
                 assert_ref_query(&graph.store, &old, "Ref0", true, &at);
                 // Merge fixtures share the alias Shared, so the link table
-                // already connects both physical owners via alias references.
-                // A literal Simple query still has no new-name block yet.
-                assert_query_controls(&graph.store, &new, "Ref0", false, mode >= 2, &at);
+                // already connects both physical owners via alias references,
+                // and so does the Simple query: `[[New]]` matches New's alias
+                // group (D-20261019-Q8, transitive AL1), which reaches Old.
+                assert_query_controls(&graph.store, &new, "Ref0", mode >= 2, mode >= 2, &at);
                 assert_alias_query(&graph.store, &alias, &at);
                 assert_incoming_query(&graph.store, &old, &at);
                 let host =
@@ -477,11 +478,14 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                 }
                 fresh(&graph.store, &graph.root, &probes, &at);
                 assert_ref_query(&graph.store, after, "Ref0", true, &at);
+                // After the legacy merge (mode 3) New holds Former and Shared,
+                // which Ref0 still links: the Simple query's alias group
+                // (D-20261019-Q8) finds it as the link table does.
                 assert_query_controls(
                     &graph.store,
                     if mode == 3 { &new } else { &old },
                     "Ref0",
-                    false,
+                    mode == 3,
                     mode == 3,
                     &at,
                 );

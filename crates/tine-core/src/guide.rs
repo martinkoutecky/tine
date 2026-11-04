@@ -2095,6 +2095,8 @@ mod og_20d_guide_tests {
             "strict `>` / `<`",
             "reversed bounds return nothing",
             "`direct_ref('project')`",
+            "A reference finds the page by any of its names",
+            "A journal answers to every spelling of its date",
             "20,000 rows",
             "Tine 0.6 (stable)",
         ] {
