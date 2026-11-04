@@ -20,11 +20,33 @@ pub fn normalize(name: &str) -> String {
     page_key(name)
 }
 
-/// OG's page-reference closure: the name and each nonempty namespace ancestor.
-/// Inputs retain their spelling; callers fold page identity before comparing.
-/// Work and output depend only on this name, never on graph size.
+/// Whether `name` is a namespace name: OG `text.cljs namespace-page?`
+/// (`deps/graph-parser/src/logseq/graph_parser/text.cljs:79`, logseq/logseq
+/// 6e7afa8eb). It contains `/`, does not start with `./` or `../`, and is not a
+/// URL (`util.cljs url?`: `new URL(s)` parses and its origin is not `"null"`,
+/// which holds for `http`, `https`, `ws`, `wss`, `ftp` and a `blob:` of one of
+/// them, not for `mailto:`, `file:` or an unknown scheme). Every consumer of
+/// "which namespace pages does this name give" asks this, through
+/// [`namespace_refs`]: a page's namespace parents, Linked References' namespace
+/// closure, the queries' namespace closure. The URL parse runs only for a name
+/// with both `/` and `:`.
+pub fn is_namespace_name(name: &str) -> bool {
+    name.contains('/')
+        && !name.starts_with("../")
+        && !name.starts_with("./")
+        && !(name.contains(':')
+            && url::Url::parse(name).is_ok_and(|parsed| parsed.origin().is_tuple()))
+}
+
+/// OG's page-reference closure: the name and each nonempty namespace ancestor
+/// (only the name itself when it is not a namespace name,
+/// [`is_namespace_name`]). Inputs retain their spelling; callers fold page
+/// identity before comparing. Work and output depend only on this name, never
+/// on graph size.
 pub fn namespace_refs(name: &str) -> impl Iterator<Item = &str> {
-    name.match_indices('/')
+    let prefixes = if is_namespace_name(name) { name } else { "" };
+    prefixes
+        .match_indices('/')
         .map(move |(at, _)| &name[..at])
         .chain(std::iter::once(name))
         .filter(|name| !name.is_empty())
@@ -215,6 +237,54 @@ pub fn rename_pre_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CM step 2 batch 14 (S8 follow-up): OG `namespace-page?` excludes `./x`,
+    /// `../x` and URLs, so such a name gives no namespace parents and no
+    /// namespace-closure reference (`[[./x]]` is not a reference to page `.`).
+    #[test]
+    fn namespace_refs_follow_og_namespace_page() {
+        fn refs(name: &str) -> Vec<&str> {
+            namespace_refs(name).collect()
+        }
+        // Control: an ordinary namespaced name, and one with no `/`.
+        assert_eq!(refs("a/b"), ["a", "a/b"]);
+        assert_eq!(refs("a/b/c"), ["a", "a/b", "a/b/c"]);
+        assert_eq!(refs("plain"), ["plain"]);
+        assert_eq!(refs("a/./b"), ["a", "a/.", "a/./b"]);
+        assert_eq!(refs(".hidden/x"), [".hidden", ".hidden/x"]);
+        assert_eq!(refs("/lead"), ["/lead"]);
+        // Excluded: relative paths and URLs are plain names.
+        for name in [
+            "./x",
+            "./x/y",
+            "../x",
+            "../x/y",
+            "https://a.b/c",
+            "HTTPS://a.b/c/d",
+            "http://x/y/z",
+            "ftp://h/p",
+            "ws://h/p",
+            "wss://h/p",
+            "blob:https://a.b/uuid",
+            "https:/x/y",
+        ] {
+            assert_eq!(refs(name), [name], "{name}");
+            assert!(!is_namespace_name(name), "{name}");
+        }
+        // OG's `url?` tests the origin, so these are namespaces.
+        for name in [
+            "mailto:a@b/c",
+            "Work: Plan/x",
+            "file:///a/b",
+            "a://b/c",
+            "tel:1/2",
+            "C:/x/y",
+            "blob:foo/bar",
+        ] {
+            assert!(is_namespace_name(name), "{name}");
+            assert!(refs(name).len() > 1, "{name}");
+        }
+    }
 
     /// Single-target rewrite of a page's text: the one-entry case of
     /// [`rename_rewrite`], the rewriter the graph rename uses.

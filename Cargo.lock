@@ -5147,6 +5147,7 @@ dependencies = [
  "tine-search",
  "unicode-normalization",
  "unicode-segmentation",
+ "url",
  "uuid",
 ]
 
