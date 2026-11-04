@@ -379,7 +379,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     e.stopPropagation();
     // Shared modified-click contract (linkGesture.ts, GH #283/#438).
     const dest = internalLinkDest(e);
-    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(target());
+    if (dest === "sidebar" && !isGuidePageName(targetName())) props.file ? openPageInSidebar(target()) : openPageInSidebar(link().name, kind());
     else if (dest === "background") openBackgroundTab();
     else if (dest === "pane")
       openRouteInOtherPane({ kind: "page", ...target() }, pane?.paneId ?? focusedPaneId());
