@@ -85,6 +85,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-minimize-to-tray"), description: msg("settings-search-hide-taskbar-dock-minimize-system-tray") },
   { tab: "appearance", label: msg("settings-search-start-minimized-to-tray"), description: msg("settings-search-launch-hidden-startup-autostart-system-tray") },
   { tab: "editor", label: msg("settings-search-your-name"), description: msg("settings-search-comment-author-name-margin-reply"), aliases: ["author", "identity"] },
+  { tab: "editor", label: msg("links-remembered-schemes"), description: msg("links-consent-device-hint"), aliases: ["scheme", "links", "privacy", "shortcuts", "obsidian", "zotero"] },
   { tab: "editor", label: msg("settings-hover-preview-delay"), description: msg("settings-hover-preview-delay-hint"), aliases: ["hover", "preview", "delay", "page", "block", "seconds"], level: "advanced" },
   ...(cm6EditorAvailable ? [{ tab: "editor", label: msg("settings-cm6-label"), description: msg("settings-cm6-label"), level: "advanced" } satisfies SettingSearchEntry] : []),
   { tab: "editor", label: msg("settings-search-file-format"), description: msg("settings-search-new-pages-markdown-org") },

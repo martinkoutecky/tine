@@ -1,6 +1,13 @@
 links-open-custom-scheme-confirm = 用系统关联的应用打开此 { $scheme }: 链接吗？{ "\u000A\u000A" }{ $url }
 
 links-open-custom-scheme-title = 打开 { $scheme }: 链接
+links-always-open-scheme = 始终打开 { $scheme } 链接
+links-consent-device-hint = 此设置仅保存在本设备上，适用于所有图谱。在设置 → 编辑器中忘记某个协议，即可在打开其链接前重新询问。
+links-remembered-schemes = 已记住的应用链接
+links-forget = 忘记
+links-forget-scheme = 忘记 { $scheme } 链接
+links-no-remembered-schemes = 尚未记住任何协议
+links-consent-save-failed = 无法保存应用链接授权。已恢复之前的设置。
 
 links-outside-graph-title = 此链接指向图谱文件夹外，Tine 不会打开它
 

@@ -1275,11 +1275,18 @@ export interface MessageArgs {
   "kernel-page-properties-stay-at-the-top-of-the-page": {};
   "launcher-ranking-could-not-load-adaptive-launcher-ranking-preference": {};
   "link-depth-embed-depth-is-too-deep": {};
+  "links-always-open-scheme": { "scheme": string | number };
+  "links-consent-device-hint": {};
+  "links-consent-save-failed": {};
   "links-copy-title": {};
+  "links-forget": {};
+  "links-forget-scheme": { "scheme": string | number };
+  "links-no-remembered-schemes": {};
   "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
   "links-open-custom-scheme-title": { "scheme": string | number };
   "links-opened-in-new-tab": {};
   "links-outside-graph-title": {};
+  "links-remembered-schemes": {};
   "live-conflicts-the-file-on-disk-now": {};
   "live-conflicts-your-unsaved-edits": {};
   "macro-advanced-ran": { "clauses": string | number };
