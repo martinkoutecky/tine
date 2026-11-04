@@ -1,7 +1,7 @@
 import type { PaneRouter, Route } from "./router";
 import type { PublishedSnapshot } from "./publishedBackend";
 import type { BlockDto, PageDto } from "./types";
-import { pageIdentityKey } from "./pageIdentity";
+import { publishedAnswerer } from "./publishedAnswers";
 import { blockRegions } from "./render/parse";
 
 export type PublishedPermalinkTarget =
@@ -73,8 +73,8 @@ function findBlock(blocks: PageDto["blocks"], wanted: string, format: "md" | "or
   return null;
 }
 
-/** Resolve a link only within the baked snapshot. Page aliases remain valid,
- *  while block UUIDs are graph-wide so moving a block does not break its link
+/** Resolve a link only within the baked snapshot. A page name opens what
+ *  `[[name]]` opens there (aliases stay valid), while block UUIDs are graph-wide so moving a block does not break its link
  *  after the next export. Canonical page identity and parser-owned block IDs
  *  match publishedBackend. O(snapshot content bytes) for a block, O(page/alias
  *  name bytes) for a page. Returns null for an absent target; block lookup
@@ -90,14 +90,9 @@ export function resolvePublishedPermalink(
     return null;
   }
 
-  const wanted = pageIdentityKey(target.page);
-  let page = snapshot.pages.find((candidate) => pageIdentityKey(candidate.name) === wanted);
-  if (!page) {
-    const alias = snapshot.aliases.find(([from]) => pageIdentityKey(from) === wanted);
-    if (alias) {
-      page = snapshot.pages.find((candidate) => pageIdentityKey(candidate.name) === pageIdentityKey(alias[1]));
-    }
-  }
+  // What `[[<name>]]` opens (`publishedAnswers.ts`; the legacy upgrade for
+  // an old snapshot).
+  const page = publishedAnswerer(snapshot).permalinkPage(target.page);
   return page ? { page } : null;
 }
 

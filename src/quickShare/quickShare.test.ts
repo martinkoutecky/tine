@@ -217,6 +217,38 @@ describe("quick share generation 1", () => {
     expect(broken((d) => { d.snapshot.pages[0].name = "/Project/"; })).toBe("invalid");
   });
 
+  it("admits a recognized answers v1 field by field and reads any other v as before (CM Q13)", () => {
+    const frozen = readFileSync(new URL("answers/document.json", FIXTURES));
+    expect(decodeShareDocument(frozen).snapshot.answers).toMatchObject({ v: 1 });
+    const doc = JSON.parse(frozen.toString());
+    const refusal = (edit: (d: typeof doc) => void) => {
+      const copy = structuredClone(doc);
+      edit(copy);
+      try {
+        decodeShareDocument(new TextEncoder().encode(JSON.stringify(copy)));
+      } catch (error) {
+        return (error as QuickShareError).reason;
+      }
+      return "admitted";
+    };
+    // Absent, or a version this viewer does not read: the legacy reading.
+    expect(refusal((d) => { delete d.snapshot.answers; })).toBe("admitted");
+    expect(refusal((d) => { d.snapshot.answers = { v: 2, inventory: "a later shape" }; })).toBe("admitted");
+    // Unknown keys inside a v1 are ignored, as everywhere in a snapshot.
+    expect(refusal((d) => { d.snapshot.answers.later = [1]; })).toBe("admitted");
+    // Damaged recognized data is refused, never downgraded to legacy.
+    expect(refusal((d) => { d.snapshot.answers = "v1"; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.inventory = {}; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.inventory[0].name = 7; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.inventory[1].target = { kind: "existing", id: "pages/Outside.md", others: [] }; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.inventory[1].target = { kind: "alias", owners: [] }; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.inventory[1].link = { name: "x", kind: "block" }; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.resolve = [{ name: "x", kind: "page" }]; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.alias_groups = [{ name: "x", aliases: [1], pages: [] }]; })).toBe("invalid");
+    expect(refusal((d) => { d.snapshot.answers.journals.content_days = ["20261017"]; })).toBe("invalid");
+    expect(refusal((d) => { delete d.snapshot.answers.journals.title_format; })).toBe("invalid");
+  });
+
   it("parses only well-formed share fragments", () => {
     const key = b64uEncode(KEY);
     expect(parseShareFragment(`#me/0123456789abcdef0123/${key}`)?.rest).toBe("");

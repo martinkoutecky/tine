@@ -9,6 +9,9 @@ const RULE = "I-12/I-25: one name answerer: the store; the frontend caches `page
   "(imitate src/pageIndex.ts: look a name up there, never build a name/alias map)";
 
 const INVENTORY_OWNER = "src/pageIndex.ts";
+// The one reader of an alias's first owner: the pure row readers `pageIndex.ts`
+// applies to its held inventory (and the published site to a snapshot's rows).
+const OWNER_READER = "src/inventoryRows.ts";
 // `resolvePage` answers ONE name for a save that has no file id yet (B15b): the
 // journal seed/template, QuickSwitcher Create and query materialize. (A working-set
 // page's first save resolves inside the `page_open` port, STEP3 §3.1.) It never
@@ -68,14 +71,14 @@ export function nameAnswererViolations(file: string, source: string): string[] {
       report(node, "page_inventory invoked outside backend.ts");
     }
     // CM step 2 (I-12): which file an alias opens is the backend's first owner,
-    // read through `ownerPath` in pageIndex.ts only, never by indexing `owners`.
+    // read through `ownerPath` in inventoryRows.ts only, never by indexing `owners`.
     const ownersList = (expr: ts.Expression) =>
       (ts.isIdentifier(expr) && expr.text === "owners") ||
       (ts.isPropertyAccessExpression(expr) && expr.name.text === "owners");
-    if (file !== INVENTORY_OWNER && ts.isElementAccessExpression(node) && ownersList(node.expression)) {
+    if (file !== OWNER_READER && ts.isElementAccessExpression(node) && ownersList(node.expression)) {
       report(node, "alias owner picked by indexing `owners` (use ownerPath from pageIndex.ts)");
     }
-    if (file !== INVENTORY_OWNER && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+    if (file !== OWNER_READER && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
       ["at", "find", "shift"].includes(node.expression.name.text) && ownersList(node.expression.expression)) {
       report(node, "alias owner picked from `owners` (use ownerPath from pageIndex.ts)");
     }
@@ -131,7 +134,9 @@ describe("page index guard (Rule 3: one answerer, frontend included)", () => {
       'const sorted = [...owners].sort()[0];',
     ].join("\n");
     expect(nameAnswererViolations("src/router.ts", planted)).toHaveLength(3);
-    expect(nameAnswererViolations("src/pageIndex.ts", 'return target.owners[0];')).toEqual([]);
+    // The one reader moved with the pure row readers (CM Q13): only it may index.
+    expect(nameAnswererViolations("src/inventoryRows.ts", 'return target.owners[0];')).toEqual([]);
+    expect(nameAnswererViolations("src/pageIndex.ts", 'return target.owners[0];')).toHaveLength(1);
   });
 });
 
