@@ -85,12 +85,16 @@ async function editText(text) {
   await readyEditor();
 }
 async function action(text, cls) {
-  return browser.execute((text, cls) => {
+  const button = await browser.execute((text, cls) => {
     const row = [...document.querySelectorAll(".ls-block")].find(el => el.querySelector(":scope > .block-main .block-content")?.textContent.includes(text));
-    const button = row?.querySelector(`:scope > .comment-quote .${cls}, :scope > .block-main .${cls}`);
-    if (!button) return false;
-    button.click(); return true;
+    // Actions may move between the quote, header and body. Target this reply's
+    // own control, never a nested reply's action.
+    return [...(row?.querySelectorAll(`button.${cls}`) ?? [])].find(button => button.closest(".ls-block") === row) ?? null;
   }, text, cls);
+  if (!button) return false;
+  await browser.$(button).moveTo();
+  await browser.$(button).click();
+  return true;
 }
 async function persisted(...words) {
   return waitForFileText(FILE, text => words.every(word => text.includes(word)), { timeoutMs: 20_000 });
@@ -178,7 +182,7 @@ try {
   if (canDelete) {
     await waitForFileText(FILE, text => !text.includes(NESTED) && text.includes(REPLY), { timeoutMs: 20_000 });
     await shot("07-reply-deleted");
-    await action(COMMENT, "comment-delete");
+    check(await action(COMMENT, "comment-delete"), "Thread has no Delete affordance");
     await waitForFileText(FILE, text => !text.includes(COMMENT) && !text.includes(REPLY), { timeoutMs: 20_000 });
     await shot("08-thread-deleted");
     await browser.keys(["Control", "z"]);
@@ -261,7 +265,7 @@ try {
   console.error(`Failure in ${step}: ${String(error)}`);
   if (browser) { try { console.error(await browser.execute(() => document.body?.innerText.slice(0, 3000))); } catch {} }
   if (browser) { try { await shot(`failure-${step}`); } catch {} }
-  fs.writeFileSync(path.join(OUT, "failure.json"), JSON.stringify({ commit: "5de3d7c9c + Round 2 working diff", journey: step, expected: "durable visible comment thread workflow", observed: String(error), classification: "ambiguous", defects }, null, 2));
+  fs.writeFileSync(path.join(OUT, "failure.json"), JSON.stringify({ commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), journey: step, expected: "durable visible comment thread workflow", observed: String(error), classification: "ambiguous", defects }, null, 2));
   throw error;
 } finally {
   fs.writeFileSync(path.join(OUT, "defects.json"), JSON.stringify(defects, null, 2));
