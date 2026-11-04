@@ -57,7 +57,7 @@ export interface PublishedAnswerer {
   /** `journalContentDays()`. */
   journalContentDays(): number[];
   /** `loadGraph().meta`'s journal formats. */
-  journalFormats(): { title: string; file: string };
+  journalFormats(): { title_format: string; file_name_format: string };
 }
 
 /** A recognized `answers` field that does not hold what its version says.
@@ -167,7 +167,7 @@ function answersV1(snapshot: PublishedSnapshot, answers: PublishedAnswersV1): Pu
     },
     aliasGroup: (name) => structuredClone(groups.get(pageIdentityKey(name)) ?? { aliases: [], pages: [] }),
     journalContentDays: () => [...answers.journals.content_days],
-    journalFormats: () => ({ title: answers.journals.title_format, file: answers.journals.file_name_format }),
+    journalFormats: () => ({ title_format: answers.journals.title_format, file_name_format: answers.journals.file_name_format }),
   };
 }
 

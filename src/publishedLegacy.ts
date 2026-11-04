@@ -18,13 +18,9 @@ import type { PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 import type { PublishedSnapshot } from "./publishedBackend";
 import type { PublishedAnswerer } from "./publishedAnswers";
 import { pageIdentityKey } from "./pageIdentity";
-import { DEFAULT_TITLE_FORMAT } from "./journal";
 
 type PublishedPage = PublishedSnapshot["pages"][number];
 
-/** The journal formats the legacy viewer always claimed. */
-const LEGACY_TITLE_FORMAT = DEFAULT_TITLE_FORMAT;
-const LEGACY_FILE_NAME_FORMAT = "yyyy_MM_dd";
 
 export function upgradeLegacySnapshot(snapshot: PublishedSnapshot): PublishedAnswerer {
   const pageByName = (name: string): PublishedPage | null => {
@@ -64,6 +60,7 @@ export function upgradeLegacySnapshot(snapshot: PublishedSnapshot): PublishedAns
     journalContentDays: () => snapshot.entries
       .filter((entry) => entry.kind === "journal" && entry.date_key !== null)
       .map((entry) => entry.date_key as number),
-    journalFormats: () => ({ title: LEGACY_TITLE_FORMAT, file: LEGACY_FILE_NAME_FORMAT }),
+    // The journal formats the legacy viewer always claimed (Logseq's defaults).
+    journalFormats: () => ({ title_format: "MMM do, yyyy", file_name_format: "yyyy_MM_dd" }),
   };
 }
