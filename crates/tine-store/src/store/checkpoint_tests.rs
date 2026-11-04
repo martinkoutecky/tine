@@ -270,6 +270,44 @@ fn literal_reference_query_checkpoints_are_rebuilt() {
     store.close();
 }
 
+/// FORMAT 25 (CM step 2 batch 11, D-20261103-CMA CM-NAMES (1)): a format-24
+/// checkpoint holds the names the old file-name decoder gave (`___lead.md` was
+/// "/lead", `%E9.md` was U+FFFD) in its claimants and `name_by_path`; it must
+/// rebuild, so a warm launch over unchanged files names them as OG does.
+#[test]
+fn old_file_name_decoder_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:preferred-format :markdown :file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("pages/___lead.md"), "- lead\n").unwrap();
+    fs::write(root.path().join("pages/%E9.md"), "- escape\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    let written = open_cp(root.path(), &cp);
+    written.whole_graph_reconciled().unwrap();
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&24_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    for (name, path) in [("lead", "pages/___lead.md"), ("%E9", "pages/%E9.md")] {
+        match graph.resolve(name, false) {
+            crate::Resolved::Existing { id, .. } => assert_eq!(id.as_str(), path),
+            _ => panic!("{name} does not name {path}"),
+        }
+    }
+    store.close();
+}
+
 #[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
@@ -1156,7 +1194,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (24, GOLDEN),
+        (25, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

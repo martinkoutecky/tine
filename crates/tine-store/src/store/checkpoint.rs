@@ -91,7 +91,12 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// graph files, and a memo entry's retained-byte charge now counts the plan's
 /// reference classes. The serialized layout stays unchanged; older memos
 /// rebuild.
-pub(crate) const FORMAT: u32 = 24;
+/// 25 (CM step 2 batch 11, D-20261103-CMA CM-NAMES (1)): the file-name
+/// decoder gives OG's name for malformed escapes and empty triple-lowbar
+/// namespace parts (`___lead` is "lead", `%E9` is "%E9"), so the persisted
+/// claimants, `name_by_path` and name-derived indexes change for unchanged
+/// graph files. The serialized layout stays unchanged; older ones rebuild.
+pub(crate) const FORMAT: u32 = 25;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
