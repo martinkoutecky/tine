@@ -14,6 +14,13 @@
 //! confirms the merge (`merge_into`); the harness confirms it, as the app's
 //! dialog would, when the name has one claimant, and says so in the class.
 //!
+//! Round-9 bridge (`bridge-round` file in the fixture directory; the gate
+//! reads it): each rename is also asked as the model's decided merge
+//! (M-Q5..7, CM-OWN-CHILD). A confirmed merge is compared with the model's
+//! merge (refusal, survivor, moved children, occurrences, united aliases,
+//! stored query arguments through `Rulings9.queryMap`), a plain rename with
+//! the model's rename (whose refusal now includes CM-OWN-CHILD).
+//!
 //! Favorites follow rename only in the frontend (`src/favorites.ts`, Q12):
 //! the model's `favorites` answer is not compared here (a harness gap).
 //!
@@ -95,6 +102,8 @@ enum TineRename {
     Performed {
         outcome: RenameOutcome,
         confirmed: bool,
+        /// The page id the confirmed merge went into (empty for a rename).
+        into: String,
     },
     Refused(String),
 }
@@ -104,6 +113,7 @@ fn run_tine(store: &Arc<Store>, old: &str, new: &str, droppers: &Droppers) -> Ti
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
     let mut result = rename_or_merge_page(store, &host, old, new, None, None, &[]);
     let mut confirmed = false;
+    let mut merged_into = String::new();
     if let Err(e) = &result {
         if e.kind() == std::io::ErrorKind::AlreadyExists
             && e.to_string().contains("already exists elsewhere")
@@ -116,6 +126,7 @@ fn run_tine(store: &Arc<Store>, old: &str, new: &str, droppers: &Droppers) -> Ti
             };
             if let Some(into) = claimant {
                 confirmed = true;
+                merged_into = into.clone();
                 result = rename_or_merge_page(store, &host, old, new, None, Some(&into), &[]);
             }
         }
@@ -125,6 +136,7 @@ fn run_tine(store: &Arc<Store>, old: &str, new: &str, droppers: &Droppers) -> Ti
         Ok(report) => TineRename::Performed {
             outcome: report.outcome,
             confirmed,
+            into: merged_into,
         },
         Err(e) => TineRename::Refused(format!(
             "{:?}: {e}{}",
@@ -226,20 +238,10 @@ fn run_rename(
         .collect();
     let journal = spec.journal_format();
     let key = |s: &str| shared::fold(&journal, s);
-    // The model's final path of each before file: its own, or for a moved
-    // file the after file named by its new name.
+    // The model's answers: the rename, and (round-9 bridge) the same pair as
+    // a merge (M-Q5..7). Older bridges have no `merges`.
     let r = &model["renames"][0];
-    let moved: BTreeMap<String, String> = r["movedFiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| {
-            (
-                f["path"].as_str().unwrap().to_owned(),
-                f["newName"].as_str().unwrap().to_owned(),
-            )
-        })
-        .collect();
+    let mg = model["merges"].get(0).cloned();
     let file_names: BTreeMap<String, String> = ctx
         .files
         .iter()
@@ -250,6 +252,7 @@ fn run_rename(
 
     let allowed = r["allowed"].as_bool().unwrap();
     let base = r["baseAllowed"].as_bool().unwrap();
+    let own_child = r["ownChildUsed"].as_bool().unwrap_or(false);
     let risks: Vec<String> = r["journalRisks"]
         .as_array()
         .unwrap()
@@ -266,22 +269,56 @@ fn run_rename(
         if !risks.is_empty() {
             why.push("journal risk");
         }
+        if own_child {
+            why.push("own child");
+        }
         format!("refuses ({})", why.join(" + "))
+    };
+    let merge_allowed = mg.as_ref().and_then(|m| m["allowed"].as_bool());
+    let merge_says = match &mg {
+        None => "has no merge".to_owned(),
+        Some(m) if m["allowed"] == true => "merges".to_owned(),
+        Some(m) => {
+            let mut why = Vec::new();
+            if m["target"].is_null() {
+                why.push("no single target");
+            }
+            if m["source"].is_null() {
+                why.push("no single source");
+            }
+            if m["typedInSubtree"] == true || m["targetInSubtree"] == true {
+                why.push("own child");
+            }
+            if m["journalRisks"].as_array().is_some_and(|a| !a.is_empty()) {
+                why.push("journal risk");
+            }
+            if why.is_empty() {
+                why.push("guard");
+            }
+            format!("refuses the merge ({})", why.join(" + "))
+        }
     };
     let tine = run_tine(&store, old, new, droppers);
     let rename = format!("rename {old:?} -> {new:?}");
+    // Which model answer the after graph is compared with: the rename's or
+    // the merge's (`None`: not compared further).
+    let mut chosen: Option<(&Value, bool)> = None;
     let performed: Option<(RenameOutcome, bool)> = match (&tine, allowed) {
-        (TineRename::Refused(why), true) => {
-            diffs.push(Diff::new(
-                format!(
-                    "rename: model allows, Tine refuses ({})",
-                    why.split(':').next().unwrap_or(why)
-                ),
-                format!("{rename}: model allows, Tine refuses: {why}"),
-            ));
+        (TineRename::Refused(why), _) => {
+            let kind = why.split(':').next().unwrap_or(why);
+            if allowed {
+                diffs.push(Diff::new(
+                    format!("rename: model allows, Tine refuses ({kind})"),
+                    format!("{rename}: model allows, Tine refuses: {why}"),
+                ));
+            } else if merge_allowed == Some(true) {
+                diffs.push(Diff::new(
+                    format!("merge: model merges, Tine refuses ({kind})"),
+                    format!("{rename}: model refuses the rename ({model_says}) but merges into {}, Tine refuses: {why}", mg.as_ref().unwrap()["target"]),
+                ));
+            }
             None
         }
-        (TineRename::Refused(_), false) => None,
         // `Unchanged` writes nothing: in effect the same as a refusal (the
         // user sees no error, but no file changes).
         (
@@ -291,41 +328,138 @@ fn run_rename(
             },
             false,
         ) => None,
-        (TineRename::Performed { outcome, confirmed }, false) => {
+        (
+            TineRename::Performed {
+                outcome,
+                confirmed: false,
+                ..
+            },
+            false,
+        ) => {
+            // Round 9: when the model would merge instead (M-Q7: into a
+            // journal day), Tine's plain rename is a different operation.
+            let merges_instead = if merge_allowed == Some(true) {
+                " but merges"
+            } else {
+                ""
+            };
             diffs.push(Diff::new(
+                format!("rename: model {model_says}{merges_instead}, Tine performs"),
                 format!(
-                    "rename: model {model_says}, Tine performs{}",
-                    if *confirmed { " a confirmed merge" } else { "" }
-                ),
-                format!(
-                    "{rename}: model {model_says} (journal risks {risks:?}), Tine performs ({outcome:?})"
+                    "{rename}: model {model_says} (journal risks {risks:?}){merges_instead}{}, Tine performs ({outcome:?})",
+                    if merge_allowed == Some(true) {
+                        format!(" into {}", mg.as_ref().unwrap()["target"])
+                    } else {
+                        String::new()
+                    }
                 ),
             ));
             None
         }
         (
             TineRename::Performed {
-                confirmed: true,
                 outcome,
+                confirmed: true,
+                into,
+            },
+            _,
+        ) => {
+            if allowed {
+                // The model allows a plain rename here (the new name is no real
+                // page); Tine refuses it and offers only a merge into the new
+                // name's claimant (an alias owner). Round 9 (M-Q5 dialog):
+                // the model offers both; Tine only the merge.
+                diffs.push(Diff::new(
+                    "rename: model allows a plain rename, Tine only merges into the new name's claimant",
+                    format!("{rename}: model allows; Tine refuses AlreadyExists, merges after confirmation ({outcome:?})"),
+                ));
+            }
+            match (&mg, merge_allowed) {
+                (Some(m), Some(true)) => {
+                    if m["target"].as_str() != Some(into.as_str()) {
+                        diffs.push(Diff::new(
+                            "merge: model and Tine merge into different pages",
+                            format!(
+                                "{rename}: model merges into {}, Tine into {into}",
+                                m["target"]
+                            ),
+                        ));
+                        None
+                    } else {
+                        chosen = Some((m, true));
+                        Some((*outcome, true))
+                    }
+                }
+                (None, _) if !allowed => {
+                    diffs.push(Diff::new(
+                        format!("rename: model {model_says}, Tine performs a confirmed merge"),
+                        format!(
+                            "{rename}: model {model_says} (journal risks {risks:?}), Tine performs ({outcome:?})"
+                        ),
+                    ));
+                    None
+                }
+                (None, _) => None,
+                (Some(_), _) => {
+                    diffs.push(Diff::new(
+                        format!("merge: model {merge_says}, Tine performs a confirmed merge"),
+                        format!(
+                            "{rename}: model {model_says} and {merge_says} (merge {}), Tine merges into {into} ({outcome:?})",
+                            mg.as_ref().unwrap()
+                                .as_object()
+                                .map(|o| {
+                                    o.iter()
+                                        .filter(|(k, _)| {
+                                            ["source", "target", "typedInSubtree", "targetInSubtree", "journalRisks"].contains(&k.as_str())
+                                        })
+                                        .map(|(k, v)| format!("{k}={v}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                })
+                                .unwrap_or_default()
+                        ),
+                    ));
+                    None
+                }
+            }
+        }
+        (
+            TineRename::Performed {
+                outcome,
+                confirmed: false,
+                ..
             },
             true,
         ) => {
-            // The model allows a plain rename here (the new name is no real
-            // page); Tine refuses it and offers only a merge into the new
-            // name's claimant (an alias owner). The after graphs differ by
-            // construction, so they are not compared further.
-            diffs.push(Diff::new(
-                "rename: model allows a plain rename, Tine only merges into the new name's claimant",
-                format!("{rename}: model allows; Tine refuses AlreadyExists, merges after confirmation ({outcome:?})"),
-            ));
-            None
+            chosen = Some((r, false));
+            Some((*outcome, false))
         }
-        (TineRename::Performed { outcome, confirmed }, true) => Some((*outcome, *confirmed)),
     };
     let Some((outcome, confirmed)) = performed else {
         later_drop(droppers, (store, dir));
         return finish(diffs, duplicate, coarse_random);
     };
+    let (r, is_merge) = chosen.expect("a performed operation has its model answer");
+    // The model's final path of each before file: its own, for a moved file
+    // the after file named by its new name, and for a merge's source the
+    // survivor (the target's path).
+    let moved: BTreeMap<String, String> = r["movedFiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["path"].as_str().unwrap().to_owned(),
+                f["newName"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let merged_into: Option<(String, String)> = is_merge.then(|| {
+        (
+            r["source"].as_str().unwrap().to_owned(),
+            r["target"].as_str().unwrap().to_owned(),
+        )
+    });
     let merge_tag = if confirmed { " (confirmed merge)" } else { "" };
 
     // The after graph, through a fresh store.
@@ -382,6 +516,25 @@ fn run_rename(
     }
     let mut final_path: BTreeMap<String, String> = BTreeMap::new();
     for path in file_names.keys() {
+        if let Some((src, dst)) = &merged_into {
+            if path == src {
+                if after_files.contains_key(dst) {
+                    final_path.insert(path.clone(), dst.clone());
+                } else {
+                    diffs.push(Diff::new(
+                        format!("merge: the survivor is gone after the merge{merge_tag}"),
+                        format!("{rename}: model merges {src} into {dst}; no such after file"),
+                    ));
+                }
+                if after_files.contains_key(src) && src != dst {
+                    diffs.push(Diff::new(
+                        format!("merge: the merged source file remains{merge_tag}"),
+                        format!("{rename}: {src} still exists after merging into {dst}"),
+                    ));
+                }
+                continue;
+            }
+        }
         match moved.get(path) {
             Some(new_name) => match by_key.get(&key(new_name)).map(Vec::as_slice) {
                 Some([p]) => {
@@ -486,7 +639,11 @@ fn run_rename(
         };
         for m in shared::query_macros(text) {
             for a in shared::query_page_args(&m) {
-                let mapped = map[&a].as_str().map(str::to_owned).unwrap_or(a);
+                // A merge writes stored query arguments by the model's query
+                // map (round 9, `Rulings9.queryMap`: the source's name becomes
+                // the survivor's own name); a rename by the spelling map.
+                let qmap = if is_merge { &r["queryMap"] } else { map };
+                let mapped = qmap[&a].as_str().map(str::to_owned).unwrap_or(a);
                 model_args
                     .entry(fp.clone())
                     .or_default()

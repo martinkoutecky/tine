@@ -1,0 +1,136 @@
+{
+  "backlinks": {
+    "Foo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[Foo]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "p": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Foo.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo",
+      "name": "Foo",
+      "target": {
+        "id": "pages/Foo.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Foo": "foo",
+    "p": "p"
+  },
+  "open": {
+    "Foo": {
+      "journal": [
+        "journal",
+        "foo"
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  },
+  "owner": {
+    "Foo": {
+      "journal": null,
+      "page": "pages/Foo.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "foo",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Foo",
+      "owner": "pages/Foo.md"
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    }
+  ],
+  "spellings": {
+    "Foo": {
+      "backend": [
+        "page",
+        "foo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    }
+  }
+}

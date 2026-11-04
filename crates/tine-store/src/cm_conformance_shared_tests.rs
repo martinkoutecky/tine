@@ -703,6 +703,10 @@ pub fn model_input(
         "favoritesPage": spec.favorites_page.clone().unwrap_or_else(|| NO_FAVORITES.to_owned()),
         "queries": spec.queries.iter().map(|q| json!({"anchor": q.anchor, "q": q.q})).collect::<Vec<_>>(),
         "renames": spec.renames.iter().map(|(o, n)| json!({"old": o, "new": n})).collect::<Vec<_>>(),
+        // Round-9 bridge: each rename is also asked as a merge (the model's
+        // decided merge, M-Q5..7); the rename harness compares whichever of
+        // the two Tine performed. Older bridges ignore the field.
+        "merges": spec.renames.iter().map(|(o, n)| json!({"old": o, "new": n})).collect::<Vec<_>>(),
         "mapStrings": map_strings,
     });
     let mut extra = spec.navigate.clone();

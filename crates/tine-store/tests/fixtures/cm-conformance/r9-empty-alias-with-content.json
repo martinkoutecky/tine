@@ -1,0 +1,10 @@
+{
+  "files": {
+    "pages/ML.md": "- my own ML notes\n",
+    "pages/Machine Learning.md": "alias:: ML\n\n- ml\n",
+    "pages/Notes.md": "- [[ML]]\n"
+  },
+  "navigate": [
+    "ML"
+  ]
+}
