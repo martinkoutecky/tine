@@ -442,6 +442,24 @@
       "r1-namespace-parent": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
+      "r1-relative-and-url-names": [
+        "frontend all pages: model page (\"page\", \".\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"..\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"../x\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"https:\") is reference-only and has no row",
+        "frontend all pages: model page (\"page\", \"https://a.b\") is reference-only and has no row",
+        "frontend linked refs header of (\"page\", \".\") [[.]]: model 1, header 0",
+        "frontend linked refs header of (\"page\", \"..\") [[..]]: model 1, header 0",
+        "frontend linked refs header of (\"page\", \"../x\") [[../x]]: model 1, header 0",
+        "frontend linked refs header of (\"page\", \"https:\") [[https:]]: model 1, header 0",
+        "frontend linked refs header of (\"page\", \"https://a.b\") [[https://a.b]]: model 1, header 0",
+        "frontend page list: model page \".\" is not listed",
+        "frontend page list: model page \"..\" is not listed",
+        "frontend page list: model page \"../x\" is not listed",
+        "frontend page list: model page \"https:\" is not listed",
+        "frontend page list: model page \"https://a.b\" is not listed"
+      ],
       "r2-alias-chain": [
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: file pages/B.md has no row (hidden as an OG built-in page, A11)",
