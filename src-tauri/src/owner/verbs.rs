@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tine_core::date::{JournalDate, JournalFormat};
+use tine_core::date::JournalDate;
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_store::{Day, HostReadError, InventoryScope, PageId, Resolved, StoreError, WholeGraph};
 
@@ -418,8 +418,13 @@ pub(super) fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
     }
 }
 
-/// The page a name names, as the app resolves it: a file claimant, else a
-/// sole alias owner, else a journal title.
+/// The page a name names: a file claimant (the claimant order's winner, as the
+/// app opens it), else a journal title. An alias-only name resolves only when
+/// one page declares it: the app opens the first declarer (AL2/CI4), but a CLI
+/// write must not guess among several, so several owners refuse `ambiguous`
+/// (contracted in docs/contracts/cli-output.md; in-scope threat: ambiguous
+/// input from an agent or script landing a write on a page it did not mean).
+/// Writes use [`resolve_write_page`] (CLI-DUPNAME: never choose among twins).
 pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     match graph.resolve(name, false) {
         Resolved::Existing { id, .. } => return Ok(id),
@@ -444,6 +449,79 @@ pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, Err
     }
 }
 
+/// The page a write names (CLI-DUPNAME, D-20261103-CMA): unlike a read's
+/// preferred claimant, a write never chooses among twins. Several files
+/// claiming `name` (or several pages declaring it as an alias) refuse
+/// `ambiguous`, naming every file, and nothing is written. In-scope threat:
+/// sync delivery or an external editor leaving two files that claim one name
+/// (a sync conflict copy, a case twin, a `title::` collision); writing the
+/// owner silently edits one twin while the agent never learns of the other.
+/// `None`: nothing claims the name. The claimants are the store's answer
+/// (`Resolved::Existing { id, others }`), never a second computation.
+pub(super) fn write_claimant(graph: &WholeGraph, name: &str) -> Result<Option<PageId>, ErrorBody> {
+    let claimants = |resolved| match resolved {
+        Resolved::Existing { id, mut others } => {
+            others.insert(0, id);
+            (others, false)
+        }
+        Resolved::Alias { owners } => (owners, true),
+        Resolved::Absent { .. } => (Vec::new(), false),
+    };
+    let (mut candidates, mut alias) = claimants(graph.resolve(name, false));
+    if candidates.is_empty() {
+        (candidates, alias) = claimants(graph.resolve(name, true));
+    }
+    if candidates.len() > 1 {
+        return Err(several_claimants(name, &candidates, alias));
+    }
+    Ok(candidates.pop())
+}
+
+/// [`write_claimant`] for a write that needs an existing page.
+pub(super) fn resolve_write_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
+    write_claimant(graph, name)?.ok_or_else(|| not_found(format!("no page is named `{name}`")))
+}
+
+/// The journal file a write to `day` lands in; a day several files claim
+/// (a Markdown and an Org file, a sync conflict copy) refuses as a page name
+/// does ([`write_claimant`]).
+pub(super) fn journal_write_page(
+    slot: &GraphSlot,
+    graph: &WholeGraph,
+    day: JournalDate,
+) -> Result<PageId, ErrorBody> {
+    let title = slot.store.config().journal_format().title(day);
+    if let Resolved::Existing { id, mut others } = graph.resolve(&title, true) {
+        if !others.is_empty() {
+            others.insert(0, id);
+            return Err(several_claimants(&title, &others, false));
+        }
+    }
+    Ok(slot.store.journal_id(Day(day.ordinal_key())))
+}
+
+/// The refusal of a write whose page name several files (or alias owners)
+/// claim: every file in the message and in `detail.candidates`.
+fn several_claimants(name: &str, candidates: &[PageId], alias: bool) -> ErrorBody {
+    let files = candidates.iter().map(PageId::as_str).collect::<Vec<_>>();
+    let message = if alias {
+        format!(
+            "`{name}` is an alias of {} pages ({}); name one of them; nothing changed",
+            files.len(),
+            files.join(", ")
+        )
+    } else {
+        format!(
+            "{} files claim the page `{name}` ({}); resolve the duplicate in the app (merge them, or rename or remove one file), then retry; nothing changed",
+            files.len(),
+            files.join(", ")
+        )
+    };
+    let mut body = ErrorBody::new("ambiguous", message, false);
+    body.detail = Some(json!({ "admitted": false, "candidates": files }));
+    body
+}
+
 /// The journal day `date` names: today when absent, else `YYYY-MM-DD` (or
 /// `YYYY_MM_DD`), else a title in the graph's journal format.
 pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, ErrorBody> {
@@ -457,12 +535,7 @@ pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<Journa
         return Ok(day);
     }
     let config = slot.store.config();
-    JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    )
-    .parse(date)
-    .ok_or_else(|| {
+    config.journal_format().parse(date).ok_or_else(|| {
         ErrorBody::new(
             "bad-args",
             format!("`{date}` is not a date (use YYYY-MM-DD)"),

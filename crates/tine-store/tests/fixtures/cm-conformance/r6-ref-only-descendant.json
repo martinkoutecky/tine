@@ -1,0 +1,12 @@
+{
+  "files": {
+    "pages/old.md": "- parent\n",
+    "pages/p.md": "- see [[old/child]]\n- and [[old]]\n"
+  },
+  "renames": [
+    {
+      "old": "old",
+      "new": "new"
+    }
+  ]
+}

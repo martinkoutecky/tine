@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Zed",
+      "path": "pages/Zed.md",
+      "preBlock": "alias:: Shared",
+      "title": null
+    },
+    {
+      "format": "md",
+      "name": "alpha",
+      "path": "pages/alpha.md",
+      "preBlock": "alias:: Shared",
+      "title": null
+    }
+  ],
+  "links": []
+}

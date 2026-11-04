@@ -1,0 +1,13 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "- day\n",
+    "pages/meeting.md": "- notes\n",
+    "pages/p.md": "- see [[meeting]]\n- {{query (page \"meeting\")}}\n"
+  },
+  "renames": [
+    {
+      "old": "meeting",
+      "new": "2026-10-26"
+    }
+  ]
+}

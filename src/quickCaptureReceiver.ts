@@ -3,6 +3,14 @@ import { appendToTodayJournal, captureToPage, flushPage } from "./document";
 import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type WriteOwner } from "./owned";
 import { pushToast } from "./toasts";
 import { msg } from "./i18n";
+import { graphMeta } from "./graphSession";
+import { appNow, journalTitle } from "./journal";
+import { openPage, route } from "./router";
+import { captureTime } from "./shareShape";
+import {
+  captureDestination, destinationName, shouldRedirect, templateOutline,
+  type QuickCaptureOptions,
+} from "./quickCaptureConfig";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 
 /** Install the graph window's capture receiver. Each request is deduplicated
@@ -87,7 +95,22 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
       return;
     }
     // A title routes the capture to a NEW (or existing) page; empty → today.
-    const title = (e.payload?.title ?? "").trim();
+    // GH #832/#833: OG's `:quick-capture-options` / `:quick-capture-templates`
+    // (quickCaptureConfig.ts). A typed title still wins; unset keys change nothing.
+    const meta = graphMeta();
+    const options: QuickCaptureOptions = {
+      defaultPage: meta?.quick_capture_default_page,
+      insertToday: meta?.quick_capture_insert_today === true,
+      redirectPage: meta?.quick_capture_redirect_page === true,
+      textTemplate: meta?.quick_capture_template_text,
+      enableJournals: meta?.enable_journals,
+    };
+    const destination = captureDestination(e.payload?.title, options);
+    const todayTitle = journalTitle(appNow());
+    const title = destination.kind === "page" ? destination.name : "";
+    const shape = (nodes: Parameters<typeof templateOutline>[0]) => templateOutline(nodes, options, {
+      time: captureTime(appNow()), date: todayTitle, format: meta?.preferred_format ?? "md",
+    });
     const save = async () => {
       let ok = false;
       let newClaim = false;
@@ -123,7 +146,7 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         const inserted = (name: string) => { if (id) landed.set(id, { name, owner: saveOwner }); };
         const result = await writeOwned(saveOwner, prior
           ? (prior.owner() ? flushPage(prior.name) : Promise.resolve(false))
-          : title ? captureToPage(title, text, inserted) : appendToTodayJournal(text, inserted));
+          : destination.kind === "page" ? captureToPage(destination.name, text, inserted, shape) : appendToTodayJournal(text, inserted, shape));
         ok = result.kind === "current" && result.value;
         if (ok && id) {
           const remembered = await writeOwned(saveOwner, backend().captureReceipt(id, "saved", e.payload.bindingGeneration));
@@ -143,6 +166,13 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
         else if (title) pushToast(msg("app-captured-to", { title }), "info");
         else pushToast(msg("app-captured-to-today-s-journal"), "info");
+        if (ok) {
+          const open = route();
+          const name = destinationName(destination, todayTitle);
+          if (shouldRedirect(options, name, open.kind === "page" ? open.name : null)) {
+            openPage(name, destination.kind === "journal" ? "journal" : "page");
+          }
+        }
       }
       return ok;
     };

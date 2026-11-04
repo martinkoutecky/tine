@@ -1,0 +1,112 @@
+[
+  {
+    "declared": [
+      "A1",
+      "B1"
+    ],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h1.md",
+    "preBlock": "alias:: A1, B1"
+  },
+  {
+    "declared": [
+      "A2"
+    ],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h2.md",
+    "preBlock": "aliases:: A2"
+  },
+  {
+    "declared": [
+      "A3",
+      "B3"
+    ],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h3.md",
+    "preBlock": "alias:: A3\nalias:: B3"
+  },
+  {
+    "declared": [],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h4.md",
+    "preBlock": "alias:: \"A4, B4\""
+  },
+  {
+    "declared": [
+      "A5"
+    ],
+    "firstRoot": "alias:: A5",
+    "format": "md",
+    "path": "pages/h5.md",
+    "preBlock": null
+  },
+  {
+    "declared": [
+      "A6"
+    ],
+    "firstRoot": "alias:: B6",
+    "format": "md",
+    "path": "pages/h6.md",
+    "preBlock": "alias:: A6"
+  },
+  {
+    "declared": [
+      "A7"
+    ],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h7.md",
+    "preBlock": "Alias:: A7"
+  },
+  {
+    "declared": [
+      "A8",
+      "B8"
+    ],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h8.md",
+    "preBlock": "alias:: [[A8]], #B8"
+  },
+  {
+    "declared": [
+      "A9",
+      "B9"
+    ],
+    "firstRoot": "body",
+    "format": "md",
+    "path": "pages/h9.md",
+    "preBlock": "alias:: A9\naliases:: B9"
+  },
+  {
+    "declared": [
+      "OA1"
+    ],
+    "firstRoot": "body",
+    "format": "org",
+    "path": "pages/o1.org",
+    "preBlock": "#+ALIAS: OA1\n"
+  },
+  {
+    "declared": [
+      "OA2"
+    ],
+    "firstRoot": "body",
+    "format": "org",
+    "path": "pages/o2.org",
+    "preBlock": ":PROPERTIES:\n:alias: OA2\n:END:\n"
+  },
+  {
+    "declared": [
+      "OA3"
+    ],
+    "firstRoot": "body",
+    "format": "org",
+    "path": "pages/o3.org",
+    "preBlock": "#+ALIASES: OA3\n"
+  }
+]

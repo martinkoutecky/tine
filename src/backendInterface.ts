@@ -58,6 +58,9 @@ export interface ConfirmOptions {
   cancelLabel: string;
 }
 
+/** A property-completion facet request (see `queryFacets`). */
+export type FacetScope = { keys: true } | { key: string };
+
 export interface Backend {
   graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
@@ -123,7 +126,7 @@ export interface Backend {
   /** Last-modified time of every page file, read once when the All pages view
    *  opens: times the store already holds (no stat, nothing persisted). */
   pageModified(): Promise<import("./types").PageModified>;
-  pageBacklinkCounts(): Promise<[string, number][]>;
+  pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts>;
   journalFeedPage(limit: number, beforeDay: number | null, waitForReferences?: boolean, throughDay?: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
@@ -200,6 +203,14 @@ export interface Backend {
    *  `unsavedPaths`: page files whose edits could not be saved; the rename
    *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
   renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
+  /** Per text (an unsaved page's pre-block or block, as the window holds it):
+   *  whether renaming `old` to `next` would rewrite it. The backend's own rename answer
+   *  (`pages::rename_would_change`), so the stuck-page check cannot disagree
+   *  with the rewrite. */
+  renameWouldChange(old: string, next: string, texts: import("./types").RenameProbeText[]): Promise<boolean[]>;
+  /** After a title:: change renamed the page at `path` (formerly `old`):
+   *  the backend moves config.edn's home and favorites and returns them. */
+  followPageIdentity(path: string, old: string): Promise<import("./types").IdentityFollow>;
   /** Resolve a query's complete owner pages without writing. O(graph query +
    * selected source bytes); the fingerprint binds the reviewed selection. */
   publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;
@@ -284,8 +295,11 @@ export interface Backend {
    *  view; no `result-too-large` refusal. Waits for graph load. */
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<ExplainEmptyResult>;
   /** Property keys (each with their distinct values) for query-builder
-   *  autocomplete. */
-  queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
+   *  autocomplete. With `autocomplete` and a `scope`, the editor's property
+   *  completion asks for less: `{ keys: true }` every key (values may be
+   *  empty), `{ key }` that key's values only. A backend may ignore `scope`
+   *  and answer every key with its values; callers read only what they asked. */
+  queryFacets(autocomplete?: boolean, scope?: FacetScope): Promise<[string, string[]][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
   pageIcons(names: string[]): Promise<Record<string, string>>;
   /** Persist favorited page names to config.edn `:favorites` and, when given,

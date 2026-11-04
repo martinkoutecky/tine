@@ -16,9 +16,11 @@ export interface DisplayedSeenPage {
 const displayed = new Map<string, DisplayedSeenPage>();
 
 // A route names the page as typed; the page itself carries its file name. Both
-// reach the same entry through the page identity key.
+// reach the same entry through the page identity key (the store's `page_key`;
+// no second fold if wasm is not ready: the parser is initialised before any
+// route renders, and a throw here is a bug to surface, census Q1).
 export function keyOf(name: string): string {
-  try { return pageIdentityKey(name); } catch { return name.trim().toLowerCase(); }
+  return pageIdentityKey(name);
 }
 
 export function registerDisplayed(name: string, page: DisplayedSeenPage): void {

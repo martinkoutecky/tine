@@ -1,9 +1,9 @@
 //! Read-only rename planning, shared by the single-page and namespace paths.
 use super::*;
 
-/// What one rename attempt writes, planned from one refreshed view and the
-/// config captured with it; commit and the host admit it only while both are
-/// current (A-W1, B2).
+/// What one rename attempt writes, planned from one published view (the
+/// attempt's walk, `refreshed_view`, decides reuse) and the config captured with it;
+/// commit and the host admit it only while both are current (A-W1, B2).
 pub(super) struct RenamePlan {
     pub(super) graph: tine_store::WholeGraph,
     pub(super) config: tine_store::ConfigState,
@@ -182,20 +182,24 @@ fn may_hold_reference(
     if !tine_store::parse_input_depth_within_limit(&text)
         || (org && !tine_core::org::headline_levels_within_limit(&text, 128))
     {
-        return text_mentions_a_name(&text.to_lowercase(), map);
+        return text_mentions_a_name(&text, map);
     }
     std::panic::catch_unwind(|| refs::rename_rewrite(&text, org, &map.0, format) != text)
-        .unwrap_or_else(|_| text_mentions_a_name(&text.to_lowercase(), map))
+        .unwrap_or_else(|_| text_mentions_a_name(&text, map))
 }
 
-fn text_mentions_a_name(lowercase: &str, map: &RenameMap) -> bool {
+/// Compared under page identity's own folding (case and Unicode normal form),
+/// so a link in any spelling that names the page is seen.
+fn text_mentions_a_name(text: &str, map: &RenameMap) -> bool {
+    let text = refs::page_key(text);
     map.0
         .iter()
-        .any(|(old, _)| lowercase.contains(&old.to_lowercase()))
+        .any(|(old, _)| text.contains(&refs::page_key(old)))
 }
 
 /// The same search for a file too big to hold in memory: chunks overlap by more
-/// than the longest name, so a name across two chunks is still seen.
+/// than the longest name in any spelling (decomposing grows UTF-8 at most
+/// threefold), so a name across two chunks is still seen.
 fn file_mentions_a_name(path: &std::path::Path, map: &RenameMap) -> io::Result<bool> {
     const CHUNK: usize = 1024 * 1024;
     let overlap = map.0.iter().map(|(old, _)| old.len()).max().unwrap_or(0) * 4;
@@ -209,7 +213,7 @@ fn file_mentions_a_name(path: &std::path::Path, map: &RenameMap) -> io::Result<b
         }
         let filled = kept + read;
         let text = String::from_utf8_lossy(&window[..filled]);
-        if text_mentions_a_name(&text.to_lowercase(), map) {
+        if text_mentions_a_name(&text, map) {
             return Ok(true);
         }
         kept = overlap.min(filled);
@@ -225,7 +229,9 @@ pub(super) fn plan_rename(
     merge_into: Option<&str>,
     #[cfg(test)] after_inventory: &dyn Fn(),
 ) -> io::Result<RenamePlan> {
-    let graph = refreshed_view(store)?;
+    // The published view: the caller walks once per attempt
+    // (`refreshed_view`, in `multi_rename`'s reuse check).
+    let graph = view(store)?;
     // The planning context: every format decision below uses this config,
     // and commit checks it is still the view's (B2).
     let config = store.config();
@@ -332,14 +338,18 @@ pub(super) fn plan_rename(
         .iter()
         .map(|(from, to)| (refs::normalize(from), to.clone()))
         .collect();
-    // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: only
-    // pages that explicitly reference a renamed name are rewritten, plus
-    // every moved page. A name mentioned only inside an ordinary query stays;
-    // the pages holding export definitions are read too, whose page
-    // selectors follow the rename (`tine_core::export_definition`).
+    // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: the
+    // pages that explicitly reference a renamed name, plus every moved page.
+    // The pages with a rewrite target no reference selects are read too: a
+    // query's page-name arguments (D-20261031-CMQ), links in other macros'
+    // arguments and Org file links follow the rename like links.
     let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
     let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
-    candidates.extend(export_definition_pages(&graph, &olds)?);
+    candidates.extend(rewrite_target_pages(
+        &graph,
+        &lookup,
+        config.file_name_format,
+    ));
     candidates.extend(moves.keys().cloned());
     candidates.extend(moved_titles_to_rebind.iter().cloned());
     candidates.retain(|id| {

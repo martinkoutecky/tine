@@ -12,10 +12,9 @@ import { toLoadablePage } from "./convert";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 import { pushToast } from "../toasts";
 import { pageIdentityKey } from "../ui";
-import { pageRefsInText } from "../render/pageRefs";
-import type { Format } from "../render/ast";
-import type { RenameDone, RenameTouchedPage } from "../types";
+import type { RenameDone, RenameProbeText, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
+import { adoptRenamedFavorites } from "../favorites";
 import { activeElement, isHTMLElementNode } from "../windowRealm";
 
 let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget, preserveRoutes?: boolean) => void) | null = null;
@@ -70,7 +69,7 @@ export async function renamePageOnDisk(
   try {
     // Delayed intents now fail pageWritable even if they started before this.
     endEdit("graph-switch");
-    const prepared = await unsavedPathsFor(from);
+    const prepared = await unsavedPathsFor(from, to);
     if (!Array.isArray(prepared)) return prepared;
     if (!owner()) return "stale";
     let result;
@@ -94,16 +93,38 @@ export async function applyOwnerPageRename(rename: import("../types").OwnerPageR
   await refreshAfterRename(rename.old, rename.name, { name: rename.old, path: rename.path ?? undefined, pageKind: rename.kind }, rename.report, undefined, true);
 }
 
+/** Take in the rename's config step (one answerer, `pages::commit_config`):
+ *  it moved `:default-home` and `:favorites` (OG `rename-page-aux`) in its
+ *  own transaction after the page operation. An own write raises no config
+ *  event, so the window adopts the backend's answer; it computes nothing. */
+function adoptConfigStep(page: string, step: Pick<RenameDone, "home_page" | "favorites" | "config_skipped">): void {
+  if (step.config_skipped) pushToast(msg("graph-rewrite-config-skipped", { page, reason: step.config_skipped }), "warn", { sticky: true });
+  const home = step.home_page;
+  const meta = graphMeta();
+  if (home && meta) setGraphMeta({ ...meta, default_home: home });
+  if (step.favorites) adoptRenamedFavorites(step.favorites);
+}
+
+/** A title:: change renamed the page at `path` (formerly `old`). The backend
+ *  moves config.edn's home and favorites to the new name and answers with
+ *  them (FAV-RETITLE: the same Rust answerer as a rename); this window only
+ *  adopts the answer. Idempotent: a repeat finds nothing left to move. */
+export async function followPageIdentity(path: string, old: string): Promise<void> {
+  const owner = bindingOwner();
+  try {
+    const result = await writeOwned(owner, backend().followPageIdentity(path, old));
+    if (result.kind === "current") adoptConfigStep(old, result.value);
+  } catch (error) {
+    if (owner()) pushToast(msg("graph-rewrite-config-skipped", { page: old, reason: String(error) }), "warn", { sticky: true });
+  }
+}
+
 async function refreshAfterRename(from: string, to: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void, preserveRoutes = false): Promise<void> {
     if (report.outcome === "unchanged") return;
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = report.skipped_conflicted_referrers ?? [];
     if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
-    // The rename moved `:default-home` in its own transaction (OG
-    // `rename-page-aux`); an own write raises no config event, so take it in.
-    const home = report.home_page;
-    const meta = graphMeta();
-    if (home && meta) setGraphMeta({ ...meta, default_home: home });
+    adoptConfigStep(from, report);
     const reloads = batch(() => {
       const pages = forgetMovedPages(report.touched);
       refreshRenamedNavigation?.(from, to, target, preserveRoutes);
@@ -115,15 +136,16 @@ async function refreshAfterRename(from: string, to: string, target: PageTarget |
 
 /** Save every pending edit. The rename reads referring pages from disk, so an
  * edit that cannot be saved matters only on a page the rename would change:
- * the renamed page, a namespace child, or one whose unpublished text references
- * the renamed page or a namespace child (a reference that exists only in
- * memory would be missed). References are the ones the backend rewrites, read
- * off the lsdoc parse and compared by page key; prose that merely contains the
- * name does not count. Those refuse; every other stuck page's file is returned
- * for the backend to leave alone; unknown host debt refuses. O(stuck pages'
- * blocks) parses after the flush. */
-async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: string; mentions: boolean }> {
+ * the renamed page, a namespace child, or one whose unpublished text the
+ * rename would rewrite (a reference that exists only in memory would be
+ * missed). Whether it would is the backend's own rename answer
+ * (`renameWouldChange`, one IPC per stuck page), never a frontend re-reading:
+ * prose that merely contains the name does not count. Those refuse; every
+ * other stuck page's file is returned for the backend to leave alone; unknown
+ * host debt refuses; a graph switch during the ask answers "stale". O(stuck pages' blocks) after the flush. */
+async function unsavedPathsFor(from: string, to: string): Promise<string[] | { unsaved: string; mentions: boolean } | "stale"> {
   if (await flushAll()) return [];
+  const owner = bindingOwner();
   const renamed = pageIdentityKey(from);
   const rewritten = (name: string) => {
     const key = pageIdentityKey(name);
@@ -138,8 +160,12 @@ async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: stri
     // Host debt this window cannot read the text of: it may mention anything.
     if (!name) return { unsaved: key ?? "a page", mentions: false };
     if (rewritten(name)) return { unsaved: name, mentions: false };
-    if (pageTexts(name).some((text) => pageRefsInText(text.raw, text.format).some(rewritten)))
-      return { unsaved: name, mentions: true };
+    const texts = pageTexts(name);
+    if (texts.length) {
+      const answer = await readOwned(owner, backend().renameWouldChange(from, to, texts));
+      if (answer.kind === "stale") return "stale";
+      if (answer.value.some(Boolean)) return { unsaved: name, mentions: true };
+    }
     const path = pageByName(name)?.id ?? key;
     if (path) paths.push(path);
   }
@@ -147,14 +173,15 @@ async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: stri
 }
 
 /** Everything a loaded page holds in memory: its header and every block. */
-function pageTexts(name: string): { raw: string; format: Format }[] {
+function pageTexts(name: string): RenameProbeText[] {
   const page = pageByName(name);
   if (!page) return [];
-  const texts = page.preBlock ? [{ raw: page.preBlock, format: page.format }] : [];
+  const org = page.format === "org";
+  const texts: RenameProbeText[] = page.preBlock ? [{ raw: page.preBlock, org, preBlock: true }] : [];
   const visit = (id: string) => {
     const node = doc.byId[id];
     if (!node) return;
-    texts.push({ raw: node.raw, format: page.format });
+    texts.push({ raw: node.raw, org, preBlock: false });
     node.children.forEach(visit);
   };
   page.roots.forEach(visit);

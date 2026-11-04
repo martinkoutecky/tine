@@ -313,7 +313,13 @@ try {
     assert(r.bTop >= r.hTop - TOL && r.bBottom <= r.hBottom + TOL, "bulk controls lie vertically within the header row");
   });
   await check("F8 a stale Unlinked References count shows a mark with a tooltip, not a stray separator", async () => {
-    // Unlinked References starts collapsed; an external edit moves the graph revision, which marks its count stale.
+    // Unlinked References starts collapsed and computes nothing until expanded (cost audit 6a, as OG).
+    // Expand once to compute its count, fold it again; an external edit then marks that folded count stale.
+    const unlinkedHeader = await browser.$(".unlinked-references .references-header");
+    await unlinkedHeader.scrollIntoView();
+    await unlinkedHeader.click();
+    await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".unlinked-references .references-count")), { timeout: 20000, timeoutMsg: "expanding Unlinked References computes its count" });
+    await unlinkedHeader.click();
     fs.writeFileSync(path.join(graph, "pages/Ref D.md"), "- Ref D says Tag in plain words too\n");
     await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".references-count-stale")), { timeout: 20000, timeoutMsg: "the stale mark appears after an external edit" });
     const r = await browser.execute(() => {

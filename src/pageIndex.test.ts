@@ -192,6 +192,27 @@ describe("page index: the one frontend name answerer", () => {
     await vi.waitFor(() => expect(navigationName("shared")).toBe("Alpha"));
   });
 
+  // EMPTY-ALIAS (D-20261103-CMA, as Logseq): an empty `ML.md` beside
+  // `Machine Learning` (`alias:: ML`) yields its name. The store marks the
+  // entry; a link and a named route open the owner, while the file is still
+  // the page that owns the name (All Pages, writes, the exact-path route).
+  it("routes an empty alias page's name to the alias owner", async () => {
+    backendMock.pageInventory.mockResolvedValue(inventory(1,
+      file("Machine Learning"),
+      { ...file("ML"), link: { name: "Machine Learning", kind: "page" }, empty_alias: true },
+      { ...file("2026-10-26"), link: { name: "Oct 26th, 2026", kind: "journal" } },
+    ));
+    const { installPageIndex, linkTarget, navigationTarget, navigationName, resolvedTarget, ownerPath } = await load();
+    installPageIndex();
+    await vi.waitFor(() => expect(linkTarget("ML")).toEqual({ name: "Machine Learning", kind: "page" }));
+    expect(navigationTarget("ml")).toEqual({ name: "Machine Learning", kind: "page" });
+    expect(navigationName("ML")).toBe("ML");
+    expect(ownerPath(resolvedTarget("ML"))).toBe("pages/ML.md");
+    // A date-named page with content keeps its named route (its link moves
+    // for the day, not for an alias).
+    expect(navigationTarget("2026-10-26")).toEqual({ name: "2026-10-26", kind: "page" });
+  });
+
   // The frontend half of the Rust `page_inventory_wire_matches_legacy_fixture`
   // (formerly the list_pages / page_aliases / referenced_page_names adapters):
   // All Pages lists every physical file (a duplicate-day journal only its
@@ -271,4 +292,91 @@ it("keeps readable names and reports unreadable files once when a file name can'
   // GH #727: the toast itself names the file, and does not point at the opt-in debug log.
   expect(errors[0].message).toContain("pages/Bad.md");
   expect(errors[0].message).not.toContain("debug log");
+});
+
+// Cost-model audit 2026-11-02 row 1: typing `[[Existing Page]]` (or editing
+// `alias::`) moves only alias and reference-only names. The publication
+// carries them; the index patches itself with no `page_inventory` IPC and
+// answers exactly as a fresh read would.
+describe("page index: name-only inventory deltas", () => {
+  const sorted = (...entries: PageInventoryEntry[]) =>
+    [...entries].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const change = (rev: number, keys: string[], entries: PageInventoryEntry[]) =>
+    ({ rev: String(rev), inventoryChanged: true, blockRefCounts: {}, inventoryDelta: { keys, entries } });
+
+  async function answers(fresh: PageInventory) {
+    const index = await load();
+    const graphAnswers = await import("./graphAnswers");
+    backendMock.pageInventory.mockResolvedValue(fresh);
+    index.installPageIndex();
+    await vi.waitFor(() => expect(index.allPages()).toBeDefined());
+    backendMock.pageInventory.mockClear();
+    return { ...index, ...graphAnswers };
+  }
+
+  /** What the index answers, for comparing a patched index with a fresh one. */
+  function snapshot(index: Awaited<ReturnType<typeof answers>>, names: string[]) {
+    return {
+      names: [...index.allPageNames()],
+      pages: index.allPages(),
+      targets: names.map((name) => [index.resolvedTarget(name), index.resolvedTarget(name, "journal"), index.navigationName(name)]),
+    };
+  }
+
+  it("patches typed link names in place: no page_inventory call, the same answers as a fresh read", async () => {
+    const base = [file("Existing Page"), file("b"), alias("Nick", "pages/b.md"), absent("Ex"), absent("Team/Child")];
+    const index = await answers(inventory(1, ...sorted(...base)));
+    const aliasRev = index.pageAliasRev();
+    // `[[E]]`, `[[Ex]]` (already referenced elsewhere), `[[Exi]]`, ... `[[Existing Page]]`.
+    index.applyGraphAnswers(change(2, ["e"], [absent("E")]));
+    index.applyGraphAnswers(change(3, ["e"], []));
+    index.applyGraphAnswers(change(4, ["exi"], [absent("Exi")]));
+    index.applyGraphAnswers(change(5, ["exi", "zz/ns"], [absent("ZZ/ns")]));
+    index.applyGraphAnswers(change(6, ["zz/ns", "😀", "￿"], [absent("😀"), absent("￿")]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backendMock.pageInventory).not.toHaveBeenCalled();
+    expect(index.pageAliasRev()).toBe(aliasRev);
+    const names = ["Existing Page", "b", "Nick", "Ex", "E", "Exi", "ZZ/ns", "😀", "￿"];
+    const patched = snapshot(index, names);
+    // Rust orders keys by code point: U+FFFF before U+1F600 (JS `<` would not).
+    const fresh = await answers(inventory(6, ...sorted(...base), absent("￿"), absent("😀")));
+    expect(patched).toEqual(snapshot(fresh, names));
+  });
+
+  it("an alias edit patches the alias entry and re-asks alias groups, still with no inventory IPC", async () => {
+    const base = [file("a"), file("b"), absent("Later Alias")];
+    const index = await answers(inventory(1, ...base));
+    const aliasRev = index.pageAliasRev();
+    index.applyGraphAnswers(change(2, ["later alias"], [alias("Later Alias", "pages/a.md")]));
+    index.applyGraphAnswers(change(3, ["nick"], [alias("nick", "pages/a.md", "pages/b.md")]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backendMock.pageInventory).not.toHaveBeenCalled();
+    expect(index.pageAliasRev()).toBe(aliasRev + 2);
+    expect(index.navigationName("LATER ALIAS")).toBe("a");
+    expect(index.resolvedTarget("Nick")).toEqual({ kind: "alias", owners: ["pages/a.md", "pages/b.md"] });
+  });
+
+  it("refetches when the change cannot be patched in order", async () => {
+    const index = await answers(inventory(1, file("a")));
+    // No delta (a page file claimed or released a name): refetch.
+    backendMock.pageInventory.mockResolvedValue(inventory(2, file("a"), file("new")));
+    index.applyGraphAnswers({ rev: "2", inventoryChanged: true, blockRefCounts: {} });
+    await vi.waitFor(() => expect(index.resolvedTarget("new")?.kind).toBe("existing"));
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);
+    // A delta while a read is in flight: the trailing read answers instead.
+    let release: (value: PageInventory) => void = () => {};
+    backendMock.pageInventory.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    index.applyGraphAnswers({ rev: "3", inventoryChanged: true, blockRefCounts: {} });
+    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(2));
+    backendMock.pageInventory.mockResolvedValue(inventory(4, file("a"), file("new"), absent("typed")));
+    index.applyGraphAnswers(change(4, ["typed"], [absent("typed")]));
+    release(inventory(3, file("a"), file("new")));
+    await vi.waitFor(() => expect(index.resolvedTarget("typed")?.kind).toBe("absent"));
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(3);
+    // A rebind forgets the held answer: the next delta refetches.
+    index.resetPageIndex();
+    backendMock.pageInventory.mockResolvedValue(inventory(5, file("a")));
+    index.applyGraphAnswers(change(5, ["typed"], []));
+    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(4));
+  });
 });

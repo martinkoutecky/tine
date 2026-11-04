@@ -2,8 +2,9 @@
 // Copy the current Beta update manifest onto tine.page (run by pages.yml).
 //
 // From 0.8.0-beta.3 on, Tine Beta reads its updates from the fixed address
-// https://tine.page/updates/beta/latest.json, and Beta AppImages read
-// https://tine.page/updates/beta/<arch>.AppImage.zsync. Each Beta is published
+// https://tine.page/updates/beta/latest.json, and AppImages of Betas built
+// before 0.9.0-beta.5 read https://tine.page/updates/beta/<arch>.AppImage.zsync
+// (later ones read GitHub's latest prerelease). Each Beta is published
 // to its own immutable release vX.Y.Z-beta.N; this script picks the newest one
 // by version and copies its manifest and zsync files into the site, after
 // checking that every download URL points into that same release.

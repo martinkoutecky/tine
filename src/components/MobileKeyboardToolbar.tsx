@@ -5,7 +5,7 @@ import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBr
 import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
-import { revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
+import { revealCaretAboveKeyboard, scrollToClearToolbar, watchCaretReveal } from "../editor/caretReveal";
 import { isElementNode } from "../windowRealm";
 import { cssInterfaceZoom } from "../zoom";
 
@@ -198,15 +198,18 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       // and the page must stay wherever the reader has scrolled it.
       if (!untrack(keyboardVisible)) return;
       const editor = document.activeElement;
-      if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) return;
+      if (!isBlockEditor(editor)) return;
       const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");
-      if (scroller) settleCaret = revealCaretSettled(editor, scroller, 2, 40, Infinity, {
-        scroll: true,
-        viewport: () => ({
-          top: window.visualViewport?.offsetTop ?? 0,
-          bottom: toolbarRef ? toolbarRevealTop(toolbarRef.getBoundingClientRect().top) : viewportKeyboardTop(),
-        }),
+      if (!scroller) return;
+      // A line that left the view goes back just above the toolbar, not to the
+      // top edge under the pinned parents (GH #783 beta.4 report; 0.7.4's place).
+      const reveal = () => revealCaretAboveKeyboard(editor, scroller, {
+        top: window.visualViewport?.offsetTop ?? 0,
+        bottom: toolbarRef ? toolbarRevealTop(toolbarRef.getBoundingClientRect().top) : viewportKeyboardTop(),
       });
+      // Both editor engines follow the same late scrolls (event-driven, no polling). The CM6 editor supplies
+      // its caret row through `registerCaretRowSource`; the textarea measures its own.
+      settleCaret = watchCaretReveal(editor, scroller, reveal, 2, 40, Infinity, true);
     };
     const updateAfterResize = () => {
       updateViewport();

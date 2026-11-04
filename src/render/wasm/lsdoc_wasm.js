@@ -1,6 +1,24 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
 /**
+ * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+ * @param {string} name
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {boolean}
+ */
+function __tine_raw_absent_link_is_journal(name, file_format, title_format) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.absent_link_is_journal(ptr0, len0, ptr1, len1, ptr2, len2);
+    return ret !== 0;
+}
+
+/**
  * Parser-boundary negative-only prefilter; true still needs drawer ownership.
  * @param {string} raw
  * @returns {boolean}
@@ -10,6 +28,24 @@ function __tine_raw_block_may_have_logbook(raw) {
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.block_may_have_logbook(ptr0, len0);
     return ret !== 0;
+}
+
+/**
+ * Every page name one block's source references, in source order (may
+ * repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+ * over the same block parse, under the default parse config. O(block bytes)
+ * plus one inline parse per property value or macro argument; no I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_block_reference_names(raw, is_org) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.block_reference_names(ptr0, len0, is_org);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
 }
 
 /**
@@ -259,6 +295,20 @@ function __tine_raw_header_tokens_json(raw, is_org) {
 }
 
 /**
+ * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+ * page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+ * with tine-core).
+ * @param {string} name
+ * @returns {boolean}
+ */
+function __tine_raw_hidden_from_all_pages(name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.hidden_from_all_pages(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  * @param {string} policy
  * @param {string} key
@@ -281,6 +331,20 @@ function __tine_raw_hide_policy_hides(policy, key, properties) {
 
 function __tine_raw_install_panic_hook() {
     wasm.install_panic_hook();
+}
+
+/**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_is_editable_linkable_built_in(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_editable_linkable_built_in(ptr0, len0);
+    return ret !== 0;
 }
 
 /**
@@ -322,6 +386,33 @@ function __tine_raw_is_render_hidden_prop(key, user_hidden, pre_block) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1, pre_block);
     return ret !== 0;
+}
+
+/**
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+ * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ * @param {string} name
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {string}
+ */
+function __tine_raw_journal_day_json(name, file_format, title_format) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.journal_day_json(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -580,6 +671,28 @@ function __tine_raw_outline_reads_json(verb) {
 }
 
 /**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ * @param {string | null | undefined} pre_block
+ * @param {string | null | undefined} first_root
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_page_alias_spellings(pre_block, first_root, is_org) {
+    var ptr0 = isLikeNone(pre_block) ? 0 : passStringToWasm0(pre_block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(first_root) ? 0 : passStringToWasm0(first_root, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.page_alias_spellings(ptr0, len0, ptr1, len1, is_org);
+    var v3 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
  * The native file-format answer, including mixed-case Org extensions.
  * @param {string} path
  * @returns {string}
@@ -632,6 +745,29 @@ function __tine_raw_page_identity_key(name) {
         const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.page_identity_key(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * The prose of a Markdown page preamble after its page header, as UTF-8 byte
+ * offsets `[start, end]`, or `null` (I-12: the one answerer,
+ * `page_preamble::page_preamble_content`, which the store's reference answer
+ * reads too).
+ * @param {string} raw
+ * @returns {string}
+ */
+function __tine_raw_page_preamble_content_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_preamble_content_json(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -904,21 +1040,25 @@ function __tine_raw_raw_byte_of_editor(raw, is_org, regions, policy, editor_utf1
 
 /**
  * Shared native target classification on an accepted AST link. O(target).
+ * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+ * `file_name_format`); only read with `filename_candidates`, where omitting it
+ * means legacy, the graph default (`Config::default`).
  * @param {string} kind
  * @param {string} value
  * @param {string} label
  * @param {boolean} org
  * @param {boolean} filename_candidates
+ * @param {boolean | null} [legacy_file_names]
  * @returns {string | undefined}
  */
-function __tine_raw_reference_target_name(kind, value, label, org, filename_candidates) {
+function __tine_raw_reference_target_name(kind, value, label, org, filename_candidates, legacy_file_names) {
     const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ptr2 = passStringToWasm0(label, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.reference_target_name(ptr0, len0, ptr1, len1, ptr2, len2, org, filename_candidates);
+    const ret = wasm.reference_target_name(ptr0, len0, ptr1, len1, ptr2, len2, org, filename_candidates, isLikeNone(legacy_file_names) ? 0xFFFFFF : legacy_file_names ? 1 : 0);
     let v4;
     if (ret[0] !== 0) {
         v4 = getStringFromWasm0(ret[0], ret[1]).slice();
@@ -1128,6 +1268,25 @@ function __tine_raw_task_checkbox_state(marker) {
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.task_checkbox_state(ptr0, len0);
     return ret === 0xFFFFFF ? undefined : ret !== 0;
+}
+
+/**
+ * Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+ * the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+ * window reads the stable `tine/…` markers exactly as the backend does.
+ * @returns {string}
+ */
+function __tine_raw_tine_key_aliases() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.tine_key_aliases();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 function __wbg_get_imports() {
     const import0 = {
@@ -1486,7 +1645,9 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
     }
   };
 }
+export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __tine_raw_absent_link_is_journal);
 export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
+export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
@@ -1497,11 +1658,14 @@ export const editor_text_json = __tineGuard("editor_text_json", __tine_raw_edito
 export const encode_page_name = __tineGuard("encode_page_name", __tine_raw_encode_page_name);
 export const format_journal_date = __tineGuard("format_journal_date", __tine_raw_format_journal_date);
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
+export const hidden_from_all_pages = __tineGuard("hidden_from_all_pages", __tine_raw_hidden_from_all_pages);
 export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
+export const is_editable_linkable_built_in = __tineGuard("is_editable_linkable_built_in", __tine_raw_is_editable_linkable_built_in);
 export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
+export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
 export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
@@ -1515,9 +1679,11 @@ export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_o
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
 export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
+export const page_alias_spellings = __tineGuard("page_alias_spellings", __tine_raw_page_alias_spellings);
 export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
+export const page_preamble_content_json = __tineGuard("page_preamble_content_json", __tine_raw_page_preamble_content_json);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
 export const parse_block_bundle_json = __tineGuard("parse_block_bundle_json", __tine_raw_parse_block_bundle_json);
 export const parse_block_json = __tineGuard("parse_block_json", __tine_raw_parse_block_json);
@@ -1540,3 +1706,4 @@ export const search_spans_json = __tineGuard("search_spans_json", __tine_raw_sea
 export const search_substring_spans_json = __tineGuard("search_substring_spans_json", __tine_raw_search_substring_spans_json);
 export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);
 export const task_checkbox_state = __tineGuard("task_checkbox_state", __tine_raw_task_checkbox_state);
+export const tine_key_aliases = __tineGuard("tine_key_aliases", __tine_raw_tine_key_aliases);

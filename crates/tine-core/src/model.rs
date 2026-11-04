@@ -17,7 +17,19 @@ pub fn encode_page_name(name: &str, fmt: crate::config::FileNameFormat) -> Strin
 /// Decode a page filename according to the graph's Logseq naming format.
 /// Legacy dots become namespace separators before percent decoding.
 /// Cost O(stem bytes); malformed percent escapes are preserved.
+///
+/// The stem `contents` names the page "Contents", as OG names
+/// `pages/contents.*` (`graph_parser/extract.cljc get-page-name` at OG
+/// 6e7afa8eb; REG-CM-CONTENTS-PAGE-NAME). Display only: the page key is
+/// `contents` either way. Intentional differences from OG, both
+/// presentation: OG matches only the top of `pages/`, this matches the stem
+/// anywhere in the pages area; and OG lets "Contents" win over a `title::`,
+/// here a `title::` still names the page (the answer reads the title first),
+/// so the key never changes.
 pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> String {
+    if stem == "contents" {
+        return "Contents".to_owned();
+    }
     page_filename::decode_page_name(stem, fmt == crate::config::FileNameFormat::Legacy)
 }
 
@@ -480,6 +492,14 @@ pub struct BlockDto {
     /// `raw` as an outline block because this flag is only result metadata.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_property: bool,
+    /// Synthetic, read-only result row representing the source page's prose
+    /// before its first block (`page_properties::preamble_content_range`), which
+    /// every reference question reads as the page's first block (CM step 2
+    /// batch 8). It has no outline identity until the page promotes it (GH #85):
+    /// the window opens the source page for it. Same save caveat as
+    /// `page_property`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page_preamble: bool,
     // --- M1: block-header facets, computed ONCE off the lsdoc projection (the one
     // grammar source) and shipped so the frontend never re-derives them with its
     // own scanner. Derived (not authoritative — `raw` round-trips); the frontend
@@ -700,6 +720,8 @@ pub struct JournalFile {
     pub name: String,
     pub path: String,
     pub preview: String,
+    /// The day's keeper: the file the day opens (the claimant order's winner).
+    /// Exactly one file of a day carries it, listed first.
     pub canonical: bool,
     /// Why this file's preview could not be read (undecodable, oversized, a
     /// disk error). The file stays listed so the day remains reviewable.
@@ -851,12 +873,23 @@ pub struct GraphMeta {
     pub quick_capture_template_text: Option<String>,
     /// OG `:quick-capture-templates {:media …}`; `None` = the OG default.
     pub quick_capture_template_media: Option<String>,
+    /// OG `:quick-capture-options {:default-page …}`; `None` = none configured.
+    pub quick_capture_default_page: Option<String>,
+    /// OG `:quick-capture-options {:insert-today? …}`; only a literal `true`.
+    pub quick_capture_insert_today: bool,
+    /// OG `:quick-capture-options {:redirect-page? …}`; only a literal `true`.
+    pub quick_capture_redirect_page: bool,
     /// Effective journal title format (`:journal/page-title-format`, default
     /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
     pub journal_page_title_format: String,
     /// Effective journal filename format (`:journal/file-name-format`, default
     /// `yyyy_MM_dd`).
     pub journal_file_name_format: String,
+    /// Page file-name format (`:file/name-format`): `"legacy"` (the default)
+    /// or `"triple-lowbar"`. The frontend hands it to the shared link policy
+    /// (`block_regions::reference_target_name` via wasm) so an Org
+    /// `[[file:…]]` link names the page the store names that file.
+    pub file_name_format: String,
     /// Format new pages/journals are created in (`"md"` or `"org"`), from
     /// `:preferred-format`. The frontend uses it to label the toggle and pick the
     /// new-page extension. This string reflects the graph configuration's
@@ -986,8 +1019,16 @@ impl GraphMeta {
                 .clone(),
             quick_capture_template_text: config.quick_capture_template_text.clone(),
             quick_capture_template_media: config.quick_capture_template_media.clone(),
+            quick_capture_default_page: config.quick_capture_default_page.clone(),
+            quick_capture_insert_today: config.quick_capture_insert_today,
+            quick_capture_redirect_page: config.quick_capture_redirect_page,
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
+            file_name_format: match config.file_name_format {
+                crate::config::FileNameFormat::Legacy => "legacy",
+                crate::config::FileNameFormat::TripleLowbar => "triple-lowbar",
+            }
+            .into(),
             preferred_format: config.preferred_format.ext().to_string(),
             macros: config.macros.clone(),
             enable_timetracking: config.enable_timetracking,

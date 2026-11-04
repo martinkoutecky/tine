@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "a",
+      "path": "pages/2026-10-26.md",
+      "preBlock": "title:: a\nalias:: a",
+      "title": "a"
+    },
+    {
+      "format": "md",
+      "name": "A",
+      "path": "pages/A.md",
+      "preBlock": "alias:: 2026-10-26",
+      "title": null
+    }
+  ],
+  "links": []
+}

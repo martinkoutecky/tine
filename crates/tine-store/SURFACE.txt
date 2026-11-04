@@ -64,7 +64,7 @@ struct link_identity::LinkInspection
 field link_identity::LinkInspection.identity
 field link_identity::LinkInspection.target_possible
 
-## Freshness (ceiling: 33)
+## Freshness (ceiling: 34)
 # GX4 S2 explicitly requires mounted unlinked targets in the publication host.
 # Store::subscribe owns the one dispatch stream, not the changing set of views;
 # adding a subscribe parameter cannot register/release targets after dispatch
@@ -98,6 +98,13 @@ enum store::LoadError
 fn store::Store::refresh
 fn store::Store::subscribe
 fn store::Change::page
+# Cost-model audit 2026-11-02 row 1: a link edit's inventory signal carries the
+# entries that moved, so the window patches its names instead of rereading the
+# whole inventory per autosave. No existing Change item answers names
+# (`Change::page` is one page's parsed form), and `WholeGraph::inventory` cannot
+# take a parameter for it: a later view answers a later revision, not this
+# publication's. The answer reuses `Inventory`; no type is added.
+fn store::Change::inventory_delta
 fn store::Subscription::recv
 # test-oracle: tests drain the change feed without blocking; production waits with `recv`.
 fn store::Subscription::try_recv
@@ -118,7 +125,15 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 11)
+## Identity (ceiling: 13)
+# REG-CM-MERGE-LOSES-ALIASES: a merge must keep both pages' aliases, which the
+# alias answer reads from the page header (pre-block, else a properties-only
+# first root) under the keys alias/aliases. No existing item answers either
+# question for a page the caller holds as text (`resolve` answers names in the
+# published graph, not a merge's two parsed pages); exposing the answer's own
+# two rules keeps the merge from restating them (I-12).
+fn query::page_header_text
+fn query::is_alias_key
 # GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
 # candidates. Expose the existing Unicode case-only predicate so the pull
 # planner and host/transaction publication share one candidate policy;
@@ -339,7 +354,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 17)
+## WholeGraph: Names (ceiling: 24)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
@@ -348,10 +363,35 @@ field store::InventoryEntry.name
 field store::InventoryEntry.target
 field store::InventoryEntry.is_journal
 field store::InventoryEntry.day
+# CM step 2 (Q8, one answerer for what a link opens): `inventory` already
+# answers per name; what that name's link opens is a field on the same entry
+# (sent only when it differs from the entry), not a sibling method. No
+# InventoryScope can carry it: it is a property of every entry, and the
+# frontend routes every rendered link by it. 17 -> 21, and 22 for the
+# test-faults-gated per-name oracle below.
+field store::InventoryEntry.link
+# CM step 2 batch 10 (S8, model rule 1): a namespace parent `n` of a listed
+# name `n/y` is an inventory entry like any reference-only name; why it exists
+# is a flag on the same entry (sent only when true), not a sibling method or
+# scope: every entry carries it and the namespace views nest by it. 22 -> 23.
+field store::InventoryEntry.namespace_parent
+# CM step 2 EMPTY-ALIAS (S14, D-20261103-CMA): a name whose files are all
+# content-free yields to its alias owner; that this is why `link` differs is a
+# flag on the same entry (sent only when true), not a sibling method or scope:
+# `link` alone cannot say it (a date-shaped name's link also moves), and named
+# routes follow `link` only for alias entries and these. 23 -> 24.
+field store::InventoryEntry.empty_alias
+struct store::LinkTarget
+field store::LinkTarget.name
+field store::LinkTarget.is_journal
+# test-oracle: the conformance harnesses (tine-store, and tine-graph-features sharing them) ask the link answer for names the inventory does not list; production reads InventoryEntry.link.
+fn store::WholeGraph::link_target
 fn store::WholeGraph::complete_page_names
 # GH #623: the rename planner asks for the page files under one key through
 # `InventoryScope` instead of a sibling method (rule 3).
 fn store::WholeGraph::inventory
+# Cost-model audit 2026-11-02 row 5: print asks for the pages of one name
+# through `corpus(Some(name))` (a parameter, rule 3), not a sibling method.
 fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::resolve
@@ -525,8 +565,8 @@ use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.
-use store::inventory::{Inventory,InventoryEntry,InventoryScope}
+use store::inventory::{Inventory,InventoryEntry,InventoryScope,LinkTarget}

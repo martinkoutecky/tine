@@ -20,7 +20,7 @@ use tine_store::{
 };
 
 use super::endpoint::busy;
-use super::verbs::{internal, resolve_page, whole_graph, Diag};
+use super::verbs::{internal, resolve_write_page, whole_graph, Diag};
 use super::wire::{ok, ErrorBody};
 use crate::state::GraphSlot;
 
@@ -298,14 +298,16 @@ pub(crate) fn resolve_on(
 }
 
 /// The page a handle writes: its own page, or the page holding the `id::`.
+/// A page name several files claim refuses (`verbs::resolve_write_page`,
+/// CLI-DUPNAME), also when an `id::` names a block on such a page.
 pub(super) fn handle_page(slot: &GraphSlot, handle: &Handle) -> Result<PageId, ErrorBody> {
     let graph = whole_graph(slot)?;
     match handle {
-        Handle::At { page, .. } => resolve_page(&graph, page),
+        Handle::At { page, .. } => resolve_write_page(&graph, page),
         // Graph-wide: an id on two pages is `ambiguous`, never the first match
         // (review 5 B1; design §2).
         Handle::Uuid(uuid) => match graph.block_pages(uuid).as_slice() {
-            [page] => resolve_page(&graph, page),
+            [page] => resolve_write_page(&graph, page),
             [] => Err(ErrorBody::new(
                 "not-found",
                 format!("no block has id:: {uuid}"),
@@ -816,6 +818,25 @@ pub(super) fn write_page_from_bytes(
                     );
                 }
                 let mut reply = written(&read.page, &reparsed.doc, &reparsed.rev, &planned.changed);
+                // A write that changed the page's name (its `title::`) moves
+                // home and favorites through the rename's config step and
+                // answerer (CM step 2, FAV-RETITLE), after the page landed:
+                // the page write stands whatever the config step does.
+                if !absent
+                    && current.doc.kind == tine_core::model::PageKind::Page
+                    && reparsed.doc.kind == tine_core::model::PageKind::Page
+                    && !tine_core::refs::same_page(&current.doc.name, &reparsed.doc.name)
+                {
+                    let follow = tine_graph_features::pages::follow_page_identity(
+                        &slot.store,
+                        read.page.as_str(),
+                        &current.doc.name,
+                    );
+                    reply["config"] = match follow {
+                        Ok(follow) => json!(follow),
+                        Err(error) => json!({ "error": error.to_string() }),
+                    };
+                }
                 commit_if_in_run(
                     slot,
                     &read.page,
@@ -1022,26 +1043,26 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 config.logbook.with_second_support,
                 now_parts(),
             );
-            block.raw = match author_property.as_deref().map(str::trim) {
-                None => transitioned,
-                // Malformed input: an empty name would write `author:: ` over
-                // the real one, and removal has its own verb.
-                Some("") => {
-                    return Err(kernel_refused(
+            block.raw =
+                match author_property.as_deref().map(str::trim) {
+                    None => transitioned,
+                    // Malformed input: an empty name would write `tine.author:: ` over
+                    // the real one, and removal has its own verb.
+                    Some("") => return Err(kernel_refused(
                         page,
-                        "--author needs a name; `tine prop remove BLOCK author` removes one".into(),
-                    ))
-                }
-                Some(name) => tine_core::block_regions::edit(
-                    &transitioned,
-                    org,
-                    tine_core::block_regions::Edit::Property {
-                        key: "author".into(),
-                        value: Some(name.into()),
-                    },
-                )
-                .map_err(|e| kernel_refused(page, e))?,
-            };
+                        "--author needs a name; `tine prop remove BLOCK tine.author` removes one"
+                            .into(),
+                    )),
+                    Some(name) => tine_core::block_regions::edit(
+                        &transitioned,
+                        org,
+                        tine_core::block_regions::Edit::Property {
+                            key: tine_core::tine_keys::AUTHOR.into(),
+                            value: Some(name.into()),
+                        },
+                    )
+                    .map_err(|e| kernel_refused(page, e))?,
+                };
             Ok(Planned {
                 doc: next,
                 changed: vec![path],

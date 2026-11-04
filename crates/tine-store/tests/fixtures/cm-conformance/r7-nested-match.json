@@ -1,0 +1,13 @@
+{
+  "files": {
+    "pages/p.md": "- [[A]] parent\n  - [[A]] child\n"
+  },
+  "queries": [
+    {
+      "anchor": "block",
+      "q": {
+        "refs": "A"
+      }
+    }
+  ]
+}

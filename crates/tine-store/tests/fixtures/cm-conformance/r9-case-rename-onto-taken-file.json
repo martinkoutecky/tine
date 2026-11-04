@@ -1,0 +1,14 @@
+{
+  "_comment": "Round 7 allows a case-only rename (N/y -> n/y). Here the case-only destination file name pages/n%2Fy.md is taken by another page (title:: B). Found by the r9 random renames (class 'rename: model allows, Tine refuses (WouldBlock)'); the model has no destination paths (stems are a given).",
+  "files": {
+    "pages/N%2Fy.md": "- upper\n",
+    "pages/n%2Fy.md": "title:: B\n\n- lower\n",
+    "pages/p.md": "- see [[N/y]] and [[B]]\n"
+  },
+  "renames": [
+    {
+      "old": "N/y",
+      "new": "n/y"
+    }
+  ]
+}

@@ -78,7 +78,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export type { Backend } from "./backendInterface";
-import type { Backend, ConfirmOptions } from "./backendInterface";
+import type { Backend, ConfirmOptions, FacetScope } from "./backendInterface";
 
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
@@ -315,7 +315,7 @@ class TauriBackend implements Backend {
     return this.call<import("./types").PageModified>("page_modified");
   }
   pageBacklinkCounts() {
-    return this.call<[string, number][]>("page_backlink_counts");
+    return this.call<import("./types").PageBacklinkCounts>("page_backlink_counts");
   }
   journalFeedPage(limit: number, beforeDay: number | null, waitForReferences = false, throughDay: number | null = null) {
     return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay, waitForReferences, throughDay });
@@ -427,6 +427,12 @@ class TauriBackend implements Backend {
     if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
+  renameWouldChange(old: string, next: string, texts: import("./types").RenameProbeText[]) {
+    return this.call<boolean[]>("rename_would_change", { old, new: next, texts });
+  }
+  followPageIdentity(path: string, old: string) {
+    return this.call<import("./types").IdentityFollow>("follow_page_identity", { path, old });
+  }
   publishQueryPlan(request: QueryPublicationRequest) {
     return this.call<QueryPublicationPlan>("publish_query_plan", { request });
   }
@@ -511,10 +517,10 @@ class TauriBackend implements Backend {
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
   }
-  queryFacets(autocomplete = false) {
+  queryFacets(autocomplete = false, scope?: FacetScope) {
     return this.call<[string, string[]][]>(
       "query_facets",
-      autocomplete ? { autocomplete: true } : undefined,
+      autocomplete ? (scope ? { autocomplete: true, scope } : { autocomplete: true }) : undefined,
     );
   }
   pageIcons(names: string[]) {

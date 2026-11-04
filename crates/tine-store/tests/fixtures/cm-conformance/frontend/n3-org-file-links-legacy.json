@@ -1,0 +1,345 @@
+{
+  "backlinks": {
+    "Ten___Child": [],
+    "a": [],
+    "a/b": [],
+    "ab": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "8b359dca-890c-878d-aed7-7a2835a75cb3",
+            "raw": "and [[file:./a.b.org][ab]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "note"
+      }
+    ],
+    "note": [],
+    "ten": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ed8f6232-45b1-8b6c-a074-1af61545776d",
+            "raw": "see [[file:./Ten___Child.org][ten]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "note"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Ten___Child.org",
+        0
+      ],
+      [
+        "pages/a.b.org",
+        0
+      ],
+      [
+        "pages/note.org",
+        0
+      ]
+    ],
+    [
+      [
+        "a",
+        0
+      ],
+      [
+        "ab",
+        1
+      ],
+      [
+        "ten",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b",
+      "name": "a/b",
+      "target": {
+        "id": "pages/a.b.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ab",
+      "name": "ab",
+      "target": {
+        "id": "pages/ab.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "note",
+      "name": "note",
+      "target": {
+        "id": "pages/note.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ten",
+      "name": "ten",
+      "target": {
+        "id": "pages/ten.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ten___child",
+      "name": "Ten___Child",
+      "target": {
+        "id": "pages/Ten___Child.org",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Ten___Child": "ten___child",
+    "a": "a",
+    "a/b": "a/b",
+    "ab": "ab",
+    "note": "note",
+    "ten": "ten"
+  },
+  "open": {
+    "Ten___Child": {
+      "journal": [
+        "journal",
+        "ten___child"
+      ],
+      "page": [
+        "page",
+        "ten___child"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "journal": [
+        "journal",
+        "a/b"
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    "ab": {
+      "journal": [
+        "journal",
+        "ab"
+      ],
+      "page": [
+        "page",
+        "ab"
+      ]
+    },
+    "note": {
+      "journal": [
+        "journal",
+        "note"
+      ],
+      "page": [
+        "page",
+        "note"
+      ]
+    },
+    "ten": {
+      "journal": [
+        "journal",
+        "ten"
+      ],
+      "page": [
+        "page",
+        "ten"
+      ]
+    }
+  },
+  "owner": {
+    "Ten___Child": {
+      "journal": null,
+      "page": "pages/Ten___Child.org"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": "pages/a.b.org"
+    },
+    "ab": {
+      "journal": null,
+      "page": null
+    },
+    "note": {
+      "journal": null,
+      "page": "pages/note.org"
+    },
+    "ten": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "a/b",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a/b",
+      "owner": "pages/a.b.org"
+    },
+    {
+      "key": "ab",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ab",
+      "owner": null
+    },
+    {
+      "key": "note",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "note",
+      "owner": "pages/note.org"
+    },
+    {
+      "key": "ten",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ten",
+      "owner": null
+    },
+    {
+      "key": "ten___child",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Ten___Child",
+      "owner": "pages/Ten___Child.org"
+    }
+  ],
+  "spellings": {
+    "Ten___Child": {
+      "backend": [
+        "page",
+        "ten___child"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ten___child"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "backend": [
+        "page",
+        "a/b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a/b"
+      ]
+    },
+    "ab": {
+      "backend": [
+        "page",
+        "ab"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ab"
+      ]
+    },
+    "note": {
+      "backend": [
+        "page",
+        "note"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "note"
+      ]
+    },
+    "ten": {
+      "backend": [
+        "page",
+        "ten"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ten"
+      ]
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "config": {
+    "edn": [
+      ":property-pages/excludelist #{:secret}"
+    ]
+  },
+  "files": {
+    "pages/a.md": "- note\n  secret:: x\n  public-key:: y\n"
+  },
+  "queries": [
+    {
+      "anchor": "page",
+      "q": {
+        "name": "secret"
+      }
+    },
+    {
+      "anchor": "page",
+      "q": {
+        "name": "public-key"
+      }
+    }
+  ]
+}

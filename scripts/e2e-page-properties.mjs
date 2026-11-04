@@ -747,7 +747,7 @@ try {
     throw new Error(`the refused move above the page properties changed the page: ${JSON.stringify(moveSaved)}`);
   }
   // GH #317: notes are available even when a sections page replaces config queries.
-  fs.writeFileSync(`${GRAPH}/pages/Journal sections.md`, "tine/journal-sections:: true\n\n- My sections\n");
+  fs.writeFileSync(`${GRAPH}/pages/Journal sections.md`, "tine.journal-sections:: true\n\n- My sections\n");
   fs.writeFileSync(`${GRAPH}/logseq/config.edn`, '{:journal/page-title-format "yyyy-ww" :journal/file-name-format "yyyy_MM_dd"}\n');
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5_000 });

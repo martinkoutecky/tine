@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-cm6-setting-restart.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"With the CodeMirror experiment switched on in Settings and the app quit and relaunched, the first block edit on a routed page and in the right sidebar mounts the CodeMirror editor, and a Quick Capture opened by the global-shortcut handoff shows the CodeMirror editor with the caret in it, with no off/on in Settings. The app is killed with SIGKILL before the relaunch, as after a crash. With a second window on another graph open, switching CodeMirror off in either window changes the next edit in the other window with no restart, and switching it back on does the same. A block opened while this window is still reading the stored choice (a slow reply) waits for it and gets the stored editor, not the default.","blocking":false,"authority":"Martin report 2026-11-02 (development build)"}],
+      "acceptableVariations": ["Timing, window geometry and the exact CodeMirror markup may vary while the editor kind and the caret location agree."],
+      "nonRequirements": ["No typing or saving in the editors, no platform other than Linux WebKitGTK, no burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-set-depth.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A bound Set depth 2 on a folded block opens it and its child and folds the grandchild in the file, leaving a folded great-grandchild's own fold unchanged; a bound Set depth 0 then folds the block. With a high :ref/default-open-blocks-level in config.edn every row of a linked reference shows, and the referencing page's file is unchanged.","blocking":false,"authority":"GH #794; GH #793; D-20261101-L5"}],
       "acceptableVariations": ["Selection styling, animation, save latency and the exact reference-section layout may vary while the saved collapsed properties and visible rows agree."],
@@ -30,6 +36,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"After bounded seeded native edits change task markers, links and text, the settled reference bodies and query membership agree with a fresh frontend on the same saved graph.","blocking":false,"authority":"Arrival audit L8-05; REG-ARRIVAL-FRESH-DIFFERENTIAL"}],
       "acceptableVariations": ["Save and publication latency, runtime block keys, selection, page layout and result ordering may vary."],
       "nonRequirements": ["No timing measurements, exhaustive random exploration, config/asset parity, graph-switch races, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-conflict-review-scroll.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a long page scrolled down with a save conflict (unsaved input, file changed on disk), Review on the changed-on-disk banner brings the page's conflict review on screen (unrolled from its docked bar or scrolled to); from another page it opens the page with the review on screen. Review resolves nothing and writes nothing.","blocking":false,"authority":"UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER; GH #858"}],
+      "acceptableVariations": ["Page geometry, latency, the attempt that wins the save race, and whether the review shows docked or scrolled may vary."],
+      "nonRequirements": ["No private graph or app data, exact pixels, other-platform certification or manager burn-in."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh800-save-then-copy.mjs": {
@@ -115,7 +127,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-namespaces-view.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"On a graph of hundreds of namespaced pages, Open the full view in the sidebar's Namespaces section opens a Namespaces view in the main pane while the sidebar keeps its inline tree; only a window of rows is drawn; Expand all, Collapse all and the size column work; a filter lists each match with its full path; clicking a name opens that page; the view is still the active tab after a restart.","blocking":true,"authority":"GH #335; UI-NAMESPACES-FULL-VIEW; D-20261101-L5"}],
+      "contracts": [{"class":"core-operation","userOutcome":"On a graph of hundreds of namespaced pages, Open the full view in the sidebar's Namespaces section opens a Namespaces view in the main pane while the sidebar keeps its inline tree; only a window of rows is drawn; Expand all, Collapse all and the size column work; a filter lists each match with its full path; clicking a name opens that page; the view is still the active tab after a restart.","blocking":true,"authority":"GH #335; UI-NAMESPACES-FULL-VIEW; D-20261101-L5"},{"class":"core-operation","userOutcome":"A namespace parent with no file of its own (Other, above the page Other/Notes) has a row in All pages and opens as its own page.","blocking":true,"authority":"UI-CM-NAMESPACE-PARENTS; conceptual model rule 1, CM3-3"}],
       "acceptableVariations": ["Row height, indentation, column widths and icon rendering; session-save and render latency."],
       "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; tens-of-thousands scale and filter cost are measured in unit tests and the scale screenshot; phone drawer completion has component coverage."],
       "stability":"burn-in"
@@ -201,6 +213,12 @@
       "contracts":[{"class":"core-operation","userOutcome":"On a long page with loaded images above the caret, outdenting a level-two block to level one and indenting it back keeps the block visible without a large viewport jump (GH #745, reopened on Beta 9).","blocking":true}],
       "acceptableVariations":["Small adjustments to show the caret and platform-dependent line geometry are allowed; an already-visible caret must not be thrown outside the viewport."],
       "nonRequirements":["Exact pixels, timing, display scaling, and certification on the reporter's Windows 10/WebView2 153 device."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-gh849-idle.mjs": {
+      "contracts":[{"class":"core-operation","userOutcome":"On a page with Linked References from more source pages than the working set holds, nothing moves or changes while the reader does nothing, and switching to another tab and back shows the same first row (GH #849, #848).","blocking":false}],
+      "acceptableVariations":["How rows look, exact heights and how long the first settling takes; the first row may land a few pixels away."],
+      "nonRequirements":["The reporters' graphs, a slow reference read (the browser proof scripts/shot-gh848-tab-scroll.mjs covers it), the right sidebar and split panes."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh810-embed-scroll.mjs": {
@@ -440,7 +458,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-share-dialog.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"The topbar share button is disabled with no page open and shares the open page. Share opens with This page chosen, reviews exactly that page, and exporting to a folder writes an export folder holding that page and no other, then creates the Exports page (marked tine/exports and public:: false, with an overview block) and lists the definition with its export folder, in Markdown and Org graphs, without changing config.edn.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"The topbar share button is disabled with no page open and shares the open page. Share opens with This page chosen, reviews exactly that page, and exporting to a folder writes an export folder holding that page and no other, then creates the Exports page (marked tine.exports and public:: false, with an overview block) and lists the definition with its export folder, in Markdown and Org graphs, without changing config.edn.","blocking":true}],
       "acceptableVariations":["Dialog layout, focus, review wording and save or watcher latency may vary while the exported page set and the persisted Exports page content remain correct."],
       "nonRequirements":["Exact pixels, the Link destination and neighbour selection (not built yet) or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -593,6 +611,168 @@
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"stable"
     },
+    "scripts/e2e-cm-file-names.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "In a graph with the default (legacy) file-name format, Ctrl+O on the Org links [[file:./a.b.org][ab]] and [[file:./Ten___Child.org][ten]] opens the pages a/b and Ten___Child with their bodies, and the conflict overview lists the sync copy of pages/foo.md (title:: Bar) as Bar; navigation creates no file and changes no bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing, title decoration and the conflict overview's layout may vary while the routed page shows the linked file's body and the row reads the page's name."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
+    "scripts/e2e-cm-rename-forms.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "Renaming the page Old to New through its title rewrites, on disk, {{cloze [[Old]]}} and {{query [[Old]]}} on pages whose only mention of Old is that macro, the property key Old:: (as new::), word#Old, the Org labelled link [[Old][a label]] and the Org headline tag :Old:, and leaves a code block whose ``` fence opens on the bullet line and the brackets of https://ex.com/q?[[[Old],[2]]] byte-for-byte as written; every other byte of those files is unchanged.",
+          "blocking": true,
+          "authority": "D-20261031-CMQ; manager rulings Q1-Q4 and blockers, CM step 2 batch 6 (2026-11-03)"
+        }
+      ],
+      "acceptableVariations": [
+        "Rename latency and the order in which files are rewritten may vary while every file's final bytes are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-cm-preamble.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "Prose before a page's first bullet (Markdown, with or without page properties) or first heading (Org) is a referencing block: All pages counts Target 4 (two preambles, one Org preamble, one bullet) and lists Ghost (named only by a #Ghost in a preamble) with 1 while the page property tags:: Other still counts Other 1; Target's Linked References header shows 4 and lists the preamble rows; renaming Target to New through its title rewrites [[Target]] in each preamble on disk and leaves every other byte, including the page properties, unchanged; All pages lists no page named by a UUID and none whose name starts with draws/.",
+          "blocking": true,
+          "authority": "CM step 2 batch 8 brief (OG graph-parser with-pre-block-if-exists, handler/page.cljs get-all-pages)"
+        }
+      ],
+      "acceptableVariations": [
+        "Row order, count refresh latency and the order in which files are rewritten may vary while the counts, rows and final bytes are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-cm-counts-refonly.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "All pages shows each page's Backlinks count as the number of blocks its unfiltered Linked References panel lists (Target 1: its own block and a code span do not count, and one block naming it by two links and a property counts once), lists the pages that only blocks name (Ref Only 2, the tag page Ideas 1, the property-key page rel 1) and no TODO row, no LATER row although pages/LATER.md exists (OG get-all-pages hides built-in names), and no row for a {{embed ((uuid))}} block's uuid; opening Target, and Ref Only from All pages, shows the same number in the Linked References header; a {{query (all-page-tags)}} block lists Ideas, which opens; opening a reference-only page writes no file.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Row order, count refresh latency (the HK3 quiet rule) and layout may vary while the counts, the listed rows and the header numbers are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-cm-duplicate-day.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "With journals/2026_10_26.md and journals/2026-10-26.md for one day, Settings > Backups & recovery > Duplicate journal days marks only the file the day opens (2026_10_26.md) as canonical and offers Merge on the other; a native click on Merge folds the other file's blocks into the opened file and moves it out of the graph, and the day then shows both files' blocks.",
+          "blocking": true,
+          "authority": "CM step 2 batch 2 OW-2 / PQ-1 (manager ruling 2026-11-02, Martin veto item): the duplicate-day keeper is the claimant order's owner"
+        }
+      ],
+      "acceptableVariations": [
+        "Panel wording, badge text and timing may vary while the canonical mark and the Merge offer are on the stated files."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
+    "scripts/e2e-cm-query-alias.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With Machine Learning carrying alias:: ML and Notes holding `also [[Machine Learning]]`, typing {{query [[ML]]}} on another page lists that block (and not a block naming no page of the group); editing Machine Learning's first block to alias:: AI in the app drops the block from the mounted query, and restoring alias:: ML lists it again, without reopening the page.",
+          "blocking": true,
+          "authority": "D-20261019-Q8 (Martin): a query's [[A]] / refs matches A's whole alias group; CM step 2 batch 9 (S10)"
+        }
+      ],
+      "acceptableVariations": [
+        "Refresh latency, row order and the result's layout may vary while the listed blocks are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-cm-date-links.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With :journal/file-name-format dd-MM-yyyy, clicking a rendered [[22-10-2026]] opens the Oct 22nd, 2026 journal with its body, and clicking a link to a journal's alias opens that journal with its body; navigation creates no page file and changes no bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing and title decoration may vary while the routed page is the journal and shows its body."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
+    "scripts/e2e-cm-empty-alias.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With Machine Learning declaring alias:: ML and an empty pages/ML.md, clicking a rendered [[ML]] opens Machine Learning with its body; the alias group's Related pages row opens the empty ML page; typing into it makes [[ML]] open ML, and clearing it makes [[ML]] open Machine Learning again, without a restart; no page file is created and the other pages keep their bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing and title decoration may vary while the routed page and its body are the expected ones; the cleared ML.md may be empty or a single empty bullet."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-cm-favorites.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "After a CLI page rename with no window open, the next app open lists the favorite under its new name in config.edn and the sidebar, and clicking it opens the renamed page with its body.",
+          "blocking": true
+        },
+        {
+          "class": "core-operation",
+          "userOutcome": "An app rename of a namespace parent moves a favorite namespace child to its new name, and a title:: change of an open page moves its favorite; config.edn and the sidebar agree, each favorite opens its page with its body, and no page file is created.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation and config reload timing may vary while config.edn and the sidebar reach the listed favorites."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels, sidebar order animation or incidental DOM nesting."
+      ],
+      "stability": "stable"
+    },
     "scripts/e2e-gh623-link-navigation.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
@@ -649,13 +829,13 @@
       "stability": "burn-in"
     },
     "scripts/e2e-margin-comment.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "In a graph under git where no name is set, the first comment asks for a name once (the dialog says the name is a Tine setting on this device used in all graphs, and nothing is written until it is answered); the name given there is saved to the device settings, shown in Settings > Editor > Your name, and later comments do not ask again. On a routed named page in a window too narrow for the margin column, with that name set, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked. Comment is the rightmost speech-bubble toolbar icon with its shortcut. The thread has an expanding local reply draft; Escape and Cancel on an empty draft leave both page bytes and mtime unchanged, Enter submits an ordinary child, and Delete shares the first content line with the quote or reply text and author, without overlap or an empty action row.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "In a graph under git where no name is set, the first comment asks for a name once (the dialog says the name is a Tine setting on this device used in all graphs, and nothing is written until it is answered); the name given there is saved to the device settings, shown in Settings > Editor > Your name, and later comments do not ask again. On a routed named page in a window too narrow for the margin column, with that name set, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying tine.quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked. Comment is the rightmost speech-bubble toolbar icon with its shortcut. The thread has an expanding local reply draft; Escape and Cancel on an empty draft leave both page bytes and mtime unchanged, Enter submits an ordinary child, and Delete shares the first content line with the quote or reply text and author, without overlap or an empty action row.", "blocking": true }],
       "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
     },
     "scripts/e2e-margin-column.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps quote::) under the unchanged commented block. Pressing t then m hides every comment thread (column, markers, marked words, cards) without changing the page file, the hidden state survives a reload, and t then m shows the threads again.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps tine.quote::) under the unchanged commented block. Pressing t then m hides every comment thread (column, markers, marked words, cards) without changing the page file, the hidden state survives a reload, and t then m shows the threads again.", "blocking": true }],
       "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width, card styling and the exact pixel offset of the thread beside its passage (within 2 px of the passage's top)."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved bullets, only their nesting.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
@@ -706,7 +886,7 @@
       "stability": "stable"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

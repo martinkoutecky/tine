@@ -1,0 +1,184 @@
+{
+  "backlinks": {
+    "25-10-2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "cc27b5e9-7374-8e8c-8d3b-c1cd0851767c",
+            "raw": "see [[25-10-2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "x"
+      }
+    ],
+    "x": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/25-10-2026.md",
+        1
+      ],
+      [
+        "pages/x.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "25-10-2026",
+      "name": "25-10-2026",
+      "target": {
+        "id": "pages/25-10-2026.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "oct 25th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 25th, 2026"
+      },
+      "name": "Oct 25th, 2026",
+      "target": {
+        "id": "pages/Oct 25th, 2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x",
+      "name": "x",
+      "target": {
+        "id": "pages/x.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": "dd-MM-yyyy",
+  "journalTitleFormat": null,
+  "keyOf": {
+    "25-10-2026": "oct 25th, 2026",
+    "Oct 25th, 2026": "oct 25th, 2026",
+    "x": "x"
+  },
+  "open": {
+    "25-10-2026": {
+      "journal": [
+        "page",
+        "oct 25th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    "Oct 25th, 2026": {
+      "journal": [
+        "journal",
+        "oct 25th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    "x": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  },
+  "owner": {
+    "25-10-2026": {
+      "journal": "pages/25-10-2026.md",
+      "page": "pages/25-10-2026.md"
+    },
+    "Oct 25th, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "x": {
+      "journal": null,
+      "page": "pages/x.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 25th, 2026",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "25-10-2026",
+      "owner": "pages/25-10-2026.md"
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "x",
+      "owner": "pages/x.md"
+    }
+  ],
+  "spellings": {
+    "25-10-2026": {
+      "backend": [
+        "page",
+        "oct 25th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        25
+      ],
+      "model": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    "Oct 25th, 2026": {
+      "backend": [
+        "journal",
+        "oct 25th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        25
+      ],
+      "model": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    "x": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    }
+  }
+}

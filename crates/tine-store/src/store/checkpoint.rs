@@ -75,7 +75,28 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// changing marker/planning projections and derived indexes for NEL/BOM input.
 /// Invalidate older disposable results; serialized layout and graph files stay
 /// unchanged.
-pub(crate) const FORMAT: u32 = 21;
+/// 22 (D-20261102-CM4 CM-REFONLY): the referenced-name index also holds
+/// property-key pages (unless `:property-pages/enabled?` is off or the key is
+/// excluded) and referenced task-marker and priority pages, so reference-only
+/// pages and page-anchored query rows change for unchanged graph files. The
+/// serialized layout stays unchanged; older indexes rebuild.
+/// 23 (CM step 2 batch 8): prose before a page's first block is a referencing
+/// block, so the explicit reference-name index, the reference candidate
+/// signatures (slot 0 now covers that prose) and cached backlink answers
+/// change for unchanged graph files. The serialized layout stays unchanged;
+/// older indexes rebuild.
+/// 24 (CM step 2 batch 9, D-20261019-Q8): a reference query (`[[A]]`, `#A`,
+/// `refs`, TQL `ref`/`direct_ref`) matches A's whole alias group and a date
+/// spelling names its journal, so memoized query answers change for unchanged
+/// graph files, and a memo entry's retained-byte charge now counts the plan's
+/// reference classes. The serialized layout stays unchanged; older memos
+/// rebuild.
+/// 25 (CM step 2 batch 11, D-20261103-CMA CM-NAMES (1)): the file-name
+/// decoder gives OG's name for malformed escapes and empty triple-lowbar
+/// namespace parts (`___lead` is "lead", `%E9` is "%E9"), so the persisted
+/// claimants, `name_by_path` and name-derived indexes change for unchanged
+/// graph files. The serialized layout stays unchanged; older ones rebuild.
+pub(crate) const FORMAT: u32 = 25;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
@@ -249,6 +270,9 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         mobile_gestures_disabled_in_block_with_tags: _,
         quick_capture_template_text: _,
         quick_capture_template_media: _,
+        quick_capture_default_page: _,
+        quick_capture_insert_today: _,
+        quick_capture_redirect_page: _,
         macros: _,
         enable_timetracking: _,
         show_brackets: _,
@@ -572,8 +596,7 @@ impl ChangeFeed {
         let (evaluator, list) = self
             .graph
             .checkpoint_install(graph, (*config.config).clone())?;
-        *self.journal_ids.lock().unwrap() =
-            journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(&self.graph, list.iter());
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let mut snapshot = Snapshot {
@@ -588,11 +611,12 @@ impl ChangeFeed {
             unreadable: Arc::new(Vec::new()),
             answers: Default::default(),
             folds_only: false,
+            unparsed: std::sync::OnceLock::new(),
         };
         // The first publication carries every answer, as a cold one does.
-        let (inventory, counts) = snapshot.answer_changes(None, &[], true);
+        let (inventory, delta, counts) = snapshot.answer_changes(None, &[], true);
         let summary = snapshot.change_summary(None, &[], true, inventory, None, &[], &[]);
-        snapshot.answers = (inventory, counts, summary);
+        snapshot.answers = (inventory, counts, summary, delta);
         let change = Change {
             graph_rev: snapshot.rev,
             origin: Origin::External,

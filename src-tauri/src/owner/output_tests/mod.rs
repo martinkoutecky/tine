@@ -61,24 +61,26 @@ impl Fixture {
         // The contract's outline example is this page, byte for byte.
         write(
             "pages/a.md",
-            &format!("- one\n  id:: {UUID}\n  author:: claude\n\t- under one\n- TODO two\n"),
+            &format!("- one\n  id:: {UUID}\n  tine.author:: claude\n\t- under one\n- TODO two\n"),
         );
         write(
             "pages/b.md",
-            &format!("- see [[a]]\n  author:: erin\n- and (({UUID}))\n- TODO see [[a]] again\n"),
+            &format!(
+                "- see [[a]]\n  tine.author:: erin\n- and (({UUID}))\n- TODO see [[a]] again\n"
+            ),
         );
-        // Literal `author::` text inside a code fence is content, not attribution.
+        // Literal `tine.author::` text inside a code fence is content, not attribution.
         write(
             "pages/fence.md",
-            "- Example\n  ```\n  author:: Bob\n  ```\n- Real\n  author:: Alice\n  note:: x\n  ```\n  author:: Bob\n  ```\n",
+            "- Example\n  ```\n  tine.author:: Bob\n  ```\n- Real\n  tine.author:: Alice\n  note:: x\n  ```\n  tine.author:: Bob\n  ```\n",
         );
         write(
             "pages/org1.org",
-            "* Heading\n:PROPERTIES:\n:author: carol\n:END:\nbody\n",
+            "* Heading\n:PROPERTIES:\n:tine.author: carol\n:END:\nbody\n",
         );
         write(
             "pages/lookalike.md",
-            "- text\n  Author::   Dave  \n- authors:: x\n- plain\n  authors:: y\n",
+            "- text\n  Tine.Author::   Dave  \n- authors:: x\n- plain\n  authors:: y\n- book notes\n  author:: Tolkien\n",
         );
         write("pages/props.md", "foo:: bar\n\n- x\n");
         write("pages/ns___child.md", "- in a namespace\n");
@@ -704,7 +706,7 @@ fn a_page_read_prints_each_blocks_handle() {
         page["page"]["blocks"][0]["handle"].as_str().unwrap(),
         format!(
             "1~{}",
-            crate::owner::write::fingerprint("one\nauthor:: claude", false)
+            crate::owner::write::fingerprint("one\ntine.author:: claude", false)
         ),
         "the fingerprint is the editor text's (hidden id:: left out)"
     );
@@ -758,6 +760,13 @@ const DISCLOSURES: &[Disclosure] = &[
             )
         },
         words: &["pages/conflict-zq41.md"],
+    },
+    Disclosure {
+        section: "page.rename",
+        field: "report.config_skipped",
+        base: |f| f.ok("page.rename", json!({"old":"a","new":"a"})),
+        on: |p| set(p, "report.config_skipped", json!("cannot edit :favorites")),
+        words: &["config.edn left unchanged", "cannot edit :favorites"],
     },
     Disclosure {
         section: "page.delete",
@@ -1095,12 +1104,14 @@ fn author_sits_beside_the_address_not_on_a_later_line() {
     let text = text_of(&fixture.ok("page.show", json!({ "name": "a" })));
     let lines: Vec<&str> = text.lines().collect();
     assert!(
-        lines.contains(&"1 [author:: claude] one"),
+        lines.contains(&"1 [tine.author:: claude] one"),
         "attribution beside the address: {text}"
     );
     assert!(
-        !lines.iter().any(|l| l.trim_start().starts_with("author::")),
-        "the author:: line is not repeated below the block: {text}"
+        !lines
+            .iter()
+            .any(|l| l.trim_start().starts_with("tine.author::")),
+        "the tine.author:: line is not repeated below the block: {text}"
     );
     // Other properties stay as lines, an unauthored block is unchanged, and
     // the JSON keeps the raw text.
@@ -1113,10 +1124,10 @@ fn author_sits_beside_the_address_not_on_a_later_line() {
     assert!(payload["page"]["blocks"][0]["raw"]
         .as_str()
         .unwrap()
-        .contains("author:: claude"));
+        .contains("tine.author:: claude"));
     // `block show` and `refs` use the same outline.
     let block = text_of(&fixture.ok("block.show", json!({ "uuid": UUID })));
-    assert!(block.contains("1 [author:: claude] one"), "{block}");
+    assert!(block.contains("1 [tine.author:: claude] one"), "{block}");
 }
 
 #[test]
@@ -1124,7 +1135,7 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
     let fixture = Fixture::new();
     let outline = |name: &str| text_of(&fixture.ok("page.show", json!({ "name": name })));
 
-    // Code fence content (CODE-2 F6): a block whose only `author::` is inside a
+    // Code fence content (CODE-2 F6): a block whose only `tine.author::` is inside a
     // fence has no author; the literal line stays where it is.
     let fence = outline("fence");
     let lines: Vec<&str> = fence.lines().collect();
@@ -1134,22 +1145,22 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
         .unwrap_or_else(|| panic!("{fence}"));
     assert_eq!(
         &lines[at..at + 4],
-        ["1 Example", "  ```", "  author:: Bob", "  ```"],
+        ["1 Example", "  ```", "  tine.author:: Bob", "  ```"],
         "{fence}"
     );
     // A block with a real property AND a fenced line: the property is the
     // attribution (and is not repeated); the fenced line stays.
     let at = lines
         .iter()
-        .position(|l| *l == "2 [author:: Alice] Real")
+        .position(|l| *l == "2 [tine.author:: Alice] Real")
         .unwrap_or_else(|| panic!("{fence}"));
     assert_eq!(
         &lines[at..],
         [
-            "2 [author:: Alice] Real",
+            "2 [tine.author:: Alice] Real",
             "  note:: x",
             "  ```",
-            "  author:: Bob",
+            "  tine.author:: Bob",
             "  ```"
         ],
         "{fence}"
@@ -1157,12 +1168,12 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
 
     // Org drawer.
     let org = outline("org1");
-    assert!(org.contains("1 [author:: carol] Heading"), "{org}");
+    assert!(org.contains("1 [tine.author:: carol] Heading"), "{org}");
     assert!(!org.contains(":author:"), "{org}");
 
     // Key spelling and look-alikes: the value is trimmed; `authors::` is another key.
     let look = outline("lookalike");
-    assert!(look.contains("1 [author:: Dave] text"), "{look}");
+    assert!(look.contains("1 [tine.author:: Dave] text"), "{look}");
     assert!(!look.contains("Dave  "), "{look}");
     assert!(
         look.contains("2 authors:: x"),
@@ -1173,13 +1184,20 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
         "{look}"
     );
     assert!(
-        !look.contains("[author:: x]") && !look.contains("[author:: y]"),
+        !look.contains("[tine.author:: x]") && !look.contains("[tine.author:: y]"),
         "{look}"
     );
+    // A user's own `author::` (book notes) is an ordinary property row, never
+    // the attribution (Discussion #825, D-20261102-PNS).
+    assert!(
+        look.contains("4 book notes") && look.contains("  author:: Tolkien"),
+        "{look}"
+    );
+    assert!(!look.contains("Tolkien]"), "{look}");
 
     // The same block reached through another verb.
     let query = text_of(&fixture.ok("query", json!({ "text": "[[a]]" })));
-    assert!(query.contains("[author:: claude] one"), "{query}");
+    assert!(query.contains("[tine.author:: claude] one"), "{query}");
 }
 
 #[test]

@@ -1,0 +1,454 @@
+{
+  "backlinks": {
+    "Caps Title": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "Oct 27th, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "Org Title": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "Shown Title": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "linker": [],
+    "release day": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ],
+    "stem-name": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b5366059-36c0-86cb-92c4-65bf31f18b95",
+            "raw": "[[Shown Title]] [[stem-name]] [[Caps Title]] [[Org Title]] [[Release day]] [[Oct 27th, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "linker"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/stem-name.md",
+        1
+      ],
+      [
+        "pages/linker.md",
+        0
+      ],
+      [
+        "pages/caps.md",
+        1
+      ],
+      [
+        "pages/o.org",
+        1
+      ],
+      [
+        "journals/2026_10_27.md",
+        1
+      ]
+    ],
+    [
+      [
+        "Release day",
+        1
+      ],
+      [
+        "stem-name",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "caps title",
+      "name": "Caps Title",
+      "target": {
+        "id": "pages/caps.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "linker",
+      "name": "linker",
+      "target": {
+        "id": "pages/linker.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261027,
+      "is_journal": true,
+      "key": "oct 27th, 2026",
+      "name": "Oct 27th, 2026",
+      "target": {
+        "id": "journals/2026_10_27.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "org title",
+      "name": "Org Title",
+      "target": {
+        "id": "pages/o.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "release day",
+      "name": "Release day",
+      "target": {
+        "id": "pages/Release day.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "shown title",
+      "name": "Shown Title",
+      "target": {
+        "id": "pages/stem-name.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "stem-name",
+      "name": "stem-name",
+      "target": {
+        "id": "pages/stem-name.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Caps Title": "caps title",
+    "Oct 27th, 2026": "oct 27th, 2026",
+    "Org Title": "org title",
+    "Release day": "release day",
+    "Shown Title": "shown title",
+    "linker": "linker",
+    "stem-name": "stem-name"
+  },
+  "open": {
+    "Caps Title": {
+      "journal": [
+        "journal",
+        "caps title"
+      ],
+      "page": [
+        "page",
+        "caps title"
+      ]
+    },
+    "Oct 27th, 2026": {
+      "journal": [
+        "journal",
+        "oct 27th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 27th, 2026"
+      ]
+    },
+    "Org Title": {
+      "journal": [
+        "journal",
+        "org title"
+      ],
+      "page": [
+        "page",
+        "org title"
+      ]
+    },
+    "Release day": {
+      "journal": [
+        "journal",
+        "release day"
+      ],
+      "page": [
+        "page",
+        "release day"
+      ]
+    },
+    "Shown Title": {
+      "journal": [
+        "journal",
+        "shown title"
+      ],
+      "page": [
+        "page",
+        "shown title"
+      ]
+    },
+    "linker": {
+      "journal": [
+        "journal",
+        "linker"
+      ],
+      "page": [
+        "page",
+        "linker"
+      ]
+    },
+    "stem-name": {
+      "journal": [
+        "journal",
+        "stem-name"
+      ],
+      "page": [
+        "page",
+        "stem-name"
+      ]
+    }
+  },
+  "owner": {
+    "Caps Title": {
+      "journal": null,
+      "page": "pages/caps.md"
+    },
+    "Oct 27th, 2026": {
+      "journal": "journals/2026_10_27.md",
+      "page": null
+    },
+    "Org Title": {
+      "journal": null,
+      "page": "pages/o.org"
+    },
+    "Release day": {
+      "journal": null,
+      "page": null
+    },
+    "Shown Title": {
+      "journal": null,
+      "page": "pages/stem-name.md"
+    },
+    "linker": {
+      "journal": null,
+      "page": "pages/linker.md"
+    },
+    "stem-name": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 27th, 2026",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "Oct 27th, 2026",
+      "owner": "journals/2026_10_27.md"
+    },
+    {
+      "key": "caps title",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Caps Title",
+      "owner": "pages/caps.md"
+    },
+    {
+      "key": "linker",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "linker",
+      "owner": "pages/linker.md"
+    },
+    {
+      "key": "org title",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Org Title",
+      "owner": "pages/o.org"
+    },
+    {
+      "key": "release day",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "release day",
+      "owner": null
+    },
+    {
+      "key": "shown title",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Shown Title",
+      "owner": "pages/stem-name.md"
+    },
+    {
+      "key": "stem-name",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "stem-name",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "Caps Title": {
+      "backend": [
+        "page",
+        "caps title"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "caps title"
+      ]
+    },
+    "Oct 27th, 2026": {
+      "backend": [
+        "journal",
+        "oct 27th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        27
+      ],
+      "model": [
+        "journal",
+        "oct 27th, 2026"
+      ]
+    },
+    "Org Title": {
+      "backend": [
+        "page",
+        "org title"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "org title"
+      ]
+    },
+    "Release day": {
+      "backend": [
+        "page",
+        "release day"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "release day"
+      ]
+    },
+    "Shown Title": {
+      "backend": [
+        "page",
+        "shown title"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "shown title"
+      ]
+    },
+    "linker": {
+      "backend": [
+        "page",
+        "linker"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "linker"
+      ]
+    },
+    "stem-name": {
+      "backend": [
+        "page",
+        "stem-name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "stem-name"
+      ]
+    }
+  }
+}

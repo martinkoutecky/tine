@@ -118,9 +118,23 @@ fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     })
 }
 
+/// The view after one stat walk of graph text and config
+/// (`Depth::PageStamps`; the walk waits for Ready, so the view is never the
+/// launch checkpoint). A page operation takes it once (a rename once per
+/// attempt, in `multi_rename`'s plan reuse check). The walk is the only
+/// proof that the plan sees an external edit or sync delivery the watcher
+/// has not published yet (its 200 ms debounce, a watch that reports nothing
+/// on some network and FUSE mounts, Poll mode's 3 s): a referrer, a twin or a
+/// claimant anywhere in the graph (B20d). After the walk, a planned page's
+/// edit is refused by the commit's byte check, and a change the watcher
+/// publishes before admission by the host's bound-view admission (B2); both
+/// replan. A page that becomes a referrer, twin or claimant after the walk
+/// and is not published by admission is not seen, the window the walk always
+/// had (`docs/storage-contract.md`). Assets and `custom.css` are not walked:
+/// no page plan reads them. Cost O(P stamps).
 fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     store
-        .refresh(tine_store::Depth::Stamps)
+        .refresh(tine_store::Depth::PageStamps)
         .map_err(|failure| match failure {
             tine_store::LoadError::Failed { reason } => error(io::ErrorKind::Other, &reason),
             tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
@@ -134,6 +148,12 @@ fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
 /// no content is read. Unlistable entries are skipped rather than refusing
 /// (missing one yields at worst a duplicate-identity file, never data loss).
 /// Cost O(files under pages/). Master 46a0e8c27.
+///
+/// Deliberately not the store's page-name answer (census Q2): that answer
+/// names the files the view admits, and these files are exactly the ones it
+/// does not. The question here is "would this file's name, decoded with the
+/// graph's codec, claim `name`", asked of the file name alone so that a page
+/// create never duplicates an identity a non-portable file still holds.
 fn retained_legacy_page_identity_exists(store: &Store, name: &str) -> io::Result<bool> {
     let format = store.config().file_name_format;
     let listing = store.scan_area(Area::Pages, None).map_err(store_error)?;
@@ -168,61 +188,119 @@ fn claimants(target: Resolved) -> Vec<PageId> {
     }
 }
 
-/// Every page holding an export definition block whose page selector names
-/// one of `olds`, found by the definitions query
-/// (`tine_core::export_definition::definitions_query`) over the planning view
-/// and the selectors of the blocks it returns: O(P + B) in memory, memoized
-/// per generation, no file read, so a definition page the rename does not
-/// touch is not read. A view with more definition blocks than one bounded
-/// answer carries refuses the rename before anything is written, rather than
-/// leave a definition naming the old page (scenario: malformed or generated
-/// input; a later page with the old name would then be the one exported).
-fn export_definition_pages(
+/// Every page with a block the rename rewrites although no reference names
+/// the page (so no referrers row selects it): a `{{query}}` page-name argument
+/// (D-20261031-CMQ), a `[[link]]` in another macro's argument (cloze,
+/// renderer, plugin macros) or an Org `[[file:…]]` link (its label, not its
+/// file, is the reference). Found by scanning the planning view's parsed
+/// blocks and pre-blocks in memory, with no index (D-10; no persisted record,
+/// I-25): O(B) substring checks, plus the rename's own rewrite of each text
+/// that may hold a target. Exact: a page is selected only when one of its
+/// texts would change.
+///
+/// A macro's target spells its page's name in the text itself, so a text
+/// holding `{{` is rewritten (one parse) only when its folded text contains a
+/// renamed page's key. That is a necessary condition except for an escaped
+/// spelling (a `\` in the text, EDN `\"`; a quote in the name, SQL `''`),
+/// which takes the rewrite unfiltered, as an Org `[[file:` link (its encoded
+/// file stem) always does. Realistic-10k: ~10k embed and query blocks, of
+/// which a rename parses the few that spell the name.
+fn rewrite_target_pages(
     graph: &tine_store::WholeGraph,
-    olds: &[String],
-) -> io::Result<Vec<PageId>> {
-    use tine_core::query::ir::{ExecutionContext, QueryRows, ViewSettings};
-    use tine_store::{IrAnswer, IrRequest};
-    let parsed = tine_core::query::wire_parse::parse_query_pair(
-        &tine_core::export_definition::definitions_query(),
-        tine_core::query::wire_parse::QueryTextDialect::Og,
-        &[],
-        tine_core::query::registry::Registry::none(),
-    );
-    let answer = graph
-        .query_ir(
-            IrRequest::Run {
-                query: &parsed.query,
-                view: &ViewSettings::default(),
-                context: &ExecutionContext::default(),
-            },
-            &tine_store::Cancel::default(),
-        )
-        .map(|answer| answer.expect("never cancelled"))
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let IrAnswer::Result(result) = answer else {
-        return Err(io::Error::other("query run returned another answer"));
-    };
-    if result.exceeded {
-        return Err(error(
-            io::ErrorKind::InvalidData,
-            "too many export definitions to rename their pages safely",
-        ));
+    renames: &HashMap<String, String>,
+    format: tine_core::config::FileNameFormat,
+) -> Vec<PageId> {
+    // A key containing another key is found through that one.
+    let mut keys: Vec<&str> = renames.keys().map(String::as_str).collect();
+    keys.sort_by_key(|key| key.len());
+    let mut needles: Vec<&str> = Vec::new();
+    for key in keys {
+        if !needles.iter().any(|needle| key.contains(needle)) {
+            needles.push(key);
+        }
     }
-    let QueryRows::Block { groups } = result.rows else {
-        return Ok(Vec::new());
+    let quoted = needles.iter().any(|key| key.contains(['\'', '"']));
+    let spells_a_key = |raw: &str| {
+        quoted || raw.contains('\\') || {
+            let folded = refs::page_key(raw);
+            needles.iter().any(|key| folded.contains(key))
+        }
     };
-    let olds: HashSet<String> = olds.iter().map(|old| refs::normalize(old)).collect();
-    Ok(groups
-        .iter()
-        .filter(|group| {
-            group.blocks.iter().any(|block| {
-                tine_core::export_definition::selected_names(&block.raw)
-                    .iter()
-                    .any(|name| olds.contains(&refs::normalize(name)))
-            })
+    graph
+        .corpus(None)
+        .pages
+        .into_iter()
+        .filter(|page| {
+            let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+            let may_hold = |raw: &str| {
+                (raw.contains("{{") && spells_a_key(raw)) || (org && raw.contains("[[file:"))
+            };
+            if let Some(pre) = page.document.pre_block.as_deref() {
+                if may_hold(pre) && refs::rename_pre_block(pre, org, renames, format) != pre {
+                    return true;
+                }
+            }
+            let mut stack: Vec<_> = page.document.roots.iter().collect();
+            while let Some(block) = stack.pop() {
+                let raw = block.raw();
+                if may_hold(raw) && refs::rename_block_raw(raw, org, renames, format) != raw {
+                    return true;
+                }
+                stack.extend(block.children.iter());
+            }
+            false
         })
-        .flat_map(|group| existing(graph.resolve(&group.page, group.kind == PageKind::Journal)))
+        .map(|page| page.id)
+        .collect()
+}
+
+/// One text an unsaved page holds, as the window asks about it
+/// ([`rename_would_change`]): its pre-block, or one block's raw body.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameProbeText {
+    pub raw: String,
+    pub org: bool,
+    /// The page's pre-block (its page properties).
+    pub pre_block: bool,
+}
+
+/// Per text, whether renaming `old` to `new` would rewrite it: the rename's
+/// own name map (`old` and every namespace descendant a file owns, as
+/// [`plan_rename`] pairs them) and its own rewrite, so the window's check
+/// before a rename that must leave a stuck page alone (GH #535) cannot
+/// disagree with what the rename writes. Read-only: one view, one inventory
+/// of `old`'s namespace, then O(text bytes) per text.
+pub fn rename_would_change(
+    store: &Store,
+    old: &str,
+    new: &str,
+    texts: &[RenameProbeText],
+) -> io::Result<Vec<bool>> {
+    let graph = view(store)?;
+    let old_key = refs::normalize(old);
+    let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
+    let mut renames: HashMap<String, String> = owned
+        .0
+        .iter()
+        .filter(|entry| !entry.is_journal)
+        .map(|entry| {
+            let to = format!("{new}{}", namespace_suffix(&entry.name, &old_key));
+            (refs::normalize(&entry.name), to)
+        })
+        .collect();
+    renames.insert(old_key, new.to_owned());
+    let format = store.config().file_name_format;
+    Ok(texts
+        .iter()
+        .map(|text| {
+            let after = if text.pre_block {
+                refs::rename_pre_block(&text.raw, text.org, &renames, format)
+            } else {
+                refs::rename_block_raw(&text.raw, text.org, &renames, format)
+            };
+            after != text.raw
+        })
         .collect())
 }
 
@@ -288,7 +366,8 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
 /// confirmation), which succeeds without a write; an absent name with no
 /// displayed path is a no-op. The host's deletion is bound to the bytes the
 /// check read and refuses if its own read differs. The window waits for a
-/// `Pending` deletion to publish (§4.4). Cost O(P + file bytes).
+/// `Pending` deletion to publish (§4.4). Cost one stat walk of the graph's
+/// text files (O(P), [`refreshed_view`]) plus the file's bytes.
 pub fn delete_page_expected(
     store: &Store,
     host: &PageHost,
@@ -421,6 +500,77 @@ pub fn rename_or_merge_page(
     )
 }
 
+/// What [`follow_page_identity`] did to `config.edn`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct IdentityFollow {
+    /// The page's name now, when it differs from the old one (by page key).
+    pub name: Option<String>,
+    /// The new `:default-home` name, when it moved.
+    pub home_page: Option<String>,
+    /// The favorites after the change, whenever the change is confirmed
+    /// (also when another writer already moved them), so a window adopts
+    /// the backend's list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favorites: Option<crate::config::FavoritesAfter>,
+    /// Why a move was not written (see [`RenameReport::config_skipped`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_skipped: Option<String>,
+}
+
+/// A page's name changed without a rename operation: its `title::` was edited
+/// (in Tine, by the CLI, or in another editor), so the file at `path` that
+/// was named `old` is now named otherwise. Home and favorites follow it
+/// through the same config.edn step and answerer as a rename (CM step 2,
+/// FAV-RETITLE ruling; OG follows only its page-title rename). Nothing moves
+/// when the file at `path` still answers to `old`, is a journal or is gone,
+/// or when `old` still names some page or alias (a stored favorite still
+/// opens a page). Callers: the CLI owner after a page write, the window after
+/// it observed the identity change. Cost: one published-view inventory scan,
+/// one stat walk if the change is not yet published, plus the config step
+/// (O(config.edn bytes)).
+pub fn follow_page_identity(store: &Store, path: &str, old: &str) -> io::Result<IdentityFollow> {
+    let named = |graph: &tine_store::WholeGraph| {
+        graph
+            .inventory(tine_store::InventoryScope::All)
+            .0
+            .iter()
+            .find(|entry| {
+                !entry.is_journal && physical(&entry.target).iter().any(|id| id.as_str() == path)
+            })
+            .map(|entry| entry.name.clone())
+    };
+    let mut graph = view(store)?;
+    let mut name = named(&graph);
+    if name
+        .as_deref()
+        .is_none_or(|name| refs::same_page(name, old))
+    {
+        graph = refreshed_view(store)?;
+        name = named(&graph);
+    }
+    let Some(name) = name.filter(|name| !refs::same_page(name, old)) else {
+        return Ok(IdentityFollow::default());
+    };
+    if !matches!(graph.resolve(old, false), Resolved::Absent { .. }) {
+        return Ok(IdentityFollow::default());
+    }
+    let lookup = HashMap::from([(refs::normalize(old), name.clone())]);
+    let step = commit_config(store, &lookup, None)?;
+    let current = store.config();
+    let favorites = step.favorites.or_else(|| {
+        Some(crate::config::FavoritesAfter {
+            names: current.config.favorites.clone(),
+            page: current.config.favorites_page.clone(),
+        })
+    });
+    Ok(IdentityFollow {
+        name: Some(name),
+        home_page: step.home,
+        favorites,
+        config_skipped: step.skipped,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rename_page_after_inventory(
     store: &Store,
@@ -452,7 +602,16 @@ fn rename_page_after_inventory(
         )
     };
     crate::retry_on_conflict("page changed repeatedly during rename", || {
-        let first = plan()?;
+        // Planned from the published view; the attempt's walk runs in
+        // `multi_rename`, after the flush. A refusal (or nothing to do) is
+        // never decided on an unwalked view: walk and plan again.
+        let first = match plan() {
+            Ok(first) if !first.map.0.is_empty() => first,
+            _ => {
+                refreshed_view(store)?;
+                plan()?
+            }
+        };
         if first.map.0.is_empty() {
             return Ok(Some(RenameReport::unchanged()));
         }
@@ -499,12 +658,22 @@ fn multi_rename(
         refused,
         || {
             built.replace(None);
-            // Reuse only while view/config and held input still match.
-            let retained = initial.take().filter(|first| {
-                refreshed_view(store).is_ok_and(|current| current.rev() == first.graph.rev())
-                    && std::sync::Arc::ptr_eq(&store.config().config, &first.config.config)
-                    && host.inputs().is_ok_and(|now| now == before_flush)
-            });
+            // Reuse only while view/config and held input still match. The
+            // first call takes the attempt's one walk (`refreshed_view`),
+            // after the flush and as near the host's admission as planning
+            // gets: the first plan read the published view, so it is reused
+            // only if the walk published nothing. A replan reads the
+            // published view.
+            let retained = match initial.take() {
+                Some(first) => {
+                    let current = refreshed_view(store)?;
+                    (current.rev() == first.graph.rev()
+                        && std::sync::Arc::ptr_eq(&store.config().config, &first.config.config)
+                        && host.inputs().is_ok_and(|now| now == before_flush))
+                    .then_some(first)
+                }
+                None => None,
+            };
             let reused = retained.is_some();
             let mut plan = match retained {
                 Some(first) => first,
@@ -570,7 +739,7 @@ fn multi_rename(
     }
     let (mut report, home) = built.into_inner().expect("planned before the operation");
     if let Some((lookup, merged_old)) = home {
-        report.home_page = commit_home_after(store, &report, &lookup, merged_old.as_ref())?;
+        commit_config_after(store, &mut report, &lookup, merged_old.as_ref())?;
     }
     Ok(Some(report))
 }
@@ -816,47 +985,65 @@ fn rename_transaction<'s>(
             touched,
             skipped_conflicted_referrers: skipped,
             home_page: None,
+            favorites: None,
+            config_skipped: None,
         },
         merge,
         home: (lookup, merged_old),
     })
 }
 
-/// The home-page move after published page changes: its failure carries the
+/// The config.edn step after published page changes: its failure carries the
 /// report of what was already applied (`RenameReport::applied_before_error`).
-fn commit_home_after(
+fn commit_config_after(
     store: &Store,
-    report: &RenameReport,
+    report: &mut RenameReport,
     lookup: &HashMap<String, String>,
     merged_old: Option<&String>,
-) -> io::Result<Option<String>> {
-    commit_home(store, lookup, merged_old).map_err(|source| {
-        io::Error::new(
+) -> io::Result<()> {
+    match commit_config(store, lookup, merged_old) {
+        Ok(step) => {
+            report.home_page = step.home;
+            report.favorites = step.favorites;
+            report.config_skipped = step.skipped;
+            Ok(())
+        }
+        Err(source) => Err(io::Error::new(
             source.kind(),
             IncompleteRename {
                 report: report.clone(),
                 source,
             },
-        )
-    })
+        )),
+    }
 }
 
-/// A rename's `:default-home` move: `logseq/config.edn` (the meta area,
-/// never a page file) in its own transaction after the host's operation,
-/// so no page-host fence applies; a merged source (`merged_old`) keeps it
-/// (`home_after`). The new home name, if it moved.
-fn commit_home(
+/// A rename's `config.edn` step: `logseq/config.edn` (the meta area, never a
+/// page file) in ONE guarded transaction after the host's operation, so no
+/// page-host fence applies. It moves `:default-home` (a merged source,
+/// `merged_old`, keeps it: OG `merge-pages!`), `:favorites` and
+/// `:tine/favorites-page` together (`config::config_after_rename`, the one
+/// answerer). Conflicts retry with fresh bytes.
+fn commit_config(
     store: &Store,
     lookup: &HashMap<String, String>,
     merged_old: Option<&String>,
-) -> io::Result<Option<String>> {
+) -> io::Result<crate::config::ConfigAfterRename> {
+    let renamed = |name: &str| lookup.get(&refs::normalize(name)).cloned();
+    let home_renamed = |home: &str| {
+        let key = refs::normalize(home);
+        (merged_old != Some(&key))
+            .then(|| lookup.get(&key).cloned())
+            .flatten()
+    };
     crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
-        let Some((id, rev, bytes, name)) = home_after(store, lookup, merged_old) else {
-            return Ok(Some(None));
+        let mut step = crate::config::config_after_rename(store, &home_renamed, &renamed);
+        let Some((id, rev, bytes)) = step.write.take() else {
+            return Ok(Some(step));
         };
         let mut tx = store.transaction(None);
         tx.replace(&id, rev, bytes);
-        Ok(crate::commit_retry(tx.commit())?.then_some(Some(name)))
+        Ok(crate::commit_retry(tx.commit())?.then_some(step))
     })
 }
 
@@ -869,21 +1056,6 @@ pub(crate) fn rename_operation_error(err: io::Error) -> io::Error {
     } else {
         err
     }
-}
-
-/// OG `rename-page-aux` moves `:default-home` with a renamed page;
-/// `merge-pages!` does not, so a merged source (`merged_old`) keeps it.
-fn home_after(
-    store: &Store,
-    lookup: &HashMap<String, String>,
-    merged_old: Option<&String>,
-) -> Option<(FileId, FileRev, Vec<u8>, String)> {
-    crate::config::home_after_rename(store, |home| {
-        let key = refs::normalize(home);
-        (merged_old != Some(&key))
-            .then(|| lookup.get(&key).cloned())
-            .flatten()
-    })
 }
 
 /// The refusal of a rename that would rewrite a page with unsaved input,
@@ -952,8 +1124,18 @@ pub struct RenameReport {
     /// per file.
     pub skipped_conflicted_referrers: Vec<String>,
     /// The new `:default-home` page name when this rename moved the home page
-    /// with it (in the same transaction); `None` otherwise.
+    /// with it (in the rename's config.edn step, its own transaction after
+    /// the page operation); `None` otherwise.
     pub home_page: Option<String>,
+    /// The favorites list and arrangement page name after the rename, when
+    /// the same config.edn step changed them; the frontend adopts it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favorites: Option<crate::config::FavoritesAfter>,
+    /// Why the config.edn step skipped a move the rename called for
+    /// (config.edn unreadable, or a value it cannot edit safely); the rename
+    /// itself succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_skipped: Option<String>,
 }
 
 impl RenameReport {
@@ -974,6 +1156,8 @@ impl RenameReport {
             touched: Vec::new(),
             skipped_conflicted_referrers: Vec::new(),
             home_page: None,
+            favorites: None,
+            config_skipped: None,
         }
     }
 }
@@ -988,7 +1172,7 @@ impl std::fmt::Display for IncompleteRename {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Page files renamed, but the home-page config update failed: {}",
+            "Page files renamed, but the config.edn update (home page, favorites) failed: {}",
             self.source
         )
     }
@@ -1027,8 +1211,9 @@ pub enum RenameOutcome {
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
 /// v0.6.5 model.rs 1779. One host operation of the source and
-/// the target (DESIGN §3.1): their unsaved input is saved first. Cost O(P +
-/// source bytes) per try; four tries maximum.
+/// the target (DESIGN §3.1): their unsaved input is saved first. Cost one
+/// stat walk and one listing of the pages area (O(P)), then O(source bytes)
+/// per try; four tries maximum.
 pub fn rename_file_to_page(
     store: &Store,
     host: &PageHost,
@@ -1047,17 +1232,25 @@ pub fn rename_file_to_page(
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
-    // claimant but OG loads it as that page: refuse like a live claimant
-    // (external-editor / multi-device graph; master 46a0e8c27).
+    let taken = || {
+        error(
+            io::ErrorKind::AlreadyExists,
+            "a page with that name already exists",
+        )
+    };
+    // Once per operation (`refreshed_view`): the walk, and the
+    // listing that alone sees a retained non-portable legacy filename
+    // (`pages/A:B.md`), which is no view claimant but OG loads as that page:
+    // refuse like a live claimant (external-editor / multi-device graph;
+    // master 46a0e8c27). A try then resolves on the published view; the
+    // host rechecks the destination's name slot at admission.
+    refreshed_view(store)?;
+    if retained_legacy_page_identity_exists(store, name)? {
+        return Err(taken());
+    }
     let unclaimed = || {
-        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
-            || retained_legacy_page_identity_exists(store, name)?
-        {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "a page with that name already exists",
-            ));
+        if !existing(view(store)?.resolve(name, false)).is_empty() {
+            return Err(taken());
         }
         Ok(())
     };
@@ -1214,7 +1407,13 @@ fn merged_survivor(
     }
     let (header, blocks) = merge_payload::payload(&doc, &source, renames, org, format);
     if let Some(header) = header {
-        doc.pre_block = Some(header);
+        // Back where the survivor's header was: a header written as the
+        // first bullet stays that bullet (a pre-block above it would demote
+        // it to an ordinary block and drop its aliases).
+        match merge_payload::header_of(&doc).map(|(at, _)| at) {
+            Some(merge_payload::HeaderAt::FirstRoot) => doc.blocks[0].raw = header,
+            _ => doc.pre_block = Some(header),
+        }
     }
     doc.blocks.extend(blocks);
     Ok(Survivor {
@@ -1224,24 +1423,15 @@ fn merged_survivor(
     })
 }
 
+/// The merge survivor's own references to the merged page follow it: the
+/// same rewrite a rename applies to a page (`refs::rename_rewrite`), block by
+/// block.
 fn rename_doc(
     doc: &mut PageDto,
     renames: &HashMap<String, String>,
     org: bool,
     format: tine_core::config::FileNameFormat,
 ) {
-    fn rewrite(
-        raw: &mut String,
-        renames: &HashMap<String, String>,
-        org: bool,
-        format: tine_core::config::FileNameFormat,
-    ) {
-        *raw = refs::rename_tags_property_multi(
-            &refs::rename_refs_multi(raw, renames, org, format),
-            renames,
-            org,
-        );
-    }
     fn walk(
         blocks: &mut [tine_core::model::BlockDto],
         renames: &HashMap<String, String>,
@@ -1249,12 +1439,12 @@ fn rename_doc(
         format: tine_core::config::FileNameFormat,
     ) {
         for block in blocks {
-            rewrite(&mut block.raw, renames, org, format);
+            block.raw = refs::rename_block_raw(&block.raw, org, renames, format);
             walk(&mut block.children, renames, org, format);
         }
     }
     if let Some(pre) = doc.pre_block.as_mut() {
-        rewrite(pre, renames, org, format);
+        *pre = refs::rename_pre_block(pre, org, renames, format);
     }
     walk(&mut doc.blocks, renames, org, format);
 }

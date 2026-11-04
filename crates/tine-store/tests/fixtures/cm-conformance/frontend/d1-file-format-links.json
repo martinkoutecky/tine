@@ -1,0 +1,460 @@
+{
+  "backlinks": {
+    "Notes": [],
+    "Oct 22nd, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "file form [[22-10-2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "title form [[Oct 22nd, 2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3b38235a-9fae-85eb-9de9-3773ae417ef4",
+            "raw": "iso form [[2026-10-22]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Plan": [],
+    "oct 23rd, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "40b6e5b1-bf8a-8ec7-a458-1c60acf71f64",
+            "raw": "other day [[23-10-2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/Plan.md",
+        0
+      ],
+      [
+        "journals/22-10-2026.md",
+        3
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026-10-22",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 22nd, 2026"
+      },
+      "name": "2026-10-22",
+      "target": {
+        "id": "pages/2026-10-22.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "22-10-2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 22nd, 2026"
+      },
+      "name": "22-10-2026",
+      "target": {
+        "id": "pages/22-10-2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "23-10-2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 23rd, 2026"
+      },
+      "name": "23-10-2026",
+      "target": {
+        "id": "pages/23-10-2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "24-10-2026",
+      "link": {
+        "kind": "page",
+        "name": "Plan"
+      },
+      "name": "24-10-2026",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Plan.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261022,
+      "is_journal": true,
+      "key": "oct 22nd, 2026",
+      "name": "Oct 22nd, 2026",
+      "target": {
+        "id": "journals/22-10-2026.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "plan",
+      "name": "Plan",
+      "target": {
+        "id": "pages/Plan.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": "dd-MM-yyyy",
+  "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-22": "oct 22nd, 2026",
+    "22-10-2026": "oct 22nd, 2026",
+    "23-10-2026": "oct 23rd, 2026",
+    "24-10-2026": "oct 24th, 2026",
+    "Notes": "notes",
+    "Oct 22nd, 2026": "oct 22nd, 2026",
+    "Plan": "plan"
+  },
+  "open": {
+    "2026-10-22": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    },
+    "22-10-2026": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    },
+    "23-10-2026": {
+      "journal": [
+        "journal",
+        "oct 23rd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 23rd, 2026"
+      ]
+    },
+    "24-10-2026": {
+      "journal": [
+        "journal",
+        "oct 24th, 2026"
+      ],
+      "page": [
+        "page",
+        "plan"
+      ]
+    },
+    "25-10-2026": {
+      "journal": [
+        "journal",
+        "oct 25th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "journal": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 22nd, 2026"
+      ]
+    },
+    "Oct 23rd, 2026": {
+      "journal": [
+        "journal",
+        "oct 23rd, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 23rd, 2026"
+      ]
+    },
+    "Oct 25th, 2026": {
+      "journal": [
+        "journal",
+        "oct 25th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    "Plan": {
+      "journal": [
+        "journal",
+        "plan"
+      ],
+      "page": [
+        "page",
+        "plan"
+      ]
+    }
+  },
+  "owner": {
+    "2026-10-22": {
+      "journal": "journals/22-10-2026.md",
+      "page": null
+    },
+    "22-10-2026": {
+      "journal": "journals/22-10-2026.md",
+      "page": null
+    },
+    "23-10-2026": {
+      "journal": null,
+      "page": null
+    },
+    "24-10-2026": {
+      "journal": null,
+      "page": "pages/Plan.md"
+    },
+    "25-10-2026": {
+      "journal": null,
+      "page": null
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Oct 22nd, 2026": {
+      "journal": "journals/22-10-2026.md",
+      "page": null
+    },
+    "Oct 23rd, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "Oct 25th, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "Plan": {
+      "journal": null,
+      "page": "pages/Plan.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 22nd, 2026",
+      "kind": "journal",
+      "linkedRefs": 3,
+      "name": "Oct 22nd, 2026",
+      "owner": "journals/22-10-2026.md"
+    },
+    {
+      "key": "oct 23rd, 2026",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "oct 23rd, 2026",
+      "owner": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    },
+    {
+      "key": "plan",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Plan",
+      "owner": "pages/Plan.md"
+    }
+  ],
+  "spellings": {
+    "2026-10-22": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    "22-10-2026": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    "23-10-2026": {
+      "backend": [
+        "journal",
+        "oct 23rd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        23
+      ],
+      "model": [
+        "journal",
+        "oct 23rd, 2026"
+      ]
+    },
+    "24-10-2026": {
+      "backend": [
+        "page",
+        "plan"
+      ],
+      "day": [
+        2026,
+        10,
+        24
+      ],
+      "model": [
+        "page",
+        "plan"
+      ]
+    },
+    "25-10-2026": {
+      "backend": [
+        "journal",
+        "oct 25th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        25
+      ],
+      "model": [
+        "journal",
+        "oct 25th, 2026"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "backend": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    "Plan": {
+      "backend": [
+        "page",
+        "plan"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "plan"
+      ]
+    }
+  }
+}

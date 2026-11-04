@@ -5,8 +5,8 @@ import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
-import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, layoutHasMultiplePanes, layoutRoot, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
@@ -15,6 +15,7 @@ import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed } from "../changeKeys";
+import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -39,7 +40,7 @@ import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { aliasNamesOf, visibleBody, isRenderHiddenPageProp } from "../render/block";
+import { visibleBody, isRenderHiddenPageProp } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
@@ -72,12 +73,17 @@ installPageIdentityNavigation((from, to) => {
   renamePageInNavigation(from, to);
   rewritePageTargetAcrossPanes(from, to);
   rewritePageTargetAcrossPanes({ name: from.name, pageKind: from.pageKind }, to);
+  followChangedIdentity(from, to);
 });
 
-/** A route load adopting a spelling of the same page identity is browsing and
- *  never rewrites the favorites config (D11); a changed identity (the file's
- *  page was renamed on disk) carries its favorite along. */
-const favoriteFollows = (from: string, to: string) => pageIdentityKey(from) !== pageIdentityKey(to);
+/** A changed identity (the file's title:: renamed its page) moves config.edn's
+ *  home and favorites; the backend computes and writes them (FAV-RETITLE, one
+ *  answerer). A route load adopting a spelling of the same page identity is
+ *  browsing and never rewrites the favorites config (D11). */
+function followChangedIdentity(from: PageTarget, to: PageTarget): void {
+  if (to.path && from.pageKind === "page" && pageIdentityKey(from.name) !== pageIdentityKey(to.name))
+    void followPageIdentity(to.path, from.name);
+}
 
 export const FEED_PAGE = 3;
 let journalAsOfDay: number | null = null;
@@ -541,7 +547,8 @@ export function PageView(): JSX.Element {
             && dto.id.toLowerCase() === r.path.toLowerCase()) {
             const from = { name: r.name, pageKind: r.pageKind, path: r.path };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
+            renamePageInNavigation(from, to);
+            followChangedIdentity(from, to);
             router.rewritePageTarget(from, to);
             return;
           }
@@ -553,7 +560,8 @@ export function PageView(): JSX.Element {
             }
             const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
+            renamePageInNavigation(from, to);
+            followChangedIdentity(from, to);
             rewritePageTargetAcrossPanes(from, to);
             return;
           }
@@ -1186,7 +1194,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
         <Show when={!props.page.guide}>
           <CarryActions page={props.page} />
           <TagTableToggle page={props.page} />
-          <Show when={!isPublishedExport() && readPageProperty(props.page.name, "tine/exports")?.toLowerCase() === "true"}>
+          <Show when={!isPublishedExport() && hasMarker(readPageProperties(props.page.name), EXPORTS_MARKER)}>
             <QuickShareAll />
           </Show>
         </Show>
@@ -1249,7 +1257,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       </div>
       <AliasGroupHeader
         name={props.page.name}
-        declared={aliasNamesOf(headerProperties(), props.page.format)}
+        declared={pageAliasNames(props.page)}
         inGraph={!props.page.guide}
         onEdit={editPageHeader}
       />
@@ -1268,7 +1276,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
           </For>
         </div>
       </Show>
-      <Show when={props.page.kind === "page" && headerProperties().some(([key, value]) => key.toLowerCase() === "tine/journal-sections" && value.trim().toLowerCase() === "true")}>
+      <Show when={props.page.kind === "page" && hasMarker(headerProperties(), JOURNAL_SECTIONS_MARKER)}>
         <JournalSectionsHeader />
       </Show>
       <Show when={props.page.guide}>

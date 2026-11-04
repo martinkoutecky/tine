@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, on, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -124,17 +124,33 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  const registration = registerUnlinkedReader(() => props.unlinked ? props.name : undefined);
   const dependency = referenceRevision(() => referenceKey(props.unlinked ? "text" : "links", props.name));
-  // The first answer establishes the count, including when initially folded.
+  // The first linked answer establishes the count, including when initially folded.
   const [loadedCount, setLoadedCount] = createSignal(0);
   const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;
   const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(savedCollapse());
   const collapsed = () => collapsedOverride() ?? loadedCount() >= referenceCollapseThreshold();
+  // D-10 (cost audit 2026-11-02 row 6a): the unlinked answer scans every block
+  // signature and may ship MBs, so it is asked for only once this section is
+  // (or becomes) expanded for this page, as OG's foldable renders
+  // `unlinked-references-aux` only when opened (reference.cljs:280-292). After
+  // the first expansion the answer and its live registration stay while folded,
+  // so refolding freezes it (collapsedRevision) instead of discarding it.
+  // The saved choice is read per name (not through the override signal, which
+  // an effect resets after a retarget), so a new page never inherits the old
+  // page's expansion.
+  const [openedFor, setOpenedFor] = createSignal<string | undefined>();
+  createEffect(on(() => props.name, () => setOpenedFor(undefined), { defer: true }));
+  const unlinkedTarget = createMemo<string | undefined>(() => {
+    if (!props.unlinked) return undefined;
+    const name = props.name;
+    return openedFor() === name || !savedCollapse() ? name : undefined;
+  });
+  const registration = registerUnlinkedReader(unlinkedTarget);
   const freshness = createCollapsedRevision(dependency.revision, collapsed, () => props.name);
   const answerRevisions = new WeakMap<RefGroup[], string>();
   const [groupsResource] = createMembershipResource(
-    () => props.name,
+    () => props.unlinked ? unlinkedTarget() : props.name,
     () => props.name,
     async (n) => {
       const token = freshness.revision();
@@ -175,6 +191,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   // Unlinked's saved override is historically "open", linked's is "collapsed".
   const setCollapsedOverride = (value: boolean) => {
     setSectionOverride(section, props.name, props.unlinked ? !value : value);
+    if (props.unlinked && !value) setOpenedFor(props.name);
     setCollapsedOverrideSignal(value);
   };
   const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse(section, () => props.name);
@@ -394,8 +411,8 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
       <div class={`${section}-references`}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
-          {heading()} <span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span>
-          <StaleReferenceCount stale={freshness.stale()} />
+          {heading()} <Show when={!props.unlinked || groups() !== undefined}><span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span></Show>
+          <StaleReferenceCount stale={freshness.stale() && (!props.unlinked || groups() !== undefined)} />
           <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
           <Show when={!collapsed() && shown().length > 1}>
             <span class="reference-bulk-controls" role="group" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>

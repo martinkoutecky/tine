@@ -1,0 +1,157 @@
+{
+  "backlinks": {
+    "Notes": []
+  },
+  "conflicts": [
+    "foo"
+  ],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/sub/Foo.md",
+        1
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo",
+      "name": "Foo",
+      "target": {
+        "id": "pages/sub/Foo.md",
+        "kind": "existing",
+        "others": [
+          "pages/foo.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "foo",
+      "name": "foo",
+      "target": {
+        "id": "pages/sub/Foo.md",
+        "kind": "existing",
+        "others": [
+          "pages/foo.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Foo": "foo",
+    "Notes": "notes",
+    "foo": "foo"
+  },
+  "open": {
+    "Foo": {
+      "journal": [
+        "journal",
+        "foo"
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "foo": {
+      "journal": [
+        "journal",
+        "foo"
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    }
+  },
+  "owner": {
+    "Foo": {
+      "journal": null,
+      "page": "pages/sub/Foo.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "foo": {
+      "journal": null,
+      "page": "pages/sub/Foo.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
+  "spellings": {
+    "Foo": {
+      "backend": [
+        "page",
+        "foo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "foo": {
+      "backend": [
+        "page",
+        "foo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "foo"
+      ]
+    }
+  }
+}

@@ -31,32 +31,35 @@ impl Graph {
         let mut named = None;
         match bytes {
             Some(bytes) => {
-                if validate_parse_bytes_for_path(bytes, path).is_err() {
-                    self.invalidate_cache();
-                    return None;
-                }
-                let Ok(content) = std::str::from_utf8(bytes) else {
-                    self.invalidate_cache();
-                    return None;
-                };
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if let Some(saved) = saved {
-                        #[cfg(test)]
-                        if !self.cache_built() {
-                            crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                let content = validate_parse_bytes_for_path(bytes, path).and_then(|()| {
+                    std::str::from_utf8(bytes)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+                });
+                match content {
+                    Err(error) => self.record_unindexable_bytes(path, error),
+                    Ok(content) => {
+                        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if let Some(saved) = saved {
+                                #[cfg(test)]
+                                if !self.cache_built() {
+                                    crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                                }
+                                if let Some(entry) =
+                                    self.cacheable_page_entry_in(path, Some(content))
+                                {
+                                    named = Some(entry.clone());
+                                    self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
+                                }
+                            } else {
+                                self.reconcile_page_content(path, content, false);
+                            }
+                        }))
+                        .is_err()
+                        {
+                            named = None;
+                            self.record_index_failure(path);
                         }
-                        if let Some(entry) = self.cacheable_page_entry_in(path, Some(content)) {
-                            named = Some(entry.clone());
-                            self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
-                        }
-                    } else {
-                        self.reconcile_page_content(path, content, false);
                     }
-                }))
-                .is_err()
-                {
-                    named = None;
-                    self.record_index_failure(path);
                 }
             }
             None => {
@@ -70,14 +73,16 @@ impl Graph {
             .flatten();
         // As for publish_owned, retag only when an installed row proves
         // that this publication kept the old name, including its spelling.
+        // A moved generation already retires the memos; they stay for the
+        // publication to adopt its patched index over (`adopt_name_index`).
         let renamed = before_name.is_none() || after_name != before_name;
-        if file_set_changed || renamed {
-            self.forget_name_memos();
-        } else {
-            let after_gen = self.cache_generation();
+        let after_gen = self.cache_generation();
+        if !(file_set_changed || renamed) {
             if after_gen == before_gen || after_gen == before_gen + 1 {
                 self.retag_name_memos(before_gen, after_gen);
             }
+        } else if after_gen == before_gen {
+            self.forget_name_memos();
         }
         self.recent_writes.lock().unwrap().remove(path);
         named

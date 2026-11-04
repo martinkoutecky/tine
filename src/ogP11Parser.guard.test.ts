@@ -121,13 +121,19 @@ describe("OG-P12 parser-owned properties, references and header spans", () => {
   it("I-12: reference targets and accepted nested nodes use native block_regions policies; imitate render/pageRefs.ts", () => {
     const frontend = readFileSync("src/render/pageRefs.ts", "utf8");
     expect(frontend).toContain("reference_target_name(");
-    expect(frontend).toContain("nested_reference_names(inline.content)");
     expect(frontend).not.toMatch(/decode_page_name|lastIndexOf|new RegExp|\.indexOf\(|\.match(?:All)?\(|\.exec\(|\.test\(/);
-    const native = readFileSync("crates/tine-core/src/reference_evidence.rs", "utf8");
-    expect(native).toContain("crate::block_regions::reference_target_name(");
+    // A block's page references are the evidence's own walk, in wasm too.
+    expect(readFileSync("src/components/blockSwipeWiring.ts", "utf8")).toContain("block_reference_names(raw,");
+    expect(readFileSync("crates/lsdoc-wasm/src/lib.rs", "utf8")).toContain('#[path = "../../tine-core/src/reference_evidence/walk.rs"]');
+    const native = readFileSync("crates/tine-core/src/reference_evidence/walk.rs", "utf8");
+    expect(native).toContain("super::block_regions::reference_target_name(");
     expect(native).not.toMatch(/fn nested_names|fn local_asset/);
     const model = readFileSync("crates/tine-store/src/model.rs", "utf8");
-    const references = model.slice(model.indexOf("fn property_refs"), model.indexOf("pub(crate) enum Withdrawal"));
+    // The referenced-name collector's property share (CM step 2 batch 5 renamed
+    // `property_refs` to `visit_block_property_and_evidence_names`).
+    const anchor = model.indexOf("fn visit_block_property_and_evidence_names");
+    expect(anchor).toBeGreaterThan(-1);
+    const references = model.slice(anchor, model.indexOf("pub(crate) enum Withdrawal"));
     expect(references).not.toContain("parse_property_line");
     expect(references).toContain("reference_evidence::linkable_property_names(");
     expect(references).toContain("projection.reference_source()");
@@ -186,15 +192,18 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
         `I-12: ${name} must read the parser's page_header_json, not scan lines`).toEqual([]);
     }
     expect(props).not.toMatch(/function parsePageHeaderPropertyLine/);
+    // The ONE header predicate (is_page_header_candidate: the parser's page_header_only
+    // minus the block-scoped keys) lives in tine-core page_header.rs since census Q7, so
+    // the wasm build serves the same code; model.rs (save-time promotion) and query.rs
+    // (the alias answer) ask it, never a parallel header check (GH #210).
+    const header = readFileSync("crates/tine-core/src/page_header.rs", "utf8");
+    expect(header, "I-12: the Rust page-header answer is block_regions::page_header_only").toMatch(/fn is_page_header_candidate[\s\S]{0,200}tine_outline::block_regions::page_header_only\(/);
     const store = readFileSync("crates/tine-store/src/model.rs", "utf8");
-    expect(store, "I-12: the Rust page-header answer is tine_core::block_regions::page_header_only").toContain("tine_core::block_regions::page_header_only(");
+    expect(store).toContain("use tine_core::page_header::is_page_header_candidate;");
     expect(store).not.toMatch(/fn page_header_property_line|fn page_header_properties_only/);
     const query = readFileSync("crates/tine-store/src/query.rs", "utf8");
-    // query.rs asks the ONE shared predicate (model.rs is_page_header_candidate: the parser's
-    // page_header_only minus the block-scoped keys), never a parallel header check (GH #210).
-    expect(query).toContain("is_page_header_candidate(");
-    expect(query).not.toMatch(/page_header_only\(/);
-    expect(store).toMatch(/fn is_page_header_candidate[\s\S]{0,200}tine_core::block_regions::page_header_only\(/);
+    expect(query).toContain("tine_core::page_header::page_alias_spellings(");
+    expect(query).not.toMatch(/page_header_only\(|fn is_properties_only/);
     const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8")
       + readFileSync("crates/tine-graph-features/src/conflicts/queue.rs", "utf8");
     expect(conflicts, "I-12: conflict preambles are read through block_regions::parse_document").toContain("tine_core::block_regions::parse_document(");

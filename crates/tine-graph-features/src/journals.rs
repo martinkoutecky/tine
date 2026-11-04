@@ -155,7 +155,6 @@ pub fn feed_page_through(
     include_references: bool,
 ) -> Result<FeedPage<FeedRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
-    let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
     let graph = if include_references {
         Some(
             store
@@ -164,6 +163,20 @@ pub fn feed_page_through(
         )
     } else {
         None
+    };
+    // A scroll step (`before_day`) on a loaded graph pages through the view's
+    // day index (cost audit 2026-11-02 row 8: it listed the journals
+    // directory per 3-day step, O(J) syscalls). The first page keeps the disk
+    // listing: it reports the listing's unreadable entries (only the first
+    // page ever did) and shows journal files that appeared where no watcher
+    // event published them; a file-only step (graph still loading) has no
+    // view to ask.
+    let (entries, listing_unreadable) = match (&graph, before_day) {
+        (Some(graph), Some(_)) => (
+            indexed_days_through(store, graph, Day(as_of_day)),
+            Vec::new(),
+        ),
+        _ => feed_days_through(store, Day(as_of_day))?,
     };
     let referenced: std::collections::BTreeSet<_> = graph
         .as_ref()
@@ -412,16 +425,26 @@ pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, St
 
 fn format(store: &Store) -> JournalFormat {
     let config = store.config();
-    JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    )
+    config.journal_format()
 }
 
 /// The journals listing: every listed file, plus `name: reason` for each entry
 /// the scan could not read. A failed scan of the whole area is an error.
 fn listing(store: &Store) -> io::Result<(Vec<FileEntry>, Vec<String>)> {
+    #[cfg(test)]
+    JOURNAL_LISTINGS.with(|count| count.set(count.get() + 1));
     crate::conflicts::area_listing(store, Area::Journals)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Journals directory listings on this thread (cost audit row 8).
+    static JOURNAL_LISTINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn journal_listings() -> usize {
+    JOURNAL_LISTINGS.with(std::cell::Cell::get)
 }
 
 /// The complete journals listing, for the filename migration, which renames
@@ -458,6 +481,26 @@ fn stem(entry: &FileEntry) -> Option<&str> {
 #[cfg(any(test, feature = "test-faults"))]
 pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<(Day, PageId)>> {
     Ok(feed_days_through(store, cutoff)?.0)
+}
+
+/// [`feed_days_through`]'s days from the view's day index instead of the
+/// directory: no disk access, O(J log J) in memory.
+fn indexed_days_through(
+    store: &Store,
+    graph: &tine_store::WholeGraph,
+    cutoff: Day,
+) -> Vec<(Day, PageId)> {
+    let days: std::collections::BTreeSet<Day> = graph
+        .inventory(tine_store::InventoryScope::JournalFiles)
+        .0
+        .iter()
+        .filter_map(|entry| entry.day)
+        .filter(|day| *day <= cutoff)
+        .collect();
+    days.into_iter()
+        .rev()
+        .map(|day| (day, store.journal_id(day)))
+        .collect()
 }
 
 /// `feed_journals_desc_through` plus the listing's unreadable entries.
@@ -745,11 +788,17 @@ fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_
         .map_err(|error| io::Error::other(format!("source could not be read: {error:?}")))
 }
 
-/// Duplicate-day files with first-line previews, canonical first. A file whose
-/// preview cannot be read stays listed with `preview_error` (one bad file never
-/// hides the day, I-22); listing entries that cannot be read at all are named by
-/// the conflict inventory and the journal feed. A failed area scan or a closed
-/// store is an error. Cost O(J log J + bytes of duplicate files).
+/// Duplicate-day files with first-line previews, the keeper first. The keeper
+/// (`canonical`, one per day) is the file the day opens: the claimant order's
+/// owner that `Store::page_named` reads (CM step 2 OW-2, PQ-1 2026-11-02, I-12),
+/// so a merge keeps the page the user sees. The rest follow canonical date
+/// stems first, then by name. When no file of the group answers the day (its
+/// owner could not be read), the first of that order is the keeper. A file
+/// whose preview cannot be read stays listed with `preview_error` (one bad file
+/// never hides the day, I-22); listing entries that cannot be read at all are
+/// named by the conflict inventory and the journal feed. A failed area scan or
+/// a closed store is an error. Cost O(J log J + bytes of duplicate files), plus
+/// one page read per duplicate day.
 pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
     let mut groups: BTreeMap<Day, Vec<FileEntry>> = BTreeMap::new();
     for entry in listing(store)?.0 {
@@ -783,13 +832,26 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                 preview_error,
             });
         }
+        let title = fmt.title(JournalDate::from_ordinal(day.0));
+        // The file the day opens. A read error here only loses the ranking
+        // (recovery, not refusal): the listing order below still names a keeper.
+        let opened = store
+            .page_named(&title, tine_core::model::PageKind::Journal)
+            .ok()
+            .flatten()
+            .map(|read| read.id.as_str().to_owned());
         journal_files.sort_by(|a, b| {
-            b.canonical
-                .cmp(&a.canonical)
+            let opens = |file: &JournalFile| opened.as_deref() == Some(file.path.as_str());
+            opens(b)
+                .cmp(&opens(a))
+                .then_with(|| b.canonical.cmp(&a.canonical))
                 .then_with(|| a.name.cmp(&b.name))
         });
+        for (i, file) in journal_files.iter_mut().enumerate() {
+            file.canonical = i == 0;
+        }
         conflicts.push(JournalConflict {
-            title: fmt.title(JournalDate::from_ordinal(day.0)),
+            title,
             files: journal_files,
         });
     }

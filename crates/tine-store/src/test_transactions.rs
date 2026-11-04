@@ -32,10 +32,14 @@ mod answer_changes;
 mod c3s_content_loss;
 #[path = "../tests/change_summary.rs"]
 mod change_summary;
+#[path = "../tests/cm_preamble_refs.rs"]
+mod cm_preamble_refs;
 #[path = "../tests/conformance_fixture.rs"]
 pub(crate) mod conformance_f3;
 #[path = "../tests/f8_vcs_markers.rs"]
 mod f8_vcs_markers;
+#[path = "../tests/inventory_delta.rs"]
+mod inventory_delta;
 #[path = "../tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "../tests/linkable_page_property_refs.rs"]
@@ -62,3 +66,5 @@ mod og_gh609_case_rename;
 
 #[path = "../tests/alias_edit_cost.rs"]
 mod alias_edit_cost;
+#[path = "../tests/asset_trash_cost.rs"]
+mod asset_trash_cost;

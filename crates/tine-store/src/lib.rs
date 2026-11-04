@@ -63,6 +63,8 @@
 #![deny(missing_docs)]
 
 #[cfg(test)]
+mod cm_conformance_tests;
+#[cfg(test)]
 mod derived_cache_fuzz_tests;
 pub use tine_outline::edit_kind;
 pub mod file_kind;
@@ -149,8 +151,8 @@ pub use store::checkpoint::CheckpointWrite;
 pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
     FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
-    InventoryScope, IrAnswer, IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin,
-    PageId, PageRead, QueryError, Resolved, SaveBase, SearchRequest, Store, StoreError,
+    InventoryScope, IrAnswer, IrRequest, LinkTarget, Listing, LoadError, OpenError, OpenOptions,
+    Origin, PageId, PageRead, QueryError, Resolved, SaveBase, SearchRequest, Store, StoreError,
     Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
@@ -161,6 +163,8 @@ pub use transaction::{
     Content, IoError, PagePlan, Refusal, RenameMap, RewriteEffect, Rollback, StepResult,
     TitleRebind, Transaction, TrashIf, TxOutcome, Why,
 };
+#[cfg(test)]
+mod block_pages_work_tests;
 #[cfg(test)]
 mod resolve_blocks_work_tests;
 

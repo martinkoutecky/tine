@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Book",
+      "path": "pages/Book.md",
+      "preBlock": "type:: book\nrating:: 5",
+      "title": null
+    }
+  ],
+  "links": []
+}

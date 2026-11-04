@@ -135,7 +135,7 @@ fn declined_passes(store: &Store) -> Vec<String> {
 /// The first complete view holds `name` once, with `text`.
 fn assert_once(store: &Store, name: &str, text: &str) {
     let view = store.whole_graph().unwrap();
-    let corpus = view.corpus();
+    let corpus = view.corpus(None);
     let found: Vec<_> = (corpus.pages.iter())
         .filter(|page| page.name == name)
         .collect();
@@ -308,6 +308,66 @@ fn a_page_hold_during_the_parse_keeps_the_launch_install() {
         "a page open during the launch parse discarded it: the app then built the graph \
          a second time before Ready (16.9 s instead of 9.6 s on the realistic 10k graph)"
     );
+    assert_eq!(on_demand_builds(&store), 0);
+    store.close();
+}
+
+/// Run `during` while the launch pass's install is between its unlocked work
+/// and its race checks: `pages/A.md` is held from mid-parse until then.
+fn race_the_launch_install(during: impl FnOnce(&Arc<Store>)) -> (tempfile::TempDir, Arc<Store>) {
+    let root = graph();
+    let store = held_open(root.path());
+    let listed = pause();
+    let installing = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    *store.graph.install_lock_pause.lock().unwrap() = Some(Arc::clone(&installing));
+    store
+        .graph
+        .held
+        .spellings()
+        .spell("pages/A.md", "pages/A.md");
+    go(root.path());
+    wait_hook(&listed);
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.hold_current("pages/A.md".into());
+        store.publish_retired();
+    }
+    release_hook(&listed);
+    wait_hook(&installing);
+    during(&store);
+    release_hook(&installing);
+    (root, store)
+}
+
+#[test]
+fn a_hold_released_while_the_launch_pass_installs_keeps_the_install() {
+    // A page host's close (card hB0p3s), landing in the install's window.
+    let (_root, store) = race_the_launch_install(|store| {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.release_hold("pages/A.md");
+        store.publish_retired();
+    });
+    assert_once(&store, "A", "old A");
+    assert_eq!(
+        declined_passes(&store),
+        Vec::<String>::new(),
+        "a hold released while the launch pass installed discarded the pass: the app then \
+         built the graph a second time before Ready (16.9 s instead of 9.6 s on the \
+         realistic 10k graph); the pass patches the released page in instead"
+    );
+    assert_eq!(on_demand_builds(&store), 0);
+    store.close();
+}
+
+#[test]
+fn an_own_save_while_the_launch_pass_installs_keeps_the_install() {
+    let (_root, store) = race_the_launch_install(|store| {
+        create(&HostWriter::start(store), "New", "made mid-install");
+    });
+    assert_once(&store, "New", "made mid-install");
+    assert_once(&store, "A", "old A");
+    assert_eq!(declined_passes(&store), Vec::<String>::new());
     assert_eq!(on_demand_builds(&store), 0);
     store.close();
 }
@@ -498,7 +558,12 @@ fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
     }
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
-    let names: Vec<_> = view.corpus().pages.iter().map(|p| p.name.clone()).collect();
+    let names: Vec<_> = view
+        .corpus(None)
+        .pages
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
     for name in ["A", "B", "C", "D", "E"] {
         assert!(
             !names.iter().any(|n| n.eq_ignore_ascii_case(name)),
@@ -542,7 +607,7 @@ fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
     let names: Vec<_> = view
-        .corpus()
+        .corpus(None)
         .pages
         .iter()
         .map(|p| p.name.to_lowercase())

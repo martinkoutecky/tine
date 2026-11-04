@@ -87,7 +87,7 @@ describe("block menu: Comment on selection", () => {
     commentItem()!.click();
     const parent = doc.byId["p"];
     expect(parent.children).toHaveLength(1);
-    expect(doc.byId[parent.children[0]].raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.");
+    expect(doc.byId[parent.children[0]].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
     expect(editingId()).toBe(parent.children[0]);
     expect(doc.byId["q"].children).toHaveLength(0);
     undo();
@@ -101,8 +101,8 @@ describe("block menu: Comment on selection", () => {
     await vi.waitFor(() => expect(commentItem()).toBeDefined());
     commentItem()!.click();
     const raw = doc.byId[doc.byId["p"].children[0]].raw;
-    expect(raw).toContain("quote:: it is true");
-    expect(raw).toContain("quote-prefix:: it is true that");
+    expect(raw).toContain("tine.quote:: it is true");
+    expect(raw).toContain("tine.quote-prefix:: it is true that");
   });
 
   it("is absent without a selection inside this block", async () => {

@@ -13,7 +13,7 @@ import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openInNewTab } from "../router";
+import { openPage, openPageInNewTab, openPageTarget, openPageTargetInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
@@ -31,7 +31,7 @@ import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
-import { linkPageKind, resolvedTarget } from "../pageIndex";
+import { linkTarget, ownerPath, resolvedTarget, type LinkDestination } from "../pageIndex";
 import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "../components/PageIcon";
@@ -108,12 +108,21 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
     if (root) return <NamespaceMacro root={root} />;
   }
   const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
-  const userMacros = graphMeta()?.macros;
-  if (um && userMacros && Object.prototype.hasOwnProperty.call(userMacros, um[1])) {
-    const args = userArgs ?? (um[2].trim() ? um[2].split(",").map((a) => a.trim()) : []);
-    return <UserMacroView name={um[1]} template={userMacros[um[1]]} args={args} blockId={blockId} />;
-  }
-  return <span class="macro">{`{{${raw}}}`}</span>;
+  const unknown = <span class="macro">{`{{${raw}}}`}</span>;
+  if (!um) return unknown;
+  const name = um[1];
+  const args = userArgs ?? (um[2].trim() ? um[2].split(",").map((a) => a.trim()) : []);
+  // Tracked: a `:macros` edit in config.edn re-renders the blocks on screen
+  // (a config change refreshes graphMeta, not the page data).
+  const template = createMemo(() => {
+    const macros = graphMeta()?.macros;
+    return macros && Object.prototype.hasOwnProperty.call(macros, name) ? macros[name] : undefined;
+  });
+  return (
+    <Show when={template() !== undefined ? { text: template()! } : undefined} keyed fallback={unknown}>
+      {(macro) => <UserMacroView name={name} template={macro.text} args={args} blockId={blockId} />}
+    </Show>
+  );
 }
 
 // OG @ 6e7afa8eb: `show-link?` accepts Org local assets (`^[./]*assets`) or a
@@ -339,7 +348,8 @@ function createPeekBridge(disabled: () => boolean) {
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+// `file`: open the file claiming `name` itself (the alias group's Related pages row; EMPTY-ALIAS, D-20261103-CMA).
+export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs; file?: boolean }): JSX.Element {
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLAnchorElement | undefined;
@@ -350,12 +360,16 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
-  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : linkPageKind(targetName()));
+  // What the link opens: the store's answer (`linkTarget`), never re-derived.
+  const link = (): LinkDestination => (isGuidePageName(targetName()) || props.file ? { name: targetName(), kind: "page" } : linkTarget(targetName()));
+  const kind = (): PageKind => link().kind;
+  const path = () => (props.file ? ownerPath(resolvedTarget(targetName(), "page")) : undefined); // exact path: no redirect
+  const target = () => ({ name: link().name, pageKind: kind(), ...(path() ? { path: path() } : {}) });
   // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
   // link signals a blank destination. Tags are exempt: a tag whose page has no
   // file is ordinary Logseq usage, and dimming them would mark most tags in a
   // normal graph. I-12/I-25: existence comes from the page index only.
-  const missing = () => !props.tag && !isGuidePageName(targetName()) && resolvedTarget(targetName(), kind())?.kind === "absent";
+  const missing = () => !props.tag && !isGuidePageName(targetName()) && resolvedTarget(link().name, kind())?.kind === "absent";
   const open = (e: MouseEvent) => {
     if (longPress.consumeClick(e)) {
       e.preventDefault();
@@ -365,16 +379,17 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     e.stopPropagation();
     // Shared modified-click contract (linkGesture.ts, GH #283/#438).
     const dest = internalLinkDest(e);
-    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(targetName(), kind());
+    if (dest === "sidebar" && !isGuidePageName(targetName())) props.file ? openPageInSidebar(target()) : openPageInSidebar(link().name, kind());
     else if (dest === "background") openBackgroundTab();
     else if (dest === "pane")
-      openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
-    else openPage(targetName(), kind());
+      openRouteInOtherPane({ kind: "page", ...target() }, pane?.paneId ?? focusedPaneId());
+    else if (props.file) openPageTarget(target());
+    else openPage(link().name, kind());
   };
   // A background tab belongs to the pane that was already active, not
   // necessarily the pane containing this link (GH #87): the pane tracker keeps
   // the active pane across a middle-button press (ui.ts installPaneTracker).
-  const openBackgroundTab = () => openPageInNewTab(targetName(), kind());
+  const openBackgroundTab = () => (props.file ? openPageTargetInNewTab(target()) : openPageInNewTab(link().name, kind()));
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
@@ -393,7 +408,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       ...new Set([pageChangeKey(targetName()), pageChangeKey(previewPage() ?? targetName())]),
     ])}` : null),
     async () => {
-      const result = await readOwned(graphOwner(), backend().getPage(targetName(), kind()));
+      const result = await readOwned(graphOwner(), backend().getPage(link().name, kind()));
       if (result.kind === "stale") return null;
       setPreviewPage(result.value?.name);
       return result.value;

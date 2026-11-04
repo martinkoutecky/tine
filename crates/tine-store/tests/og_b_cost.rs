@@ -64,8 +64,11 @@ fn retained_views_bound_content_and_structural_publication_work() {
             "I-25: bounded tree paths, not graph copies: {cost:?}"
         );
         assert_eq!(cost.snapshot_rebuilds, 0, "I-25: structural publication patches affected paths, never rebuilds signatures; exemplar model/persistent.rs: {cost:?}");
-        assert_eq!(held.corpus().pages.len(), pages);
-        assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), pages + 1);
+        assert_eq!(held.corpus(None).pages.len(), pages);
+        assert_eq!(
+            store.whole_graph().unwrap().corpus(None).pages.len(),
+            pages + 1
+        );
         store.close();
     }
 }
@@ -78,9 +81,15 @@ fn save_preparation_parses_old_document_once() {
         .split("fn prepare_page_content(")
         .nth(1)
         .unwrap()
-        .split("/// Properties that describe the block they sit on")
+        // The section ends where the page-header predicate is imported (it
+        // moved to tine-core page_header.rs, census Q7).
+        .split("pub(crate) use tine_core::page_header::is_page_header_candidate;")
         .next()
         .unwrap();
+    assert!(
+        preparation.len() < source.len() / 2,
+        "the prepare_page_content section marker is missing from model.rs"
+    );
     assert!(!preparation.contains("doc::parse"), "I-25/I-12: parse old source once through parse_doc and pass the Document to every validator; exemplar model/layout_retention.rs");
     let layout = include_str!("../src/model/layout_retention.rs");
     assert!(

@@ -1,0 +1,360 @@
+{
+  "backlinks": {
+    "Notes": [],
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[a/b/c]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "a/b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[a/b/c]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "a/b/c": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[a/b/c]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "n": [],
+    "n/y": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/n%2Fy.md",
+        0
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
+    ],
+    [
+      [
+        "a",
+        1
+      ],
+      [
+        "a/b",
+        1
+      ],
+      [
+        "a/b/c",
+        1
+      ],
+      [
+        "n",
+        0
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b",
+      "name": "a/b",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/a%2Fb.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a/b/c",
+      "name": "a/b/c",
+      "target": {
+        "id": "pages/a%2Fb%2Fc.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n",
+      "name": "n",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/n.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n/y",
+      "name": "n/y",
+      "target": {
+        "id": "pages/n%2Fy.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "a": "a",
+    "a/b": "a/b",
+    "a/b/c": "a/b/c",
+    "n": "n",
+    "n/y": "n/y"
+  },
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "journal": [
+        "journal",
+        "a/b"
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    "a/b/c": {
+      "journal": [
+        "journal",
+        "a/b/c"
+      ],
+      "page": [
+        "page",
+        "a/b/c"
+      ]
+    },
+    "n": {
+      "journal": [
+        "journal",
+        "n"
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    },
+    "n/y": {
+      "journal": [
+        "journal",
+        "n/y"
+      ],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "a": {
+      "journal": null,
+      "page": null
+    },
+    "a/b": {
+      "journal": null,
+      "page": null
+    },
+    "a/b/c": {
+      "journal": null,
+      "page": null
+    },
+    "n": {
+      "journal": null,
+      "page": null
+    },
+    "n/y": {
+      "journal": null,
+      "page": "pages/n%2Fy.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "a/b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a/b",
+      "owner": null
+    },
+    {
+      "key": "a/b/c",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a/b/c",
+      "owner": null
+    },
+    {
+      "key": "n",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "n",
+      "owner": null
+    },
+    {
+      "key": "n/y",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "n/y",
+      "owner": "pages/n%2Fy.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "a/b": {
+      "backend": [
+        "page",
+        "a/b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a/b"
+      ]
+    },
+    "a/b/c": {
+      "backend": [
+        "page",
+        "a/b/c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a/b/c"
+      ]
+    },
+    "n": {
+      "backend": [
+        "page",
+        "n"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "n"
+      ]
+    },
+    "n/y": {
+      "backend": [
+        "page",
+        "n/y"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "n/y"
+      ]
+    }
+  }
+}

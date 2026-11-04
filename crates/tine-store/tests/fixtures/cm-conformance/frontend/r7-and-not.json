@@ -1,0 +1,226 @@
+{
+  "backlinks": {
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "18291579-c847-8bad-8432-add90e972123",
+            "raw": "[[A]] only",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "9c07297b-fd9d-8683-a4e2-209226596c8a",
+            "raw": "[[A]] and [[B]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3e0118a4-b27d-8dd0-9103-4d9dfa51ae40",
+            "raw": "[[A]] parent",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "notes"
+      }
+    ],
+    "b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "9c07297b-fd9d-8683-a4e2-209226596c8a",
+            "raw": "[[A]] and [[B]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "f9029857-aa01-81d4-8c74-5c4745838110",
+            "raw": "[[B]] only",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b90fd386-8cce-8f7b-bd47-b6923c9d3f66",
+            "raw": "child [[B]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "notes"
+      }
+    ],
+    "notes": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/notes.md",
+        0
+      ]
+    ],
+    [
+      [
+        "A",
+        3
+      ],
+      [
+        "B",
+        3
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/B.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "notes",
+      "target": {
+        "id": "pages/notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "B": "b",
+    "notes": "notes"
+  },
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    "notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": null
+    },
+    "B": {
+      "journal": null,
+      "page": null
+    },
+    "notes": {
+      "journal": null,
+      "page": "pages/notes.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 3,
+      "name": "b",
+      "owner": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "notes",
+      "owner": "pages/notes.md"
+    }
+  ],
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    },
+    "notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    }
+  }
+}

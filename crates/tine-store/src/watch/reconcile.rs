@@ -241,6 +241,9 @@ impl Core {
             });
         }
         let mut config_changed = false;
+        // Whether the reload moved the settings that decide which files are
+        // graph text and how they are named (`checkpoint::config_key`).
+        let mut build_changed = false;
         let mut config_file = None;
         if include_config {
             let path = self.graph.root.join("logseq/config.edn");
@@ -260,10 +263,13 @@ impl Core {
             // and publication (build-key changes also discard parsed pages).
             let moved = previous.as_ref().and_then(|value| value.rev.as_ref())
                 != current.as_ref().and_then(|value| value.rev.as_ref());
+            let key = || crate::store::checkpoint::config_key(&self.graph.current_config());
+            let before = moved.then(key);
             match moved.then(|| self.read_config(&path)) {
                 None => *previous = current,
                 Some(Ok(())) => {
                     config_changed = true;
+                    build_changed = before != Some(key());
                     let kind = match (previous.as_ref(), current.as_ref()) {
                         (None, Some(_)) => ChangeKind::Created,
                         (Some(_), None) => ChangeKind::Removed,
@@ -286,9 +292,9 @@ impl Core {
                 Some(Err(_)) => {}
             }
         }
-        // A changed config can change which files are graph text (`:hidden`,
-        // page and journal directories), so it takes a full scan.
-        let paths = if config_changed { None } else { paths };
+        // A changed build key can change which files are graph text
+        // (`:hidden`, page and journal directories), so it takes a full scan.
+        let paths = if build_changed { None } else { paths };
         let mut snapshot = self.snapshot.lock().unwrap();
         let (mut now, mut unreadable) = if let Some(paths) = paths {
             (
@@ -411,7 +417,7 @@ impl Core {
                 continue;
             }
             if !force
-                && !config_changed
+                && !build_changed
                 && refusals.get(&path).is_some_and(|refusal| {
                     now.get(&path)
                         .is_some_and(|new| refusal.stamp.same_metadata(new))

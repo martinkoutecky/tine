@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // jsdom has no layout: the mirror measurement is replaced by a fixed caret row so the reveal RULE is
 // what is tested (GH #745): no move while the caret row is visible, the least move otherwise, below pins.
 let row: { top: number; bottom: number } | null = { top: 0, bottom: 20 };
 vi.mock("./caretRows", () => ({ textareaCaretRow: () => row }));
-import { revealCaret, revealCaretSettled } from "./caretReveal";
+import { caretViewRow, editorCaretRow, keyboardCaretOffset, registerCaretRowSource, revealCaret, revealCaretAboveKeyboard, revealCaretSettled } from "./caretReveal";
+import { applyAndroidInterfaceZoom } from "../zoom";
 
 const frames: FrameRequestCallback[] = [];
 beforeEach(() => {
@@ -236,4 +237,121 @@ it("without layout the editor's bottom rule applies, as before", () => {
   row = null;
   const f = toolbarFixture(400, 800);
   expect(scrollToClearToolbar(f.editor, f.scroller, TOOLBAR_TOP)).toBe(608);
+});
+
+// GH #783, beta.4 report: after the keyboard opened, a line that had left the view came back at the top edge, right
+// under the pinned parents, and the pins still hid it (the block's first line under the pin). It goes back as low as
+// it can instead, just above the keyboard toolbar, where 0.7.4 left it. Toolbar top 450 here: the line's bottom ends at 442.
+function sized(f: ReturnType<typeof fixture>, editorTop: number, height: number) {
+  f.editor.getBoundingClientRect = () => {
+    const top = 100 + editorTop - (f.scroller.scrollTop - 1000);
+    return { top, bottom: top + height, height } as DOMRect;
+  };
+  return f;
+}
+const KEYBOARD = { top: 0, bottom: 450 };
+it("GH #783: a line under the pinned parents goes back just above the keyboard toolbar, not to the top edge", () => {
+  const f = sized(fixture(10, 2), 10, 20); // y 110..130, under two pins (100..160)
+  expect(revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD)).toBe(true);
+  expect(f.editor.getBoundingClientRect().bottom).toBe(442);
+  expect(f.scroller.scrollTop).toBe(1000 - 312);
+  expect(revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD)).toBe(false); // settled: stays put
+});
+it("GH #783: a visible line is left where it is, as 0.7.4 left it", () => {
+  const f = sized(fixture(200, 2), 200, 20);
+  expect(keyboardCaretOffset(f.editor, f.scroller, KEYBOARD)).toBe(0);
+  expect(revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD)).toBe(false);
+  expect(f.scroller.scrollTop).toBe(1000);
+});
+it("GH #783: a multi-line editor that fits is placed by its bottom, the toolbar rule's anchor, so typing does not move it again", () => {
+  row = { top: 0, bottom: 20 }; // caret on the first of three lines
+  const f = sized(fixture(-100), -100, 60);
+  revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD);
+  expect(f.editor.getBoundingClientRect().bottom).toBe(442);
+});
+it("GH #783: in an editor taller than the room the caret row itself goes just above the toolbar", () => {
+  row = { top: 400, bottom: 420 };
+  const f = sized(fixture(-500), -500, 900); // caret row y -0..20, above the scroller top
+  revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD);
+  expect(f.editor.getBoundingClientRect().top + 420).toBe(442);
+});
+it("GH #783: a line below the toolbar moves the least that clears it", () => {
+  const f = sized(fixture(400), 400, 20); // y 500..520
+  revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD);
+  expect(f.editor.getBoundingClientRect().bottom).toBe(442);
+});
+
+// GH #783 follow-up: Android's interface zoom is CSS zoom on the root. Rects are viewport pixels, but the pin height,
+// margins, mirror rows and scrollTop are CSS pixels. Unscaled, at zoom 1.25 the visible top ended 7px above the
+// painted pins, a line under them counted as visible, and corrections moved by the wrong amount.
+describe.each([1.25, 1.5])("at interface zoom %d", z => {
+  beforeEach(() => applyAndroidInterfaceZoom(z));
+  afterEach(() => applyAndroidInterfaceZoom(1));
+  /** Two pinned parents painted 100..100+60z; the edited line `lineTop` px below the scroller top, 20 CSS px tall;
+   * scrolling by d CSS px moves it by d*z viewport px. */
+  function zoomed(lineTop: number) {
+    const f = fixture(lineTop, 2);
+    f.editor.getBoundingClientRect = () => {
+      const top = 100 + lineTop - (f.scroller.scrollTop - 1000) * z;
+      return { top, bottom: top + 20 * z, height: 20 * z } as DOMRect;
+    };
+    return f;
+  }
+  const pinsBottom = 100 + 60 * z;
+  it("a line just under the painted pins is not visible: the reveal brings it below them", () => {
+    const f = zoomed(60 * z - 2); // starts 2px inside the second pin, below the unscaled 60+8
+    expect(revealCaret(f.editor, f.scroller)).toBe(true);
+    expect(f.editor.getBoundingClientRect().top).toBeCloseTo(pinsBottom + 8 * z, 6);
+  });
+  it("the visible top is the painted pins' bottom plus the margin", () => {
+    const f = zoomed(200);
+    const g = caretViewRow(f.editor, f.scroller)!;
+    expect(g.visibleTop).toBeCloseTo(pinsBottom + 8 * z, 6);
+    expect(g.visibleBottom).toBeCloseTo(100 + (500 - 8) * z, 6);
+  });
+  it("the keyboard placement lands the line's bottom 8 zoomed px above the toolbar", () => {
+    const f = zoomed(60 * z - 2);
+    expect(revealCaretAboveKeyboard(f.editor, f.scroller, KEYBOARD)).toBe(true);
+    expect(f.editor.getBoundingClientRect().bottom).toBeCloseTo(450 - 8 * z, 6);
+  });
+});
+
+// GH #783 follow-up: the CM6 editor (a div) supplies its measured caret row; the keyboard-time rules use it like the textarea's.
+describe("a non-textarea editor with a registered caret row", () => {
+  function cm6Fixture(rowTop: number) {
+    const f = fixture(0);
+    const div = document.createElement("div");
+    div.tabIndex = 0;
+    f.scroller.append(div);
+    div.focus();
+    div.getBoundingClientRect = () => ({ top: 100 + rowTop - (f.scroller.scrollTop - 1000), bottom: 100 + rowTop + 800 - (f.scroller.scrollTop - 1000), height: 800 } as DOMRect);
+    const source = () => { const y = 100 + rowTop - (f.scroller.scrollTop - 1000); return { top: y, bottom: y + 20 }; };
+    return { ...f, div, source };
+  }
+  it("has no row without a source, and none once it is unregistered", () => {
+    const f = cm6Fixture(0);
+    expect(editorCaretRow(f.div, f.scroller)).toBeNull();
+    const off = registerCaretRowSource(f.div, f.source);
+    expect(editorCaretRow(f.div, f.scroller)).not.toBeNull();
+    off();
+    expect(editorCaretRow(f.div, f.scroller)).toBeNull();
+  });
+  it("puts a caret line that left the view back just above the keyboard", () => {
+    const f = cm6Fixture(-300); // caret row at viewport y -200
+    registerCaretRowSource(f.div, f.source);
+    const band = { top: 0, bottom: 480 };
+    // the 800px editor cannot fit between the pins and the keyboard: the caret row's bottom (y -180) goes to 472
+    expect(keyboardCaretOffset(f.div, f.scroller, band)).toBe(-180 - 472);
+    expect(revealCaretAboveKeyboard(f.div, f.scroller, band)).toBe(true);
+    expect(f.scroller.scrollTop).toBe(1000 - 652);
+    expect(revealCaretAboveKeyboard(f.div, f.scroller, band)).toBe(false); // placed: nothing further
+  });
+  it("lets the toolbar rule clear the caret row of a tall editor, not its bottom (never upward)", () => {
+    const above = cm6Fixture(100); // caret row at y 200..220, the toolbar at 480: the row is clear
+    registerCaretRowSource(above.div, above.source);
+    expect(scrollToClearToolbar(above.div, above.scroller, 480)).toBe(0);
+    const below = cm6Fixture(450); // caret row at y 550..570, under the toolbar
+    registerCaretRowSource(below.div, below.source);
+    expect(scrollToClearToolbar(below.div, below.scroller, 480)).toBe(570 - 472);
+  });
 });

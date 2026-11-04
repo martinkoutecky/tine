@@ -1,0 +1,224 @@
+{
+  "backlinks": {
+    "Notes": [],
+    "Real Name": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[real name]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "file-name": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "[[file-name]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/file-name.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
+    ],
+    [
+      [
+        "file-name",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "file-name",
+      "name": "file-name",
+      "target": {
+        "id": "pages/file-name.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "real name",
+      "name": "Real Name",
+      "target": {
+        "id": "pages/file-name.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "Real Name": "real name",
+    "file-name": "file-name"
+  },
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Real Name": {
+      "journal": [
+        "journal",
+        "real name"
+      ],
+      "page": [
+        "page",
+        "real name"
+      ]
+    },
+    "file-name": {
+      "journal": [
+        "journal",
+        "file-name"
+      ],
+      "page": [
+        "page",
+        "file-name"
+      ]
+    },
+    "real name": {
+      "journal": [
+        "journal",
+        "real name"
+      ],
+      "page": [
+        "page",
+        "real name"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Real Name": {
+      "journal": null,
+      "page": "pages/file-name.md"
+    },
+    "file-name": {
+      "journal": null,
+      "page": null
+    },
+    "real name": {
+      "journal": null,
+      "page": "pages/file-name.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "file-name",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "file-name",
+      "owner": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    },
+    {
+      "key": "real name",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Real Name",
+      "owner": "pages/file-name.md"
+    }
+  ],
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Real Name": {
+      "backend": [
+        "page",
+        "real name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "real name"
+      ]
+    },
+    "file-name": {
+      "backend": [
+        "page",
+        "file-name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "file-name"
+      ]
+    },
+    "real name": {
+      "backend": [
+        "page",
+        "real name"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "real name"
+      ]
+    }
+  }
+}

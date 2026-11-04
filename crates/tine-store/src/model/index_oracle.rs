@@ -50,7 +50,7 @@ impl crate::WholeGraph {
                 None,
                 &graph.pages,
                 &[],
-                crate::query::document_alias_spellings,
+                &crate::query::document_alias_spellings,
                 None
             )
         );
@@ -113,7 +113,7 @@ fn image(snapshot: &ReadSnapshot, probes: &[&str], include_layout: bool) -> Stri
         for block in &doc.roots {
             block_lines(&mut out, block, 0);
         }
-        let mut referenced = collect_document_referenced_names(doc);
+        let mut referenced = collect_document_referenced_names(doc, &snapshot.config);
         referenced.sort();
         out.push_str(&format!("  referenced {referenced:?}\n"));
         out.push_str(&format!(
@@ -213,8 +213,11 @@ fn lazy_lines(
     for (rel, entry, doc) in pages.iter().step_by(stride) {
         if let Some(block) = doc.roots.first() {
             let original = format!("[[GJ5 Baseline]] [[孤独基线]] {}", block.raw());
-            let mut names =
-                snapshot.referenced_page_names_for_editor(&entry.name, &block.uuid, &original);
+            let mut names: Vec<String> = snapshot
+                .referenced_names_for_completion(Some((&entry.name, &block.uuid, &original)))
+                .into_iter()
+                .map(|name| name.into_owned())
+                .collect();
             names.sort();
             out.push_str(&format!("lazy editor {rel:?} {names:?}\n"));
         }

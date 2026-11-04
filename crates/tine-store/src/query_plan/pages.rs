@@ -85,7 +85,7 @@ fn page_base_score(
                         && plan
                             .page_exact
                             .as_ref()
-                            .is_some_and(|exact| identity_fold(original) != *exact)
+                            .is_some_and(|exact| page_key(original) != *exact)
                     {
                         (1000, ObjectiveMatchClass::Prefix)
                     } else {
@@ -121,7 +121,7 @@ fn page_base_score(
                     if plan
                         .page_exact
                         .as_ref()
-                        .is_some_and(|exact| identity_fold(original) != *exact)
+                        .is_some_and(|exact| page_key(original) != *exact)
                     {
                         Some((1000, ObjectiveMatchClass::Prefix))
                     } else {
@@ -200,7 +200,7 @@ pub(super) fn best_page_match(
     // This repairs the objective class for ordinary multi-word titles without
     // bypassing NOT/OR/regex membership semantics for syntax-looking names.
     if let Some(exact) = plan.page_exact.as_deref() {
-        if page_match.is_some() && identity_fold(page_name) == exact {
+        if page_match.is_some() && page_key(page_name) == exact {
             return Some((
                 1500,
                 ObjectiveMatchClass::Exact,
@@ -209,7 +209,7 @@ pub(super) fn best_page_match(
             ));
         }
         if let Some(alias) = aliases.iter().find(|alias| {
-            identity_fold(alias) == exact
+            page_key(alias) == exact
                 && page_base_score(plan, expr, alias, &plan.fold(alias)).is_some()
         }) {
             return Some((
@@ -290,10 +290,8 @@ pub(super) fn execute_pages(
     } else {
         usize::MAX
     };
-    let mut completion_names: HashSet<String> = file_pages
-        .iter()
-        .map(|page| identity_fold(&page.name))
-        .collect();
+    let mut completion_names: HashSet<String> =
+        file_pages.iter().map(|page| page_key(&page.name)).collect();
     for (index, page) in file_pages.iter().enumerate() {
         if cancelled() {
             return None;
@@ -347,7 +345,7 @@ pub(super) fn execute_pages(
         if plan.separate_aliases {
             for alias in aliases {
                 // A physical page wins over an alias with the same identity.
-                if !completion_names.insert(identity_fold(alias)) {
+                if !completion_names.insert(page_key(alias)) {
                     continue;
                 }
                 if let Some((base_score, match_class, matched_text, _)) =
@@ -363,7 +361,7 @@ pub(super) fn execute_pages(
                             match_class,
                             matched_text,
                             matched_alias: Some(alias.clone()),
-                            tie_key: format!("{}:{}", identity_fold(alias), page.rel_path_str()),
+                            tie_key: format!("{}:{}", page_key(alias), page.rel_path_str()),
                             candidate: PageCandidate::File(index),
                             content_text: None,
                         },
@@ -382,21 +380,23 @@ pub(super) fn execute_pages(
         aliases_by_owner
             .values()
             .flatten()
-            .map(|alias| identity_fold(alias)),
+            .map(|alias| page_key(alias)),
     );
+    // The resident referenced-name table answers; only the editing block's
+    // page is re-read for its baseline (cost-model audit 2026-11-02, row 2a).
     for name in if include_names {
-        if let Some((owner, id, original)) = &plan.editor_reference_baseline {
-            graph.referenced_page_names_for_editor(owner, id, original)
-        } else {
-            graph.referenced_page_names()
-        }
+        graph.referenced_names_for_completion(
+            plan.editor_reference_baseline
+                .as_ref()
+                .map(|(owner, id, original)| (owner.as_str(), id.as_str(), original.as_str())),
+        )
     } else {
         Vec::new()
     } {
         if cancelled() {
             return None;
         }
-        let key = identity_fold(&name);
+        let key = page_key(&name);
         if have.contains(&key) {
             continue;
         }
@@ -416,7 +416,7 @@ pub(super) fn execute_pages(
                     matched_alias,
                     tie_key: tine_core::refs::page_key(&name),
                     candidate: PageCandidate::Referenced(PageEntry {
-                        name,
+                        name: name.into_owned(),
                         kind: PageKind::Page,
                         date_key: None,
                         rel_path: None,

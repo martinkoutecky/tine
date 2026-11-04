@@ -12,7 +12,7 @@ import { applyChangeSummary } from "./changeSummary";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favorites, favoritesLayout, moveFavoriteRow,
   renameFavoriteGroup, seedFavorites, setFavoriteRowCollapsed, toggleFavorite,
-  favoriteBlock, isFavoriteBlock,
+  favoriteBlock, isFavoriteBlock, adoptRenamedFavorites,
 } from "./favorites";
 import { ensurePageLoaded } from "./document";
 import { layoutToMarkdown } from "./favoritesLayout";
@@ -133,7 +133,7 @@ describe("favorites arrangement page", () => {
     expect(writes).toEqual(["config:A:-", "config:A|B:-"]);
     addFavoriteGroup();
     await settle();
-    expect(shape(disk.get("Favorites")!)).toEqual({ pre: "tine/favorites:: true", text: "- [[A]]\n- [[B]]\n- New group\n" });
+    expect(shape(disk.get("Favorites")!)).toEqual({ pre: "tine.favorites:: true", text: "- [[A]]\n- [[B]]\n- New group\n" });
     expect(writes.slice(2)).toEqual(["page:Favorites:create-page", "config:A|B:Favorites"]);
     expect(config).toEqual({ names: ["A", "B"], page: "Favorites" });
   });
@@ -330,9 +330,15 @@ describe("favorites arrangement page", () => {
     await settle();
     disk.set("Faves", disk.get("Favorites")!); // the rename moved the file
     disk.delete("Favorites");
+    // The backend's config step moved `:tine/favorites-page` (one answerer,
+    // scenario f10); the window adopts its answer and writes nothing.
+    config = { names: ["A"], page: "Faves" };
+    const writes = vi.mocked(backend().setFavorites).mock.calls.length;
     renamePageInNavigation("Favorites", "Faves");
+    adoptRenamedFavorites({ names: ["A"], page: "Faves" });
     await settle();
-    expect(config).toEqual({ names: ["A"], page: "Faves" });
+    expect(vi.mocked(backend().setFavorites).mock.calls.length).toBe(writes);
+    expect(favorites().map((f) => f.name)).toEqual(["A"]);
     addFavoriteGroup("H");
     await settle();
     expect(disk.has("Favorites")).toBe(false); // not recreated under the old name
@@ -358,7 +364,7 @@ describe("favorites arrangement page", () => {
     await settle();
     const page = disk.get("Favorites")!;
     expect(page.format).toBe("org");
-    expect(page.pre_block).toBe("#+tine/favorites: true");
+    expect(page.pre_block).toBe("#+tine.favorites: true");
     expect(page.blocks[1].raw).toBe("Work\n:PROPERTIES:\n:collapsed: true\n:END:");
     seedFavorites(config.names, config.page); // reopen: the Org page is recognised, collapse came back
     await settle();

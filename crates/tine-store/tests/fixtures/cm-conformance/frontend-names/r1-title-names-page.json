@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Real Name",
+      "path": "pages/file-name.md",
+      "preBlock": "title:: Real Name",
+      "title": "Real Name"
+    }
+  ],
+  "links": []
+}

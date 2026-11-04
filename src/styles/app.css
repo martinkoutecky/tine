@@ -1328,7 +1328,8 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
-.nav-all-pages-open { width: 100%; text-align: start; background: transparent; border: 0; font: inherit; cursor: pointer; }
+/* GH #704: `font: inherit` resets the size; keep the section headings' 11px. */
+.nav-all-pages-open { width: 100%; text-align: start; background: transparent; border: 0; font: inherit; font-size: 11px; cursor: pointer; }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
 .nav-toggle-caret,
 .graph-switch-caret,
@@ -3834,7 +3835,7 @@ html[data-system-insets="native-viewport"] {
    container's left edge, so margin-left:-3px puts the border there; padding-left
    then pushes the children content back to its indented position. */
 .block-children {
-  border-inline-start: 1px solid var(--guide-color);
+  border-inline-start: 1px solid var(--guide-line, var(--guide-color));
   margin-inline-start: -3px;
   padding-inline-start: 3px;
 }
@@ -7397,14 +7398,20 @@ img.emoji {
    the sidebar. */
 .block-refs-count {
   float: right;
+  box-sizing: border-box;
+  /* Same pill and same line as .margin-marker (GH #843): centered on the first line. */
+  margin: calc((var(--ls-block-line-height) - 18px) / 2) 0 0;
   margin-inline-start: 8px;
-  padding: 0 6px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
   font-size: 11px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 18px;
+  text-align: center;
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  border-radius: 7px;
+  border-radius: 9px;
   cursor: pointer;
   user-select: none;
 }

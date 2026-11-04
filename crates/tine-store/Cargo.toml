@@ -63,6 +63,10 @@ required-features = ["test-faults"]
 name = "qf2_native_bench"
 required-features = ["test-faults"]
 
+[[example]]
+name = "asset_trash_bench"
+required-features = ["test-faults"]
+
 # Keep all integration cases in one linked executable.
 [[test]]
 name = "integration"

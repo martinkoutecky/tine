@@ -416,7 +416,7 @@ fn bench_scale(scale: usize, root: &Path, generated: GeneratedGraph) -> io::Resu
     for _ in 0..CACHE_BUILD_RUNS {
         let store = open_store(root)?;
         let started = Instant::now();
-        let page_count = store.whole_graph().unwrap().corpus().pages.len();
+        let page_count = store.whole_graph().unwrap().corpus(None).pages.len();
         cache_build.push(started.elapsed());
         assert_eq!(page_count, generated.pages + generated.journals);
         black_box(page_count);

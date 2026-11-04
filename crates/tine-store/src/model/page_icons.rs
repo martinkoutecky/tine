@@ -146,10 +146,7 @@ impl IconIndex {
 impl ReadSnapshot {
     pub(crate) fn page_icons(&self, names: &[String]) -> HashMap<String, String> {
         let icons = self.icon_index.get().expect("icons built at publication");
-        let format = JournalFormat::new(
-            self.config.journal_file_name_format.as_deref(),
-            self.config.journal_page_title_format.as_deref(),
-        );
+        let format = self.config.journal_format();
         names
             .iter()
             .filter_map(|name| {

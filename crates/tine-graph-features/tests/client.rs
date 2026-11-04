@@ -1974,11 +1974,12 @@ fn page_rename_keeps_an_external_referrer_change_and_a_failed_draft_changes_noth
     assert_eq!(disk_tree(&b), before, "a refused rename changed disk");
 }
 
-/// OG `:block/refs` excludes `{{query}}` arguments, so a page that mentions the
-/// renamed page only inside a query is not a referrer and keeps its bytes. v0.6.5
-/// did this only with a warm reference index; its full-scan fallback rewrote them.
+/// A query's page-name arguments follow a rename like links (D-20261031-CMQ,
+/// superseding the M2(4) exception this test pinned until batch 6): a page that
+/// mentions the renamed page only inside a query is rewritten too, although OG
+/// `:block/refs` excludes `{{query}}` arguments and so leaves it stale.
 #[test]
-fn page_rename_leaves_query_only_mentions_alone() {
+fn page_rename_rewrites_query_only_mentions() {
     let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("rename-query-only");
     put(&a, "pages/x.md", "- body\n");
@@ -1995,7 +1996,7 @@ fn page_rename_leaves_query_only_mentions_alone() {
     .unwrap();
     assert_eq!(
         fs::read(a.join("pages/query.md")).unwrap(),
-        b"- {{query (and (task TODO) [[x]])}}\n"
+        b"- {{query (and (task TODO) [[y]])}}\n"
     );
     assert_eq!(
         fs::read(a.join("pages/ref.md")).unwrap(),

@@ -13,6 +13,9 @@ export interface BlockDto {
   breadcrumb?: string[];
   /** Synthetic read-only backlink row sourced from page-level properties. */
   page_property?: boolean;
+  /** Synthetic read-only reference row: the source page's prose before its
+   *  first block (CM step 2 batch 8). No outline id; it opens its page. */
+  page_preamble?: boolean;
   // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
   // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
   // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).
@@ -137,6 +140,29 @@ export interface RenameDone {
   /** The new `:default-home` page when the rename moved the home page with it
    *  (og 22b, OG `rename-page-aux`); null otherwise. */
   home_page?: string | null;
+  /** config.edn's favorites after the rename's config step (one answerer:
+   *  `pages::commit_config` in Rust). Absent when the step changed none. */
+  favorites?: FavoritesAfter;
+  /** Why the config step left config.edn alone (malformed or unreadable
+   *  config); the page operation itself is complete. */
+  config_skipped?: string;
+}
+
+/** Favorites membership and arrangement page as the backend computed them. */
+export interface FavoritesAfter {
+  names: string[];
+  page: string | null;
+}
+
+/** What `follow_page_identity` did after a title:: change renamed a page:
+ *  config.edn's home and favorites follow the new name (Rust answerer). */
+export interface IdentityFollow {
+  /** The page's new name; null when nothing followed (same page, or the old
+   *  name still names a page). */
+  name?: string | null;
+  home_page?: string | null;
+  favorites?: FavoritesAfter;
+  config_skipped?: string;
 }
 
 /** An owner-side rename uses the same refresh as the window's own rename. */
@@ -157,6 +183,15 @@ export interface RenameTouchedPage {
   /** The file left this path (moved, or trashed by a merge); otherwise it was
    *  rewritten in place. */
   moved: boolean;
+}
+
+/** One text an unsaved page holds (its pre-block, or one block's raw body),
+ *  asked of `rename_would_change`. */
+export interface RenameProbeText {
+  raw: string;
+  org: boolean;
+  /** The page's pre-block (page properties), rewritten as a pre-block is. */
+  preBlock: boolean;
 }
 
 /** `page_alias_group`: the other members of one page's alias group
@@ -181,6 +216,28 @@ export interface PageInventoryEntry {
   is_journal: boolean;
   day: number | null;
   target: ResolvedPage;
+  /** What a `[[name]]` link opens, when that is not this entry itself: the
+   *  store's `WholeGraph::link_target` (an alias's owner, a date spelling's
+   *  journal). Absent means the entry itself. */
+  link?: { name: string; kind: PageKind };
+  /** Set when the entry exists only as the namespace parent of a listed name
+   *  (`n` for `n/y`; conceptual model rule 1, `InventoryEntry::namespace_parent`).
+   *  Absent means false. */
+  namespace_parent?: boolean;
+  /** EMPTY-ALIAS (D-20261103-CMA, as Logseq): this name's file has no real
+   *  content and some page declares the name as an alias, so `link` is that
+   *  owner and a named route opens it too (`InventoryEntry::empty_alias`).
+   *  Only a route to the exact file opens the empty page. Absent means false. */
+  empty_alias?: boolean;
+}
+
+/** What one publication changed in the `page_inventory` answer when no page
+ *  file claimed or released a name (cost-model audit 2026-11-02, row 1): drop
+ *  the alias and reference-only entries of `keys`, then add `entries` (only
+ *  alias and reference-only entries; `existing` ones never travel here). */
+export interface PageInventoryDelta {
+  keys: string[];
+  entries: PageInventoryEntry[];
 }
 
 /** `page_inventory` result; `rev` is the graph revision it was read at. */
@@ -191,6 +248,14 @@ export interface PageInventory {
    *  names but never failing the inventory. */
   unreadable?: string[];
 }
+
+/** `page_backlink_counts` result (D-20261102-CM4 CM-COUNT): how many blocks
+ *  each page's unfiltered Linked References panel lists, as `[files,
+ *  references]`. `files` holds one row per file that owns its name, by
+ *  graph-relative path (a non-owner twin has none: All pages shows a dash);
+ *  `references` one row per reference-only page, by the name its inventory
+ *  entry carries. */
+export type PageBacklinkCounts = [files: [string, number][], references: [string, number][]];
 
 /** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
  *  file whose last-modified time the store holds. A file with no time is absent. */
@@ -272,7 +337,7 @@ export interface JournalFile {
    *  when it shares a date with the canonical one (#21). */
   path: string;
   preview: string;
-  canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
+  canonical: boolean; // the file the day opens (claimant order) — the one to keep; exactly one per day
   /** Why the preview could not be read; the file stays listed. */
   preview_error?: string;
 }
@@ -581,8 +646,16 @@ export interface GraphMeta {
   quick_capture_template_text?: string | null;
   /** OG `:quick-capture-templates {:media "…"}`; null/absent = OG default (shareShape.ts). */
   quick_capture_template_media?: string | null;
+  /** OG `:quick-capture-options {:default-page "…"}`: where a Quick Capture without a title goes. */
+  quick_capture_default_page?: string | null;
+  /** OG `:quick-capture-options {:insert-today? true}`: untitled captures go to today's journal, ahead of the default page. */
+  quick_capture_insert_today?: boolean;
+  /** OG `:quick-capture-options {:redirect-page? true}`: open the page a capture landed on. */
+  quick_capture_redirect_page?: boolean;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
+  /** :file/name-format; absent (older backend) = "legacy", the graph default. */
+  file_name_format?: "legacy" | "triple-lowbar";
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
   macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
   enable_timetracking: boolean; // :feature/enable-timetracking?, default true

@@ -17,7 +17,8 @@ export interface NsEntry {
   parent: number;
   /** Index one past this entry's last descendant, so `end - index - 1` entries lie below it. */
   end: number;
-  /** Listed names strictly below this entry: its size. Zero for a leaf. */
+  /** Pages strictly below this entry (every node is a listed name, namespace
+   *  parents included): its size. Zero for a leaf. */
   count: number;
   /** `node.full` lowercased, for the filter. */
   lower: string;
@@ -44,22 +45,15 @@ export function indexNamespaces(tree: readonly NsNode[]): NsEntry[] {
   }
   for (const closed of open) entries[closed].end = entries.length;
 
-  // count = listed entries in (index, end): a prefix sum over the preorder.
-  const listedBefore = new Array<number>(entries.length + 1);
-  listedBefore[0] = 0;
-  for (let i = 0; i < entries.length; i++) listedBefore[i + 1] = listedBefore[i] + (entries[i].node.listed ? 1 : 0);
-  for (let i = 0; i < entries.length; i++) entries[i].count = listedBefore[entries[i].end] - listedBefore[i + 1];
+  for (let i = 0; i < entries.length; i++) entries[i].count = entries[i].end - i - 1;
   return entries;
 }
 
-/** Pages (listed names) in the whole tree, and the entries that have something below them. */
+/** Pages in the whole tree (every entry is a listed name), and the entries that have something below them. */
 export function namespaceTotals(entries: readonly NsEntry[]): { pages: number; namespaces: number } {
-  let pages = 0, namespaces = 0;
-  for (const entry of entries) {
-    if (entry.node.listed) pages++;
-    if (entry.node.children.length) namespaces++;
-  }
-  return { pages, namespaces };
+  let namespaces = 0;
+  for (const entry of entries) if (entry.node.children.length) namespaces++;
+  return { pages: entries.length, namespaces };
 }
 
 /** What is open when the view first appears: the top-level namespaces, as in the sidebar tree. */

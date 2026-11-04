@@ -86,11 +86,43 @@ impl Graph {
     }
 }
 
+/// Which name claims answer a lookup of `name`: a journal is claimed by its
+/// day's title (any accepted spelling parses to it), and a date name no
+/// journal claims falls back to an ordinary page of the requested name.
+/// The one rule behind `WholeGraph::resolve` and the file-listing answer
+/// `Store::page_named_from_files` (I-12).
+pub(crate) struct ClaimLookup<'a> {
+    /// The name the claimants of the requested kind are looked up by.
+    pub(crate) name: std::borrow::Cow<'a, str>,
+    /// An ordinary page name to try when no claimant of `name` exists.
+    pub(crate) page_fallback: Option<&'a str>,
+}
+
+pub(crate) fn claim_lookup<'a>(
+    format: &tine_core::date::JournalFormat,
+    name: &'a str,
+    kind: PageKind,
+) -> ClaimLookup<'a> {
+    if kind != PageKind::Journal {
+        return ClaimLookup {
+            name: name.into(),
+            page_fallback: None,
+        };
+    }
+    match format.parse(name) {
+        Some(day) => ClaimLookup {
+            name: format.title(day).into(),
+            page_fallback: Some(name),
+        },
+        None => ClaimLookup {
+            name: name.into(),
+            page_fallback: None,
+        },
+    }
+}
+
 /// The same claimant ordering for cold direct reads, journal open and snapshots.
-pub(super) fn page_claimants(
-    graph: &Graph,
-    entries: &[PageEntry],
-) -> HashMap<(PageKind, String), Vec<PageEntry>> {
+pub(super) fn page_claimants(graph: &Graph, entries: &[PageEntry]) -> ClaimantMap {
     let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
     for entry in entries {
         claimants
@@ -103,7 +135,9 @@ pub(super) fn page_claimants(
     for entries in claimants.values_mut() {
         entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
     }
-    claimants
+    (claimants.into_iter())
+        .map(|(key, entries)| (claimant_key(&key), entries))
+        .collect()
 }
 
 #[cfg(test)]
@@ -823,6 +857,16 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>, stem_key: Option<&str>) -> 
 /// (`DirEntry::metadata`: no file open on Windows) with the time it was taken,
 /// for the racy judgement. The listing precedes every read, so these stamps
 /// keep §5's stamp-before-read order.
+///
+/// Deliberately a different question from the page-name answer (census Q2):
+/// a PROVISIONAL name, the file stem before any byte is read, so the launch
+/// pass can list before it reads. The pass replaces it with the answer
+/// (`name_from` over the bytes it read) for every file it reads, before it
+/// publishes its named listing. A file it cannot read keeps the file-name
+/// name, as the answer itself does for unreadable bytes
+/// (`discover_page_name`), and is recorded as a discovery failure; a held
+/// page's row is its owner's. The conformance harness pins that it differs
+/// from the answer only for titled pages (`file_name_answerers`).
 pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));

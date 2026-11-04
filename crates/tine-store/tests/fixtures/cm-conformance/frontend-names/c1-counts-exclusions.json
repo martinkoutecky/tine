@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Hub",
+      "path": "pages/Hub.md",
+      "preBlock": "alias:: H",
+      "title": null
+    }
+  ],
+  "links": []
+}

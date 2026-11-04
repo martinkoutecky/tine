@@ -106,13 +106,81 @@ pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
+#[path = "../../tine-core/src/page_header.rs"]
+mod page_header;
+
+/// The alias spellings a page declares (census Q7): the store's own answer,
+/// `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+/// properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+/// one spelling per page identity). The page header's alias list shows this.
+/// O(header bytes).
+#[wasm_bindgen]
+pub fn page_alias_spellings(pre_block: Option<String>, first_root: Option<String>, is_org: bool) -> Vec<String> {
+    page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
+}
+
 #[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
 mod og_built_in;
+
+// The reference evidence's walker and the config slice it reads, compiled
+// from tine-core's own files (I-12: one answer for "what does this block
+// reference"). They reach their outside names through `super::`, provided
+// here: `block_regions`, `og_built_in`, `is_query_macro_name` (above and
+// below), and these. Only part of each module is used here.
+#[allow(dead_code)]
+#[path = "../../tine-core/src/query/atom/parse_config.rs"]
+mod parse_config;
+use parse_config::{reference_parsing_suppressed, separated_by_commas, ParseConfig};
+
+/// OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+/// `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+/// frontend's fallback when the graph's `linkable_property_keys` is absent.
+#[wasm_bindgen]
+pub fn is_editable_linkable_built_in(key: &str) -> bool {
+    parse_config::is_editable_linkable_built_in(key)
+}
+use tine_outline::editor_text::property_key_norm;
+use tine_outline::lsdoc_block_parse::parse_inline_bounded;
+#[allow(dead_code)]
+#[path = "../../tine-core/src/reference_evidence/walk.rs"]
+mod walk;
+
+/// Every page name one block's source references, in source order (may
+/// repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+/// over the same block parse, under the default parse config. O(block bytes)
+/// plus one inline parse per property value or macro argument; no I/O.
+#[wasm_bindgen]
+pub fn block_reference_names(raw: &str, is_org: bool) -> Vec<String> {
+    let blocks = lsdoc_block_parse::parse_projection(raw, is_org).blocks;
+    let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    walk::project_with_config(raw, is_org, &blocks, &regions, ParseConfig::default_ref())
+        .explicit
+        .into_iter()
+        .map(|reference| reference.name)
+        .collect()
+}
 
 /// OG built-ins excluded from default query-table property columns.
 #[wasm_bindgen]
 pub fn is_og_built_in_property(key: &str) -> bool {
     og_built_in::is_og_built_in_property(key)
+}
+
+/// Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+/// page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+/// with tine-core).
+#[wasm_bindgen]
+pub fn hidden_from_all_pages(name: &str) -> bool {
+    og_built_in::hidden_from_all_pages(name)
+}
+
+/// The prose of a Markdown page preamble after its page header, as UTF-8 byte
+/// offsets `[start, end]`, or `null` (I-12: the one answerer,
+/// `page_preamble::page_preamble_content`, which the store's reference answer
+/// reads too).
+#[wasm_bindgen]
+pub fn page_preamble_content_json(raw: &str) -> String {
+    serde_json::to_string(&tine_outline::page_preamble::page_preamble_content(raw).map(|r| [r.0, r.1])).unwrap()
 }
 
 /// Whether a block property key is hidden from rendered chips (I-12: the one
@@ -172,9 +240,19 @@ pub fn page_header_json(raw: &str) -> String {
 }
 
 /// Shared native target classification on an accepted AST link. O(target).
+/// `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+/// `file_name_format`); only read with `filename_candidates`, where omitting it
+/// means legacy, the graph default (`Config::default`).
 #[wasm_bindgen]
-pub fn reference_target_name(kind: &str, value: &str, label: &str, org: bool, filename_candidates: bool) -> Option<String> {
-    block_regions::reference_target_name(kind, value, label, org, filename_candidates)
+pub fn reference_target_name(
+    kind: &str,
+    value: &str,
+    label: &str,
+    org: bool,
+    filename_candidates: bool,
+    legacy_file_names: Option<bool>,
+) -> Option<String> {
+    block_regions::reference_target_name(kind, value, label, org, filename_candidates, legacy_file_names.unwrap_or(true))
 }
 
 /// Names inside an accepted NestedLink node; O(node bytes).
@@ -531,6 +609,14 @@ pub fn comment_quote(properties: &str) -> Result<Option<String>, JsValue> {
         .map(str::to_owned))
 }
 
+/// Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+/// the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+/// window reads the stable `tine/…` markers exactly as the backend does.
+#[wasm_bindgen]
+pub fn tine_key_aliases() -> String {
+    serde_json::to_string(tine_outline::tine_keys::LEGACY_KEY_ALIASES).unwrap()
+}
+
 /// The kernel's outline depth cap (twin 4).
 #[wasm_bindgen]
 pub fn outline_max_depth() -> usize {
@@ -765,6 +851,42 @@ pub fn parse_journal_format_json(text: &str, pattern: &str) -> String {
     with_date_format(pattern, |format| {
         serde_json::to_string(&format.parse(text).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
     })
+}
+
+thread_local! {
+    static JOURNAL_FORMAT: std::cell::RefCell<Option<(String, String, date::JournalFormat)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The graph's journal date answerer for (file, title) format strings ("" =
+/// default), cached for the last pair: the frontend asks with one graph's
+/// formats at a time.
+fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&date::JournalFormat) -> T) -> T {
+    JOURNAL_FORMAT.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if !matches!(&*cell, Some((cf, ct, _)) if cf == file && ct == title) {
+            *cell = Some((
+                file.to_owned(),
+                title.to_owned(),
+                date::JournalFormat::new(Some(file), Some(title)),
+            ));
+        }
+        f(&cell.as_ref().unwrap().2)
+    })
+}
+
+/// Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+/// (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+#[wasm_bindgen]
+pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> String {
+    with_journal_format(file_format, title_format, |format| {
+        serde_json::to_string(&format.parse(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+    })
+}
+
+/// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+#[wasm_bindgen]
+pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str) -> bool {
+    with_journal_format(file_format, title_format, |format| format.absent_link_is_journal(name))
 }
 
 /// Native date formatter over explicit civil parts; same bounded format cache.

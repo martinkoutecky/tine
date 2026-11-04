@@ -25,7 +25,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use tine_core::date::JournalDate;
-use tine_core::doc::{property_key_norm, DocBlock, Document};
+use tine_core::doc::{DocBlock, Document};
 use tine_core::model::{BlockDto, PageEntry, PageKind, RefGroup};
 use tine_core::query::atom::ParseConfig;
 use tine_core::query::ir::{
@@ -35,7 +35,7 @@ use tine_core::query::ir::{
 use tine_core::query::og::rebase_to_block;
 use tine_core::query::path_refs::{PathRefCounts, PathRefVisitor};
 use tine_core::query::registry::Registry;
-use tine_core::query::sort::{compare_sort_decorations, lexical_property_sort_text, SortDecor};
+use tine_core::query::sort::{compare_sort_decorations, SortDecor};
 use tine_core::query::statistics::{StatisticsFold, StatisticsResourceLimit};
 use tine_core::query::view::{explain_empty_plan, statistics_execution_view};
 use tine_core::query::{
@@ -44,6 +44,7 @@ use tine_core::query::{
 };
 use tine_core::refs;
 
+use super::eval::ref_classes::RefClasses;
 use super::eval::{self, CompiledLeaves, EvalCache, EvalCtx};
 use super::index::{atom_format, PageFacts, QueryIndex};
 use super::link_graph::{LinkAnswers, LinkGraph, VirtualNode};
@@ -51,6 +52,11 @@ use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, Construction
 
 #[path = "exec_candidates.rs"]
 mod candidates;
+
+#[path = "exec_order.rs"]
+mod order;
+use order::{base_order, is_recency_field, recency, statistics_keys, statistics_values};
+pub(crate) use order::{block_sort_decor, page_sort_decor};
 
 #[path = "exec_sample.rs"]
 mod sample;
@@ -85,6 +91,11 @@ pub(crate) struct Plan {
     /// filter reads `used_as_tag` (graph-wide, so the memo cannot treat such a
     /// plan as page-local: see [`Plan::reads_tag_targets`]).
     tag_targets: Option<Arc<HashSet<String>>>,
+    /// What each reference operand names in the generation the plan runs on
+    /// (alias class and journal days, D-20261019-Q8). Not persisted: set by
+    /// [`plan`], or built on first use from the graph a carried or restored
+    /// plan is asked about ([`Self::ref_classes`]).
+    ref_classes: std::sync::OnceLock<Arc<RefClasses>>,
 }
 
 /// A [`Plan`]'s persisted half (launch checkpoint, ADR 0070): every field
@@ -107,6 +118,7 @@ impl Plan {
     /// no sound page-local test and deliberately invalidate on every edit.
     pub(crate) fn touches_edit(
         &self,
+        graph: &ReadSnapshot,
         entry: &PageEntry,
         before: &Document,
         after: &Document,
@@ -122,8 +134,8 @@ impl Plan {
             || self.reads_links()
             || self.registry().is_some() && old_facts.registry_rows_differ(new_facts)
             || self.reads_tag_targets() && old_facts.tags() != new_facts.tags()
-            || self.touches(entry, before, old_facts, config)
-            || self.touches(entry, after, new_facts, config)
+            || self.touches(graph, entry, before, old_facts, config)
+            || self.touches(graph, entry, after, new_facts, config)
     }
 
     pub(super) fn estimated_bytes(&self) -> usize {
@@ -139,7 +151,28 @@ impl Plan {
             .saturating_add(self.tag_targets.as_ref().map_or(0, |targets| {
                 super::memo::retained::serialized_bytes(&**targets)
             }))
+            .saturating_add(
+                self.ref_classes
+                    .get()
+                    .map_or(0, |classes| classes.estimated_bytes()),
+            )
             .saturating_add(std::mem::size_of::<Self>())
+    }
+
+    /// The reference classes of this plan in `graph`'s generation, built on
+    /// first use. `graph` must hold the same alias relation and page names as
+    /// the generation the plan answers for: every caller passes the snapshot
+    /// the plan runs on or is carried from (a carry happens only when neither
+    /// moved).
+    pub(crate) fn ref_classes(&self, graph: &ReadSnapshot) -> &RefClasses {
+        self.ref_classes
+            .get_or_init(|| Arc::new(RefClasses::build(graph, &self.filter, false)))
+    }
+
+    fn known_ref_classes(&self) -> &RefClasses {
+        self.ref_classes
+            .get()
+            .map_or(RefClasses::none(), |classes| classes.as_ref())
     }
 
     /// Whether an answer depends on the wall-clock instant rather than the
@@ -202,6 +235,7 @@ impl Plan {
             remove_accents,
             registry,
             tag_targets,
+            ref_classes: std::sync::OnceLock::new(),
         }
     }
 
@@ -218,6 +252,7 @@ impl Plan {
             top_level_only,
             filter,
             compiled: _,
+            ref_classes: _,
             track,
             today,
             remove_accents,
@@ -262,6 +297,7 @@ impl Plan {
             remove_accents,
             registry: registry.cloned(),
             tag_targets: tag_targets.cloned(),
+            ref_classes: std::sync::OnceLock::new(),
         }
     }
 
@@ -307,6 +343,9 @@ impl Plan {
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             links,
             atoms,
+            atoms
+                .ref_classes()
+                .unwrap_or_else(|| self.known_ref_classes()),
         )
     }
 
@@ -337,6 +376,9 @@ impl Plan {
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             links,
             atoms,
+            atoms
+                .ref_classes()
+                .unwrap_or_else(|| self.known_ref_classes()),
         )
     }
 
@@ -505,11 +547,13 @@ impl Plan {
     /// registry snapshot.
     pub(crate) fn touches(
         &self,
+        graph: &ReadSnapshot,
         entry: &PageEntry,
         doc: &Document,
         facts: &PageFacts,
         config: &ParseConfig,
     ) -> bool {
+        self.ref_classes(graph);
         let atoms = EvalCache::default();
         if self.skips(entry, facts, config, &atoms) {
             return false;
@@ -550,17 +594,31 @@ impl Plan {
         cache: &EvalCache,
     ) -> bool {
         self.anchor == Anchor::Block
-            && (required_refs(&self.filter)
-                .is_some_and(|names| !facts.may_reference(entry, &names))
-                || required_reference_days(&self.filter).is_some_and(|preds| {
-                    !facts.refs().iter().any(|name| {
-                        let day = cache.reference_day(name, config);
-                        day.is_some()
-                            && preds.iter().any(|pred| {
-                                eval::reference_date_pred(pred, day, self.today) == Some(true)
-                            })
-                    })
-                }))
+            && (required_refs(&self.filter).is_some_and(|operands| {
+                let classes = cache
+                    .ref_classes()
+                    .unwrap_or_else(|| self.known_ref_classes());
+                !operands.iter().any(|operand| match classes.class(operand) {
+                    None => facts.may_reference(entry, &[refs::normalize(operand)]),
+                    Some(class) => {
+                        facts.may_reference(entry, class.key_list())
+                            || class.has_days()
+                                && std::iter::once(&refs::normalize(&entry.name))
+                                    .chain(facts.refs())
+                                    .any(|name| {
+                                        class.holds(name, |key| cache.reference_day(key, config))
+                                    })
+                    }
+                })
+            }) || required_reference_days(&self.filter).is_some_and(|preds| {
+                !facts.refs().iter().any(|name| {
+                    let day = cache.reference_day(name, config);
+                    day.is_some()
+                        && preds.iter().any(|pred| {
+                            eval::reference_date_pred(pred, day, self.today) == Some(true)
+                        })
+                })
+            }))
     }
 }
 
@@ -603,9 +661,11 @@ fn row_dto(facts: &PageFacts, block: &DocBlock) -> BlockDto {
     dto
 }
 
-/// Page refs one of which every matching block's path-refs closure must
-/// contain, normalized; `None` when the filter does not require any.
-fn required_refs(filter: &Filter) -> Option<Vec<String>> {
+/// Reference operands one of which every matching block's path-refs closure
+/// must hold a name of (the operand's class, [`RefClasses`]: the same names
+/// [`eval::eval_refs`] matches, so narrowing never drops a row); `None` when
+/// the filter does not require any.
+fn required_refs(filter: &Filter) -> Option<Vec<&str>> {
     match filter {
         Filter::Leaf {
             leaf:
@@ -614,7 +674,7 @@ fn required_refs(filter: &Filter) -> Option<Vec<String>> {
                     quant: Quant::Any | Quant::Every,
                     pred,
                 },
-        } => eval::single_ref_name(pred).map(|name| vec![refs::normalize(name)]),
+        } => eval::single_ref_name(pred).map(|name| vec![name]),
         Filter::And { items } => items.iter().find_map(required_refs),
         Filter::Or { items } if !items.is_empty() => items
             .iter()
@@ -701,170 +761,6 @@ fn cost(filter: &Filter) -> u8 {
     }
 }
 
-/// The recency axis (Unix seconds): a journal by the day it represents, any
-/// other page by the mtime captured with the page table; oldest when unknown.
-fn recency(
-    entry: &PageEntry,
-    mtimes: &crate::model::persistent::Map<String, std::time::SystemTime>,
-) -> i64 {
-    if let Some(day) = entry.date_key {
-        return JournalDate::from_ordinal(day).to_days() * 86_400;
-    }
-    mtimes
-        .get(entry.rel_path_str())
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(i64::MIN, |elapsed| elapsed.as_secs() as i64)
-}
-
-fn is_recency_field(field: &str) -> bool {
-    matches!(
-        field.to_ascii_lowercase().as_str(),
-        "modified" | "updated" | "updated-at" | "date"
-    )
-}
-
-fn kind_rank(kind: PageKind) -> u8 {
-    match kind {
-        PageKind::Journal => 0,
-        PageKind::Page => 1,
-    }
-}
-
-/// SPEC §3.5's base order for block groups (M13), amended for OG parity (#8a):
-/// OG renders grouped results with `(sort-by (comp :block/journal-day first) >)`
-/// (`components/block.cljs:3497,3523,3552`), so journal days run NEWEST first and
-/// pages that are not journals follow. The reference groups (`query::collect_bounded`)
-/// already order this way; one rule for every group list (I-12). Ties fall back
-/// to page name, then kind rank, then physical path.
-fn base_order(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
-    b.date_key
-        .unwrap_or(i64::MIN)
-        .cmp(&a.date_key.unwrap_or(i64::MIN))
-        .then_with(|| a.name.cmp(&b.name))
-        .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
-        .then_with(|| a.rel_path_str().as_bytes().cmp(b.rel_path_str().as_bytes()))
-}
-
-fn first_property(properties: &[(String, String)], field: &str) -> Option<String> {
-    let field = property_key_norm(field);
-    properties
-        .iter()
-        .find(|(key, _)| property_key_norm(key) == field)
-        .map(|(_, value)| value.clone())
-}
-
-/// One row's aggregate inputs: `count` reads no value; every other function
-/// reads the row's first value of the named property.
-fn statistics_values(
-    fold: &StatisticsFold,
-    properties: &[(String, String)],
-) -> Vec<Option<String>> {
-    fold.view()
-        .aggregates
-        .iter()
-        .map(|(field, op)| match op {
-            tine_core::query::ir::AggFn::Count => None,
-            _ => first_property(properties, field.as_str()),
-        })
-        .collect()
-}
-
-fn statistics_keys(
-    fold: &StatisticsFold,
-    special: impl FnOnce(&str) -> Option<Vec<Option<String>>>,
-    properties: &[(String, String)],
-) -> Vec<Option<String>> {
-    let mut keys = match fold.view().group_by.as_ref().map(|field| field.as_str()) {
-        None => Vec::new(),
-        Some(field) if field.starts_with("formula:") => Vec::new(),
-        Some(field) => special(field).unwrap_or_else(|| {
-            vec![first_property(
-                properties,
-                field.strip_prefix("prop:").unwrap_or(field),
-            )]
-        }),
-    };
-    if keys.is_empty() {
-        keys.push(None);
-    }
-    keys
-}
-
-/// Shared block sort meaning for IR and Friendly rows. Missing properties use
-/// visible first-line text; planning fields use their stable missing sentinel.
-/// Cost O(properties on one block); no failure for a parsed block.
-pub(crate) fn block_sort_decor(
-    field: &str,
-    entry: &PageEntry,
-    block: &DocBlock,
-    page_recency: impl FnOnce() -> i64,
-) -> SortDecor {
-    let projection = block.projection();
-    match field.to_ascii_lowercase().as_str() {
-        _ if is_recency_field(field) => SortDecor::Num(page_recency()),
-        "priority" => SortDecor::Text(
-            block
-                .priority()
-                .map_or_else(|| "Z".to_string(), str::to_ascii_uppercase),
-        ),
-        "page" => SortDecor::Text(entry.name.to_lowercase()),
-        "deadline" => SortDecor::Text(
-            projection
-                .deadline()
-                .map_or_else(|| "~".to_string(), str::to_owned),
-        ),
-        "scheduled" => SortDecor::Text(
-            projection
-                .scheduled()
-                .map_or_else(|| "~".to_string(), str::to_owned),
-        ),
-        _ => SortDecor::Text(lexical_property_sort_text(
-            projection
-                .properties()
-                .iter()
-                .map(|(key, value)| (key.as_str(), value.as_str())),
-            field,
-            || {
-                block
-                    .visible_text()
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .to_string()
-            },
-        )),
-    }
-}
-
-/// Shared page sort meaning for IR and Friendly rows. Missing properties use
-/// the page name. Cost O(properties on one page); no failure for a page entry.
-pub(crate) fn page_sort_decor(
-    field: &str,
-    entry: &PageEntry,
-    properties: &[(String, String)],
-    page_recency: i64,
-) -> SortDecor {
-    match field.to_ascii_lowercase().as_str() {
-        "name" | "page" => SortDecor::Text(entry.name.to_lowercase()),
-        "kind" => SortDecor::Text(
-            match entry.kind {
-                PageKind::Journal => "journal",
-                PageKind::Page => "page",
-            }
-            .into(),
-        ),
-        "day" | "journal-day" | "journal_day" => SortDecor::Num(entry.date_key.unwrap_or(i64::MIN)),
-        _ if is_recency_field(field) => SortDecor::Num(page_recency),
-        _ => SortDecor::Text(lexical_property_sort_text(
-            properties
-                .iter()
-                .map(|(key, value)| (key.as_str(), value.as_str())),
-            field,
-            || entry.name.clone(),
-        )),
-    }
-}
-
 /// Execute one plan over the graph's current generation.
 pub(crate) fn execute(
     graph: &ReadSnapshot,
@@ -933,6 +829,7 @@ pub(crate) fn execute_cancellable(
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        atoms.spell_ref_classes(graph, &plan.filter);
         let Some(links) = plan.link_answers(graph, &candidates, config, &atoms, cancelled) else {
             stopped = true;
             return Ok(());
@@ -1062,7 +959,7 @@ pub(crate) fn execute_cancellable(
             }
             Anchor::Page => {
                 let mut matches: Vec<(&PageEntry, Arc<PageFacts>)> = Vec::new();
-                for (entry, doc) in candidates.pages() {
+                for (entry, doc) in candidates.pages().chain(candidates.reference_only()) {
                     if cancelled() {
                         stopped = true;
                         return Ok(());
@@ -1075,10 +972,11 @@ pub(crate) fn execute_cancellable(
                         matches.push((entry, facts));
                     }
                 }
+                // Files in path order, then the fileless rows in key order
+                // (the stable sort keeps `reference_only`'s order).
                 matches.sort_by(|a, b| {
-                    a.0.rel_path_str()
-                        .as_bytes()
-                        .cmp(b.0.rel_path_str().as_bytes())
+                    (a.0.rel_path.is_none(), a.0.rel_path_str().as_bytes())
+                        .cmp(&(b.0.rel_path.is_none(), b.0.rel_path_str().as_bytes()))
                 });
                 let matched = matches.len();
                 if let Some(sample) = sample {
@@ -1182,10 +1080,11 @@ fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Opt
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        atoms.spell_ref_classes(graph, &plan.filter);
         let links = plan.link_answers(graph, &candidates, config, &atoms, cancelled)?;
         let mut count = 0usize;
         let mut hits = Vec::new();
-        for (entry, doc) in candidates.pages() {
+        for (entry, doc) in candidates.pages().chain(candidates.reference_only()) {
             if cancelled() {
                 return None;
             }
@@ -1215,14 +1114,15 @@ pub(crate) fn plan(
     today: JournalDate,
     block_rows: bool,
 ) -> Plan {
-    Plan::new(
+    let plan = Plan::new(
         query,
         today,
         block_rows,
         graph.config().enable_search_remove_accents,
         || graph.with_pages(|pages| graph.query_index().registry(pages)),
         || graph.with_pages(|pages| Arc::new(graph.query_index().tag_targets(pages))),
-    )
+    );
+    plan
 }
 
 /// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a

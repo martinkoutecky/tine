@@ -1,12 +1,21 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-const env = vi.hoisted(() => ({ channel: "beta", get: vi.fn(), set: vi.fn(), toast: vi.fn() }));
+const env = vi.hoisted(() => ({ channel: "beta", get: vi.fn(), set: vi.fn(), toast: vi.fn(), emit: vi.fn(), handlers: [] as Array<(event: { payload: { origin: string } }) => void> }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async (_name: string, handler: (event: { payload: { origin: string } }) => void) => { env.handlers.push(handler); return () => {}; },
+  emit: env.emit,
+}));
 vi.mock("../appIdentity", () => ({ get APP_UPDATE_CHANNEL() { return env.channel; } }));
 vi.mock("../backend", () => ({ backend: () => ({ getAppBool: env.get, setAppBool: env.set }) }));
 vi.mock("../toasts", () => ({ pushToast: env.toast }));
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
-afterEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+// A Beta module registers its change listener after a dynamic import; under a loaded
+// suite that can land after the next test began, so wait for it before resetting.
+afterEach(async () => {
+  if (env.channel === "beta") await vi.waitFor(() => expect(env.handlers.length).toBeGreaterThan(0), { timeout: 10_000 });
+  vi.resetModules(); vi.clearAllMocks(); env.handlers.length = 0;
+});
 
 it("defaults off in Beta, loads the device opt-in and rolls back a failed save", async () => {
   env.channel = "beta";
@@ -51,4 +60,53 @@ it("stable refuses stored and programmatic opt-ins without preference IO", async
   expect(setting.cm6EditorEnabled()).toBe(false);
   expect(env.get).not.toHaveBeenCalled();
   expect(env.set).not.toHaveBeenCalled();
+});
+
+it("settles only after the stored choice has landed, so a window that mounts an editor first can wait for it", async () => {
+  env.channel = "beta";
+  let finish!: (value: boolean) => void;
+  env.get.mockReturnValue(new Promise<boolean>(resolve => { finish = resolve; }));
+  const setting = await import("./cm6Setting");
+  let landed = false;
+  const loading = setting.initCm6EditorSetting().then(() => { landed = true; });
+  await tick();
+  expect(landed).toBe(false);
+  expect(setting.cm6EditorEnabled()).toBe(false);
+  finish(true);
+  await loading;
+  expect(setting.cm6EditorEnabled()).toBe(true);
+
+  env.get.mockRejectedValue(new Error("unreadable"));
+  await setting.initCm6EditorSetting();
+  expect(setting.cm6EditorEnabled()).toBe(true);
+});
+
+it("a choice made in another window reaches this one, and this window's own choice is announced", async () => {
+  env.channel = "beta";
+  env.get.mockResolvedValue(false);
+  env.set.mockResolvedValue(undefined);
+  env.emit.mockResolvedValue(undefined);
+  const setting = await import("./cm6Setting");
+  await setting.initCm6EditorSetting();
+  await tick();
+  expect(setting.cm6EditorEnabled()).toBe(false);
+  await vi.waitFor(() => expect(env.handlers).toHaveLength(1)); // the listener registers after a dynamic import
+
+  // Another window turned it on and wrote the file.
+  env.get.mockResolvedValue(true);
+  env.handlers[0]({ payload: { origin: "another-window" } });
+  await vi.waitFor(() => expect(setting.cm6EditorEnabled()).toBe(true));
+
+  // This window's own change is announced once the file is written, with its origin,
+  // and its own echo does not trigger a re-read.
+  setting.setCm6EditorEnabled(false);
+  // The announcement also goes through a dynamic import, so it can take more than a tick.
+  await vi.waitFor(() => expect(env.emit).toHaveBeenCalledWith("cm6-editor-setting-changed", { origin: expect.any(String) }));
+  expect(env.set).toHaveBeenCalledWith("experimental_cm6_editor", false);
+  const origin = env.emit.mock.calls[0][1].origin;
+  const reads = env.get.mock.calls.length;
+  env.handlers[0]({ payload: { origin } });
+  await tick();
+  expect(env.get.mock.calls.length).toBe(reads);
+  expect(setting.cm6EditorEnabled()).toBe(false);
 });

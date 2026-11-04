@@ -104,7 +104,7 @@ afterEach(() => { unmount(); closeQuickShare(); clearTransientLayersForTest(); s
 /** Open the share dialog on the Notes query block and press Create. */
 async function startShare() {
   const notes = page("Notes", [blk("intro"), blk(QUERY)]);
-  await bindDisk([notes, page("Exports", [blk("{{query (or (property export) (property tine.share))}}")])]);
+  await bindDisk([notes, page("Exports", [blk("{{query (or (property tine.export) (property tine.share))}}")])]);
   load(notes);
   openQuickShare(REQUEST, { hostBlockId: idOf("Notes", QUERY), macro: QUERY });
   const root = await mount(() => <QuickShareDialog request={quickShareRequest} />);

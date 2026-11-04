@@ -1,0 +1,12 @@
+{
+  "frontend": {},
+  "owner": {
+    "f4-merge": [
+      "owner merge: refused (refused): a page or alias already owns the destination; nothing changed"
+    ],
+    "f5-merge-both-favorites": [
+      "owner merge: refused (refused): a page or alias already owns the destination; nothing changed"
+    ]
+  },
+  "rust": {}
+}

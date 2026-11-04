@@ -16,11 +16,13 @@ pub mod lsdoc_block_parse;
 pub mod outline;
 pub mod page_filename;
 pub mod page_format;
+pub mod page_preamble;
 pub mod property_line;
 pub mod property_refs;
 pub mod property_visibility;
 pub mod removal_refs;
 mod swallowed_rows;
+pub mod tine_keys;
 
 /// The parse entry `block_regions` asks through (`crate::render::…`), the same
 /// names `tine-core`'s render bridge exposes.

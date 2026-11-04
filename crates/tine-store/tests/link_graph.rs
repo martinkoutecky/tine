@@ -117,14 +117,21 @@ fn links_near_directions_on_a_hand_graph() {
     let (_store, graph) = open(dir.path());
     let q = |tql: &str| pages(&graph, tql);
 
-    // Cycle a→b→c→a.
+    // Cycle a→b→c→a; a also links to `idea`, a page without a file, which
+    // is a page row of its own (D-20261102-CM4 CM-REFONLY, conformance S13).
     assert_eq!(q("@page and near(name = 'a', 0)"), set(&["a"]));
-    assert_eq!(q("@page and near(name = 'a', 1, 'out')"), set(&["a", "b"]));
+    assert_eq!(
+        q("@page and near(name = 'a', 1, 'out')"),
+        set(&["a", "b", "idea"])
+    );
     assert_eq!(q("@page and near(name = 'a', 1, 'in')"), set(&["a", "c"]));
-    assert_eq!(q("@page and near(name = 'a', 1)"), set(&["a", "b", "c"]));
+    assert_eq!(
+        q("@page and near(name = 'a', 1)"),
+        set(&["a", "b", "c", "idea"])
+    );
     assert_eq!(
         q("@page and near(name = 'a', 2, 'out')"),
-        set(&["a", "b", "c"])
+        set(&["a", "b", "c", "idea"])
     );
     assert_eq!(
         q("@page and near(name = 'a', 99, 'in')"),
@@ -173,7 +180,12 @@ fn links_near_directions_on_a_hand_graph() {
 
     // links / linked_by and their quantifiers.
     assert_eq!(q("@page and any(links, name = 'b')"), set(&["a"]));
-    assert_eq!(q("@page and any(linked_by, name = 'a')"), set(&["b"]));
+    // `a` also links to the fileless `idea`, now a page row (D-20261102-CM4
+    // CM-REFONLY).
+    assert_eq!(
+        q("@page and any(linked_by, name = 'a')"),
+        set(&["b", "idea"])
+    );
     // A self link is not a link (the panel never lists a page under itself).
     assert!(!q("@page and any(links, name = 'a')").contains("a"));
     // An alias: a link to `tt` is a link to `target`.
@@ -214,11 +226,12 @@ fn links_near_pages_without_a_file_are_seeds_and_elements() {
     hand_graph(dir.path());
     let (_store, graph) = open(dir.path());
     let q = |tql: &str| pages(&graph, tql);
-    // `idea` has no file; its panel lists a and w.
+    // `idea` has no file; its panel lists a and w. It is a page row itself
+    // (D-20261102-CM4 CM-REFONLY), so a ball around it holds it.
     assert_eq!(panel(&graph, "idea"), set(&["a", "w"]));
     assert_eq!(
         q("@page and near(name = 'idea', 1, 'in')"),
-        set(&["a", "w"])
+        set(&["a", "idea", "w"])
     );
     assert_eq!(q("@page and any(links, name = 'idea')"), set(&["a", "w"]));
     // A fileless journal day is a journal with its day.
@@ -230,12 +243,8 @@ fn links_near_pages_without_a_file_are_seeds_and_elements() {
         q("@page and any(links, name = 'Oct 2nd, 2026')"),
         set(&["w"])
     );
-    // It never links anywhere: two steps in from `idea` stop at its sources'
-    // own sources, never through `idea` outwards.
-    assert_eq!(
-        q("@page and near(name = 'idea', 2, 'out')"),
-        BTreeSet::new()
-    );
+    // It never links anywhere: two steps out from `idea` reach only itself.
+    assert_eq!(q("@page and near(name = 'idea', 2, 'out')"), set(&["idea"]));
 }
 
 /// Review r1 blocker: a nested link condition evaluated ON a page without a
@@ -292,7 +301,7 @@ fn links_near_seeds_survive_a_rename_inside_a_definition() {
     let dir = tempfile::tempdir().unwrap();
     hand_graph(dir.path());
     let definition =
-        "- {{tine-query @page and near(name = 'hub', 1, 'in')}}\n  export:: hub-site\n";
+        "- {{tine-query @page and near(name = 'hub', 1, 'in')}}\n  tine.export:: hub-site\n";
     write(dir.path(), "pages/sites.md", definition);
     let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
     let app_data = tempfile::tempdir().unwrap();
@@ -317,7 +326,7 @@ fn links_near_seeds_survive_a_rename_inside_a_definition() {
 /// claims — the pages without a file.
 fn parity(root: &Path) -> (usize, usize) {
     let (_store, graph) = open(root);
-    let corpus = graph.corpus();
+    let corpus = graph.corpus(None);
     let mut physical: BTreeSet<String> = BTreeSet::new();
     let mut fileless: BTreeSet<String> = BTreeSet::new();
     let format = tine_core::date::JournalFormat::new(None, None);
@@ -442,7 +451,7 @@ fn links_near_k2_on_the_realistic_graph() {
     let root = std::env::var("TINE_LINKS_BENCH_GRAPH").expect("TINE_LINKS_BENCH_GRAPH");
     let (_store, graph) = open(Path::new(&root));
     let names: Vec<String> = graph
-        .corpus()
+        .corpus(None)
         .pages
         .iter()
         .filter(|page| page.kind == tine_core::model::PageKind::Page)
@@ -497,13 +506,13 @@ fn links_near_k2_on_the_realistic_graph() {
     // The table build alone, on a fresh view of an unchanged graph... the view
     // shares the snapshot, so time a rebuild through a new store instead.
     let (_store2, graph2) = open(Path::new(&root));
-    let _ = graph2.corpus();
+    let _ = graph2.corpus(None);
     let started = std::time::Instant::now();
     let _ = graph2.link_table_stats();
     eprintln!("link table build alone: {:?}", started.elapsed());
     eprintln!(
         "{} pages, VmHWM {} KiB",
-        graph.corpus().pages.len(),
+        graph.corpus(None).pages.len(),
         rss_kib("VmHWM:")
     );
 }
@@ -545,7 +554,7 @@ fn links_near_a_set_cancel_flag_answers_nothing() {
         panic!("page rows");
     };
     let names: BTreeSet<String> = pages.iter().map(|row| page_key(&row.name)).collect();
-    assert_eq!(names, set(&["a", "w"]));
+    assert_eq!(names, set(&["a", "idea", "w"]));
 }
 
 /// Peak extra heap of one link-table build: `owners` pages each declaring
@@ -565,7 +574,7 @@ fn alias_fanout_build_peak(owners: usize, repeats: usize) -> (i64, (usize, usize
         &format!("- {}\n", "[[shared]] ".repeat(repeats)),
     );
     let (_store, graph) = open(dir.path());
-    let _ = graph.corpus();
+    let _ = graph.corpus(None);
     let (stats, peak) = crate::query_unit_cost::peak_heap_of(|| graph.link_table_stats());
     (peak, stats)
 }

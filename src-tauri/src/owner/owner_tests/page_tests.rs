@@ -73,7 +73,7 @@ fn page_create_rename_delete_and_lazy_reference_helpers() {
     assert_eq!(embed["text"], format!("{{{{embed (({uuid}))}}}}"));
     assert!(!std::fs::read_to_string(graph.root.join("pages/a.md"))
         .unwrap()
-        .contains("author::"));
+        .contains("tine.author::"));
     let renamed = verb(&slot, "page.rename", json!({"old":"a", "new":"A"})).unwrap();
     assert_eq!(renamed["report"]["outcome"], "renamed");
     assert!(graph.root.join("pages/A.md").exists());
@@ -272,7 +272,7 @@ fn org_helpers_stamp_a_drawer_once_and_preserve_existing_authorship() {
         &graph,
         &[(
             "pages/Org.org",
-            "* target\n:PROPERTIES:\n:author: Martin\n:END:\nbody\n",
+            "* target\n:PROPERTIES:\n:tine.author: Martin\n:END:\nbody\n",
         )],
     );
     let slot = graph.slot();
@@ -282,7 +282,7 @@ fn org_helpers_stamp_a_drawer_once_and_preserve_existing_authorship() {
     let second = verb(&slot, "ref", json!({"handle":first["uuid"]})).unwrap();
     assert_eq!(first["uuid"], second["uuid"]);
     let text = std::fs::read_to_string(graph.root.join("pages/Org.org")).unwrap();
-    assert!(text.contains(":author: Martin"));
+    assert!(text.contains(":tine.author: Martin"));
     assert_eq!(text.to_lowercase().matches(":id:").count(), 1);
     assert!(!text.contains("id::"));
 }
@@ -328,4 +328,110 @@ fn rename_options_and_destination_alias_refuse_before_writing() {
         assert_eq!(error_code(verb(&slot, "page.rename", args)).0, "refused");
     }
     assert!(graph.root.join("pages/a.md").exists());
+}
+
+/// CLI-DUPNAME (D-20261103-CMA): a write to a page name that two files claim
+/// (a sync conflict, a case twin, a `title::` collision) refuses `ambiguous`,
+/// naming both files, and writes neither. Before, it went silently to the
+/// file that owns the name: an agent edited one twin and never learned the
+/// other existed. Reads keep answering the owning file.
+#[test]
+fn a_cli_write_to_a_name_two_files_claim_refuses_naming_both() {
+    let graph = Graph::new();
+    seed(&graph, &[("pages/twin.md", "title:: a\n\n- twin\n")]);
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name":"a"})).expect("a read still answers");
+    assert_eq!(read["id"], "pages/a.md");
+    let one = format!("a/{}", block_handle(&read, 0));
+    let two = format!("a/{}", block_handle(&read, 1));
+    let files = |graph: &Graph, names: &[&str]| -> Vec<String> {
+        names
+            .iter()
+            .map(|n| std::fs::read_to_string(graph.root.join(n)).unwrap())
+            .collect()
+    };
+    let before = files(&graph, &["pages/a.md", "pages/twin.md"]);
+    let assert_refused = |what: &str, result: Result<Value, ErrorBody>, both: [&str; 2]| {
+        let body = result.expect_err(what);
+        assert_eq!(body.code, "ambiguous", "{what}: {}", body.message);
+        for file in both {
+            assert!(body.message.contains(file), "{what}: {}", body.message);
+        }
+        let detail = body.detail.expect("detail");
+        assert_eq!(detail["admitted"], false, "{what}");
+        let candidates: Vec<&str> = detail["candidates"]
+            .as_array()
+            .expect("candidates")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(candidates, both, "{what}");
+    };
+    let both = ["pages/a.md", "pages/twin.md"];
+    for (name, args) in [
+        ("block.add", json!({"page":"a","content":"- new"})),
+        ("block.add", json!({"page":"A","content":"- new"})),
+        ("block.add", json!({"under":one,"content":"- new"})),
+        ("block.add", json!({"after":one,"content":"- new"})),
+        ("block.edit", json!({"handle":one,"text":"changed"})),
+        ("block.edit", json!({"handle":UUID,"text":"changed"})),
+        (
+            "block.prop",
+            json!({"handle":one,"key":"status","value":"x"}),
+        ),
+        ("block.move", json!({"handle":two,"to":one,"at":"under"})),
+        ("block.delete", json!({"handle":two})),
+        ("ref", json!({"handle":two})),
+        ("embed", json!({"handle":two})),
+        ("page.delete", json!({"name":"a","yes":true})),
+        ("page.rename", json!({"old":"a","new":"renamed"})),
+    ] {
+        assert_refused(&format!("{name} {args}"), verb(&slot, name, args), both);
+    }
+    assert_eq!(files(&graph, &["pages/a.md", "pages/twin.md"]), before);
+
+    // A journal day two files claim (Markdown and Org).
+    std::fs::create_dir_all(graph.root.join("journals")).unwrap();
+    seed(
+        &graph,
+        &[
+            ("journals/2026_01_05.md", "- md day\n"),
+            ("journals/2026_01_05.org", "* org day\n"),
+        ],
+    );
+    let days = ["journals/2026_01_05.md", "journals/2026_01_05.org"];
+    let before = files(&graph, &days);
+    assert_refused(
+        "block.add --journal",
+        verb(
+            &slot,
+            "block.add",
+            json!({"journal":"2026-01-05","content":"- new"}),
+        ),
+        days,
+    );
+    assert_eq!(files(&graph, &days), before);
+
+    // A case twin, where the file system keeps both spellings.
+    seed(
+        &graph,
+        &[("pages/Foo.md", "- upper\n"), ("pages/foo.md", "- lower\n")],
+    );
+    let listed = std::fs::read_dir(graph.root.join("pages"))
+        .unwrap()
+        .filter(|e| {
+            let name = e.as_ref().unwrap().file_name();
+            name == "Foo.md" || name == "foo.md"
+        })
+        .count();
+    if listed == 2 {
+        let twins = ["pages/Foo.md", "pages/foo.md"];
+        let before = files(&graph, &twins);
+        assert_refused(
+            "block.add --page Foo",
+            verb(&slot, "block.add", json!({"page":"foo","content":"- new"})),
+            twins,
+        );
+        assert_eq!(files(&graph, &twins), before);
+    }
 }

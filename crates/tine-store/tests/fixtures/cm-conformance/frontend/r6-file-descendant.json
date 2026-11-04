@@ -1,0 +1,199 @@
+{
+  "backlinks": {
+    "old": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[old/sub]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "old/sub": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[old/sub]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "p": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/old%2Fsub.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/old.md",
+        1
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old",
+      "name": "old",
+      "target": {
+        "id": "pages/old.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old/sub",
+      "name": "old/sub",
+      "target": {
+        "id": "pages/old%2Fsub.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "old": "old",
+    "old/sub": "old/sub",
+    "p": "p"
+  },
+  "open": {
+    "old": {
+      "journal": [
+        "journal",
+        "old"
+      ],
+      "page": [
+        "page",
+        "old"
+      ]
+    },
+    "old/sub": {
+      "journal": [
+        "journal",
+        "old/sub"
+      ],
+      "page": [
+        "page",
+        "old/sub"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  },
+  "owner": {
+    "old": {
+      "journal": null,
+      "page": "pages/old.md"
+    },
+    "old/sub": {
+      "journal": null,
+      "page": "pages/old%2Fsub.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "old",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "old",
+      "owner": "pages/old.md"
+    },
+    {
+      "key": "old/sub",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "old/sub",
+      "owner": "pages/old%2Fsub.md"
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    }
+  ],
+  "spellings": {
+    "old": {
+      "backend": [
+        "page",
+        "old"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "old"
+      ]
+    },
+    "old/sub": {
+      "backend": [
+        "page",
+        "old/sub"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "old/sub"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    }
+  }
+}

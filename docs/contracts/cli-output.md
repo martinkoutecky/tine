@@ -84,7 +84,9 @@ Kind `status`.
 
 `tine page show NAME`. The page as the page host sees it: a held page's buffer (unsaved text
 included), else its file. Kind `page`. Errors: `not-found`, `ambiguous` (an alias of several
-pages, `detail.candidates`), `too-large` (over the 64 MiB parse bound), `busy`.
+pages, `detail.candidates`), `too-large` (over the 64 MiB parse bound), `busy`. A name that several
+files claim reads the file that owns it (`id` says which), as the app opens it; a write to that name
+refuses (see *Writes*).
 
 `tine journal [DATE]` answers the same payload, kind `journal`. `DATE` is `YYYY-MM-DD`,
 `YYYY_MM_DD`, `today`, or a title in the graph's journal format; absent means today. Errors
@@ -265,17 +267,25 @@ or is killed while its write stands in line does not cancel it: the write can la
 - **Blocks** are named by a **handle**: `PAGE/POS~FP` as a read prints it (see "The text outline"), or a block's
   `id::` UUID (graph-wide). The position is used when its fingerprint still matches; otherwise the one block on the
   page with that fingerprint; otherwise `stale`. A bare `PAGE/POS` (no fingerprint) is accepted only with `--rev`.
+- **A page name several files claim** (CLI-DUPNAME, D-20261103-CMA): every write that names its page, by a
+  handle's `PAGE/`, by `--page`, by `--journal` (a day with a Markdown and an Org file, say), or by an `id::`
+  UUID on such a page, refuses `ambiguous` and writes nothing. The message and `detail.candidates` name every
+  file (the owning file first); `detail.admitted` is `false`. `page rename` and `page delete` refuse the same
+  way. In-scope threat: sync delivery or an external editor leaving two files that claim one name (a conflict
+  copy, a case twin, a `title::` collision); a write to the owning file would edit one twin while the agent never
+  learns of the other. Recovery: resolve the duplicate in the app (merge, or rename or remove one file), then
+  retry. Reads keep answering the owning file.
 - **`--rev REV`** (required for `block.edit` supplying a parsed LOGBOOK drawer; otherwise optional):
   write only if the page is still at that rev; else `stale` with the
   current `detail.rev`.
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
   (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
-  page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
+  page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
 - **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
   built-ins including SRS keys, graph-configured hidden keys, and visible ones such as `status::`, `src::`,
-  `author::`) is kept byte-exact; children are kept too. Removing a property takes `tine prop remove`. This is an
+  `tine.author::`) is kept byte-exact; children are kept too. Removing a property takes `tine prop remove`. This is an
   intentional difference from typing in the app, whose editor buffer owns visible properties, and from OG, which
   has no command line (#840, D-20261101-CLIE). A block whose parse failed is refused (`refused:kernel`): the
   in-scope threat is malformed input, where properties cannot be told from text.
@@ -288,9 +298,9 @@ or is killed while its write stands in line does not cancel it: the write can la
   omitted-id edits keep the identity; a block without an accepted id may receive one, even when its body
   contains a non-primary lookalike. A property-looking line inside a fence is text: it neither replaces
   metadata nor counts as naming a key.
-  `--author NAME` on the command line sets `author::`, replacing a retained or supplied one and adding one
+  `--author NAME` on the command line sets `tine.author::`, replacing a retained or supplied one and adding one
   to a block without it. An empty name is refused (`refused:kernel`, malformed input). `TINE_AUTHOR` alone names
-  the run's commits and leaves `author::` alone: set once for a session, it would overwrite people's attribution
+  the run's commits and leaves `tine.author::` alone: set once for a session, it would overwrite people's attribution
   on every edit.
   Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
   property ownership and creates no more property groups than canonical placement. Otherwise the join
@@ -307,7 +317,7 @@ or is killed while its write stands in line does not cancel it: the write can la
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
   nothing changes. **`--author NAME`** (or `TINE_AUTHOR`, default `agent`) names the agent on created blocks'
-  `author::` and on the run's commits; on `block.edit`, see above.
+  `tine.author::` and on the run's commits; on `block.edit`, see above.
 
 Kind `written`. Write replies carry no page text.
 
@@ -321,6 +331,7 @@ Kind `written`. Write replies carry no page text.
 | `blocks` | array of string | always | no | the handles (`PAGE/POS~FP`) of the blocks created or changed, in the new text, in outline order; at most 200 |
 | `more` | integer | always | yes | blocks created or changed beyond the 200 listed; the text output says how many |
 | `git` | object | optional | yes | present only for a write with `--run`: its commit, or why it has none |
+| `config` | object | optional | yes | present only when the write changed the page's name (its `title::`): the rename config step's answer, `{name, home_page, favorites, config_skipped}` as `follow_page_identity` returns it, or `{error}` when that step failed (the page write stands) |
 | `git.committed` | boolean | optional | yes | `true`: the write's bytes are committed. `false`: the file is saved but not committed (`git.error`, `git.message` say why: `refused:git` for a repository error, `refused:git-busy` when the branch kept moving) |
 | `git.commit` | string | optional | no | the agent commit's id |
 | `git.snapshot` | string | nullable | yes | the commit of the user's uncommitted edits to the file, made first under the user's git identity; `null` when `HEAD` already had the bytes the write started from |
@@ -429,7 +440,7 @@ searched.
 ### `page.create`
 
 `tine page create NAME` creates an empty page through the owner's guarded save,
-with EditKind `create-page`. It creates no blocks, so there is no `author::` to
+with EditKind `create-page`. It creates no blocks, so there is no `tine.author::` to
 add. An existing page, alias or file refuses as `refused:page-exists`. Its payload
 and text are the `block.edit` / `written` fields above (`blocks: []`, `more: 0`).
 An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits.
@@ -437,7 +448,7 @@ An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits
 ### `page.rename`
 
 `tine page rename OLD NEW` calls the app's rename operation, including references,
-namespaces, titles and the home page. A sole alias resolves to its canonical page.
+namespaces, titles, the home page and favorites. A sole alias resolves to its canonical page.
 A reference-only source or fileless namespace parent uses the same operation:
 references and physical descendants move without creating a placeholder page.
 A destination owned by a file or alias refuses as `refused:page-exists`; merging
@@ -448,11 +459,14 @@ single-file revision guard or run commits: `--rev` or `--run` (including `TINE_R
 refuses as `refused:rename-options` before any change. An error from the app's I/O
 adapter whose admission cannot be proved returns `uncertain` with
 `detail.admitted: null`; inspect disk and any rollback diagnostic before retrying.
-If page/referrer publication succeeded but the separate home-page config update
-failed, it returns `uncertain` with `detail.admitted: true` and `detail.report`
-containing the known applied page changes (`home_page: null`). The window receives
-that report too. This error is a partial outcome, never a no-change refusal;
-inspect the home-page configuration before retrying.
+The home page and `:favorites` (with `:tine/favorites-page`) follow in one
+config.edn step, its own guarded transaction after the page operation. If page/referrer
+publication succeeded but that config.edn write failed, it returns `uncertain` with
+`detail.admitted: true` and `detail.report` containing the known applied page changes
+(`home_page: null`, no `favorites`). The window receives that report too. This error
+is a partial outcome, never a no-change refusal; inspect config.edn's home page and
+favorites before retrying. A config.edn the step cannot read or edit safely is left
+unchanged without failing the rename: `report.config_skipped` says why.
 
 | field | type | presence | disclosure | meaning |
 |---|---|---|---|---|
@@ -465,6 +479,8 @@ inspect the home-page configuration before retrying.
 | `report.touched` | array | always | no | old paths and whether they moved |
 | `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
 | `report.home_page` | string | nullable | no | new home-page title when changed |
+| `report.favorites` | object | optional | no | config.edn's favorites after the rename, present only when they changed: `names` (`:favorites`, in order) and `page` (`:tine/favorites-page`, nullable). A merged-away page's favorite moves to the survivor (deduplicated); an alias spelling stays |
+| `report.config_skipped` | string | optional | yes | why the config step left config.edn unchanged (unreadable, or a value it cannot edit safely); home and favorites may still name the old page; text prints the reason |
 
 ### `page.delete`
 
@@ -513,8 +529,8 @@ One block per line, indented two spaces per level:
 
 ```
 # a
-id pages/a.md rev 9e8b1eedbf3d8ef0
-1~eea65l [author:: claude] one
+id pages/a.md rev d24f22bfce0d5568
+1~xy4j47 [tine.author:: claude] one
          id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
   1.1~3as2k7 under one
 2~hl6h22 TODO two
@@ -523,8 +539,8 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
 - The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
   PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
   the shared built-in editor projection; OG hidden built-ins, including SRS keys,
-  are left out, as are `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` only when the block's own
-  primary properties include `quote`). Ordinary author/context properties contribute to the fingerprint.
+  are left out, as are `tine.quote::`, `tine.quote-prefix::`, `tine.quote-suffix::` and `tine.author::` only when the block's own
+  primary properties include `tine.quote`). Ordinary author/context properties contribute to the fingerprint.
   Graph-configured hiding does not alter fingerprints; handles remain independent of that display preference.
   A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
@@ -537,13 +553,15 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
   file. When the page cannot be read at that moment the preview comes from the graph's index
   and prints positions relative to the block, with no handles. Result groups (`refs`, `query`) print positions only.
 - **Attribution sits beside the address** (spec A3: "each block line starts with its address and
-  its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property
+  its `tine.author::` when there is one"): `ADDRESS [tine.author:: NAME] first line`. The `tine.author::` property
   line is not repeated among the block's other lines. The JSON `raw` is unchanged and still holds
   it. Other properties are shown as lines under the block, as written.
+  The key is `tine.author` (D-20261102-PNS, Discussion #825; earlier versions used a bare `author::`, with no
+  reader kept for it). A user's own `author::` (book notes) is an ordinary property line.
 - **Whether a block has an author is the projection's answer.** The text reads `properties`
   (`BlockDto.properties`, the DocBlock projection in `tine-core`, which treats a `key::` line inside a
-  code fence as content) and does not scan `raw`. A literal `author:: NAME` line in a code fence is
-  content: it is neither attribution nor hidden. A block with no `properties` entry for `author` has
+  code fence as content) and does not scan `raw`. A literal `tine.author:: NAME` line in a code fence is
+  content: it is neither attribution nor hidden. A block with no `properties` entry for `tine.author` has
   no attribution.
 - Continuation and property lines are indented under the address.
 - A block preview cut by its bound ends with a line naming how many nodes were omitted
@@ -587,7 +605,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | code | exit | meaning |
 |---|---|---|
 | `not-found` | 3 | the page, block or journal day does not exist |
-| `ambiguous` | 3 | a name matched several pages, or a write's `id::` UUID is on several pages (nothing is written) |
+| `ambiguous` | 3 | a name matched several pages (a read: an alias of several pages; a write: also a name several files claim), or a write's `id::` UUID is on several pages (nothing is written) |
 | `busy` | 4 | the owner is yielding or stopping; not admitted. Reads retry for 30 s first |
 | `unknown-verb` | 2 | the owner does not know the verb (an older Tine) |
 | `bad-args` | 2 | arguments invalid for the verb; also a query that does not parse |

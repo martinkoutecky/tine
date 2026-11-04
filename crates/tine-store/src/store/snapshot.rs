@@ -220,7 +220,7 @@ impl Snapshot {
             .map(|old| Arc::clone(&old.name_by_path))
             .unwrap_or_default();
         let (list, claimants) = if config_changed || rebuild || old.is_none() {
-            let (list, claimants) = graph.snapshot_name_index();
+            let (list, claimants) = graph.snapshot_name_roots();
             name_by_path = Arc::new(
                 claimants
                     .values()
@@ -228,15 +228,7 @@ impl Snapshot {
                     .map(|entry| (entry.path.clone(), (entry.kind, entry.name.clone())))
                     .collect(),
             );
-            (
-                Arc::new(EntryList::from(list.as_slice())),
-                Arc::new(
-                    claimants
-                        .into_iter()
-                        .map(|((kind, name), rows)| ((kind == PageKind::Journal, name), rows))
-                        .collect(),
-                ),
-            )
+            (list, claimants)
         } else if !changed_names.is_empty() {
             let previous = old.expect("name index from old generation");
             let mut list = Arc::clone(&previous.list);
@@ -393,8 +385,16 @@ impl Snapshot {
             unreadable: graph.reported_unreadable_pages(),
             answers: Default::default(),
             folds_only,
+            unparsed: std::sync::OnceLock::new(),
         };
-        let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        // A config change or rescan renames the whole table: rebuilt on demand.
+        snapshot.carry_unparsed(
+            graph,
+            old.filter(|_| !config_changed && !rebuild),
+            &changed_paths,
+        );
+        let (inventory, delta, counts) =
+            snapshot.answer_changes(old, &changed_paths, name_set_changed);
         let summary = snapshot.change_summary(
             old,
             &changed_paths,
@@ -404,8 +404,31 @@ impl Snapshot {
             &targets.unlinked,
             &targets.queries,
         );
-        snapshot.answers = (inventory, counts, summary);
+        snapshot.answers = (inventory, counts, summary, delta);
         snapshot
+    }
+}
+
+impl Store {
+    /// Another chance for pages a panic retired (`derived_contained.rs`): a
+    /// focus or a rescan comes here, the watcher's own ticks do not. Nothing
+    /// to do when no retired page has a retry left.
+    pub(super) fn retry_contained_rows(&self) {
+        if !self.graph.contained_retry_due() {
+            return;
+        }
+        let _writer = self.writer.lock().unwrap();
+        let (mut files, mut pages) = (Vec::new(), Vec::new());
+        for (path, entry, rev) in self.graph.retry_contained_rows() {
+            let id = FileId::from(self.graph.rel_path(&path));
+            if let Some(entry) = entry {
+                pages.push((id.clone(), entry.kind, entry.name));
+            }
+            files.push((id, ChangeKind::Modified, Some(rev)));
+        }
+        if !files.is_empty() {
+            self.changes.publish(Origin::External, files, false, pages);
+        }
     }
 }
 
@@ -423,18 +446,27 @@ impl ChangeFeed {
         published: &HashMap<FileId, PageEntry>,
     ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
-        let journals_dir = self.graph.current_config().journals_dir.clone();
-        if old.is_none()
-            || config_changed
-            || rebuild
-            || files.iter().any(|(id, kind, _)| {
-                id.as_str().starts_with(&format!("{journals_dir}/"))
-                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
-            })
-        {
-            *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
-        }
+        // Only the settings the page build and indexes read
+        // (`checkpoint::config_key`) rebuild names and indexes; the others
+        // install with the config state and publish no index change (the
+        // config contract). Compared with the previous publication's config,
+        // so a reload since then that moved the key is never missed.
+        let config_changed = config_changed
+            && old.as_ref().is_none_or(|old| {
+                super::checkpoint::config_key(&old.config.config)
+                    != super::checkpoint::config_key(&self.config.read().unwrap().config)
+            });
+        // Every journal file the capture may name, whatever its raw kind: the
+        // capture adds a file no publication named yet (a retired or touched
+        // row, a Modified file with no previous name), so the day index
+        // patches what the page list and claimants patch.
+        let journals_dir = format!("{}/", self.graph.current_config().journals_dir);
+        let journal_files = |pending: &PendingFiles| -> Vec<PathBuf> {
+            (pending.files().iter())
+                .filter(|(id, _, _)| id.as_str().starts_with(&journals_dir))
+                .map(|(id, _, _)| self.graph.root.join(id.as_str()))
+                .collect()
+        };
         let rev = GraphRev(self.rev().0 + 1);
         let targets = self.registered_targets();
         let capture = |pending: &PendingFiles, config_changed: bool| {
@@ -455,26 +487,29 @@ impl ChangeFeed {
         };
         let mut pending = PendingFiles::of(&files, &self.graph);
         let captured = capture(&pending, config_changed).or_else(|| {
-            // Only a patch names its suspects: a capture that builds every
-            // index has no page to blame (`contain_index_publication`).
-            if old.is_none() || rebuild {
-                return None;
-            }
             // Parses are isolated per page before this, so this is a Rust
             // index stage. Patch each page alone to learn which one it is. A
             // file that is no page would build every index, so it is no suspect.
-            let suspects: Vec<_> = (pending.files().iter())
-                .map(|file| (file, self.graph.root.join(file.0.as_str())))
-                .filter(|(_, path)| {
-                    crate::model::graph_text_eligible(
-                        &self.graph.root,
-                        path,
-                        &self.graph.current_config(),
-                    )
-                })
-                .filter(|(file, _)| capture(&pending.only(file), false).is_none())
-                .map(|(_, path)| path)
-                .collect();
+            let mut suspects = Vec::new();
+            if old.is_some() && !rebuild {
+                suspects = (pending.files().iter())
+                    .map(|file| (file, self.graph.root.join(file.0.as_str())))
+                    .filter(|(_, path)| {
+                        crate::model::graph_text_eligible(
+                            &self.graph.root,
+                            path,
+                            &self.graph.current_config(),
+                        )
+                    })
+                    .filter(|(file, _)| capture(&pending.only(file), false).is_none())
+                    .map(|(_, path)| path)
+                    .collect();
+            }
+            // A capture that builds every index names no page: find its rows.
+            let probed = suspects.is_empty() && (old.is_none() || rebuild || config_changed);
+            if probed {
+                suspects = self.graph.rows_that_panic_an_index_build();
+            }
             if suspects.is_empty() {
                 return None;
             }
@@ -482,9 +517,23 @@ impl ChangeFeed {
                 self.graph.retire_index_stage_failure(path);
             }
             pending.take_rows(&self.graph);
-            capture(&pending, config_changed)
+            let without = capture(&pending, config_changed);
+            // Rows that panic built alone but do not explain this build's panic
+            // are not shown to be bad: the graph fails with no page blamed.
+            if without.is_none() && probed {
+                suspects.iter().for_each(|path| self.graph.unblame(path));
+            }
+            without
         });
         let Some(mut snapshot) = captured else {
+            let journal_set_changed = files.iter().any(|(id, kind, _)| {
+                id.as_str().starts_with(&journals_dir)
+                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            });
+            if old.is_none() || config_changed || rebuild || journal_set_changed {
+                *self.journal_ids.lock().unwrap() =
+                    journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+            }
             // Under the writer, so a panic that reached it would poison every
             // later save: the graph fails instead, `refresh()` retries, and
             // the retry patches these files.
@@ -494,6 +543,22 @@ impl ChangeFeed {
             self.load.fail_publication(&self.graph);
             return self.rev();
         };
+        // The day index and the name memos follow the names this capture
+        // patched: no listing walk (GH #623 R2).
+        match old.as_deref() {
+            Some(old) if !config_changed && !rebuild => {
+                self.patch_journal_ids(old, &snapshot, &journal_files(&pending))
+            }
+            _ => {
+                *self.journal_ids.lock().unwrap() =
+                    journal_ids_from_entries(&self.graph, snapshot.list.iter())
+            }
+        }
+        self.graph.adopt_name_index(
+            old.as_ref().map(|old| old.cache_generation),
+            snapshot.cache_generation,
+            (&snapshot.list, &snapshot.claimants),
+        );
         // A fold leaves the launch checkpoint's derived state true; its file
         // stamp is stale, so the next launch diff rereads that one file
         // (ADR 0070) instead of the whole checkpoint being rewritten for it.
@@ -528,6 +593,36 @@ impl ChangeFeed {
             self.ready.notify_all();
         }
         rev
+    }
+
+    /// Patch the day index for the journal files a capture took: each named
+    /// one's day takes the journal `snapshot` lists for it (one per day, the
+    /// claimant order's first), or none. A file whose name did not change
+    /// rewrites its day to the same id.
+    fn patch_journal_ids(&self, old: &Snapshot, snapshot: &Snapshot, paths: &[PathBuf]) {
+        if paths.is_empty() {
+            return;
+        }
+        let mut ids = self.journal_ids.lock().unwrap();
+        for path in paths {
+            let Some(named) = (snapshot.name_by_path.get(path))
+                .or_else(|| old.name_by_path.get(path))
+                .filter(|(kind, _)| *kind == PageKind::Journal)
+            else {
+                continue;
+            };
+            let Some(day) = self.graph.tombstone(path, named).date_key else {
+                continue;
+            };
+            match snapshot
+                .list
+                .get_day(day)
+                .and_then(|entry| entry.rel_path.clone())
+            {
+                Some(id) => ids.insert(Day(day), id),
+                None => ids.remove(&Day(day)),
+            };
+        }
     }
 }
 

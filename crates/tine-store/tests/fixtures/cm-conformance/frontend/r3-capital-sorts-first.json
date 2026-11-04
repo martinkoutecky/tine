@@ -1,0 +1,268 @@
+{
+  "backlinks": {
+    "Notes": [],
+    "Zed": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[Shared]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:alpha",
+            "raw": "alias:: Shared",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "alpha"
+      }
+    ],
+    "alpha": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[Shared]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:zed",
+            "raw": "alias:: Shared",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Zed"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/alpha.md",
+        2
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/Zed.md",
+        2
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "alpha",
+      "name": "alpha",
+      "target": {
+        "id": "pages/alpha.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "shared",
+      "link": {
+        "kind": "page",
+        "name": "Zed"
+      },
+      "name": "Shared",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Zed.md",
+          "pages/alpha.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "zed",
+      "name": "Zed",
+      "target": {
+        "id": "pages/Zed.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Notes": "notes",
+    "Shared": "shared",
+    "Zed": "zed",
+    "alpha": "alpha"
+  },
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Shared": {
+      "journal": [
+        "journal",
+        "shared"
+      ],
+      "page": [
+        "page",
+        "zed"
+      ]
+    },
+    "Zed": {
+      "journal": [
+        "journal",
+        "zed"
+      ],
+      "page": [
+        "page",
+        "zed"
+      ]
+    },
+    "alpha": {
+      "journal": [
+        "journal",
+        "alpha"
+      ],
+      "page": [
+        "page",
+        "alpha"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Shared": {
+      "journal": null,
+      "page": "pages/Zed.md"
+    },
+    "Zed": {
+      "journal": null,
+      "page": "pages/Zed.md"
+    },
+    "alpha": {
+      "journal": null,
+      "page": "pages/alpha.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "alpha",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "alpha",
+      "owner": "pages/alpha.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    },
+    {
+      "key": "zed",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "Zed",
+      "owner": "pages/Zed.md"
+    }
+  ],
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Shared": {
+      "backend": [
+        "page",
+        "zed"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "zed"
+      ]
+    },
+    "Zed": {
+      "backend": [
+        "page",
+        "zed"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "zed"
+      ]
+    },
+    "alpha": {
+      "backend": [
+        "page",
+        "alpha"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "alpha"
+      ]
+    }
+  }
+}

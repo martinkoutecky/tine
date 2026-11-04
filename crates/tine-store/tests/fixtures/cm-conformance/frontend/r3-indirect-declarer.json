@@ -1,0 +1,267 @@
+{
+  "backlinks": {
+    "A": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:b",
+            "raw": "alias:: X",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "B"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[X]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "B": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:a",
+            "raw": "alias:: B",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "A"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[X]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        2
+      ],
+      [
+        "pages/B.md",
+        2
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/B.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x",
+      "link": {
+        "kind": "page",
+        "name": "B"
+      },
+      "name": "X",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/B.md"
+        ]
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "B": "b",
+    "Notes": "notes",
+    "X": "x"
+  },
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "X": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "B": {
+      "journal": null,
+      "page": "pages/B.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "X": {
+      "journal": null,
+      "page": "pages/B.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "A",
+      "owner": "pages/A.md"
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "B",
+      "owner": "pages/B.md"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md"
+    }
+  ],
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "B": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "X": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    }
+  }
+}

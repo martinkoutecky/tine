@@ -4,6 +4,13 @@
 //! name, starting and ending on grapheme boundaries (I-4), then filtered by the
 //! OG edge rules (`og_prefix_allows`, adjacent ASCII alphanumerics).
 //!
+//! The fold here is a different question from page identity (census Q1,
+//! I-12): it compares a span of source text with a name, so it cannot trim or
+//! strip boundary slashes the way `page_identity::page_key` does (a span
+//! ` Foo` or `/Foo` is not an occurrence of `Foo` in the text). The needle's
+//! name has already been chosen by page identity; only the text comparison is
+//! case- and NFC-folded here.
+//!
 //! GH #623 made this the hot loop of every unlinked-references query (Ellis's
 //! 440k-block graph spent 0.5-3.7 s here), so the scan is built to touch each
 //! source byte about once and to allocate nothing per block:

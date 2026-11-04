@@ -83,6 +83,9 @@ mod cold_search_cost;
 #[path = "config_live_reload.rs"]
 mod config_live_reload;
 
+#[path = "og_perf_publish.rs"]
+mod og_perf_publish;
+
 #[path = "conformance_f3.rs"]
 mod conformance_f3;
 
@@ -211,6 +214,9 @@ mod og_q617_page_property_blocks;
 
 #[path = "og_q617b_query_semantics.rs"]
 mod og_q617b_query_semantics;
+
+#[path = "cm_query_leaves.rs"]
+mod cm_query_leaves;
 
 #[path = "og_qd8_query_decisions.rs"]
 mod og_qd8_query_decisions;

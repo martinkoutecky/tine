@@ -628,7 +628,7 @@ fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
 fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
     for refresh_fails in [false, true] {
         let mut h = host();
-        h.fs.external("b.md", text("[[A]] unrelated"), true);
+        h.fs.external("b.md", text("- [[A]] unrelated"), true);
         open(&mut h, "b.md");
         assert_eq!(
             h.rename(
@@ -642,10 +642,10 @@ fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
             Disposition::Pending
         );
         drain(&mut h);
-        assert_eq!(h.pages["b.md"].buf, text("[[C]] unrelated"));
+        assert_eq!(h.pages["b.md"].buf, text("- [[C]] unrelated"));
         let files = h.fs.draft_files(true);
         assert!(files.len() == 1 && files[0].0.starts_with("op-"));
-        edit(&mut h, "b.md", "[[C]] edited");
+        edit(&mut h, "b.md", "- [[C]] edited");
         assert_eq!(h.begin_draft("b.md"), Disposition::Pending);
         if refresh_fails {
             h.fs.inject(Phase::DraftTemp, [Fault::Before]);
@@ -653,7 +653,7 @@ fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
             let scan = drafts::scan(h.fs.draft_files(true));
             assert_eq!(scan.files.len(), 1, "the vehicle stays whole");
             assert!(scan.files.keys().all(|name| name.starts_with("op-")));
-            assert_eq!(scan.logical["b.md"].bytes, text("[[C]] unrelated"));
+            assert_eq!(scan.logical["b.md"].bytes, text("- [[C]] unrelated"));
             continue;
         }
         // The refresh is durable and applied; the first copy fails once.
@@ -666,7 +666,7 @@ fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
         assert_eq!(scan.logical.len(), 3);
         assert_eq!(scan.files.len(), 3);
         assert!(scan.files.keys().all(|name| name.starts_with("p-")));
-        assert_eq!(scan.logical["b.md"].bytes, text("[[C]] edited"));
+        assert_eq!(scan.logical["b.md"].bytes, text("- [[C]] edited"));
         saved(&mut h, "c.md");
     }
 }
@@ -675,7 +675,7 @@ fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
 fn unclean_referrer_refuses_rename_without_io_or_buffer_side_effects() {
     let mut h = host();
     open(&mut h, "b.md");
-    edit(&mut h, "b.md", "[[A]] mine");
+    edit(&mut h, "b.md", "- [[A]] mine");
     let before = h.pages.clone();
     let version = h.version;
     assert_eq!(

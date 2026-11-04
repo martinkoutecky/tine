@@ -1,4 +1,4 @@
-use crate::Store;
+use crate::{Store, Why};
 use std::fs;
 /// The retained case move on a case-folding volume: a failed step rolls back.
 #[test]
@@ -390,13 +390,14 @@ fn a_hardlinked_case_destination_refuses_the_host_move_and_keeps_both_names() {
     let rev = store.read(&src, None).unwrap().1;
     let mut tx = store.page_plan(Some(crate::EditKind::RenamePage));
     tx.move_file(&src, rev, &dst, None);
-    let refused = match tx.plan() {
-        Ok(op) => crate::test_host_writer::HostWriter::start(&store)
-            .apply(op)
-            .is_err(),
-        Err(_) => true,
-    };
-    assert!(refused, "the occupied destination stays occupied");
+    // GH #609: a listed destination is a distinct entry even when it is a
+    // hard link to the source, so the plan refuses it as occupied.
+    let planned = tx.plan();
+    assert!(
+        matches!(&planned, Err(Why::Conflict { file, disk: Some(_) }) if *file == dst),
+        "the occupied destination stays occupied: {:?}",
+        planned.map(|_| ())
+    );
     assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 2);
     for name in ["pages/old.md", "pages/Old.md"] {
         assert_eq!(fs::read(dir.path().join(name)).unwrap(), b"- original\n");

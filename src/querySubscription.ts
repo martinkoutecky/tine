@@ -21,6 +21,42 @@ let lastInput = -Infinity;
 /** The document dirty funnel calls this on each accepted edit, before the
  * host debounce. Publication arrival is deliberately not the typing clock. */
 export function noteQueryInput(): void { lastInput = Date.now(); setInputRevision(n => n + 1); }
+/** HK3 (D-20261024): milliseconds until the graph counts as quiet, i.e.
+ * QUERY_QUIET_MS after the latest accepted input; 0 once it is. The one idle
+ * rule for graph-wide reruns: mounted queries and All pages counts. */
+function quietDelay(): number { return Math.max(0, QUERY_QUIET_MS - (Date.now() - lastInput)); }
+
+/** Schedule a graph-wide read on the HK3 idle rule ([`quietDelay`] plus
+ * settled results), the gate mounted queries use. The returned `request`
+ * marks a read due; `run` is called once per burst of requests, once the
+ * graph is quiet, rechecked when the timer fires. The first request runs at
+ * once: a newly shown answer keeps its initial-read timing, as a newly
+ * mounted query does. Create under a reactive owner (the timer is disposed
+ * with it). */
+export function createQuietRun(run: () => void): () => void {
+  const [requested, setRequested] = createSignal(0);
+  const [retry, setRetry] = createSignal(0);
+  let served = 0;
+  let first = true;
+  createEffect(() => {
+    const want = requested();
+    retry();
+    inputRevision();
+    const settled = resultsSettled();
+    if (want === served) return;
+    const fire = () => { served = want; untrack(run); };
+    if (first) { first = false; fire(); return; }
+    // A held gate is not a reactive source: look again after one quiet span.
+    const delay = settled ? quietDelay() : QUERY_QUIET_MS;
+    if (delay === 0) { fire(); return; }
+    const timer = setTimeout(() => {
+      if (resultsSettled() && quietDelay() === 0) fire();
+      else setRetry(n => n + 1);
+    }, delay);
+    onCleanup(() => clearTimeout(timer));
+  });
+  return () => setRequested(n => n + 1);
+}
 // One app-lifetime observer per registered document, including composition
 // input that has not reached the document dirty funnel yet. Workspace-window
 // disposal removes its listeners; programmatic edits still use that funnel.
@@ -86,12 +122,12 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
     const settled = resultsSettled();
     if (current === untrack(quietRevision) || !settled) return;
     if (!quiet) { setQuietRevision(current); return; }
-    const delay = Math.max(0, QUERY_QUIET_MS - (Date.now() - lastInput));
+    const delay = quietDelay();
     if (delay === 0) { setQuietRevision(current); return; }
     const timer = setTimeout(() => {
       // Both are rechecked at execution: no stale-publication run can slip
       // between a timer and a newly accepted edit or publication wait.
-      if (resultsSettled() && Date.now() - lastInput >= QUERY_QUIET_MS) setQuietRevision(current);
+      if (resultsSettled() && quietDelay() === 0) setQuietRevision(current);
       else setRetryRevision(n => n + 1);
     }, delay);
     onCleanup(() => clearTimeout(timer));
@@ -101,7 +137,7 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
     const started = subscription();
     const released = untrack(revision);
     const gatesOpen = () => resultsSettled() && (!started.readStarted
-      || !untrack(waitsForQuiet) || Date.now() - lastInput >= QUERY_QUIET_MS);
+      || !untrack(waitsForQuiet) || quietDelay() === 0);
     const rearm = () => { setRetryRevision(n => n + 1); return false; };
     // Resource inputs/epochs can change independently of the scheduled key.
     // Do not rebuild graph-wide registration inputs before its release either.

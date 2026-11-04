@@ -1,0 +1,136 @@
+{
+  "backlinks": {
+    "a": [],
+    "b": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "a71d42a6-03c3-8f25-bb54-4f50b975653f",
+            "raw": "see [[b]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "a"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/a.md",
+        0
+      ]
+    ],
+    [
+      [
+        "b",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "a",
+      "target": {
+        "id": "pages/a.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "b",
+      "target": {
+        "id": "pages/b.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "a": "a",
+    "b": "b"
+  },
+  "open": {
+    "a": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "b": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    }
+  },
+  "owner": {
+    "a": {
+      "journal": null,
+      "page": "pages/a.md"
+    },
+    "b": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "a",
+      "owner": "pages/a.md"
+    },
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "b",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "a": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "b": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    }
+  }
+}

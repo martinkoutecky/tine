@@ -100,7 +100,7 @@ loadSingle({ name: "Wrap", title: "Wrap", kind: "page", pre_block: null, format:
     const id = `wrap-${depth}`;
     let block: WrapNode = { id, raw: WRAP_TEXT, collapsed: false, children: [
       { id: `${id}-child`, raw: "Next child", collapsed: false, children: [] },
-      { id: `${id}-comment`, raw: "A margin comment\nquote:: *", properties: [["quote", "*"]], collapsed: false, children: [] },
+      { id: `${id}-comment`, raw: "A margin comment\ntine.quote:: *", properties: [["tine.quote", "*"]], collapsed: false, children: [] },
     ] };
     for (let i = 0; i < depth; i++) block = { id: `${id}-parent-${i}`, raw: "Parent", collapsed: false, children: [block] };
     return block;

@@ -1,0 +1,18 @@
+{
+  "_comment": "Census Q2 item 5 (transaction/validation.rs rewrite_move): renames of pages named by a title that differs from the stem.",
+  "files": {
+    "pages/stem-name.md": "title:: Shown Title\n\n- body\n",
+    "pages/custom.md": "title:: Custom Name\n\n- body\n",
+    "pages/linker.md": "- [[Shown Title]] [[Custom Name]]\n"
+  },
+  "renames": [
+    {
+      "old": "Shown Title",
+      "new": "Renamed"
+    },
+    {
+      "old": "Custom Name",
+      "new": "custom"
+    }
+  ]
+}

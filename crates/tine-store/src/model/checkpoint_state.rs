@@ -274,7 +274,7 @@ impl Graph {
             &state.observed_mtimes,
             state.failures,
             (state.disk_revs, state.vcs_anchored),
-            (state.cache_generation, list.materialize()),
+            (state.cache_generation, Arc::clone(&list)),
         )?;
         // The alias list names its owners by relative path; the owner map is
         // the same rows keyed the other way and is not read back. A row naming
@@ -301,6 +301,8 @@ impl Graph {
             block_index: cell(Some(block_index)),
             alias_index: cell(state.alias_index),
             referenced_name_index: cell(derived.referenced_name_index),
+            asset_refs: std::sync::OnceLock::new(),
+            referenced_name_table: std::sync::OnceLock::new(),
             real_page_names: state.real_page_names,
             alias_relation: cell(alias_relation),
             link_graph: std::sync::OnceLock::new(),

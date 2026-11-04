@@ -31,13 +31,13 @@ describe("the exports page (contract: export-definitions.md)", () => {
     engine([], () => absent);
     expect(await ensureExportsPage()).toBe("Exports");
     expect(created.calls[0][1]).toMatchObject({
-      name: "Exports", format: "md", pre_block: "tine/exports:: true\npublic:: false",
-      blocks: [{ raw: "{{query (or (property export) (property tine.share))}}" }],
+      name: "Exports", format: "md", pre_block: "tine.exports:: true\npublic:: false",
+      blocks: [{ raw: "{{query (or (property tine.export) (property tine.share))}}" }],
     });
     created.calls.length = 0;
     engine([], () => absent, "org");
     await ensureExportsPage();
-    expect(created.calls[0][1]).toMatchObject({ format: "org", pre_block: "#+tine/exports: true\n#+public: false" });
+    expect(created.calls[0][1]).toMatchObject({ format: "org", pre_block: "#+tine.exports: true\n#+public: false" });
   });
 
   it("is found by its marker, so a renamed page is still the exports page", async () => {
@@ -58,10 +58,11 @@ describe("the exports page (contract: export-definitions.md)", () => {
 
   it("lists every definition with the contract's destination properties", () => {
     const rust = readFileSync("crates/tine-core/src/export_definition.rs", "utf8");
-    expect(rust).toContain('DESTINATION_KEYS: [&str; 2] = ["export", "tine.share"]');
-    expect(EXPORTS_OVERVIEW).toBe("{{query (or (property export) (property tine.share))}}");
-    expect(exportsMarker("md")).toBe("tine/exports:: true\npublic:: false");
-    expect(exportsMarker("org")).toBe("#+tine/exports: true\n#+public: false");
+    expect(rust).toContain('DESTINATION_KEYS: [&str; 2] = [crate::tine_keys::EXPORT, "tine.share"]');
+    expect(readFileSync("crates/tine-outline/src/tine_keys.rs", "utf8")).toContain('pub const EXPORT: &str = "tine.export";');
+    expect(EXPORTS_OVERVIEW).toBe("{{query (or (property tine.export) (property tine.share))}}");
+    expect(exportsMarker("md")).toBe("tine.exports:: true\npublic:: false");
+    expect(exportsMarker("org")).toBe("#+tine.exports: true\n#+public: false");
   });
 });
 

@@ -1024,6 +1024,16 @@ note = "Conservative .publish match is in-memory change-feed publication, not fi
 mutations = ".publish=1"
 
 [[site]]
+file = "crates/tine-store/src/store/snapshot.rs"
+fn = "Store::retry_contained_rows"
+domain = "primitive"
+guard = ""
+test = ""
+oracle = false
+note = "Conservative .publish match is in-memory change-feed publication of rows a bounded retry reinstalled, not filesystem I/O; retained explicitly so future mutations in this owner require review."
+mutations = ".publish=1"
+
+[[site]]
 file = "crates/tine-store/src/transaction.rs"
 fn = "PagePlan::apply"
 domain = "graph"

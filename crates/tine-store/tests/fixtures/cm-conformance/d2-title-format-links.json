@@ -1,0 +1,15 @@
+{
+  "config": {
+    "journalTitleFormat": "dd.MM.yyyy"
+  },
+  "files": {
+    "journals/2026_10_22.md": "- day\n",
+    "pages/Notes.md": "- title form [[22.10.2026]]\n- default title [[Oct 22nd, 2026]]\n- iso form [[2026-10-22]]\n- file form [[2026_10_22]]\n- other day [[23.10.2026]]\n"
+  },
+  "queries": [
+    {"anchor": "block", "q": {"refs": "22.10.2026"}},
+    {"anchor": "block", "q": {"refs": "Oct 22nd, 2026"}},
+    {"anchor": "block", "q": {"page": {"name": "2026-10-22"}}},
+    {"anchor": "page", "q": {"name": "2026-10-22"}}
+  ]
+}

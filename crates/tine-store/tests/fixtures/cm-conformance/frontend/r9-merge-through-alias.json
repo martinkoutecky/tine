@@ -1,0 +1,297 @@
+{
+  "backlinks": {
+    "ML notes": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "d321f34f-523f-80c9-85a9-58d63586fd8d",
+            "raw": "see [[ML notes]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "25d84fc4-995d-8edd-a4f8-f1dfb3aa5637",
+            "raw": "see [[ML notes/x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "q"
+      }
+    ],
+    "ML notes/x": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "25d84fc4-995d-8edd-a4f8-f1dfb3aa5637",
+            "raw": "see [[ML notes/x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "q"
+      }
+    ],
+    "Machine Learning": [],
+    "q": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/ML notes%2Fx.md",
+        1
+      ],
+      [
+        "pages/q.md",
+        0
+      ],
+      [
+        "pages/Machine Learning.md",
+        0
+      ],
+      [
+        "pages/ML notes.md",
+        2
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "machine learning",
+      "name": "Machine Learning",
+      "target": {
+        "id": "pages/Machine Learning.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
+      "name": "ML",
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Machine Learning.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml notes",
+      "name": "ML notes",
+      "target": {
+        "id": "pages/ML notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml notes/x",
+      "name": "ML notes/x",
+      "target": {
+        "id": "pages/ML notes%2Fx.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "q",
+      "name": "q",
+      "target": {
+        "id": "pages/q.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "ML": "ml",
+    "ML notes": "ml notes",
+    "ML notes/x": "ml notes/x",
+    "Machine Learning": "machine learning",
+    "q": "q"
+  },
+  "open": {
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "ML notes": {
+      "journal": [
+        "journal",
+        "ml notes"
+      ],
+      "page": [
+        "page",
+        "ml notes"
+      ]
+    },
+    "ML notes/x": {
+      "journal": [
+        "journal",
+        "ml notes/x"
+      ],
+      "page": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    "Machine Learning": {
+      "journal": [
+        "journal",
+        "machine learning"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "q": {
+      "journal": [
+        "journal",
+        "q"
+      ],
+      "page": [
+        "page",
+        "q"
+      ]
+    }
+  },
+  "owner": {
+    "ML": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "ML notes": {
+      "journal": null,
+      "page": "pages/ML notes.md"
+    },
+    "ML notes/x": {
+      "journal": null,
+      "page": "pages/ML notes%2Fx.md"
+    },
+    "Machine Learning": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "q": {
+      "journal": null,
+      "page": "pages/q.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "machine learning",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Machine Learning",
+      "owner": "pages/Machine Learning.md"
+    },
+    {
+      "key": "ml notes",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "ML notes",
+      "owner": "pages/ML notes.md"
+    },
+    {
+      "key": "ml notes/x",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ML notes/x",
+      "owner": "pages/ML notes%2Fx.md"
+    },
+    {
+      "key": "q",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "q",
+      "owner": "pages/q.md"
+    }
+  ],
+  "spellings": {
+    "ML": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "ML notes": {
+      "backend": [
+        "page",
+        "ml notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml notes"
+      ]
+    },
+    "ML notes/x": {
+      "backend": [
+        "page",
+        "ml notes/x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    "Machine Learning": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "q": {
+      "backend": [
+        "page",
+        "q"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "q"
+      ]
+    }
+  }
+}

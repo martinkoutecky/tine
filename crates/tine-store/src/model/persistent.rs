@@ -241,13 +241,6 @@ impl<K: Ord, V> Map<K, V> {
         }
         None
     }
-    pub(crate) fn first_entry(&self) -> Option<&(K, V)> {
-        let mut node = self.root.as_deref()?;
-        while let Some(left) = node.left.as_deref() {
-            node = left;
-        }
-        Some(node.entry.as_ref())
-    }
     pub(crate) fn first(&self) -> Option<(&K, &V)> {
         let mut node = self.root.as_deref()?;
         while let Some(left) = node.left.as_deref() {
@@ -262,6 +255,24 @@ impl<K: Ord, V> Map<K, V> {
     }
     pub(crate) fn values(&self) -> impl Iterator<Item = &V> {
         self.iter().map(|(_, v)| v)
+    }
+    /// The entries whose key is at least `key`, in key order: O(log N) to
+    /// start, then O(1) amortized per entry.
+    pub(crate) fn iter_from<Q: Ord + ?Sized>(&self, key: &Q) -> Iter<'_, K, V>
+    where
+        K: Borrow<Q>,
+    {
+        let mut it = Iter { stack: Vec::new() };
+        let mut node = self.root.as_deref();
+        while let Some(n) = node {
+            if key.cmp(n.entry.0.borrow()) == Ordering::Greater {
+                node = n.right.as_deref();
+            } else {
+                it.stack.push(n);
+                node = n.left.as_deref();
+            }
+        }
+        it
     }
 }
 pub(crate) struct Iter<'a, K, V> {
@@ -345,7 +356,7 @@ impl<'de, K: serde::Deserialize<'de> + Ord, V: serde::Deserialize<'de>> serde::D
 }
 
 use super::{Document, PageEntry};
-type Page = (PageEntry, Arc<Document>);
+pub(crate) type Page = (PageEntry, Arc<Document>);
 /// Stable slots retain the original iteration order through deletion. New
 /// pages append; removed slots disappear without shifting any survivor/index.
 #[derive(Clone, Default)]
@@ -462,6 +473,10 @@ impl EntryList {
     pub(crate) fn get_path(&self, path: &std::path::Path) -> Option<&PageEntry> {
         self.paths.get(path).and_then(|slot| self.rows.get(slot))
     }
+    /// The journal listed for `day`: one per day, the claimant order's first.
+    pub(crate) fn get_day(&self, day: i64) -> Option<&PageEntry> {
+        self.days.get(&day).and_then(|slot| self.rows.get(slot))
+    }
     pub(crate) fn iter(&self) -> impl Iterator<Item = &PageEntry> {
         self.rows.values()
     }
@@ -476,6 +491,10 @@ impl EntryList {
             self.paths.remove(path);
             self.projected.take();
         }
+    }
+    /// One journal entry per day, ascending by day. O(J) to iterate.
+    pub(crate) fn journal_days(&self) -> impl Iterator<Item = &PageEntry> {
+        self.days.iter().filter_map(|(_, slot)| self.rows.get(slot))
     }
     pub(crate) fn remove_day(&mut self, day: i64) {
         if let Some(path) = self
@@ -615,6 +634,13 @@ mod tests {
             assert_eq!(
                 old.iter().collect::<Vec<_>>(),
                 expected.iter().collect::<Vec<_>>()
+            );
+        }
+        for from in [0, 1, 128, 256, 257, 300] {
+            assert_eq!(
+                tree.iter_from(&from).collect::<Vec<_>>(),
+                oracle.range(from..).collect::<Vec<_>>(),
+                "iter_from({from})"
             );
         }
         let bulk: Map<_, _> = [(1, 2), (1, 3), (0, 4)].into_iter().collect();

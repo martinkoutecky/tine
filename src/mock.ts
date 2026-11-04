@@ -1,7 +1,7 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
-import { bigPageBlocks, embedScrollBlocks } from "./mockScrollFixtures";
+import { bigPageBlocks, embedScrollBlocks, manyRefsPages } from "./mockScrollFixtures";
 import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
@@ -22,21 +22,19 @@ import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
 import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
-import { parseJournalWith } from "./journal";
+import { parseJournalDayIn } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { marginRegressionPages } from "./mockMarginPages";
+import { guideLevelRegressionPages } from "./mockGuidePages";
 import { mockAliases } from "./mockAliases";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
- * host's permissive/non-portable Date string parser. Keep the same explicit
- * patterns the fixture can emit so pagination remains deterministic in every
- * browser/runtime. */
+ * host's permissive/non-portable Date string parser. The mock graph's formats
+ * (file `dd-MM-yyyy`, title `EEEE, dd-MM-yyyy`) through the one Rust date
+ * answerer; its list is those two plus `MMM do, yyyy`, ISO and underscore. */
 function mockJournalDayKey(name: string): number | null {
-  for (const format of ["MMM do, yyyy", "EEEE, dd-MM-yyyy", "yyyy-MM-dd", "dd-MM-yyyy", "yyyy_MM_dd"]) {
-    const parsed = parseJournalWith(name, format);
-    if (parsed) return parsed.y * 10_000 + parsed.m * 100 + parsed.d;
-  }
-  return null;
+  const parsed = parseJournalDayIn(name, "dd-MM-yyyy", "EEEE, dd-MM-yyyy");
+  return parsed ? parsed.y * 10_000 + parsed.m * 100 + parsed.d : null;
 }
 
 function pageRefs(raw: string): string[] {
@@ -401,6 +399,9 @@ if (typeof location !== "undefined" && /[?&]embedscroll\b/.test(location.search)
   NAMED.push({ name: "Embed scroll source", kind: "page", title: "Embed scroll source", pre_block: null, blocks: source },
     { name: "Embed scroll", kind: "page", title: "Embed scroll", pre_block: null, blocks: page });
 }
+if (typeof location !== "undefined" && /[?&]manyrefs\b/.test(location.search)) {
+  for (const page of manyRefsPages(b)) NAMED.push({ ...page, kind: "page", title: page.name, pre_block: null });
+}
 // D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
 // pages and three names with no file of their own.
 if (typeof location !== "undefined" && /[?&]aliasgroups\b/.test(location.search)) {
@@ -480,7 +481,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
         b("Source root two"),
       ],
     },
-    ...marginRegressionPages(b).map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
+    ...[...marginRegressionPages(b), ...guideLevelRegressionPages(b)].map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
   );
 }
 
@@ -923,6 +924,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return `${dir.replace(/[\\/]$/, "")}/${name.trim()}`; // no real scaffolding in the browser mock
     },
     async getBacklinks(name: string): Promise<RefGroup[]> {
+      // `?refslatency=ms`: a slow answer, as on a big graph (GH #848).
+      const latency = typeof location === "undefined" ? 0 : Number(new URLSearchParams(location.search).get("refslatency")) || 0;
+      if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
     },
@@ -983,6 +987,15 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async renamePage(): Promise<import("./types").RenameDone> {
       return { outcome: "unchanged", touched: [] }; // no-op in mock
+    },
+    async renameWouldChange(old: string, _next: string, texts: import("./types").RenameProbeText[]): Promise<boolean[]> {
+      // The mock has no rename answer to ask: any text spelling the name may
+      // change (over-approximate, so a stuck page refuses rather than loses).
+      const name = old.normalize("NFC").toLowerCase();
+      return texts.map((text) => text.raw.normalize("NFC").toLowerCase().includes(name));
+    },
+    async followPageIdentity(): Promise<import("./types").IdentityFollow> {
+      return { name: null }; // no-op in mock
     },
     async pagePrintHtml(name: string, _opts, _sheets): Promise<string> {
       // Dev-preview stub: a small self-contained doc so the print harness/flow can
@@ -1118,7 +1131,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const base = Date.UTC(2026, 5, 15, 12, 0, 0) / 1000;
       return { rev: "0", modified: all.map((p, i) => [mockPagePath(p), base - i * 3600] as [string, number]) };
     },
-    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
+    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], []]; },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {

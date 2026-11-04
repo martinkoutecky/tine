@@ -1,0 +1,202 @@
+{
+  "backlinks": {
+    "Oct 26th, 2026": [],
+    "a": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "e91a4b4b-2414-86f2-9ce7-a5174b2b4a8f",
+            "raw": "[#A] urgent",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "todo": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1db45489-f00c-80a8-9d55-69b5311f8e24",
+            "raw": "TODO write",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
+    ],
+    [
+      [
+        "A",
+        1
+      ],
+      [
+        "TODO",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "todo",
+      "name": "TODO",
+      "target": {
+        "id": "pages/TODO.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "TODO": "todo"
+  },
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "TODO": {
+      "journal": [
+        "journal",
+        "todo"
+      ],
+      "page": [
+        "page",
+        "todo"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": null
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "TODO": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md"
+    },
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "a",
+      "owner": null
+    },
+    {
+      "key": "todo",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "todo",
+      "owner": null
+    }
+  ],
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "TODO": {
+      "backend": [
+        "page",
+        "todo"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "todo"
+      ]
+    }
+  }
+}

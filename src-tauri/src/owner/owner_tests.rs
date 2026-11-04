@@ -34,6 +34,9 @@ mod proof;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;
 
+#[path = "owner_tests/cm_favorites_tests.rs"]
+mod cm_favorites;
+
 #[path = "owner_tests/parallel_write_tests.rs"]
 mod parallel_writes;
 
@@ -1444,14 +1447,14 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         for block in [&added[0], &added[0].children[0], &added[1]] {
             assert_eq!(
                 tine_core::block_regions::parse(&block.raw, false)
-                    .property("author")
+                    .property("tine.author")
                     .map(|p| p.value.as_str()),
                 Some("Ada")
             );
         }
         let anchor = &doc.blocks[if placement == "before" { 3 } else { 1 }];
         let regions = tine_core::block_regions::parse(&anchor.raw, false);
-        assert!(regions.property("author").is_none());
+        assert!(regions.property("tine.author").is_none());
         assert_eq!(
             regions.id.is_some(),
             placement != "page",
@@ -1468,18 +1471,18 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         .unwrap();
         let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
         // The edit keeps the block's author and adds none (#840).
-        assert_eq!(bytes.matches("author::").count(), 3);
-        assert!(!bytes.contains("author:: agent"));
+        assert_eq!(bytes.matches("tine.author::").count(), 3);
+        assert!(!bytes.contains("tine.author:: agent"));
     }
 }
 
 #[test]
 fn block_edit_preserves_comment_metadata_and_ordinary_author() {
     for (content, expected) in [
-        ("ordinary\nauthor:: Ada", "edited\nauthor:: Ada"),
+        ("ordinary\ntine.author:: Ada", "edited\ntine.author:: Ada"),
         (
-            "comment\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
-            "edited\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
+            "comment\ntine.quote:: one\ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada",
+            "edited\ntine.quote:: one\ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada",
         ),
     ] {
         let graph = Graph::new();
@@ -1538,16 +1541,20 @@ fn gh840_block_edit_keeps_properties_not_named_in_the_text() {
     // The reporter's three shapes. Intentional difference from OG and from the
     // app's editor buffer: OG has no command line (D-20261101-CLIE).
     for (raw, text, expected) in [
-        ("plain block\nauthor:: claude", "x", "x\nauthor:: claude"),
         (
-            "with status\nstatus:: done\nauthor:: claude",
+            "plain block\ntine.author:: claude",
             "x",
-            "x\nstatus:: done\nauthor:: claude",
+            "x\ntine.author:: claude",
         ),
         (
-            "comment\nquote:: words\nauthor:: claude",
+            "with status\nstatus:: done\ntine.author:: claude",
             "x",
-            "x\nquote:: words\nauthor:: claude",
+            "x\nstatus:: done\ntine.author:: claude",
+        ),
+        (
+            "comment\ntine.quote:: words\ntine.author:: claude",
+            "x",
+            "x\ntine.quote:: words\ntine.author:: claude",
         ),
         // Bytes of a kept row stay exact, including trailing space.
         (
@@ -1557,14 +1564,14 @@ fn gh840_block_edit_keeps_properties_not_named_in_the_text() {
         ),
         // A named key replaces its row and leaves the others, in any spelling.
         (
-            "a\nstatus:: done\nauthor:: claude",
+            "a\nstatus:: done\ntine.author:: claude",
             "x\nstatus:: doing",
-            "x\nstatus:: doing\nauthor:: claude",
+            "x\nstatus:: doing\ntine.author:: claude",
         ),
         (
-            "a\nstatus:: done\nauthor:: claude",
+            "a\nstatus:: done\ntine.author:: claude",
             "x\nSTATUS:: doing",
-            "x\nSTATUS:: doing\nauthor:: claude",
+            "x\nSTATUS:: doing\ntine.author:: claude",
         ),
         // A new key joins the one group OG reads.
         (
@@ -1588,36 +1595,40 @@ fn gh840_block_edit_keeps_properties_not_named_in_the_text() {
     }
     let org = gh840_edit(
         true,
-        "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:\nbody",
+        "a\n:PROPERTIES:\n:status: done\n:tine.author: claude\n:END:\nbody",
         "x",
         json!({}),
     )
     .unwrap();
     assert_eq!(gh840_values(&org, true, "status"), ["done"], "{org}");
-    assert_eq!(gh840_values(&org, true, "author"), ["claude"], "{org}");
+    assert_eq!(gh840_values(&org, true, "tine.author"), ["claude"], "{org}");
     assert!(org.starts_with('x') && !org.contains("body"), "{org}");
     let named = gh840_edit(
         true,
-        "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:",
+        "a\n:PROPERTIES:\n:status: done\n:tine.author: claude\n:END:",
         "x\n:PROPERTIES:\n:STATUS: doing\n:END:",
         json!({}),
     )
     .unwrap();
     assert_eq!(gh840_values(&named, true, "status"), ["doing"], "{named}");
-    assert_eq!(gh840_values(&named, true, "author"), ["claude"], "{named}");
+    assert_eq!(
+        gh840_values(&named, true, "tine.author"),
+        ["claude"],
+        "{named}"
+    );
 }
 
 #[test]
 fn gh840_read_then_edit_keeps_one_copy_and_fences_stay_text() {
     for raw in [
-        format!("a\nid:: {UUID}\nstatus:: done\nauthor:: claude"),
-        "a\nstatus:: done\nbody\nauthor:: claude".to_string(),
+        format!("a\nid:: {UUID}\nstatus:: done\ntine.author:: claude"),
+        "a\nstatus:: done\nbody\ntine.author:: claude".to_string(),
     ] {
         // The raw text a read returns, sent back unchanged or changed only in
         // its title, gains no second copy of anything.
         for text in [raw.clone(), raw.replacen('a', "b", 1)] {
             let edited = gh840_edit(false, &raw, &text, json!({})).unwrap();
-            for key in ["status", "author"] {
+            for key in ["status", "tine.author"] {
                 assert_eq!(gh840_values(&edited, false, key).len(), 1, "{edited:?}");
             }
             assert_eq!(edited.matches("id::").count(), raw.matches("id::").count());
@@ -1656,18 +1667,18 @@ fn gh840_read_then_edit_keeps_one_copy_and_fences_stay_text() {
 fn gh840_explicit_author_replaces_and_empty_refuses() {
     let name = json!({"author_property": "codex"});
     for (raw, text, expected) in [
-        ("a", "x", "x\nauthor:: codex"),
-        ("a\nauthor:: claude", "x", "x\nauthor:: codex"),
-        ("a\nAuthor:: claude", "x", "x\nAuthor:: codex"),
+        ("a", "x", "x\ntine.author:: codex"),
+        ("a\ntine.author:: claude", "x", "x\ntine.author:: codex"),
+        ("a\nTine.Author:: claude", "x", "x\nTine.Author:: codex"),
         (
-            "a\nauthor:: claude",
-            "x\nauthor:: typed",
-            "x\nauthor:: codex",
+            "a\ntine.author:: claude",
+            "x\ntine.author:: typed",
+            "x\ntine.author:: codex",
         ),
         (
-            "a\nquote:: words\nauthor:: claude",
+            "a\ntine.quote:: words\ntine.author:: claude",
             "x",
-            "x\nquote:: words\nauthor:: codex",
+            "x\ntine.quote:: words\ntine.author:: codex",
         ),
     ] {
         assert_eq!(
@@ -1675,17 +1686,23 @@ fn gh840_explicit_author_replaces_and_empty_refuses() {
             expected
         );
     }
-    let org = gh840_edit(true, "a\n:PROPERTIES:\n:author: claude\n:END:", "x", name).unwrap();
-    assert_eq!(gh840_values(&org, true, "author"), ["codex"], "{org}");
+    let org = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:tine.author: claude\n:END:",
+        "x",
+        name,
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&org, true, "tine.author"), ["codex"], "{org}");
     // The `author` every write carries (TINE_AUTHOR) names commits, not the block.
-    let edited = gh840_edit(false, "a\nauthor:: Ada", "x", json!({"author": "env"})).unwrap();
-    assert_eq!(edited, "x\nauthor:: Ada");
+    let edited = gh840_edit(false, "a\ntine.author:: Ada", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(edited, "x\ntine.author:: Ada");
     let plain = gh840_edit(false, "a", "x", json!({"author": "env"})).unwrap();
     assert_eq!(plain, "x");
     for bad in ["", "  ", "two\nlines"] {
         let error = gh840_edit(
             false,
-            "a\nauthor:: Ada",
+            "a\ntine.author:: Ada",
             "x",
             json!({"author_property": bad}),
         )
@@ -1708,7 +1725,7 @@ fn add_creates_page_and_journal_through_create_new_and_bounds_handles() {
         assert_eq!(reply["page"], path);
         let text = std::fs::read_to_string(graph.root.join(path)).unwrap();
         assert!(
-            text.contains("- plain first block\n  author:: agent"),
+            text.contains("- plain first block\n  tine.author:: agent"),
             "{text}"
         );
         // Existing pages append rather than overwrite.
@@ -1813,7 +1830,7 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
         text.contains("** root") && text.contains("*** child"),
         "{text}"
     );
-    assert_eq!(text.matches(":author: Ada").count(), 2, "{text}");
+    assert_eq!(text.matches(":tine.author: Ada").count(), 2, "{text}");
     assert!(text.contains(":id:"), "{text}");
     let doc = graph
         .store
@@ -1821,7 +1838,7 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
         .unwrap()
         .doc;
     assert!(tine_core::block_regions::parse(&doc.blocks[0].raw, true)
-        .property("author")
+        .property("tine.author")
         .is_none());
 }
 
@@ -1857,8 +1874,8 @@ fn add_resolves_author_environment_and_explicit_override() {
     )
     .unwrap();
     let text = std::fs::read_to_string(graph.root.join("pages/env.md")).unwrap();
-    assert!(text.contains("author:: Environment Author"), "{text}");
-    assert!(text.contains("author:: Ada"), "{text}");
+    assert!(text.contains("tine.author:: Environment Author"), "{text}");
+    assert!(text.contains("tine.author:: Ada"), "{text}");
 }
 
 #[test]

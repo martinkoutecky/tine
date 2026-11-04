@@ -109,6 +109,17 @@ pub struct Config {
     /// `:quick-capture-templates {:media "…"}` — OG's template for one shared
     /// image or file (`frontend.mobile.intent/embed-asset-file`).
     pub quick_capture_template_media: Option<String>,
+    /// `:quick-capture-options {:default-page "Name"}` — OG's page a capture
+    /// goes to when none is named (`frontend.quick-capture/quick-capture`).
+    /// Only a non-blank string directly inside the top-level map counts.
+    pub quick_capture_default_page: Option<String>,
+    /// `:quick-capture-options {:insert-today? true}` — a capture without a
+    /// named page goes to today's journal, ahead of `:default-page`. Only the
+    /// literal `true` counts; anything else keeps OG's `false`.
+    pub quick_capture_insert_today: bool,
+    /// `:quick-capture-options {:redirect-page? true}` — after a capture the
+    /// app opens the page it landed on. Only the literal `true` counts.
+    pub quick_capture_redirect_page: bool,
     /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
     /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
     /// flat membership list Logseq reads.
@@ -254,6 +265,9 @@ impl Default for Config {
             mobile_gestures_disabled_in_block_with_tags: Vec::new(),
             quick_capture_template_text: None,
             quick_capture_template_media: None,
+            quick_capture_default_page: None,
+            quick_capture_insert_today: false,
+            quick_capture_redirect_page: false,
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
@@ -282,6 +296,15 @@ impl Default for LogbookSettings {
 }
 
 impl Config {
+    /// The graph's journal date answerer: the one place the two config
+    /// strings become a [`crate::date::JournalFormat`] (I-12, CM step 2).
+    pub fn journal_format(&self) -> crate::date::JournalFormat {
+        crate::date::JournalFormat::new(
+            self.journal_file_name_format.as_deref(),
+            self.journal_page_title_format.as_deref(),
+        )
+    }
+
     /// Parse supported EDN keys independently, defaulting missing or malformed
     /// values. A journal date pattern with parts Tine does not support keeps its
     /// value and adds a `journal_config_diagnostics` entry (card g4czVA).
@@ -342,6 +365,13 @@ impl Config {
             nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
         cfg.quick_capture_template_text = nested_string(edn, ":quick-capture-templates", ":text");
         cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
+        cfg.quick_capture_default_page =
+            nested_string(edn, ":quick-capture-options", ":default-page")
+                .filter(|name| !name.trim().is_empty());
+        cfg.quick_capture_insert_today =
+            nested_true(edn, ":quick-capture-options", ":insert-today?");
+        cfg.quick_capture_redirect_page =
+            nested_true(edn, ":quick-capture-options", ":redirect-page?");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         let file_format = string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
@@ -1003,6 +1033,28 @@ fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
         .flatten()
 }
 
+/// Whether a direct boolean entry in a direct root settings map is the literal
+/// `true` (followed by a delimiter, so `trueish` is not). A nested extension
+/// map cannot shadow either key; any other value is `false`.
+fn nested_true(edn: &str, outer: &str, inner: &str) -> bool {
+    let Some(key) = read_keyword(edn, outer) else {
+        return false;
+    };
+    let Some((open, close)) = balanced_map_at(edn, skip_blank(edn, key + outer.len())) else {
+        return false;
+    };
+    let Some(irel) = find_keyword_at_map_level(&edn[open + 1..close], inner) else {
+        return false;
+    };
+    let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
+    let value = &edn[vfrom..close];
+    value.strip_prefix("true").is_some_and(|rest| {
+        rest.chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || matches!(c, ',' | ';' | '}' | ']' | ')'))
+    })
+}
+
 /// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
 /// when there is no `{` there or it never closes.
 pub fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
@@ -1160,10 +1212,14 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     map
 }
 
-/// `:macros {"name" "template" …}` — string→string map. Mirrors `parse_shortcuts`
-/// but with STRING keys (macro names) rather than keyword keys. Values are template
-/// strings (with `$1..$N` placeholders the frontend fills in). Stops cleanly on the
-/// first non-string key/value rather than desyncing on unexpected EDN.
+/// `:macros {"name" "template" :name "template" …}` — name→template map. Keys
+/// are strings or keywords, mixed freely (GH #854): OG looks a macro up by its
+/// name string, then by `(keyword name)` (`frontend/components/block.cljs`), so
+/// a keyword key `:ns/name` is the macro `ns/name` (namespace kept, as
+/// `(keyword "ns/name")` is `:ns/name`), and a string key wins over a keyword
+/// key of the same name. Values are template strings (with `$1..$N`
+/// placeholders the frontend fills in). Stops cleanly on the first other key or
+/// value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let Some(start) = read_keyword(edn, ":macros") else {
@@ -1175,16 +1231,48 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         return map;
     }
     let close = match_close_brace(edn, from);
+    let mut string_keys = std::collections::HashSet::new();
     let mut i = from + 1;
     while i < close {
         i = skip_blank(edn, i);
-        if i >= close || b[i] != b'"' {
-            break; // key must be a string
-        }
-        let Some(key) = read_string_at(edn, i) else {
+        if i >= close {
             break;
+        }
+        let (key, keyword) = match b[i] {
+            b'"' => {
+                let Some(key) = read_string_at(edn, i) else {
+                    break;
+                };
+                i = edn_str_end(edn, i);
+                (key, false)
+            }
+            b':' => {
+                let kstart = i + 1;
+                let mut j = kstart;
+                while j < close
+                    && !matches!(
+                        b[j],
+                        b' ' | b'\t'
+                            | b'\n'
+                            | b'\r'
+                            | b','
+                            | b'"'
+                            | b';'
+                            | b'{'
+                            | b'}'
+                            | b'['
+                            | b']'
+                            | b'('
+                            | b')'
+                    )
+                {
+                    j += 1;
+                }
+                i = j;
+                (edn[kstart..j].to_string(), true)
+            }
+            _ => break, // neither a string nor a keyword key
         };
-        i = edn_str_end(edn, i);
         let vfrom = skip_blank(edn, i);
         if vfrom >= close || b[vfrom] != b'"' {
             break; // value must be a string
@@ -1193,7 +1281,15 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
             break;
         };
         i = edn_str_end(edn, vfrom);
-        if !key.is_empty() {
+        if key.is_empty() {
+            continue;
+        }
+        if keyword {
+            if !string_keys.contains(&key) {
+                map.insert(key, val);
+            }
+        } else {
+            string_keys.insert(key.clone());
             map.insert(key, val);
         }
     }
@@ -1442,6 +1538,59 @@ mod tests {
             cfg.macros.get("greet").map(String::as_str),
             Some("Hello, **$1**! See [[$2]]")
         );
+    }
+
+    /// GH #854: a Logseq `config.edn` names macros with keywords (`:bar`). OG
+    /// looks a macro up by its name string, then by `(keyword name)`, so both
+    /// forms work there; Tine used to stop at the first keyword key.
+    #[test]
+    fn parses_macros_with_keyword_keys() {
+        let edn = r#"{:macros {:bar "[:span {:class \"score s$1\"} $1]"
+                               :r "red $1"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(
+            cfg.macros.get("bar").map(String::as_str),
+            Some("[:span {:class \"score s$1\"} $1]")
+        );
+        assert_eq!(cfg.macros.get("r").map(String::as_str), Some("red $1"));
+    }
+
+    #[test]
+    fn a_keyword_macro_key_no_longer_drops_later_macros() {
+        let edn = r#"{:macros {"poem" "Roses are $1"
+                               :g "green $1", "greet" "Hello $1"
+                               ;; a comment between entries
+                               :o "orange"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(
+            cfg.macros.get("poem").map(String::as_str),
+            Some("Roses are $1")
+        );
+        assert_eq!(cfg.macros.get("g").map(String::as_str), Some("green $1"));
+        assert_eq!(
+            cfg.macros.get("greet").map(String::as_str),
+            Some("Hello $1")
+        );
+        assert_eq!(cfg.macros.get("o").map(String::as_str), Some("orange"));
+    }
+
+    /// OG tries the string name first, then `(keyword name)`: when a map has
+    /// both `"x"` and `:x`, the string entry wins whatever their order. A
+    /// namespaced `:ns/name` matches `{{ns/name}}`, because ClojureScript's
+    /// `(keyword "ns/name")` is the keyword `:ns/name`.
+    #[test]
+    fn macro_string_key_wins_over_keyword_key_and_namespaced_keyword_keeps_namespace() {
+        let edn = r#"{:macros {:x "from keyword" "x" "from string"
+                               "y" "from string" :y "from keyword"
+                               :ns/name "namespaced"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(cfg.macros.get("x").map(String::as_str), Some("from string"));
+        assert_eq!(cfg.macros.get("y").map(String::as_str), Some("from string"));
+        assert_eq!(
+            cfg.macros.get("ns/name").map(String::as_str),
+            Some("namespaced")
+        );
+        assert_eq!(cfg.macros.get("name"), None);
     }
 
     #[test]
@@ -2030,5 +2179,69 @@ mod quick_capture_template_tests {
         assert_eq!(config.quick_capture_template_text, None);
         let config = Config::parse(r#"{:quick-capture-templates {:text :not-a-string}}"#);
         assert_eq!(config.quick_capture_template_text, None);
+    }
+}
+
+#[cfg(test)]
+mod quick_capture_options_tests {
+    use super::*;
+
+    /// OG `:quick-capture-options` (`frontend.quick-capture/quick-capture`):
+    /// absent keys keep OG's defaults (no default page, both flags `false`).
+    #[test]
+    fn reads_the_three_options_and_defaults_the_rest() {
+        let config = Config::parse("{}");
+        assert_eq!(config.quick_capture_default_page, None);
+        assert!(!config.quick_capture_insert_today);
+        assert!(!config.quick_capture_redirect_page);
+        let config = Config::parse(
+            r#"{:quick-capture-options {:default-page "Inbox" :insert-today? true :redirect-page? true}}"#,
+        );
+        assert_eq!(config.quick_capture_default_page.as_deref(), Some("Inbox"));
+        assert!(config.quick_capture_insert_today);
+        assert!(config.quick_capture_redirect_page);
+        let config = Config::parse(r#"{:quick-capture-options {:default-page "Inbox"}}"#);
+        assert!(!config.quick_capture_insert_today && !config.quick_capture_redirect_page);
+    }
+
+    /// A wrong shape never panics and never enables anything: a flag is on only
+    /// for the literal `true`, a page only for a non-blank string, and a nested
+    /// extension map cannot shadow the key.
+    #[test]
+    fn a_malformed_value_keeps_todays_behaviour() {
+        for edn in [
+            r#"{:quick-capture-options {:default-page :Inbox}}"#,
+            r#"{:quick-capture-options {:default-page "  "}}"#,
+            r#"{:quick-capture-options {:default-page ""}}"#,
+            r#"{:quick-capture-options {:default-page 42}}"#,
+            r#"{:quick-capture-options "Inbox"}"#,
+            r#"{:quick-capture-options {:default-page "Inbox""#,
+            r#"{:other {:quick-capture-options {:default-page "Inbox"}}}"#,
+            r#"{:quick-capture-options {:nested {:default-page "Inbox"}}}"#,
+        ] {
+            assert_eq!(Config::parse(edn).quick_capture_default_page, None, "{edn}");
+        }
+        for edn in [
+            r#"{:quick-capture-options {:insert-today? "true" :redirect-page? "true"}}"#,
+            r#"{:quick-capture-options {:insert-today? trueish :redirect-page? 1}}"#,
+            r#"{:quick-capture-options {:insert-today? nil :redirect-page? false}}"#,
+            r#"{:quick-capture-options {:insert-today?"#,
+            r#"{:other {:quick-capture-options {:insert-today? true :redirect-page? true}}}"#,
+            r#"{:quick-capture-options {:nested {:insert-today? true}}}"#,
+            r#"{:quick-capture-options true}"#,
+        ] {
+            let config = Config::parse(edn);
+            assert!(!config.quick_capture_insert_today, "{edn}");
+            assert!(!config.quick_capture_redirect_page, "{edn}");
+        }
+    }
+
+    #[test]
+    fn a_flag_followed_by_the_next_entry_or_the_map_end_counts() {
+        let config =
+            Config::parse(r#"{:quick-capture-options {:insert-today? true,:redirect-page? true}}"#);
+        assert!(config.quick_capture_insert_today && config.quick_capture_redirect_page);
+        let config = Config::parse(r#"{:quick-capture-options {:redirect-page? true}}"#);
+        assert!(config.quick_capture_redirect_page);
     }
 }

@@ -1,8 +1,8 @@
 //! The share dialog's "this page" selector (share dialog design §1, review
 //! R2/R3): the TQL page row `{{tine-query @page and name = '<page>'}}` selects
 //! the page itself, so a page with no blocks is exported, and a rename carries
-//! it along inside export definition blocks (`export::` / `tine.share::`)
-//! while ordinary query blocks keep OG's behaviour.
+//! it along inside export definition blocks (`tine.export::` / `tine.share::`)
+//! and, since D-20261031-CMQ, inside ordinary query blocks too.
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -98,12 +98,12 @@ fn the_selector_exports_a_page_with_no_blocks_and_page_keeps_its_block_meaning()
 }
 
 #[test]
-fn a_rename_carries_export_definitions_and_leaves_ordinary_queries() {
+fn a_rename_carries_export_definitions_and_ordinary_queries() {
     let _integration_guard = crate::integration_lock();
     let exports = "tine/exports:: true\npublic:: false\n\n\
-                   - {{tine-query @page and name = 'Project'}}\n  export:: project-site\n\
+                   - {{tine-query @page and name = 'Project'}}\n  tine.export:: project-site\n\
                    - {{tine-query @page and name = 'Project/Sub'}}\n  tine.share:: me/abc\n\
-                   - {{tine-query @page and name = 'Proj'}}\n  export:: by-alias\n";
+                   - {{tine-query @page and name = 'Proj'}}\n  tine.export:: by-alias\n";
     let dashboard = "- {{tine-query @page and name = 'Project'}}\n";
     let (root, store) = graph(&[
         ("pages/Project.md", "alias:: Proj\n\n- notes\n"),
@@ -112,7 +112,7 @@ fn a_rename_carries_export_definitions_and_leaves_ordinary_queries() {
         ("pages/Dashboard.md", dashboard),
         (
             "pages/Shares.org",
-            "* {{tine-query @page and name = 'Project'}}\n:PROPERTIES:\n:export: org-site\n:END:\n",
+            "* {{tine-query @page and name = 'Project'}}\n:PROPERTIES:\n:tine.export: org-site\n:END:\n",
         ),
     ]);
     let app_data = tempfile::tempdir().unwrap();
@@ -125,19 +125,19 @@ fn a_rename_carries_export_definitions_and_leaves_ordinary_queries() {
     assert_eq!(
         exports_after,
         "tine/exports:: true\npublic:: false\n\n\
-         - {{tine-query @page and name = 'Project archive'}}\n  export:: project-site\n\
+         - {{tine-query @page and name = 'Project archive'}}\n  tine.export:: project-site\n\
          - {{tine-query @page and name = 'Project archive/Sub'}}\n  tine.share:: me/abc\n\
-         - {{tine-query @page and name = 'Proj'}}\n  export:: by-alias\n",
+         - {{tine-query @page and name = 'Proj'}}\n  tine.export:: by-alias\n",
         "namespace descendants follow; an alias is not the page's name and stays"
     );
     assert_eq!(
         fs::read_to_string(root.join("pages/Shares.org")).unwrap(),
-        "* {{tine-query @page and name = 'Project archive'}}\n:PROPERTIES:\n:export: org-site\n:END:\n"
+        "* {{tine-query @page and name = 'Project archive'}}\n:PROPERTIES:\n:tine.export: org-site\n:END:\n"
     );
     assert_eq!(
         fs::read_to_string(root.join("pages/Dashboard.md")).unwrap(),
-        dashboard,
-        "an ordinary query block keeps OG's rename behaviour"
+        "- {{tine-query @page and name = 'Project archive'}}\n",
+        "an ordinary query's page names follow too (D-20261031-CMQ)"
     );
     // A new page under the old name is not what the definition shares.
     fs::write(root.join("pages/Project.md"), "- someone else's notes\n").unwrap();

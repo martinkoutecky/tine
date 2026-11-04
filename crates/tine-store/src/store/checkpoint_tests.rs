@@ -166,6 +166,148 @@ fn pre_ecmascript_editor_trim_checkpoints_are_rebuilt() {
     store.close();
 }
 
+/// FORMAT 22 (D-20261102-CM4 CM-REFONLY): a format-21 referenced-name index
+/// lacks property-key and task-marker (and priority) pages; it must rebuild, so the
+/// reference-only pages appear on a warm launch over unchanged files.
+#[test]
+fn pre_reference_only_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/Refs.md"),
+        "- TODO task\n- LATER plan\n- note\n  rating:: 5\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&21_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    let absent: Vec<String> = graph
+        .inventory(crate::InventoryScope::All)
+        .0
+        .iter()
+        .filter(|entry| matches!(entry.target, crate::Resolved::Absent { .. }))
+        .map(|entry| entry.name.to_lowercase())
+        .collect();
+    for key in ["todo", "later", "rating"] {
+        assert!(
+            absent.iter().any(|k| k == key),
+            "{key} missing from {absent:?}"
+        );
+    }
+    store.close();
+}
+
+/// FORMAT 23 (CM step 2 batch 8): a format-22 checkpoint's reference indexes
+/// never read the prose before a page's first block; it must rebuild, so a
+/// warm launch over unchanged files lists that prose in Linked References.
+#[test]
+fn pre_preamble_reference_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(root.path().join("pages/Prose.md"), "[[Target]] in prose\n").unwrap();
+    fs::write(root.path().join("pages/Target.md"), "- target\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&22_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    let linked = graph.backlinks("Target").unwrap();
+    assert_eq!(linked.len(), 1, "{linked:?}");
+    assert_eq!(linked[0].page, "Prose");
+    store.close();
+}
+
+/// FORMAT 24 (CM step 2 batch 9, D-20261019-Q8): a format-23 checkpoint's
+/// memoized reference-query answers matched the literal name only; it must
+/// rebuild, so a warm launch over unchanged files answers `[[ML]]` with the
+/// blocks that link the page by its other name.
+#[test]
+fn literal_reference_query_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/Machine Learning.md"),
+        "alias:: ML\n\n- intro\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/Notes.md"),
+        "- also [[Machine Learning]]\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    let written = open_cp(root.path(), &cp);
+    written
+        .whole_graph_reconciled()
+        .unwrap()
+        .query("[[ML]]", crate::QueryDialect::Simple)
+        .unwrap();
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&23_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    let crate::QueryResult::Simple(groups) =
+        graph.query("[[ML]]", crate::QueryDialect::Simple).unwrap()
+    else {
+        panic!("simple rows")
+    };
+    let pages: Vec<&str> = groups.iter().map(|g| g.page.as_str()).collect();
+    assert!(pages.contains(&"Notes"), "{pages:?}");
+    store.close();
+}
+
+/// FORMAT 25 (CM step 2 batch 11, D-20261103-CMA CM-NAMES (1)): a format-24
+/// checkpoint holds the names the old file-name decoder gave (`___lead.md` was
+/// "/lead", `%E9.md` was U+FFFD) in its claimants and `name_by_path`; it must
+/// rebuild, so a warm launch over unchanged files names them as OG does.
+#[test]
+fn old_file_name_decoder_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:preferred-format :markdown :file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("pages/___lead.md"), "- lead\n").unwrap();
+    fs::write(root.path().join("pages/%E9.md"), "- escape\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    let written = open_cp(root.path(), &cp);
+    written.whole_graph_reconciled().unwrap();
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&24_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    for (name, path) in [("lead", "pages/___lead.md"), ("%E9", "pages/%E9.md")] {
+        match graph.resolve(name, false) {
+            crate::Resolved::Existing { id, .. } => assert_eq!(id.as_str(), path),
+            _ => panic!("{name} does not name {path}"),
+        }
+    }
+    store.close();
+}
+
 #[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
@@ -1052,13 +1194,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (21, GOLDEN),
+        (25, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "e154a79e130b4594fae9eec1760fcb10f2ce7f90191770299975a993bf835be0";
+const GOLDEN: &str = "5857b431fa31be0a4d99b598bf2123b6f094e26a3df7cbd96334a05e0fed27c2";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no
@@ -1115,7 +1257,7 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 39] = [
+    let cases: [(&str, String, bool); 42] = [
         (
             "default_journal_queries",
             format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
@@ -1257,6 +1399,21 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         (
             "quick_capture_template_media",
             format!("{BASE} :quick-capture-templates {{:media \"{{url}}\"}}"),
+            false,
+        ),
+        (
+            "quick_capture_default_page",
+            format!("{BASE} :quick-capture-options {{:default-page \"Inbox\"}}"),
+            false,
+        ),
+        (
+            "quick_capture_insert_today",
+            format!("{BASE} :quick-capture-options {{:insert-today? true}}"),
+            false,
+        ),
+        (
+            "quick_capture_redirect_page",
+            format!("{BASE} :quick-capture-options {{:redirect-page? true}}"),
             false,
         ),
         (

@@ -75,6 +75,7 @@ feedNames
 finishPageHeaderEdit
 flushAll
 flushPage
+followPageIdentity  # why: a title:: name change moves home and favorites through the rename's Rust config step (FAV-RETITLE, I-12); batch-cm-favorites
 formatForBlock
 formatForPage
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
@@ -125,6 +126,7 @@ orderedListMarker
 outdentBlock
 outdentSelection
 outlineFits  # why: one placement cap shared by editor paste and structural sheet paste; batch15b-followup
+pageAliasNames  # why: the page header alias list is the store answer through wasm (census Q7); batch-cm-keys
 pageByName
 pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup
 pageInstanceGeneration  # why: shown query results stay live while their source page instance is unchanged; batch-query-epoch-flicker
@@ -134,6 +136,7 @@ pageVisibleOrder
 pasteClipboardPayload
 pendingDataRevision  # why: query and reference membership waits for the ordinary final save revision without changing autosave; batchog-w5-refs
 persistBlockRefTarget
+pinPageNearViewport  # why: a page a live reference row shows near the viewport is not evicted, or rows evict each other for ever (GH #849); batch-fix-beta-scroll-848-849
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble

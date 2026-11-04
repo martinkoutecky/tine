@@ -520,7 +520,8 @@ within a column; merged cells are still v2+.
   old/foreign files still resolve. The display-title format is pickable in Settings.
 - **Duplicate-day reconcile** — if two files ever resolve to the same day, Tine keeps
   **both** rather than silently dropping one, and Settings → *Backups & recovery* → **Duplicate
-  journal days** lets you **Open** / **Merge** / **Rename** / **Trash** each.
+  journal days** lets you **Open** / **Merge** / **Rename** / **Trash** each. The file the day
+  opens is the one marked canonical; **Merge** folds another file into it.
 - **Sync-conflict merge** — Syncthing/Dropbox leave a `*.sync-conflict-*` (or
   `(conflicted copy)`) file when the same page was edited on two devices. Tine keeps
   these **out of your page list** (they're not real pages) and surfaces them under

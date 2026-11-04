@@ -247,6 +247,8 @@ fn collect_dir(
                         .and_then(|metadata| stamp_from_metadata(&metadata));
                     times.stat += began.elapsed();
                     times.files += 1;
+                    #[cfg(feature = "test-faults")]
+                    crate::cost_counters::listing_stamp();
                     if let Some(value) = value {
                         files.insert(path, value);
                     }
@@ -941,10 +943,20 @@ impl WatchHandle {
         self.scan_refresh_with(DiffTrigger::Rescan)
     }
 
+    /// `scan_refresh` of graph text and config only (`Depth::PageStamps`):
+    /// on a ready graph neither the asset walk nor the `custom.css` stamp.
+    pub(crate) fn scan_refresh_pages(&self) -> Result<(), LoadError> {
+        self.scan_refresh_scoped(DiffTrigger::Rescan, false)
+    }
+
     /// `scan_refresh`, with `DiffTrigger::Bytes` hashing every file on a
     /// ready graph instead of trusting unchanged stamps. A failed load is
     /// recovered the same way either way (already a cold build).
     pub(crate) fn scan_refresh_with(&self, trigger: DiffTrigger) -> Result<(), LoadError> {
+        self.scan_refresh_scoped(trigger, true)
+    }
+
+    fn scan_refresh_scoped(&self, trigger: DiffTrigger, assets: bool) -> Result<(), LoadError> {
         let mut status = self.core.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
             status = self.core.load.ready.wait(status).unwrap();
@@ -1015,7 +1027,7 @@ impl WatchHandle {
             LoadStatus::Loading => unreachable!(),
         }
         let result = self.core.reconcile(None, true, true, trigger);
-        if result.is_ok() {
+        if result.is_ok() && assets {
             self.core.observe_custom_css();
             self.core.observe_assets(&HashSet::new(), true);
         }
@@ -2126,7 +2138,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| { page.name == "A" && page.document.roots[0].raw().contains("old") }));
@@ -2140,7 +2152,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -2161,7 +2173,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {
@@ -2180,7 +2192,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus()
+            .corpus(None)
             .pages
             .iter()
             .any(|page| {

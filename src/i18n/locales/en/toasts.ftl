@@ -541,6 +541,7 @@ page-props-stale-panel =
         [page] This page changed or was reloaded while its properties panel was open, so "{ $key }" was not saved. Reopen the panel to edit it.
        *[block] This block changed or was reloaded while its properties panel was open, so "{ $key }" was not saved. Reopen the panel to edit it.
     }
+graph-rewrite-config-skipped = “{ $page }” was renamed, but config.edn was left unchanged ({ $reason }), so its home page and favorites may still name the old page.
 graph-rewrite-conflicted-referrers =
     { $count ->
         [one] One page still mid-merge keeps its references to “{ $page }”: { $files }. Resolve the merge, then update them.

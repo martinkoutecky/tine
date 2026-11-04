@@ -34,15 +34,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tine_core::doc::{property_key_norm, DocBlock};
-use tine_core::model::PageKind;
 use tine_core::query::ir::{Leaf, NearDir, Quant, Rel};
 use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
-use super::{
-    graph_equivalent_page_names_with, journal_format, page_property_block_with_config,
-    real_page_names,
-};
+use super::{pre_blocks_with_config, PanelResolver};
 use crate::model::ReadSnapshot;
 
 /// A page without a file that some page links to: the panel exists for it, so
@@ -79,26 +75,9 @@ impl LinkGraph {
     /// The table, or `None` once `cancelled` reports true.
     pub(crate) fn build(graph: &ReadSnapshot, cancelled: &dyn Fn() -> bool) -> Option<LinkGraph> {
         let config = graph.config();
-        let format = journal_format(config);
-        let real = real_page_names(graph);
-        let edges = graph.alias_edges();
-        // The panel's `find` over the page list, once: the FIRST journal page
-        // of each day in page-list order.
-        let mut first_journal: HashMap<i64, String> = HashMap::new();
-        for entry in graph.page_list_arc().iter() {
-            if entry.kind == PageKind::Journal {
-                if let Some(day) = format.parse(&entry.name) {
-                    first_journal
-                        .entry(day.ordinal_key())
-                        .or_insert_with(|| entry.name.clone());
-                }
-            }
-        }
-        let resolve = |target: &str| {
-            graph_equivalent_page_names_with(&real, &edges, &format, target, |day| {
-                first_journal.get(&day.ordinal_key()).cloned()
-            })
-        };
+        let resolver = PanelResolver::new(graph);
+        let format = resolver.format();
+        let resolve = |target: &str| resolver.resolve(target);
         let favorites = config
             .favorites_page
             .as_deref()
@@ -208,10 +187,11 @@ impl LinkGraph {
                     }
                     true
                 };
-                if let Some(block) = doc
+                for block in doc
                     .pre_block
                     .as_deref()
-                    .and_then(|pre| page_property_block_with_config(entry, pre, &parse_config))
+                    .into_iter()
+                    .flat_map(|pre| pre_blocks_with_config(entry, pre, &parse_config))
                 {
                     if !collect(&block) {
                         return false;
@@ -256,6 +236,12 @@ impl LinkGraph {
             register(node, &names, &mut by_name, &mut by_property_key);
             node_keys.push(refs::page_key(&canonical));
             self_keys.push(refs::page_key(&self_page));
+            // A page-anchored query row of a reference-only page finds its
+            // node by key, as a file row does (D-20261102-CM4 CM-REFONLY).
+            table
+                .by_key
+                .entry(refs::page_key(&canonical))
+                .or_insert(node);
             table.virtuals.push(VirtualNode {
                 journal_day: format.parse(&canonical).map(|day| day.ordinal_key()),
                 name: canonical,
@@ -365,7 +351,8 @@ impl LinkGraph {
         adjacency(&self.out) + adjacency(&self.inn) + keys + virtuals
     }
 
-    /// The node of the physical page whose key is `page_key`.
+    /// The node of the page whose key is `page_key`: a physical page, else a
+    /// reference-only page's virtual node.
     pub(crate) fn node(&self, page_key: &str) -> Option<u32> {
         self.by_key.get(page_key).copied()
     }
@@ -654,8 +641,9 @@ mod cancellation_tests {
         let QueryRows::Page { pages } = result.rows else {
             panic!("page rows");
         };
-        // p1..p{CHAIN-1} (p0 has no referrer; the fileless end is no row).
-        assert_eq!(pages.len(), CHAIN - 1);
+        // p1..p{CHAIN-1} and the fileless end p{CHAIN}, a reference-only page
+        // row (D-20261102-CM4 CM-REFONLY); p0 has no referrer.
+        assert_eq!(pages.len(), CHAIN);
     }
 
     /// One whole run on `graph` of `tql`, counting its checks.

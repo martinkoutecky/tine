@@ -1,0 +1,8 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "- day\n",
+    "journals/2026_10_27.md": "alias:: Launch\n\n- launch day\n",
+    "pages/Launch.md": "- launch page\n",
+    "pages/n.md": "- iso [[2026-10-26]]\n- title [[Oct 26th, 2026]]\n- tag #[[2026-10-26]]\n- launch by date [[2026-10-27]]\n- launch by name [[Launch]]\n"
+  }
+}

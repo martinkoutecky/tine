@@ -121,7 +121,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
   "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageSaveNow",
-  "setGuideAnnounced", "renamePage", "publishQuery", "publishLive", "setFavorites",
+  "setGuideAnnounced", "renamePage", "followPageIdentity", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
   "setStartOfWeek", "editAssetExternal", "editCustomCss", "editGlobalCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
@@ -151,7 +151,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "captureTarget", "bindCaptureGraph", "captureReceipt", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "pageBacklinkCounts", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage", "pageAliasGroup",
+  "getPage", "resolvePage", "pageAliasGroup", "renameWouldChange",
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.

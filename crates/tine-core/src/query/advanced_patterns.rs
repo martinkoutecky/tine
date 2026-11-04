@@ -949,6 +949,11 @@ fn parse_adv_group(
             });
             name.filter(|_| args.len() == 3).map(|name| {
                 ran.push("page-ref".into());
+                // OG matches `:block/name` literally: a literal with upper case
+                // matches no page (a different question from page identity,
+                // declared under census Q1). A lower-case name lowers to the
+                // one reference leaf and so matches the alias group
+                // (D-20261019-Q8; QL-1: one rule, see `advanced_joins`).
                 if name != name.to_lowercase() {
                     Filter::False
                 } else {
@@ -1161,6 +1166,10 @@ fn resolve_inputs(
                 map.insert(v.clone(), AdvancedInput::Page(page.to_lowercase()));
             }
         } else if let Some(text) = edn_string(val) {
+            // Declared different question (I-12, census Q1): OG lowercases a
+            // `[[page]]` input into a `:block/name` literal; the literal still
+            // names its page through `page_key` where it is compared, and
+            // lowercase-then-page_key equals page_key (cm keys harness).
             let text = match text.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
                 Some(page) => page.to_lowercase(),
                 None => text,

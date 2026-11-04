@@ -52,7 +52,7 @@ fn exact_l03_unicode_rename_input_is_already_fixed() {
     let raw = "* Example [[Old]]\n#+aaaaaé\n";
     let renames = std::collections::HashMap::from([("old".into(), "New".into())]);
     assert_eq!(
-        tine_core::refs::rename_refs_multi(raw, &renames, true, FileNameFormat::TripleLowbar),
+        tine_core::refs::rename_rewrite_keyed(raw, true, &renames, FileNameFormat::TripleLowbar),
         "* Example [[New]]\n#+aaaaaé\n"
     );
 }

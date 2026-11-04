@@ -1,0 +1,6 @@
+{
+ "files": {
+  "pages/Project Alpha.md": "- alpha\n",
+  "pages/Notes.md": "- see [[project alpha]]\n- and [[ Project Alpha ]]\n"
+ }
+}

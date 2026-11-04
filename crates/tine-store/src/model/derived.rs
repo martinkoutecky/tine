@@ -21,7 +21,10 @@
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
-//! whole build decides at the held epoch it checks again under the lock.
+//! whole build decides at the held epoch it checks again under the lock,
+//! and so does a name memo (the page list, the claimant index): one walked
+//! outside it installs only if neither the generation nor the held epoch
+//! moved since the walk began ([`Graph::install_name_memo`]).
 //! Holds, releases and respellings are one ownership transition
 //! ([`Graph::transition`], REVIEW-3a4): under the cache lock it changes the
 //! held map, bumps the held epoch and settles every row and error whose
@@ -153,8 +156,9 @@ pub(crate) struct Derived {
     /// invisibly.
     page_index_failures: RwLock<Vec<String>>,
     /// Each page whose row panicked an index stage, with those bytes' revision:
-    /// the row stays out until its bytes change or the cache is rebuilt.
-    index_retired: RwLock<HashMap<PathBuf, String>>,
+    /// the row stays out until its bytes change, the cache is rebuilt, or a
+    /// bounded retry passes (`derived_contained.rs`).
+    index_retired: RwLock<HashMap<PathBuf, contained::Retired>>,
     unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
     /// Retryable reads inside the racy window. Storage guards still need
     /// this uncertainty even though automatic notices wait for settling.
@@ -163,7 +167,8 @@ pub(crate) struct Derived {
     /// Memoized `list_pages()`, keyed by `cache_gen` (which every page
     /// create, delete and rename bumps), so quick-switch and `[[` complete
     /// without re-walking the graph on every keystroke.
-    page_list_cache: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
+    /// A publication's patched list is adopted as is ([`Graph::adopt_name_index`]).
+    page_list_cache: RwLock<Option<(u64, Arc<EntryList>)>>,
     /// Memoized exact `find_entry(name, kind)` claimants, keyed by
     /// `cache_gen`. It keeps `find_entry`'s duplicate selection: the
     /// date-stem file first, else the first match of the walk.
@@ -304,13 +309,25 @@ impl Graph {
     /// spelling; None when that path is no cacheable page or the bytes are
     /// not a page's.
     pub(super) fn owned_entry(&self, key: &str, bytes: &[u8]) -> Option<PageEntry> {
+        let mut entry = self.owned_listing(key)?;
+        validate_parse_bytes_for_path(bytes, &entry.path).ok()?;
+        let content = std::str::from_utf8(bytes).ok()?;
+        if let Ok(name) = self.name_from(&entry, content) {
+            entry.name = name;
+        }
+        Some(entry)
+    }
+
+    /// `key`'s listing entry before its owner's bytes name it; None when that
+    /// path is no cacheable page.
+    fn owned_listing(&self, key: &str) -> Option<PageEntry> {
         let path = self.root.join(self.held.spellings().spelling(key));
         let config = self.current_config();
         if path_is_sync_conflict(&path) || !graph_text_eligible(&self.root, &path, &config) {
             return None;
         }
         let (format, journals) = (self.current_journal_format(), self.journals_path());
-        let mut entry = listed_entry(self, (&format, &journals, config.file_name_format), path)?;
+        let entry = listed_entry(self, (&format, &journals, config.file_name_format), path)?;
         if let Some(date) = entry
             .date_key
             .map(tine_core::date::JournalDate::from_ordinal)
@@ -318,11 +335,6 @@ impl Graph {
             if entry.kind == PageKind::Journal && self.is_shadow_journal(&entry.path, date) {
                 return None;
             }
-        }
-        validate_parse_bytes_for_path(bytes, &entry.path).ok()?;
-        let content = std::str::from_utf8(bytes).ok()?;
-        if let Ok(name) = self.name_from(&entry, content) {
-            entry.name = name;
         }
         Some(entry)
     }
@@ -332,23 +344,31 @@ impl Graph {
     /// given, is the owner's Document for them (R8): only its runtime
     /// identities are kept, and only when its content is exactly what
     /// `bytes` parse to; its content never reaches the row (REVIEW-3a4 #5,
-    /// E126).
+    /// E126). `Ok(None)` when the path is no cacheable page; `Err` when it is
+    /// one and these bytes give no row, which the caller lists unreadable.
     pub(super) fn owned_row(
         &self,
         key: &str,
         bytes: &[u8],
         saved: Option<&Document>,
-    ) -> Option<Row> {
-        let entry = self.owned_entry(key, bytes)?;
-        let content = std::str::from_utf8(bytes).ok()?;
+    ) -> io::Result<Option<Row>> {
+        let Some(mut entry) = self.owned_listing(key) else {
+            return Ok(None);
+        };
+        validate_parse_bytes_for_path(bytes, &entry.path)?;
+        let content = std::str::from_utf8(bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if let Ok(name) = self.name_from(&entry, content) {
+            entry.name = name;
+        }
         let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             parse_page_content(&entry, content)
         }))
-        .ok()?;
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
         if let Some(saved) = saved.filter(|saved| **saved == doc) {
             keep_runtime_ids(&mut doc.roots, &saved.roots);
         }
-        Some((entry, Arc::new(doc), disk))
+        Ok(Some((entry, Arc::new(doc), disk)))
     }
 
     // ---- reads ----------------------------------------------------------
@@ -410,15 +430,16 @@ impl Graph {
                 }
             }
             Source::Held(bytes) => {
-                if let Some(row) = self
-                    .held_key(&winner.path)
-                    .and_then(|key| self.owned_row(&key, &bytes, None))
-                {
-                    let mut cache = self.derived.cache.write().unwrap();
-                    if let Some(pages) = cache.as_mut() {
+                let row =
+                    (self.held_key(&winner.path)).map(|key| self.owned_row(&key, &bytes, None));
+                let mut cache = self.derived.cache.write().unwrap();
+                match (row, cache.as_mut()) {
+                    (Some(Ok(Some(row))), Some(pages)) => {
                         self.put_row(Arc::make_mut(pages), row);
                         self.move_generation(false, &[&winner.path]);
                     }
+                    (Some(Err(error)), _) => self.list_held_row_failure(&winner.path, &error),
+                    _ => {}
                 }
             }
             Source::HeldAbsent | Source::HeldUnindexed => {}
@@ -547,24 +568,6 @@ impl Graph {
         self.derived.disk_revs.read().unwrap().get(path).cloned()
     }
 
-    /// The claimant index's answer for `key` at cache generation `gen`, if
-    /// it has one; `None` means only a walk can answer.
-    pub(super) fn cached_claimants(
-        &self,
-        key: &(PageKind, String),
-        gen: u64,
-    ) -> Option<Vec<PageEntry>> {
-        let cache = self.derived.find_entry_cache.read().unwrap();
-        let (g, index) = cache.as_ref()?;
-        (*g == gen && (index.has_kind(key.0) || index.entries.contains_key(key)))
-            .then(|| index.entries.get(key).cloned().unwrap_or_default())
-    }
-
-    #[cfg(test)]
-    pub(super) fn claimant_memo_built(&self) -> bool {
-        self.derived.find_entry_cache.read().unwrap().is_some()
-    }
-
     #[cfg(test)]
     pub(super) fn cache_index_built(&self) -> bool {
         self.derived.cache_index.read().unwrap().is_some()
@@ -581,6 +584,8 @@ impl Graph {
         }
         let mut memo = Memo::default();
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.certify_pause);
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
                 if kind.is_none_or(|kind| kind == entry.kind) {
@@ -589,143 +594,6 @@ impl Graph {
             }
         }
         Certified(entries)
-    }
-
-    /// Every page and journal in the graph, one per duplicate journal day.
-    pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
-            if *g == gen {
-                return Arc::clone(entries);
-            }
-        }
-        let entries = self.certify(list_graph_pages(self), None);
-        // A duplicate-day journal (canonical + leftover title-named file)
-        // shows once in quick-switch and All Pages: both resolve to one page.
-        let entries = Arc::new(dedup_journal_days(
-            entries.0,
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
-        entries
-    }
-
-    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        let key = (kind, tine_core::refs::page_key(name));
-        loop {
-            let gen = self.cache_gen.load(Ordering::Acquire);
-            if let Some(found) = self.cached_claimants(&key, gen) {
-                return found;
-            }
-            let listed = self.certify(list_graph_pages_kind(self, Some(kind)), Some(kind));
-            let mut built = FindEntryIndex::new();
-            built.entries = page_claimants(self, &listed.0);
-            built.mark_kind_loaded(kind);
-            let found = {
-                let mut guard = self.derived.find_entry_cache.write().unwrap();
-                match guard.as_mut() {
-                    Some((g, index)) if *g == gen => {
-                        if !index.has_kind(kind) {
-                            index
-                                .entries
-                                .retain(|(loaded_kind, _), _| *loaded_kind != kind);
-                            index.entries.extend(built.entries);
-                            index.mark_kind_loaded(kind);
-                        }
-                        index.entries.get(&key).cloned().unwrap_or_default()
-                    }
-                    _ => {
-                        let found = built.entries.get(&key).cloned().unwrap_or_default();
-                        *guard = Some((gen, built));
-                        found
-                    }
-                }
-            };
-            if self.cache_gen.load(Ordering::Acquire) == gen {
-                return found;
-            }
-        }
-    }
-
-    /// A direct path read can observe a new or retitled file before the
-    /// watcher. Drop the claimant memo if that live file is missing from its
-    /// bucket (dropping a memo is always safe); a proposed destination that
-    /// does not exist must not become a claimant.
-    pub(super) fn observe_name_entry(&self, entry: &PageEntry) {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let mut cache = self.derived.find_entry_cache.write().unwrap();
-        if let Some((g, index)) = cache.as_ref() {
-            let key = (entry.kind, tine_core::refs::page_key(&entry.name));
-            let known = index.entries.get(&key).is_some_and(|entries| {
-                entries.iter().any(|candidate| candidate.path == entry.path)
-            });
-            if *g == gen
-                && !known
-                && fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
-            {
-                *cache = None;
-            }
-        }
-    }
-
-    /// Cold journal inventory and its complete claimant index share one walk.
-    /// Only called at open, before the watcher and load worker start.
-    pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let entries = self.certify(
-            list_graph_pages_kind(self, Some(PageKind::Journal)),
-            Some(PageKind::Journal),
-        );
-        let mut index = FindEntryIndex::new();
-        index.entries = page_claimants(self, &entries.0);
-        index.mark_kind_loaded(PageKind::Journal);
-        *self.derived.find_entry_cache.write().unwrap() = Some((gen, index));
-        entries.0
-    }
-
-    /// The page list and the effective-name claimants, from one certified
-    /// inventory (R2): the snapshot's roots and the memos hold the same rows.
-    pub(crate) fn snapshot_name_index(
-        &self,
-    ) -> (
-        Arc<Vec<PageEntry>>,
-        HashMap<(PageKind, String), Vec<PageEntry>>,
-    ) {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let format = self.current_journal_format();
-        // The build that produced this generation already listed and named
-        // every file from its own reads (GH #623: one read per file); a
-        // later generation walks again.
-        let launch = self
-            .derived
-            .launch_listing
-            .write()
-            .unwrap()
-            .take()
-            .filter(|(listed_gen, _)| *listed_gen == gen);
-        let entries = match launch {
-            Some((_, entries)) => entries,
-            None => self.certify(list_graph_pages(self), None),
-        };
-        let claimants = page_claimants(self, &entries.0);
-        *self.derived.find_entry_cache.write().unwrap() = Some((
-            gen,
-            FindEntryIndex {
-                entries: claimants.clone(),
-                // Reuse known claims, but a first miss must discover files
-                // that arrived after this published snapshot.
-                pages_loaded: false,
-                journals_loaded: false,
-            },
-        ));
-        let list = Arc::new(dedup_journal_days(
-            entries.0,
-            &format,
-            self.current_config().file_name_format,
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
-        (list, claimants)
     }
 
     /// What a snapshot names the changed `path` (R2): from disk when no host
@@ -837,51 +705,6 @@ impl Graph {
         }
     }
 
-    /// A publication's index stage panicked on `path`'s row: the same
-    /// isolation, for a held page's row too. A held row cannot be left in
-    /// place, since every later capture would patch it and panic again; its
-    /// owner's next publication installs it afresh.
-    pub(crate) fn retire_index_stage_failure(&self, path: &Path) {
-        let cache = self.derived.cache.write().unwrap();
-        if let Some(rev) = self.derived.disk_revs.read().unwrap().get(path).cloned() {
-            (self.derived.index_retired.write().unwrap()).insert(path.to_path_buf(), rev);
-        }
-        self.retire_failed_row(cache, path);
-    }
-
-    /// Whether `path`'s row needs nothing for the bytes of revision `rev`:
-    /// it was derived from them, or they panicked an index stage.
-    pub(super) fn row_settled(&self, path: &Path, rev: &str) -> bool {
-        self.cached_rev(path).is_some_and(|r| r == rev)
-            || (self.derived.index_retired.read().unwrap().get(path)).is_some_and(|r| r == rev)
-    }
-
-    fn retire_failed_row(
-        &self,
-        mut cache: std::sync::RwLockWriteGuard<'_, Option<Arc<Pages>>>,
-        path: &Path,
-    ) {
-        // A quiet retry must not erase an already reported launch error.
-        self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
-        let rel = self.rel_path(path);
-        let mut failures = self.derived.page_index_failures.write().unwrap();
-        if !failures.contains(&rel) {
-            failures.push(rel.clone());
-        }
-        drop(failures);
-        // A checkpoint launch also reconciles through this boundary.
-        // Replacing a whole-cache rebuild must retain its per-page error
-        // reporting, including when the watcher defers its own notice.
-        let mut unreadable = self.derived.unreadable_pages.write().unwrap();
-        let id = crate::FileId::from(rel);
-        if !unreadable.iter().any(|(known, _)| *known == id) {
-            tine_core::diag_line::diagnostic_line("Tine unreadable file producer=index-panic");
-            Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
-        }
-        drop(unreadable);
-        self.move_generation(cache.is_none(), &[path]);
-    }
-
     /// A publication that could not capture: the next capture patches these.
     pub(crate) fn touch_rows(&self, paths: impl IntoIterator<Item = PathBuf>) {
         self.derived.touched.lock().unwrap().extend(paths);
@@ -943,58 +766,57 @@ impl Graph {
     /// Install a whole-graph build atomically, with (G): rows a held or
     /// unknown identity names are left out, and every held key whose owner
     /// indexed bytes gets the row those bytes give. Declines when a cache
-    /// mutation, a publication or a hold raced the build, or (without
-    /// `replace`) when a cache exists. `discovery`, a full listing's name
-    /// failures, replaces the known ones when given.
+    /// mutation, a publication or a hold raced the build, handing the build
+    /// back unchanged, or (without `replace`) when a cache exists.
+    /// `discovery`, a full listing's name failures, replaces the known ones
+    /// when given.
     pub(super) fn install_built(
         &self,
-        built: PageCacheBuild,
+        mut built: PageCacheBuild,
         (expected_gen, held_epoch): (u64, u64),
         replace: bool,
         observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
-        discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
-    ) -> bool {
-        let PageCacheBuild {
-            pages: built,
-            mut failures,
-            mut unreadable,
-        } = built;
-        let mut built = built;
-        let mut discovery = discovery;
+        mut discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
+    ) -> Result<(), super::launch_patch::Declined> {
+        use super::launch_patch::Declined;
         // Identities are decided at the build's epoch (checked again under
-        // the lock), so a disk row a hold now owns is left out.
+        // the lock), so a disk row a hold now owns is left out. The pages
+        // are marked here, unlocked, and dropped only after the checks, so a
+        // raced install hands the build back whole.
         let mut owned: Vec<Owned> = Vec::new();
-        if !self.held.is_empty() {
-            let mut memo = Memo::default();
-            built.retain(|(entry, _, _)| self.disk_sourced_in(&mut memo, &entry.path));
-            let mut disk = |rel: &str| self.disk_sourced_in(&mut memo, &self.root.join(rel));
-            failures.retain(|rel| disk(rel));
-            unreadable.retain(|(rel, _)| disk(rel));
-            if let Some(discovery) = discovery.as_mut() {
-                discovery.retain(|(id, _)| disk(id.as_str()));
-            }
+        // A held page's own failures, added to the build's after the checks
+        // (a raced install drops them; the retry recomputes them).
+        let (mut owned_failures, mut owned_unreadable) = (Vec::new(), Vec::new());
+        let (held, mut kept, mut memo) = (!self.held.is_empty(), Vec::new(), Memo::default());
+        if held {
+            let pages = built.pages.iter();
+            kept =
+                (pages.map(|(entry, _, _)| self.disk_sourced_in(&mut memo, &entry.path))).collect();
             owned = self
                 .held
                 .published()
                 .into_iter()
-                .map(|(key, bytes)| Owned {
-                    row: self.owned_row(&key, &bytes, None),
-                    key,
-                    bytes,
+                .map(|(key, bytes)| {
+                    let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
+                        let rel = self.held.spellings().spelling(&key).to_string();
+                        if contained::is_parser_panic(&error) {
+                            owned_failures.push(rel.clone());
+                        }
+                        owned_unreadable.push((rel, error.to_string()));
+                        None
+                    });
+                    Owned { row, key, bytes }
                 })
                 .collect();
         }
-        let mut rows: Vec<Row> = built
-            .into_iter()
-            .map(|(entry, doc, obs)| (entry, Arc::new(doc), obs))
-            .collect();
         // The launch pass observed every file's stamp before reading it; an
         // on-demand build did not, and stats each page here, as it does an
         // owner's row (E109).
         let stat = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
-        let mut mtimes: SharedMap<String, std::time::SystemTime> = rows
-            .iter()
-            .filter_map(|(entry, _, _)| {
+        let mut mtimes: SharedMap<String, std::time::SystemTime> = (built.pages.iter())
+            .enumerate()
+            .filter(|(at, _)| kept.get(*at) != Some(&false))
+            .filter_map(|(_, (entry, _, _))| {
                 let mtime = match observed {
                     Some(observed) => observed.get(&entry.path).and_then(|stamp| stamp.modified()),
                     None => stat(&entry.path),
@@ -1009,26 +831,44 @@ impl Graph {
                 }
             }
         }
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.install_lock_pause);
         let mut guard = self.derived.cache.write().unwrap();
-        if (guard.is_some() && !replace)
-            || self.cache_gen.load(Ordering::Acquire) != expected_gen
-            || self.held.epoch() != held_epoch
-        {
-            return false;
+        if guard.is_some() && !replace {
+            return Err(Declined::CacheBuilt);
         }
         // R1: each owner's row was derived from the bytes it indexes now
         // (every publication also moves `cache_gen`; this is the
         // certificate, checked in the installing critical section).
-        for owned in owned {
-            let current = matches!(
-                self.held.indexed_of(&owned.key),
-                Some(Some(Some(bytes))) if Arc::ptr_eq(&bytes, &owned.bytes)
-            );
-            if !current {
-                return false;
-            }
-            rows.extend(owned.row);
+        let raced = self.cache_gen.load(Ordering::Acquire) != expected_gen
+            || self.held.epoch() != held_epoch
+            || !owned.iter().all(|owned| {
+                matches!(
+                    self.held.indexed_of(&owned.key),
+                    Some(Some(Some(bytes))) if Arc::ptr_eq(&bytes, &owned.bytes)
+                )
+            });
+        if raced {
+            return Err(Declined::Raced(built, discovery));
         }
+        if held {
+            // The few failed files, at the same epoch (the lock is held).
+            let mut disk = |rel: &str| self.disk_sourced_in(&mut memo, &self.root.join(rel));
+            built.failures.retain(|rel| disk(rel));
+            built.unreadable.retain(|(rel, _)| disk(rel));
+            if let Some(discovery) = discovery.as_mut() {
+                discovery.retain(|(id, _)| disk(id.as_str()));
+            }
+            built.failures.append(&mut owned_failures);
+            built.unreadable.append(&mut owned_unreadable);
+        }
+        let (failures, mut unreadable) = (built.failures, built.unreadable);
+        let mut rows: Vec<Row> = (built.pages.into_iter())
+            .enumerate()
+            .filter(|(at, _)| kept.get(*at) != Some(&false))
+            .map(|(_, (entry, doc, obs))| (entry, Arc::new(doc), obs))
+            .collect();
+        rows.extend(owned.into_iter().filter_map(|owned| owned.row));
         if let Some(discovery) = discovery {
             *self.derived.discovery_errors.write().unwrap() = discovery
                 .into_iter()
@@ -1088,7 +928,7 @@ impl Graph {
             self.cache_gen.fetch_add(1, Ordering::Release);
         }
         drop(guard);
-        true
+        Ok(())
     }
 
     /// The launch build's listing, installed at generation `gen` (R2): the
@@ -1100,7 +940,8 @@ impl Graph {
             &self.current_journal_format(),
             self.current_config().file_name_format,
         );
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::new(deduped)));
+        *self.derived.page_list_cache.write().unwrap() =
+            Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
@@ -1129,7 +970,7 @@ impl Graph {
         observed_mtimes: &Arc<SharedMap<String, std::time::SystemTime>>,
         failures: Vec<String>,
         (disk_revs, vcs_anchored): (Vec<(PathBuf, String)>, Vec<PathBuf>),
-        (cache_generation, list): (u64, Arc<Vec<PageEntry>>),
+        (cache_generation, list): (u64, Arc<EntryList>),
     ) -> Result<(), crate::store::checkpoint::Fallback> {
         use crate::store::checkpoint::Fallback;
         let index = build_page_cache_index(pages);
@@ -1221,13 +1062,6 @@ impl Graph {
         drop(guard);
     }
 
-    /// The forced rebuild re-reads the listing: the generation-keyed memos
-    /// go (dropping a memo is always safe).
-    pub(super) fn forget_name_memos(&self) {
-        *self.derived.page_list_cache.write().unwrap() = None;
-        *self.derived.find_entry_cache.write().unwrap() = None;
-    }
-
     /// A reconcile found no cache: bump the generation holding the lock the
     /// builders install under (a read guard excludes their install), so a
     /// build that read the earlier bytes declines. False when a cache was
@@ -1244,21 +1078,6 @@ impl Graph {
         true
     }
 
-    /// The generation-keyed memos at `before` stay valid at `after`: the
-    /// publication between them changed no listed name.
-    pub(super) fn retag_name_memos(&self, before: u64, after: u64) {
-        if let Some((gen, _)) = self.derived.page_list_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = after;
-            }
-        }
-        if let Some((gen, _)) = self.derived.find_entry_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = after;
-            }
-        }
-    }
-
     /// Move the generation for a publication of `paths` that moved none.
     pub(crate) fn transaction_bump_generation(&self, paths: &[&Path]) {
         let cache = self.derived.cache.read().unwrap();
@@ -1273,12 +1092,8 @@ impl Graph {
     /// file time, all under the held cache lock.
     fn put_row(&self, pages: &mut Pages, (entry, doc, disk): Row) {
         let path = entry.path.clone();
-        {
-            let mut retired = self.derived.index_retired.write().unwrap();
-            if retired.get(&path) == Some(&disk.rev) {
-                return;
-            }
-            retired.remove(&path);
+        if !self.admits_row(&path, &disk.rev) {
+            return;
         }
         self.derived.touched.lock().unwrap().insert(path.clone());
         let rel = entry.rel_path_str().to_owned();
@@ -1473,7 +1288,8 @@ impl Graph {
         let index = build_page_cache_index(&pages);
         *self.derived.cache.write().unwrap() = Some(Arc::new(pages));
         *self.derived.cache_index.write().unwrap() = Some(index);
-        *self.derived.page_list_cache.write().unwrap() = Some((0, Arc::new(entries)));
+        *self.derived.page_list_cache.write().unwrap() =
+            Some((0, Arc::new(EntryList::from(entries.as_slice()))));
     }
 }
 
@@ -1486,6 +1302,12 @@ mod owners;
 
 #[path = "derived_cold.rs"]
 mod cold;
+
+#[path = "derived_names.rs"]
+mod names;
+
+#[path = "derived_contained.rs"]
+mod contained;
 
 #[cfg(test)]
 #[path = "derived_tests.rs"]

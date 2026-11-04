@@ -52,8 +52,9 @@ it("refreshes unlinked and linked references without building the unused filter 
   const { root, dispose } = mount(() => <><LinkedReferences name="Target" /><UnlinkedReferences name="Target" /></>);
   try {
     await vi.waitFor(() => expect(root.querySelector(".linked-references")).not.toBeNull());
-    await vi.waitFor(() => expect(root.querySelector(".unlinked-references .references-count")?.textContent).toBe("40"));
+    // Cost audit 6a: unlinked loads only once expanded.
     root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
+    await vi.waitFor(() => expect(root.querySelector(".unlinked-references .references-count")?.textContent).toBe("40"));
     await tick();
     folds.count = 0;
     for (let save = 0; save < 3; save++) {
@@ -83,8 +84,9 @@ it("keeps shown unlinked rows in place, without Loading, while a refresh with th
     : Promise.resolve(answer(3)));
   const { root, dispose } = mount(() => <UnlinkedReferences name="Target" />);
   try {
-    await vi.waitFor(() => expect(root.querySelector(".references-count")?.textContent).toBe("3"));
+    // Cost audit 6a: unlinked loads only once expanded.
     root.querySelector<HTMLElement>(".references-header")!.click();
+    await vi.waitFor(() => expect(root.querySelector(".references-count")?.textContent).toBe("3"));
     await vi.waitFor(() => expect(root.querySelector('[data-reference-block="b1"]')).not.toBeNull());
     const row = root.querySelector('[data-reference-block="b1"]');
 

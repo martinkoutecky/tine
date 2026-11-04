@@ -10,15 +10,18 @@ the oracle for behaviour; the mechanism here is develop's.
 - **Answer (I-12).** `Store::config()` is the only answer to "the current
   configuration" in the backend. The frontend's is the `graphMeta` signal, and
   `applyConfigDerivedState` (src/graph.ts) is the one producer of state derived
-  from it that is not read reactively (workflow, journal title format,
+  from it that is not read reactively (workflow, journal formats, the page
+  file-name format that names Org `[[file:…]]` links in `render/pageRefs.ts`,
   favorites); graph open calls it with `null` ("apply everything").
 - **Door (I-1).** Every settings write goes through
   `tine_graph_features::config::update`: one read of the file, a pure text
   edit, and a `Transaction::replace` (or `create`) guarded by the revision just
   read. An outside write between the read and the commit is a conflict, and
   the edit is re-applied to the new bytes (at most four attempts). A page
-  rename that moves the home page carries the same kind of guarded replace as
-  the last step of its own `RenamePage` transaction.
+  rename that moves the home page or favorites carries the same kind of
+  guarded replace as its config step: one transaction after the page
+  operation (`pages::commit_config`), which a title:: change that renames a
+  page reuses (`pages::follow_page_identity`).
 - Config writes carry no page edit kind: the Rule 8 vocabulary covers page
   content, and a Meta replace is not page content.
 
@@ -42,14 +45,19 @@ unknown. A real change reloads the live configuration and journal format,
 and publishes an External change naming `logseq/config.edn`. The desktop
 shell turns that into `graph-config-changed` with the fresh `GraphMeta`.
 
-Own and outside config writes retain parsed pages and their observations
-when `checkpoint::config_key` is unchanged. That key covers the fields read
-by the page build and indexes (including file eligibility, names, journal
-formats and search folding), enforced by its scanning test. A changed key
-still discards parsed pages and rebuilds them before publication. Favorites,
-journal templates and display settings therefore cause no full-page reads or
-document parses; publication can still enumerate names (reading page
-preambles) and rebuild in-memory indexes.
+Own and outside config writes retain parsed pages, their observations, the
+name index and every in-memory index when `checkpoint::config_key` is
+unchanged. That key covers the fields read by the page build and indexes
+(including file eligibility, names, journal formats and search folding),
+enforced by its scanning test. A changed key still discards parsed pages,
+rescans the graph files and rebuilds names and indexes before publication.
+Favorites, journal templates and display settings therefore cause no file
+listing, page read or parse, and their publication names no reader key: the
+frontend's settings readers read `graphMeta` reactively, and
+`graph-config-changed` refreshes no data (a build-key change publishes a
+`full` summary instead). The comparison is with the configuration the
+previous publication used, so a reload in between that moved the key is
+never missed.
 Config publications and frontend updates do not depend on cache invalidation.
 
 ## 3. Writing it
@@ -74,6 +82,18 @@ Renaming the page `:default-home` names, or a namespace parent of it, rewrites
 `:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
 not (OG `merge-pages!`). A case-only rename updates `:default-home :page` to the new spelling too.
 
+The same config step moves `:favorites` (one answerer, CM step 2 batch 4): a
+favorite naming the renamed page or a namespace descendant, under any case
+spelling, takes the new name in its place (OG `rename-page-aux`); a merged-away
+page's favorite moves to the survivor, deduplicated (a deliberate OG difference:
+OG drops it); an alias spelling stays (it still opens the page); a renamed
+arrangement page moves `:tine/favorites-page`. Home and favorites are edited
+independently and written together. A title:: change that renames a page moves
+both the same way, as the backend observes it (`follow_page_identity`: called by
+the window on an identity change, and by the CLI owner's page write). The rename
+report and the follow reply carry the new list; the window adopts it and never
+computes or writes favorites for a rename.
+
 On graph open, a readable device-local session restores its tabs, histories,
 order, pins and active tab before any home landing. `:default-home` supplies
 the landing only without such a session, including when switching graphs.
@@ -91,7 +111,7 @@ Session state remains outside the graph, with no additional persisted fields.
 | A settings write finds a config whose first form is not a balanced map (truncated, half-saved, not a map) | `InvalidData`; the bytes are left exactly as they are | Sync delivery / external-editor race |
 | An edit would produce a config without a balanced root map | `InvalidData`; nothing is written | Same: never make a malformed file out of a good one |
 | A key's value has a shape Tine does not edit (`(…)`, reader tags, a collection where a scalar belongs) | `InvalidData`; nothing is written | Hand-edited or newer-Logseq config |
-| A rename finds config.edn unreadable or malformed | The rename proceeds; home is not updated | Sync delivery / external-editor race; a bad config must not block page work |
+| A rename finds config.edn unreadable or malformed | The rename proceeds; home and favorites are not updated; a value the step cannot edit, or a file it cannot read, is reported as `config_skipped` and the window toasts it | Sync delivery / external-editor race; a bad config must not block page work |
 
 A malformed config never blocks opening the graph: the reader is lenient and
 pages open as usual.
@@ -102,9 +122,11 @@ pages open as usual.
 reload shrinks, but does not close, the window in which a favorite added
 elsewhere is overwritten by the next star toggled in Tine (master §6).
 
-A crash between a rename's last page step and its config step leaves home
-naming the old page; the user re-picks it in Settings. No page content is at
-risk.
+A crash between a rename's last page step and its config step leaves home and
+favorites naming the old page; the user re-picks them. No page content is at
+risk. A title:: change made while no Tine process observes it (an outside
+editor with the app and `tine serve` closed) is not followed: the next open
+lists the favorite under its old name, as OG never follows title:: edits.
 
 ## Tests
 
@@ -115,6 +137,8 @@ risk.
 - crates/tine-store/tests/config_live_reload.rs::settings_only_writes_keep_parsed_pages
 - crates/tine-store/tests/config_live_reload.rs::outside_settings_keep_parsed_pages_but_build_config_reparses
 - crates/tine-store/tests/config_live_reload.rs::own_build_config_change_still_reparses_pages
+- crates/tine-store/tests/og_perf_publish.rs::creates_and_a_favourite_toggle_list_and_open_no_other_page
+- crates/tine-store/tests/og_perf_publish.rs::an_outside_favourite_edit_rescans_nothing_but_a_hidden_edit_does
 - crates/tine-store/tests/config_live_reload.rs::an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed
 - crates/tine-store/tests/config_live_reload.rs::a_removed_config_keeps_its_settings_until_it_returns
 - crates/tine-store/tests/config_live_reload.rs::an_undownloaded_icloud_config_opens_the_graph_read_only
@@ -130,3 +154,9 @@ risk.
 - crates/tine-graph-features/tests/home_rename.rs::merging_the_home_page_into_another_keeps_default_home
 - crates/tine-graph-features/tests/home_rename.rs::a_malformed_config_neither_blocks_the_rename_nor_is_rewritten
 - crates/tine-graph-features/tests/home_rename.rs::a_home_rename_killed_at_each_step_reopens_whole
+- crates/tine-graph-features/tests/home_rename.rs::home_and_favorites_move_together_in_the_config_step
+- crates/tine-graph-features/tests/home_rename.rs::a_favorite_renamed_onto_another_favorite_is_deduplicated
+- crates/tine-graph-features/tests/home_rename.rs::home_and_favorites_follow_independently
+- crates/tine-graph-features/tests/cm_favorites_rename.rs::favorites_after_rename_through_the_rust_entry
+- src-tauri/src/owner/owner_tests/cm_favorites_tests.rs::favorites_after_a_headless_cli_rename
+- src/cmFavoritesRename.test.ts

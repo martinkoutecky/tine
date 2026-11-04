@@ -1,12 +1,13 @@
 // What shows under today's journal (OG page/today-queries, GH #605): the
-// sections page when one is marked `tine/journal-sections:: true`, else
+// sections page when one is marked `tine.journal-sections:: true`, else
 // config.edn `:default-queries` followed by the built-in agenda.
 // Policy: src/journalSections.ts.
 import { For, Match, Show, Switch, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingCurrent, captureBinding } from "../binding";
 import { graphMeta } from "../graphSession";
-import { changed, pageChangeKey } from "../changeKeys";
+import { changed, changedAny, pageChangeKey } from "../changeKeys";
+import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { bindingOwner, graphOwner, readOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { macroNameForDialect } from "../editor/queryMacroName";
@@ -105,7 +106,7 @@ export async function customizeTodaySections(): Promise<void> {
 }
 
 export function TodaySections(props: { today: string; upcoming?: JSX.Element }): JSX.Element {
-  const [pages, { refetch: refetchPages }] = createResource(() => changed("prop:tine/journal-sections"), locateSectionsPages);
+  const [pages, { refetch: refetchPages }] = createResource(() => changedAny(markerChangeKeys(JOURNAL_SECTIONS_MARKER)), locateSectionsPages);
   const [sections, { refetch }] = createResource(() => {
     const names = readOr(pages, undefined, "sections pages");
     return names && { names, revision: names.map(name => changed(pageChangeKey(name))).join("\0") };
@@ -144,7 +145,10 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
                 <Switch>
                   <Match when={item.kind === "upcoming"}>{props.upcoming}</Match>
                   <Match when={item.kind === "query" && detectMacro(item.raw, item.format)}>
-                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty />}
+                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty
+                      // GH #855: the section block's View properties (sort, group) apply here
+                      // too; the feed is read-only, View edits happen on the sections page.
+                      hostRaw={{ raw: item.raw, format: item.format }} />}
                   </Match>
                   <Match when={item.kind === "begin-query" && inspectBeginQuery(item.raw, item.format)}>
                     {(match) => <BeginQuery match={match()} currentPage={props.today} hideWhenEmpty />}

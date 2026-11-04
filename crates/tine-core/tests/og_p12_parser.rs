@@ -37,16 +37,52 @@ fn reference_evidence_excludes_unlabeled_local_assets_and_keeps_nested_pages() {
 #[test]
 fn file_candidate_and_evidence_selection_are_named_policies() {
     use tine_core::block_regions::reference_target_name;
+    // Triple-lowbar graph: `___` is the namespace separator.
     assert_eq!(
-        reference_target_name("file", "file:../pages/Ten___Child.org", "ten", true, true)
-            .as_deref(),
+        reference_target_name(
+            "file",
+            "file:../pages/Ten___Child.org",
+            "ten",
+            true,
+            true,
+            false
+        )
+        .as_deref(),
         Some("Ten/Child")
     );
+    // Legacy graph (the default): the file is named as the store names it,
+    // `___` stays and a dot is the namespace separator
+    // (UI-CM-ORG-FILE-LINK-LEGACY-FORMAT).
     assert_eq!(
-        reference_target_name("file", "file:../pages/Ten___Child.org", "ten", true, false)
-            .as_deref(),
-        Some("ten")
+        reference_target_name(
+            "file",
+            "file:../pages/Ten___Child.org",
+            "ten",
+            true,
+            true,
+            true
+        )
+        .as_deref(),
+        Some("Ten___Child")
     );
+    assert_eq!(
+        reference_target_name("file", "file:./a.b.org", "ab", true, true, true).as_deref(),
+        Some("a/b")
+    );
+    for legacy in [false, true] {
+        assert_eq!(
+            reference_target_name(
+                "file",
+                "file:../pages/Ten___Child.org",
+                "ten",
+                true,
+                false,
+                legacy
+            )
+            .as_deref(),
+            Some("ten")
+        );
+    }
 }
 
 #[test]

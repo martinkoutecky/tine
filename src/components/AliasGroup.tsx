@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphEpoch, pageInventoryRev } from "../graphSession";
+import { graphEpoch, pageAliasRev, pageInventoryRev } from "../graphSession";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { resolvedTarget } from "../pageIndex";
 import { pageIdentityKey } from "../pageIdentity";
@@ -13,7 +13,10 @@ import { PageRef } from "../render/inline";
  * "the real pages in this group". **Also called** lists the names with no file
  * of their own; a link to one opens the page declaring it (with several, the
  * one whose file path sorts first: `Resolved::Alias`). The second row lists
- * the other names that have their own file; a link to one opens that file.
+ * the other names that have their own file; a link to one opens that file,
+ * even an empty alias page that every other link redirects to its owner
+ * (EMPTY-ALIAS, `PageRef file`; Logseq's alias group headers bypass that
+ * redirect too).
  * Blocks are never merged. The backend owns the group (`page_alias_group`,
  * transitive over every page's `alias::`); this page's own declared names
  * show at once while an edit is still publishing, sorted into the two rows by
@@ -31,7 +34,7 @@ export function AliasGroupHeader(props: {
 }): JSX.Element {
   const owners = {};
   const [answer] = createResource(
-    () => props.inGraph && `${props.name}\0${graphEpoch()}\0${pageInventoryRev()}`,
+    () => props.inGraph && `${props.name}\0${graphEpoch()}\0${pageInventoryRev()}\0${pageAliasRev()}`,
     async () => {
       const owner = latestOwner(owners, "alias-group", graphOwner());
       const result = await readOwned(owner, backend().pageAliasGroup(props.name));
@@ -69,7 +72,7 @@ export function AliasGroupHeader(props: {
       <div class="page-aliases page-alias-group" data-alias-group-pages title={t("page-ui-alias-group-pages-title")}>
         <span class="page-aliases-label">{t("page-ui-alias-group-pages")}</span>
         <For each={rows().pages}>
-          {(name) => <span class="alias-group-page"><PageRef name={name} alias={name} /></span>}
+          {(name) => <span class="alias-group-page"><PageRef name={name} alias={name} file /></span>}
         </For>
       </div>
     </Show>

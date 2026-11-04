@@ -5,9 +5,11 @@ use serde_json::{json, Value};
 use tine_core::block_regions::{self, Edit};
 use tine_core::model::{BlockDto, Format};
 use tine_core::outline_kernel::{apply, KeySource, OutlineNode, Place, Verb};
-use tine_store::{Day, EditKind, Resolved};
+use tine_store::{EditKind, Resolved};
 
-use super::verbs::{internal, journal_day, resolve_page, whole_graph, Diag};
+use super::verbs::{
+    internal, journal_day, journal_write_page, resolve_write_page, whole_graph, Diag,
+};
 use super::wire::ErrorBody;
 use super::write::{
     block_at_mut, handle_page, outline_refused, parse_handle, refused, resolve_on, store_refused,
@@ -70,11 +72,11 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         }
         match graph.resolve(name, false) {
             Resolved::Absent { id } => id,
-            _ => resolve_page(&graph, name)?,
+            _ => resolve_write_page(&graph, name)?,
         }
     } else {
         let day = journal_day(slot, args.journal.as_deref().filter(|d| !d.is_empty()))?;
-        slot.store.journal_id(Day(day.ordinal_key()))
+        journal_write_page(slot, &graph, day)?
     };
     let author = args
         .author
@@ -157,7 +159,7 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                             &block.raw,
                             org,
                             Edit::Property {
-                                key: "author".into(),
+                                key: tine_core::tine_keys::AUTHOR.into(),
                                 value: Some(author.into()),
                             },
                         )

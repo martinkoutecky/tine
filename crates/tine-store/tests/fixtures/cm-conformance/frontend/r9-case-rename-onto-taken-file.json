@@ -1,0 +1,263 @@
+{
+  "backlinks": {
+    "B": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[N/y]] and [[B]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "N/y": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[N/y]] and [[B]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "n": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "see [[N/y]] and [[B]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ],
+    "p": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/n%2Fy.md",
+        1
+      ],
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "pages/N%2Fy.md",
+        1
+      ]
+    ],
+    [
+      [
+        "N",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "b",
+      "name": "B",
+      "target": {
+        "id": "pages/n%2Fy.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n",
+      "name": "N",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/N.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n/y",
+      "name": "N/y",
+      "target": {
+        "id": "pages/N%2Fy.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "B": "b",
+    "N": "n",
+    "N/y": "n/y",
+    "p": "p"
+  },
+  "open": {
+    "B": {
+      "journal": [
+        "journal",
+        "b"
+      ],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    "N": {
+      "journal": [
+        "journal",
+        "n"
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    },
+    "N/y": {
+      "journal": [
+        "journal",
+        "n/y"
+      ],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  },
+  "owner": {
+    "B": {
+      "journal": null,
+      "page": "pages/n%2Fy.md"
+    },
+    "N": {
+      "journal": null,
+      "page": null
+    },
+    "N/y": {
+      "journal": null,
+      "page": "pages/N%2Fy.md"
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "b",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "B",
+      "owner": "pages/n%2Fy.md"
+    },
+    {
+      "key": "n",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "n",
+      "owner": null
+    },
+    {
+      "key": "n/y",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "N/y",
+      "owner": "pages/N%2Fy.md"
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md"
+    }
+  ],
+  "spellings": {
+    "B": {
+      "backend": [
+        "page",
+        "b"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "b"
+      ]
+    },
+    "N": {
+      "backend": [
+        "page",
+        "n"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "n"
+      ]
+    },
+    "N/y": {
+      "backend": [
+        "page",
+        "n/y"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "n/y"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    }
+  }
+}

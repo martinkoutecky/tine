@@ -205,10 +205,10 @@ pub fn guide_link_renames() -> HashMap<String, String> {
 
 pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>) -> String {
     // Markdown has no `file:` page links, so the filename format is not consulted.
-    crate::refs::rename_refs_multi(
+    crate::refs::rename_rewrite_keyed(
         markdown,
-        renames,
         false,
+        renames,
         crate::config::FileNameFormat::TripleLowbar,
     )
 }
@@ -230,6 +230,13 @@ mod journal_guide_tests {
             reference.contains("Deleting referenced blocks or merging them with Backspace/Delete")
         );
         assert!(reference.contains("with **Undo** to restore the blocks and their ids"));
+    }
+
+    #[test]
+    fn unlinked_references_say_they_are_found_on_opening() {
+        // Cost audit 2026-11-02 row 6a: nothing is computed while folded.
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("they are looked for only when you open the section"));
     }
 
     #[test]
@@ -500,7 +507,7 @@ mod journal_guide_tests {
         let text = include_str!("templates/journals-tasks-scheduling.md");
         for required in [
             "**Customize today's sections…**",
-            "`tine/journal-sections:: true`",
+            "`tine.journal-sections:: true`",
             "in outline order",
             "Delete the page, or set the marker to `false`, to go back to `config.edn`",
             "Tine never writes to `config.edn`",
@@ -728,7 +735,9 @@ mod parity_guide_tests {
             "**Related pages in this alias group** lists the other names that do have their own page",
             "Their blocks are never merged into one view",
             "opens the page whose file path comes first in plain character order",
-            "A name with its own page file always opens that file",
+            "A name with its own page file opens that file",
+            // EMPTY-ALIAS (D-20261103-CMA): an empty page yields to the alias.
+            "A page file with no real content (no text and no properties, at most one empty bullet) gives its name to the alias",
         ] {
             assert!(guide.contains(phrase), "Guide missing {phrase}");
         }
@@ -1080,7 +1089,7 @@ mod rename_guide_tests {
             "**Settings > Editor > Your name**",
             "**quoted text changed**",
             "**Reply…**",
-            "`author:: <your name>`",
+            "`tine.author:: <your name>`",
             "the first comment or reply you write without a name asks for one once",
             "**Ctrl/Cmd+Z** restores them together",
             "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
@@ -1513,8 +1522,8 @@ mod rename_guide_tests {
             "a page marked `public:: false` and the Exports page are never shared",
             "**Include the query text** is off",
             "`published-queries/<folder>/`",
-            "`export:: <folder>`",
-            "marked `tine/exports:: true` and `public:: false`",
+            "`tine.export:: <folder>`",
+            "marked `tine.exports:: true` and `public:: false`",
             "Exports 2",
             "Share pages with a link",
             "The key is in the link, after `#`",
@@ -1937,6 +1946,9 @@ mod customize_look_guide_tests {
             "**Embedded blocks**",
             "**Links to the web or a file**",
             "**Links to pages that do not exist yet**",
+            // GH #856: indent guides colored by nesting level, with their off switch.
+            "**Color indent guides by level**",
+            "--guide-hue-1",
             "style.knobs.v1",
             // Discussion #714: the transient toggle class for theme animations.
             "`just-toggled`",
@@ -2000,6 +2012,10 @@ mod og_20d_guide_tests {
             "**Page** (name)",
             "**Show journals**",
             "**Journal date**",
+            // D-20261102-CM4: reference-only pages are listed, and the count
+            // is the size of the page's Linked References.
+            "pages with no file of their own",
+            "the number of blocks the page's Linked References lists",
         ] {
             assert!(
                 map.contains(detail),
@@ -2081,6 +2097,8 @@ mod og_20d_guide_tests {
             "strict `>` / `<`",
             "reversed bounds return nothing",
             "`direct_ref('project')`",
+            "A reference finds the page by any of its names",
+            "A journal answers to every spelling of its date",
             "20,000 rows",
             "Tine 0.6 (stable)",
         ] {
@@ -2280,7 +2298,7 @@ mod og_20d_guide_tests {
             vec!["handle", "fingerprint", "id::", "stale"],
             vec!["handle", "printed name", "title::", "file you read"],
             vec!["1 mib", "tine edit", "frame-too-large", "before changing"],
-            vec!["author::", "agent", "--author", "tine_author"],
+            vec!["tine.author::", "agent", "--author", "tine_author"],
             // #840: an edit keeps properties; removal has its own verb.
             vec!["tine edit", "properties stay", "tine prop remove"],
             vec!["app open", "typed", "saved first", "window", "stale"],

@@ -1,0 +1,185 @@
+{
+  "backlinks": {
+    "A": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "cc27b5e9-7374-8e8c-8d3b-c1cd0851767c",
+            "raw": "[[A]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "x"
+      }
+    ],
+    "Favs": [],
+    "x": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Favs.md",
+        0
+      ],
+      [
+        "pages/A.md",
+        1
+      ],
+      [
+        "pages/x.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "a",
+      "name": "A",
+      "target": {
+        "id": "pages/A.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "favs",
+      "name": "Favs",
+      "target": {
+        "id": "pages/Favs.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x",
+      "name": "x",
+      "target": {
+        "id": "pages/x.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "A": "a",
+    "Favs": "favs",
+    "x": "x"
+  },
+  "open": {
+    "A": {
+      "journal": [
+        "journal",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    "Favs": {
+      "journal": [
+        "journal",
+        "favs"
+      ],
+      "page": [
+        "page",
+        "favs"
+      ]
+    },
+    "x": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  },
+  "owner": {
+    "A": {
+      "journal": null,
+      "page": "pages/A.md"
+    },
+    "Favs": {
+      "journal": null,
+      "page": "pages/Favs.md"
+    },
+    "x": {
+      "journal": null,
+      "page": "pages/x.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "a",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "A",
+      "owner": "pages/A.md"
+    },
+    {
+      "key": "favs",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Favs",
+      "owner": "pages/Favs.md"
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "x",
+      "owner": "pages/x.md"
+    }
+  ],
+  "spellings": {
+    "A": {
+      "backend": [
+        "page",
+        "a"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "a"
+      ]
+    },
+    "Favs": {
+      "backend": [
+        "page",
+        "favs"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "favs"
+      ]
+    },
+    "x": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    }
+  }
+}
