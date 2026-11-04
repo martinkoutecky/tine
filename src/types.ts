@@ -203,6 +203,24 @@ export interface AliasGroup {
   pages: string[];
 }
 
+/** Why the backend refused a rename the user can act on
+ *  (`pages::RenameBlocked`): the new name is inside the page's own namespace
+ *  and used (CM-OWN-CHILD, M-Q6), or its file belongs to another page (R14). */
+export type RenameRefusal =
+  | { kind: "ownChild"; old: string; new: string }
+  | { kind: "fileTaken"; file: string; page: string };
+
+/** What renaming a page asks of the user, answered by the rename's own planner
+ *  (`pages::rename_offer`; the window never re-derives it). `merge`: the new
+ *  name is one other page's (its file `into`, display `name`); `aliasOf`: the
+ *  new name is only `owner`'s alias (M-Q5): merge / own page / cancel, the
+ *  merge offered only when `merge`. */
+export type RenameOffer =
+  | { kind: "rename" }
+  | { kind: "merge"; into: string; name: string; journal: boolean }
+  | { kind: "aliasOf"; owner: string; name: string; merge: boolean }
+  | { kind: "refused"; reason: RenameRefusal; message: string };
+
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }
   | { kind: "alias"; owners: string[] }

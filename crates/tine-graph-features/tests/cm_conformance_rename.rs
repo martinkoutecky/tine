@@ -37,7 +37,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{json, Value};
-use tine_graph_features::pages::{rename_or_merge_page, RenameOutcome};
+use tine_graph_features::pages::{
+    rename_offer, rename_page_as, RenameChoice, RenameOffer, RenameOutcome,
+};
 use tine_store::{Resolved, Store};
 
 use tine_store as store_crate;
@@ -108,35 +110,51 @@ enum TineRename {
     Refused(String),
 }
 
-fn run_tine(store: &Arc<Store>, old: &str, new: &str, droppers: &Droppers) -> TineRename {
+/// Tine's rename as the app runs it: the dialog's question
+/// (`rename_offer`, the planner's own answer), then the answer the user
+/// gives. A merge offer is confirmed. An alias-only name (M-Q5) offers both
+/// a merge into its owner and "make it its own page": `own_page` picks the
+/// second (the caller runs both); the returned flag says the offer had both.
+fn run_tine(
+    store: &Arc<Store>,
+    old: &str,
+    new: &str,
+    own_page: bool,
+    droppers: &Droppers,
+) -> (TineRename, bool) {
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
-    let mut result = rename_or_merge_page(store, &host, old, new, None, None, &[]);
-    let mut confirmed = false;
-    let mut merged_into = String::new();
-    if let Err(e) = &result {
-        if e.kind() == std::io::ErrorKind::AlreadyExists
-            && e.to_string().contains("already exists elsewhere")
-        {
-            // The app asks the user to confirm a merge into the sole claimant.
-            let claimant = match store.whole_graph().unwrap().resolve(new, false) {
-                Resolved::Existing { id, others } if others.is_empty() => Some(id.to_string()),
-                Resolved::Alias { owners } if owners.len() == 1 => Some(owners[0].to_string()),
-                _ => None,
-            };
-            if let Some(into) = claimant {
-                confirmed = true;
-                merged_into = into.clone();
-                result = rename_or_merge_page(store, &host, old, new, None, Some(&into), &[]);
+    let mut both = false;
+    let (choice, confirmed, into) = match rename_offer(store, old, new, None) {
+        Ok(RenameOffer::Rename) => (Some(RenameChoice::Rename), false, String::new()),
+        Ok(RenameOffer::Merge { into, .. }) => (None, true, into),
+        Ok(RenameOffer::AliasOf { owner, merge, .. }) => {
+            both = merge;
+            if own_page || !merge {
+                (Some(RenameChoice::OwnPage), false, String::new())
+            } else {
+                (None, true, owner)
             }
         }
-    }
+        Ok(RenameOffer::Refused { reason, message }) => {
+            later_drop(droppers, (host, app_data));
+            let kind = format!("{reason:?}");
+            let kind = kind.split([' ', '{']).next().unwrap_or("").to_owned();
+            return (TineRename::Refused(format!("{kind}: {message}")), false);
+        }
+        Err(e) => {
+            later_drop(droppers, (host, app_data));
+            return (TineRename::Refused(format!("{:?}: {e}", e.kind())), false);
+        }
+    };
+    let choice = choice.unwrap_or(RenameChoice::MergeInto(&into));
+    let result = rename_page_as(store, &host, old, new, None, choice, &[]);
     later_drop(droppers, (host, app_data));
-    match result {
+    let tine = match result {
         Ok(report) => TineRename::Performed {
             outcome: report.outcome,
             confirmed,
-            into: merged_into,
+            into: into.clone(),
         },
         Err(e) => TineRename::Refused(format!(
             "{:?}: {e}{}",
@@ -147,7 +165,8 @@ fn run_tine(store: &Arc<Store>, old: &str, new: &str, droppers: &Droppers) -> Ti
                 ""
             }
         )),
-    }
+    };
+    (tine, both)
 }
 
 /// (kind, key) multisets, sorted, per final path.
@@ -202,6 +221,9 @@ fn diff_multisets(
 }
 
 /// One graph and one rename through Tine and the model; the differences.
+/// Round 9 (M-Q5): when Tine's dialog offered both a merge and "make it its
+/// own page", the merge is run here and the own-page answer by the caller
+/// ([`run_both`]).
 fn run_rename(
     store_classes: &BTreeSet<String>,
     bridge: &Path,
@@ -209,8 +231,9 @@ fn run_rename(
     old: &str,
     new: &str,
     coarse_random: bool,
+    own_page: bool,
     droppers: &Droppers,
-) -> Vec<Diff> {
+) -> (Vec<Diff>, bool) {
     let dir = tempfile::tempdir().unwrap();
     spec.write(dir.path());
     let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
@@ -226,7 +249,7 @@ fn run_rename(
             diffs.push(Diff::new("harness: bridge failed", e));
             drop(view);
             later_drop(droppers, (store, dir));
-            return diffs;
+            return (diffs, false);
         }
     };
     diffs.extend(shared::harness_reports(&model));
@@ -298,7 +321,7 @@ fn run_rename(
             format!("refuses the merge ({})", why.join(" + "))
         }
     };
-    let tine = run_tine(&store, old, new, droppers);
+    let (tine, both) = run_tine(&store, old, new, own_page, droppers);
     let rename = format!("rename {old:?} -> {new:?}");
     // Which model answer the after graph is compared with: the rename's or
     // the merge's (`None`: not compared further).
@@ -364,11 +387,12 @@ fn run_rename(
             },
             _,
         ) => {
-            if allowed {
+            if allowed && !both {
                 // The model allows a plain rename here (the new name is no real
                 // page); Tine refuses it and offers only a merge into the new
                 // name's claimant (an alias owner). Round 9 (M-Q5 dialog):
-                // the model offers both; Tine only the merge.
+                // the model offers both; so does Tine's dialog when the
+                // owner can be merged into (`both`, run twice).
                 diffs.push(Diff::new(
                     "rename: model allows a plain rename, Tine only merges into the new name's claimant",
                     format!("{rename}: model allows; Tine refuses AlreadyExists, merges after confirmation ({outcome:?})"),
@@ -437,7 +461,7 @@ fn run_rename(
     };
     let Some((outcome, confirmed)) = performed else {
         later_drop(droppers, (store, dir));
-        return finish(diffs, duplicate, coarse_random);
+        return (finish(diffs, duplicate, coarse_random), both);
     };
     let (r, is_merge) = chosen.expect("a performed operation has its model answer");
     // The model's final path of each before file: its own, for a moved file
@@ -499,7 +523,7 @@ fn run_rename(
             diffs.push(Diff::new("harness: bridge failed (after graph)", e));
             drop(view2);
             later_drop(droppers, (store2, dir));
-            return finish(diffs, duplicate, coarse_random);
+            return (finish(diffs, duplicate, coarse_random), both);
         }
     };
     diffs.extend(shared::harness_reports(&after_model));
@@ -686,7 +710,45 @@ fn run_rename(
     drop(after_ctx);
     drop(view2);
     later_drop(droppers, (store2, dir));
-    finish(diffs, duplicate, coarse_random)
+    (finish(diffs, duplicate, coarse_random), both)
+}
+
+/// [`run_rename`] with the dialog's first answer, and again with "make it its
+/// own page" when the dialog offered both (M-Q5); the second run's
+/// differences are tagged `(own page)` and both sets returned.
+fn run_both(
+    store_classes: &BTreeSet<String>,
+    bridge: &Path,
+    spec: &GraphSpec,
+    old: &str,
+    new: &str,
+    coarse_random: bool,
+    droppers: &Droppers,
+) -> (Vec<Diff>, Option<Vec<Diff>>) {
+    let (diffs, both) = run_rename(
+        store_classes,
+        bridge,
+        spec,
+        old,
+        new,
+        coarse_random,
+        false,
+        droppers,
+    );
+    let own = both.then(|| {
+        run_rename(
+            store_classes,
+            bridge,
+            spec,
+            old,
+            new,
+            coarse_random,
+            true,
+            droppers,
+        )
+        .0
+    });
+    (diffs, own)
 }
 
 fn finish(mut diffs: Vec<Diff>, duplicate: bool, coarse_random: bool) -> Vec<Diff> {
@@ -823,18 +885,22 @@ fn conceptual_model_rename_conformance() {
     let mut report = BTreeMap::new();
     for spec in rename_fixtures() {
         for (old, new) in &spec.renames {
-            let diffs = run_rename(&store_classes, bridge, &spec, old, new, false, &droppers);
+            let (diffs, own) = run_both(&store_classes, bridge, &spec, old, new, false, &droppers);
             let name = format!("{}: {old} -> {new}", spec.name);
-            report.insert(
-                name.clone(),
-                json!(diffs
-                    .iter()
-                    .map(|d| json!({"class": d.class, "detail": d.detail}))
-                    .collect::<Vec<_>>()),
-            );
-            section
-                .fixtures
-                .insert(name, diffs.into_iter().map(|d| d.detail).collect());
+            let runs = std::iter::once((name.clone(), diffs))
+                .chain(own.map(|own| (format!("{name} (own page)"), own)));
+            for (name, diffs) in runs {
+                report.insert(
+                    name.clone(),
+                    json!(diffs
+                        .iter()
+                        .map(|d| json!({"class": d.class, "detail": d.detail}))
+                        .collect::<Vec<_>>()),
+                );
+                section
+                    .fixtures
+                    .insert(name, diffs.into_iter().map(|d| d.detail).collect());
+            }
         }
     }
     for spec in all_fixtures() {
@@ -865,7 +931,13 @@ fn conceptual_model_rename_conformance() {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(spec) = specs.get(i) else { break };
                 let (old, new) = &spec.renames[0];
-                let diffs = run_rename(&store_classes, bridge, spec, old, new, true, &droppers);
+                let (mut diffs, own) =
+                    run_both(&store_classes, bridge, spec, old, new, true, &droppers);
+                for d in own.into_iter().flatten() {
+                    diffs.push(Diff::new(format!("{} (own page)", d.class), d.detail));
+                }
+                diffs.sort();
+                diffs.dedup();
                 results.lock().unwrap().insert(i, diffs);
             });
         }

@@ -422,10 +422,13 @@ class TauriBackend implements Backend {
   getBlockReferrers(uuid: string) {
     return this.call<RefGroup[]>("block_referrers", { uuid });
   }
-  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
+  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[], ownPage?: boolean) {
     dropDisplayedFor({ name: old });
-    if (mergeInto) dropDisplayedFor({ name: mergeInto });
-    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
+    if (mergeInto && !ownPage) dropDisplayedFor({ name: mergeInto });
+    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto: ownPage ? undefined : mergeInto, ownPage: ownPage || undefined, unsavedPaths });
+  }
+  renameOffer(old: string, next: string, expectedPath?: string) {
+    return this.call<import("./types").RenameOffer>("rename_offer", { old, new: next, expectedPath });
   }
   renameWouldChange(old: string, next: string, texts: import("./types").RenameProbeText[]) {
     return this.call<boolean[]>("rename_would_change", { old, new: next, texts });

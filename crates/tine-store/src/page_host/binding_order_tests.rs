@@ -156,7 +156,7 @@ fn replanned(
     (old, new): (&str, &str),
 ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
     let referrers: Vec<PageId> = referrers.iter().map(|page| PageId::from(*page)).collect();
-    let map = RenameMap(vec![(old.into(), new.into())]);
+    let map = RenameMap(vec![(old.into(), new.into())], Vec::new());
     super::rename::rename(
         host,
         &PageId::from(source),

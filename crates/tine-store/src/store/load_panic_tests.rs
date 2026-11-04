@@ -349,7 +349,7 @@ fn a_title_read_panic_refuses_one_rename_and_keeps_the_writer() {
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     assert!(matches!(settled(&store), Ok(true)));
     let before = fs::read(root.join("pages/Bad.md")).unwrap();
-    let map = crate::RenameMap(vec![("Bad".into(), "Renamed".into())]);
+    let map = crate::RenameMap(vec![("Bad".into(), "Renamed".into())], Vec::new());
     let committed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut tx = store.page_plan(Some(crate::EditKind::RenamePage));
         tx.move_file(

@@ -1331,6 +1331,15 @@
       "acceptableVariations": ["Palette ranking, selection highlight, save latency and where the caret sits when the key is pressed."],
       "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK; the CM6 editor, which the render-level tests cover."],
       "stability":"burn-in"
+    },
+    "scripts/e2e-cm-merge-rules.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Renaming a page through its title to a name that is only another page's alias (ML notes to ML, where Machine Learning has alias:: ML) opens Tine's own dialog with three choices: Merge into “Machine Learning”, Make “ML” its own page (still an alias of “Machine Learning”), and Cancel. Cancel changes no file. Making it its own page moves the page to pages/ML.md, rewrites [[ML notes]] to [[ML]], leaves Machine Learning's file byte-identical (alias:: ML stays), opens the renamed page, and a block linking [[ML]] still shows in Machine Learning's Linked References.","blocking":true,"authority":"D-20261102-MC5 (M-Q5); CM step 2 batch 12 (divergence R4)"},
+        {"class":"exact-safety-interoperability","userOutcome":"Renaming Foo to Foo/bar, where Foo/bar is already a page, is refused: an error toast says that Foo/bar is already a page or an alias inside Foo, no choice dialog opens, and every page and journal file is byte-identical.","blocking":true,"authority":"M-Q6; D-20261103-CMA (CM-OWN-CHILD); CM step 2 batch 12 (divergence R12)"}
+      ],
+      "acceptableVariations": ["Dialog styling, toast timing and the rendered layout of Linked References may vary while the choices, the message and the files are as stated."],
+      "nonRequirements": ["The merge choice's file outcome (covered by crates/tine-graph-features/tests/cm_merge_rules.rs).", "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run."],
+      "stability":"burn-in"
     }
   }
 }
