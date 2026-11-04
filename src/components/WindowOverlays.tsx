@@ -16,6 +16,7 @@ import { ShareDialog } from "./ShareDialog";
 import { QuickShareDialog } from "./QuickShareDialog";
 import { GraphNamePrompt } from "./GraphNamePrompt";
 import { CommentNamePrompt } from "./CommentNamePrompt";
+import { LinkSchemePrompt } from "./LinkSchemePrompt";
 import { FailureBoundary } from "./FailureBoundary";
 import { DrawerBackground } from "./MobileDrawerShell";
 import { queryExportRequest, settingsOpen } from "../ui";
@@ -63,6 +64,7 @@ export function WindowOverlays(props: {
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
         <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
         <FailureBoundary region="Your name"><CommentNamePrompt /></FailureBoundary>
+        <FailureBoundary region={t("links-remembered-schemes")}><LinkSchemePrompt /></FailureBoundary>
         <FailureBoundary region={t("css-editor-title")}><CssEditor /></FailureBoundary>
         <Show when={settingsOpen()}>
           <Suspense>

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-scheme-consent.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A custom app link asks with its full URL and an unchecked Always open choice. Explicitly remembering opens later links of that exact scheme without prompting across a new app process. A different scheme still prompts; forgetting the scheme in Settings persists removal and restores its prompt. Native OS handoffs carry the original URLs and graph bytes stay unchanged.","blocking":false,"authority":"GH #503; D-20261103-S503"}],
+      "acceptableVariations": ["Dialog geometry, wording translations, setting latency and OS handler registration may vary."],
+      "nonRequirements": ["No pixels, no boundary enumeration (component tests cover denied schemes, exact prefixes and malformed settings), no platform beyond Linux WebKitGTK, no burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-cm6-setting-restart.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With the CodeMirror experiment switched on in Settings and the app quit and relaunched, the first block edit on a routed page and in the right sidebar mounts the CodeMirror editor, and a Quick Capture opened by the global-shortcut handoff shows the CodeMirror editor with the caret in it, with no off/on in Settings. The app is killed with SIGKILL before the relaunch, as after a crash. With a second window on another graph open, switching CodeMirror off in either window changes the next edit in the other window with no restart, and switching it back on does the same. A block opened while this window is still reading the stored choice (a slow reply) waits for it and gets the stored editor, not the default.","blocking":false,"authority":"Martin report 2026-11-02 (development build)"}],
       "acceptableVariations": ["Timing, window geometry and the exact CodeMirror markup may vary while the editor kind and the caret location agree."],

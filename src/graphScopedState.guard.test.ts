@@ -339,6 +339,7 @@ describe("graph-scoped UI state (I-20)", () => {
     for (const key of Object.keys(CLASSIFIED_CONSUMERS)) expect(keys, `stale CLASSIFIED_CONSUMERS entry ${key}; remove it`).toContain(key);
     expect(consumers.filter((c) => c.proven).map((c) => c.key).sort(), "the proven writers").toEqual([
       "src/commentActions.ts#paletteSelection",
+      "src/components/AssetsSettings.tsx#orphanScan",
       "src/components/CommentNamePrompt.tsx#commentNameRequest",
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
@@ -346,7 +347,6 @@ describe("graph-scoped UI state (I-20)", () => {
       "src/components/QuickShareAll.tsx#batchOwner",
       "src/components/RenameAliasChoice.tsx#aliasRenameRequest",
       "src/components/RootRecoveryNotice.tsx#rootRecoveryOffers",
-      "src/components/Settings.tsx#orphanScan",
     ]);
     const picker = readFileSync("src/components/DatePicker.tsx", "utf8");
     expect(picker.match(/if \(!bound\(\)\) return/g)?.length, `${RULE}: both DatePicker write paths check bound()`).toBe(2);
