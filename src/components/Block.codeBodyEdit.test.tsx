@@ -75,6 +75,26 @@ const modA = (el: EditorDriver) =>
   el.keydown(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
 
 describe("body-only code editor (GH #412/#413)", () => {
+  it.each([ ["md", "```js\nx\n```"], ["org", "#+BEGIN_SRC js\nx\n#+END_SRC"] ] as const)("Escape reveals editable raw %s source, then exits on the next Escape (GH #865)", async (format, raw) => {
+    const { root, textarea, blockId, dispose } = mountPage(raw, format);
+    try {
+      typeText(textarea, "y");
+      const expected = raw.replace("\nx\n", "\nyx\n");
+      textarea.keydown({ key: "Escape", bubbles: true, cancelable: true });
+      await Promise.resolve();
+      const plain = maybeEditorIn(root)!;
+      expect(plain).not.toBeNull();
+      expect(plain.value()).toBe(expected);
+      expect(editingId()).toBe(blockId);
+      expect(doc.byId[blockId].raw).toBe(expected);
+      plain.select(0, 0);
+      typeText(plain, "intro\n");
+      expect(plain.value()).toBe("intro\n" + expected);
+      expect(doc.byId[blockId].raw).toBe("intro\n" + expected);
+      plain.keydown({ key: "Escape", bubbles: true, cancelable: true });
+      expect(editingId()).toBeNull();
+    } finally { dispose(); }
+  });
   it("shows only the payload of a complete markdown fence, never the fences", () => {
     const { textarea, dispose } = mountPage("```\necho hello\n```");
     try {
