@@ -27,7 +27,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-beta-editor-862-865.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"On routed pages Enter after closed standalone math creates a writable next block, and Escape from Markdown or Org code reveals editable raw source that saves durably.","blocking":false,"authority":"GH #862, GH #865"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"On routed pages Enter after closed standalone math creates a writable next block, and Escape from Markdown or Org code in classic and CodeMirror editors reveals editable raw source that saves durably; the next Escape selects the block and reopening restores the code view.","blocking":false,"authority":"GH #862, GH #865"}],
       "acceptableVariations": ["Editor geometry and save latency may vary."],
       "nonRequirements": ["No exact pixels, Windows certification, private graph or release burn-in."],
       "stability":"burn-in"

@@ -10,7 +10,9 @@
  * `leaveOnKey` consumes boundary arrows/Backspace and restores raw coordinates.
  * `leaveRange` supplies that same transition to editors with state-owned selections.
  * `selection` supplies visible-source mixed-block coordinates to history (whole-code keeps
- * its existing body coordinates). No operation here commits or persists text. */
+ * its existing body coordinates). `revealRaw` alone calls the editor's guarded
+ * commit before disabling projection and returning visible source, or null if
+ * no code view is showing. Editors own display and caret placement. */
 import { createMemo, createSignal, type Accessor } from "solid-js";
 import { codeFences } from "./fences";
 import { codeBodyJoin, codeBodyProjection, type CodeBodyProjection } from "./codeFence";
@@ -79,12 +81,12 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     // OG extensions/code.cljs render!: Esc saves the code editor and calls
     // edit-block! with :max. Stay raw for this editing session so native
     // selection cannot immediately hide the delimiters again (GH #865).
-    revealRaw: (ta: HTMLTextAreaElement) => {
+    revealRaw: (body: string, commit: (text: string) => void) => {
+      if (!shown()) return null;
+      commit(body);
       setRawMode(true);
       setRegion(null);
-      ta.value = visibleRaw();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
-      ta.focus();
+      return visibleRaw();
     },
     join: (body: string) => {
       const p = shown();

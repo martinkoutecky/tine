@@ -13,7 +13,7 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const artifacts = path.join(root, "artifacts/fix-beta-editor-862-865");
+const artifacts = process.env.E2E_ARTIFACT_DIR || path.join(root, "artifacts/cm6-esc-865");
 fs.mkdirSync(artifacts, { recursive: true });
 const out = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(out, "graph");
@@ -26,7 +26,11 @@ const cases = [
   ["Markdown code", "md", "```js\nx\n```"],
   ["Org code", "org", "#+BEGIN_SRC js\nx\n#+END_SRC"],
 ];
-for (const [name, format, raw] of cases) fs.writeFileSync(path.join(graph, `pages/${name}.${format}`),
+const cm6Cases = [
+  ["CM6 Markdown code", "md", "```js\nx\n```"],
+  ["CM6 Org code", "org", "#+BEGIN_SRC js\nx\n#+END_SRC"],
+];
+for (const [name, format, raw] of [...cases, ...cm6Cases]) fs.writeFileSync(path.join(graph, `pages/${name}.${format}`),
   (format === "md" ? "- " + raw.replaceAll("\n", "\n  ") : "* " + raw) + "\n");
 const app = process.env.TINE_APP || path.join(root, "target/release/tine");
 const fixture = accountHomeFixture(out, out, { ...process.env, HOME: path.join(out, "home"), TINE_GRAPH: graph,
@@ -97,6 +101,50 @@ try {
       }
     }
     shot(`${name}.png`);
+  }
+  stage = "Enable CodeMirror in Settings";
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-modal").waitForDisplayed();
+  await browser.$(".settings-search-input").setValue("CodeMirror");
+  const result = await browser.$(".settings-search-result");
+  await result.waitForDisplayed();
+  await result.click();
+  const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
+  await toggle.waitForDisplayed();
+  assert.equal(await toggle.getAttribute("aria-checked"), "false");
+  await toggle.click();
+  await browser.waitUntil(async () => await toggle.getAttribute("aria-checked") === "true");
+  await browser.keys("Escape");
+  const cmText = () => browser.execute(() => [...document.querySelectorAll(".main-content .cm-content .cm-line")].map(line => line.textContent).join("\n"));
+  for (const [name, format, raw] of cm6Cases) {
+    stage = name;
+    console.log(`Case: ${name}`);
+    await openPageByName(browser, name);
+    await browser.$(".main-content .block-content").click();
+    await browser.$('.main-content [data-block-editor="cm6"]').waitForDisplayed();
+    assert.equal(await cmText(), "x");
+    await browser.keys(["Control", "End"]);
+    await browser.releaseActions();
+    await browser.keys("y");
+    await browser.keys("Escape");
+    const expected = raw.replace("\nx\n", "\nxy\n");
+    const success = await browser.waitUntil(async () => await cmText() === expected, { timeout: 3000 }).then(() => true, () => false);
+    proof.outcomes.push({ name, success });
+    assert.ok(success, `${name}: Escape must reveal raw source`);
+    shot(`${name}-raw.png`);
+    // Edit the opener while preserving a complete code wrapper for reopening.
+    await browser.keys(["Control", "Home"]);
+    await browser.releaseActions();
+    await browser.keys("End");
+    await browser.keys(" raw continuation");
+    assert.equal(await cmText(), expected.replace("js\n", "js raw continuation\n"));
+    await browser.keys("Escape");
+    await browser.waitUntil(async () => !await browser.$('.main-content [data-block-editor="cm6"]').isExisting());
+    await waitForFileText(path.join(graph, `pages/${name}.${format}`), text => text.includes("xy") && text.includes("raw continuation"));
+    await browser.$(".main-content .block-content").click();
+    await browser.waitUntil(async () => await cmText() === "xy");
+    await browser.keys("Escape");
+    await browser.keys("Escape");
   }
   assert.ok(proof.outcomes.every(x => x.success), JSON.stringify(proof.outcomes));
   fixture.verify();

@@ -339,6 +339,14 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         else capture!.cancel();
         event.preventDefault(); event.stopImmediatePropagation(); return;
       }
+      if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const raw = codeView.revealRaw(view.state.doc.toString(), commit);
+        if (raw !== null) {
+          showText(view, raw, raw.length);
+          view.focus();
+          event.preventDefault(); event.stopImmediatePropagation(); return;
+        }
+      }
       const s = view.state.selection.main;
       const leave = codeView.leaveRange(event, view.state.doc.toString(), s.from, s.to);
       if (leave) showText(view, visible(), leave.anchor, leave.head);
