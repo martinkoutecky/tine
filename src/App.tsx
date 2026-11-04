@@ -82,6 +82,7 @@ import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
 import { initCommentIdentity } from "./commentIdentity";
 import { initCommentNamePrompt, probeGraphGit } from "./commentNamePrompt";
 import { initLocalFileSettings } from "./localFileSettings";
+import { loadLinkSchemeSettings } from "./linkSchemeSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
@@ -837,6 +838,7 @@ export function App(): JSX.Element {
   onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
+  onMount(() => void loadLinkSchemeSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
   onMount(() => {
     let unsub = () => {};

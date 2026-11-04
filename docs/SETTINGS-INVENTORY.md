@@ -57,11 +57,14 @@ dynamic keys are outside this core inventory.
 
 <!-- tab:editor -->
 
+Remembered app link consent is device-local and revocable for each exact URL scheme.
+
 ## Editor
 
 | Tab ID | Setting key | Label | Level | Rationale |
 |---|---|---|---|---|
 | `editor` | `settings-search-your-name` | Your name | Basic | Visible workflow, accessibility, permission or safety choice. |
+| `editor` | `links-remembered-schemes` | Remembered app links | Basic | Device-local permission, with per-scheme revocation. |
 | `editor` | `settings-hover-preview-delay` | Hover preview delay | Advanced | Optional reference-preview timing; a large delay keeps previews out of the way. |
 | `editor` | `settings-cm6-label` | Experimental: CodeMirror editor | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
 | `editor` | `settings-search-file-format` | File format | Basic | Visible workflow, accessibility, permission or safety choice. |

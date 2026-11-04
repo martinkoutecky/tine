@@ -1,27 +1,18 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
-import { msg, t } from "../i18n";
+import { msg } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-
-/** Schemes whose links open as before, with no prompt: web, mail, a local
- *  `file:` (GH #444) and Tine's own `tine:` routes. */
-const DIRECT_SCHEMES = new Set(["http", "https", "mailto", "file", "tine"]);
-/** Schemes no outbound link ever opens, confirmed or not (I-22); the native
- *  opener refuses them too. */
-const NEVER_OPENED_SCHEMES = new Set(["javascript", "vbscript", "data", "blob", "about"]);
-
-/** The RFC 3986 scheme of a link destination, lowercased, or null. A single
- *  letter is a Windows drive (`C:\notes`), not a scheme. O(dest bytes). */
-export function linkScheme(dest: string): string | null {
-  const match = /^([a-z][a-z0-9+.-]+):/i.exec(dest);
-  return match ? match[1].toLowerCase() : null;
-}
+import { linkScheme, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
+import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
+import { askLinkScheme } from "../linkSchemePrompt";
+export { linkScheme } from "../linkSchemePolicy";
 
 /** The one owner of "open this outbound link" for graph content (I-12). http(s),
  *  mailto, `file:` and `tine:` open directly, as before. Another app's scheme
  *  (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) opens only after the
- *  user confirms a prompt naming the scheme and the full target: a link in a
+ *  user confirms a prompt naming the scheme and the full target, or remembers
+ *  that exact scheme on this device (D-20261103-S503): a link in a
  *  note is untrusted content (malformed or imported Markdown, a synced note),
  *  and the prompt is the boundary before an arbitrary registered app launches.
  *  The native opener re-checks that the confirmed scheme is the link's. Code-
@@ -33,13 +24,14 @@ export async function openOutboundLink(dest: string, graphScoped = true): Promis
   const owner = ownedWhen(...(graphScoped ? [graphOwner()] : []));
   const scheme = linkScheme(dest);
   try {
-    if (scheme && NEVER_OPENED_SCHEMES.has(scheme)) throw new Error(`${scheme}: links are never opened`);
-    if (scheme && !DIRECT_SCHEMES.has(scheme)) {
-      const answer = await readOwned(owner, backend().confirm(
-        t("links-open-custom-scheme-confirm", { scheme, url: dest }),
-        { title: t("links-open-custom-scheme-title", { scheme }), okLabel: t("confirm-open-link"), cancelLabel: t("confirm-cancel") },
-      ));
-      if (answer.kind === "stale" || !answer.value) return;
+    if (scheme && refusedLinkScheme(scheme)) throw new Error(`${scheme}: links are never opened`);
+    if (scheme && rememberableLinkScheme(scheme)) {
+      if ((await readOwned(owner, loadLinkSchemeSettings())).kind === "stale") return;
+      if (!rememberedLinkSchemes().includes(scheme)) {
+        const answer = await readOwned(owner, askLinkScheme(scheme, dest, owner));
+        if (answer.kind === "stale" || answer.value === "cancel") return;
+        if (answer.value === "always") setLinkSchemeRemembered(scheme, true);
+      }
       await readOwned(owner, backend().openExternal(dest, scheme));
       return;
     }

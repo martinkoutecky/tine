@@ -1,6 +1,13 @@
 ## Links in graph content: destinations and schemes are never translated.
 links-open-custom-scheme-confirm = Open this { $scheme }: link in the app your system uses for it?{ "\u000A\u000A" }{ $url }
 links-open-custom-scheme-title = Open { $scheme }: link
+links-always-open-scheme = Always open { $scheme } links
+links-consent-device-hint = Remembered on this device for all graphs. Forget a scheme in Settings → Editor to ask again before opening its links.
+links-remembered-schemes = Remembered app links
+links-forget = Forget
+links-forget-scheme = Forget { $scheme } links
+links-no-remembered-schemes = No remembered schemes
+links-consent-save-failed = Could not save app link consent. The previous setting has been restored.
 links-outside-graph-title = This link points outside the graph folder, so Tine does not open it
 links-copy-title = Copy link
 references-filter-unlinked = Filter unlinked references

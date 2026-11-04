@@ -1465,6 +1465,8 @@ mod rename_guide_tests {
         let search = include_str!("templates/pages-links-references-search.md");
         assert!(search.contains("A link to another app"));
         assert!(search.contains("first asks whether to open it"));
+        assert!(search.contains("**Always open <scheme> links**"));
+        assert!(search.contains("Settings → **Editor** → **Remembered app links**"));
         assert!(!search.contains("or any other kind of link, is reported"));
     }
 
