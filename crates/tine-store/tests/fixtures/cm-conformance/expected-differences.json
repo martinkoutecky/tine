@@ -336,12 +336,6 @@
       ],
       "o2-date-alias-on-twin": [
         "frontend navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), frontend (\"page\", \"a\") via (page, A); backend agrees with the frontend"
-      ],
-      "r3-empty-own-file": [
-        "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
-      ],
-      "r9-empty-alias-blank-block": [
-        "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
       ]
     }
   },
@@ -2179,9 +2173,7 @@
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not"
       ],
       "r3-capital-sorts-first": [],
-      "r3-empty-own-file": [
-        "navigate [[ML]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"ml\")"
-      ],
+      "r3-empty-own-file": [],
       "r3-indirect-declarer": [],
       "r3-own-file-wins": [],
       "r3-two-declarers": [],
@@ -2212,9 +2204,7 @@
         "pages: Tine has (\"page\", \"oct 26th, 2026\"), model does not"
       ],
       "r9-case-rename-onto-taken-file": [],
-      "r9-empty-alias-blank-block": [
-        "navigate [[ML]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"ml\")"
-      ],
+      "r9-empty-alias-blank-block": [],
       "r9-empty-alias-undeclared": [],
       "r9-empty-alias-with-content": [],
       "r9-journal-title": [
@@ -2863,109 +2853,6 @@
                 "name": "A"
               },
               "tine": "@page and name = 'A'"
-            }
-          ]
-        }
-      },
-      "navigate: model journal vs Tine page (claimed,occurrence,alias-edge)": {
-        "detail": "navigate [[N/y]]: model (\"journal\", \"oct 27th, 2026\"), Tine (\"page\", \"n/y\")",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "alias:: n/y\n\n- see [[A]]\n- plain words\n",
-            "pages/N%2Fy.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "n"
-                }
-              },
-              "tine": "(not [[n]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "x"
-              },
-              "tine": "@page and name = 'x'"
-            }
-          ]
-        }
-      },
-      "navigate: model page vs Tine page (claimed,occurrence,alias-edge)": {
-        "detail": "navigate [[N/y]]: model (\"page\", \"x\"), Tine (\"page\", \"n/y\")",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "",
-            "pages/B.md": "",
-            "pages/N%2Fy.md": "",
-            "pages/x.md": "alias:: n/y, n\n\n- n mentioned\n  - child [[n]]\n- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "a"
-                  },
-                  {
-                    "page": {
-                      "name": "N/y"
-                    }
-                  }
-                ]
-              },
-              "tine": "(or [[a]] (page \"N/y\"))"
-            }
-          ]
-        }
-      },
-      "navigate: model page vs Tine page (claimed,occurrence,file-name-prefix,alias-edge)": {
-        "detail": "navigate [[n]]: model (\"page\", \"n/y\"), Tine (\"page\", \"n\")",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "- #n tagged\n- n/y mentioned\n- B mentioned\n",
-            "pages/n%2Fy.md": "alias:: n\n",
-            "pages/n.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "N/y"
-                  },
-                  {
-                    "refs": "2026-10-26"
-                  }
-                ]
-              },
-              "tine": "(or [[N/y]] [[2026-10-26]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "and": [
-                  {
-                    "name": "A"
-                  },
-                  {
-                    "not": {
-                      "name": "B"
-                    }
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'A' and not (name = 'B'))"
             }
           ]
         }

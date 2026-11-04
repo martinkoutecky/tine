@@ -165,14 +165,20 @@ fn image(entries: &[InventoryEntry]) -> BTreeMap<(bool, String, String), String>
                 ),
                 // `link` is part of the answer the window holds: a delta that
                 // left it stale would route a link to the wrong page; so is
-                // why a fileless entry exists (a namespace parent).
+                // why a fileless entry exists (a namespace parent), and
+                // whether an empty file yields its name (EMPTY-ALIAS).
                 format!(
-                    "{:?} {:?} {:?}{}",
+                    "{:?} {:?} {:?}{}{}",
                     entry.target,
                     entry.day,
                     entry.link,
                     if entry.namespace_parent {
                         " parent"
+                    } else {
+                        ""
+                    },
+                    if entry.empty_alias {
+                        " empty-alias"
                     } else {
                         ""
                     }
@@ -906,6 +912,146 @@ fn names_table_resident_probe() {
     println!(
         "names table: pages={pages} keys={keys} referrer_slots={slots} bytes={bytes} bytes_per_page={:.1}",
         bytes as f64 / pages as f64
+    );
+    store.close();
+}
+
+/// What `[[name]]` opens, as the window reads it: the `All` entry's `link`,
+/// else the entry itself; with the entry's `empty_alias` bit.
+fn window_link(store: &Store, name: &str) -> (String, bool, bool) {
+    let key = tine_core::refs::page_key(name);
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let entry = inventory
+        .0
+        .iter()
+        .find(|entry| !entry.is_journal && tine_core::refs::page_key(&entry.name) == key)
+        .unwrap_or_else(|| panic!("{name} listed"))
+        .clone();
+    let link = entry.link.clone().unwrap_or(crate::LinkTarget {
+        name: entry.name.clone(),
+        is_journal: entry.is_journal,
+    });
+    // The per-name oracle is the same answer.
+    assert_eq!(
+        view.link_target(name),
+        link,
+        "link_target({name}) vs inventory"
+    );
+    (link.name, link.is_journal, entry.empty_alias)
+}
+
+/// EMPTY-ALIAS (D-20261103-CMA, OG `page-empty-or-dummy?`): with `Machine
+/// Learning` declaring `alias:: ML`, `[[ML]]` opens Machine Learning while
+/// `pages/ML.md` has no real content, and `ML.md` once it has any. The empty
+/// page stays a real, listed page (its entry is `Existing`).
+#[test]
+fn empty_alias_page_yields_its_name_to_the_alias_owner() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let owner = ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n");
+    let notes = ("pages/Notes.md", "- [[ML]]\n");
+    // (ML.md text, does `[[ML]]` open Machine Learning?)
+    let cases: [(&str, &str, bool); 8] = [
+        ("no blocks", "", true),
+        ("a blank line", "\n", true),
+        ("one empty block", "- \n", true),
+        ("one block with a space", "-  \n", false),
+        ("two empty blocks", "- \n- \n", false),
+        ("page properties only", "tags:: x\n", false),
+        ("a title only", "title:: ML\n", false),
+        ("content", "- my own ML notes\n", false),
+    ];
+    for (what, text, yields) in cases {
+        let (_dir, store) = fixture(&[owner, notes, ("pages/ML.md", text)]);
+        let (name, journal, empty_alias) = window_link(&store, "ML");
+        let want = if yields { "Machine Learning" } else { "ML" };
+        assert_eq!(
+            (name.as_str(), journal),
+            (want, false),
+            "{what}: [[ML]] opens"
+        );
+        assert_eq!(empty_alias, yields, "{what}: empty_alias");
+        // Still a real page: listed with its own file.
+        let view = store.whole_graph().unwrap();
+        assert!(
+            matches!(view.resolve("ML", false), crate::Resolved::Existing { ref id, .. } if id.as_str() == "pages/ML.md"),
+            "{what}: ML.md is still the page named ML"
+        );
+        store.close();
+    }
+    // No page declares the name: the empty file opens itself.
+    let (_dir, store) = fixture(&[notes, ("pages/ML.md", "")]);
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
+    store.close();
+    // The declarer's kind does not matter: a journal declaring `alias:: n/y`
+    // wins over an empty `n/y` page (model C-g).
+    let (_dir, store) = fixture(&[
+        ("journals/2026_10_27.md", "alias:: n/y\n\n- see [[A]]\n"),
+        ("pages/N%2Fy.md", ""),
+    ]);
+    assert_eq!(
+        window_link(&store, "N/y"),
+        ("Oct 27th, 2026".into(), true, true)
+    );
+    store.close();
+}
+
+/// EMPTY-ALIAS follows live edits without a restart: typing the first
+/// character into the empty `ML.md` makes `[[ML]]` open it, clearing it again
+/// makes `[[ML]]` open Machine Learning, and dropping or adding the alias
+/// moves it too. The window's held inventory (patched by deltas, or refetched
+/// when a publication carries none) always equals a fresh read.
+#[test]
+fn empty_alias_follows_live_edits() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n"),
+        ("pages/Notes.md", "- [[ML]]\n"),
+        ("pages/ML.md", ""),
+    ]);
+    let step = |store: &Arc<Store>, id: &str, edit: &dyn Fn(&mut tine_core::model::PageDto)| {
+        let mut held = inventory(store);
+        let (changed, deltas) = save(store, id, |doc| edit(doc));
+        match deltas {
+            Some(deltas) => deltas.iter().for_each(|delta| apply(&mut held, delta)),
+            None => held = inventory(store),
+        }
+        let fresh = inventory(store);
+        assert_eq!(held, fresh, "the window's inventory after saving {id}");
+        changed
+    };
+    assert_eq!(window_link(&store, "ML").0, "Machine Learning");
+    let typed = |text: &'static str| {
+        move |doc: &mut tine_core::model::PageDto| {
+            doc.blocks = vec![tine_core::model::BlockDto {
+                raw: text.to_owned(),
+                ..Default::default()
+            }];
+        }
+    };
+    assert!(
+        step(&store, "pages/ML.md", &typed("m")),
+        "first character signals"
+    );
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
+    assert!(step(&store, "pages/ML.md", &typed("")), "clearing signals");
+    assert_eq!(
+        window_link(&store, "ML"),
+        ("Machine Learning".into(), false, true)
+    );
+    let pre = |text: Option<&'static str>| {
+        move |doc: &mut tine_core::model::PageDto| doc.pre_block = text.map(str::to_owned)
+    };
+    assert!(step(&store, "pages/Machine Learning.md", &pre(None)));
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
+    assert!(step(
+        &store,
+        "pages/Machine Learning.md",
+        &pre(Some("alias:: ML"))
+    ));
+    assert_eq!(
+        window_link(&store, "ML"),
+        ("Machine Learning".into(), false, true)
     );
     store.close();
 }

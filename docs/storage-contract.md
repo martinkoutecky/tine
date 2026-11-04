@@ -798,7 +798,13 @@ What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
 (`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
 the graph's journal answerer parses (`JournalFormat::parse`: the configured
 title and file-name formats plus the fixed fallbacks, D-20261102-JDL) opens that
-day's journal, else a page file claiming the name, else the alias owner. An
+day's journal, else a page file claiming the name, else the alias owner. A
+claimant with no real content (`inventory.rs::content_free` over its parsed
+document: no pre-block text, and no blocks or one block with empty raw text)
+yields the name to the alias owner when some page declares it (D-20261103-CMA,
+OG `page-empty-or-dummy?`); such entries carry `empty_alias: true` and named
+routes (`navigationTarget`) follow their `link`, while exact-path opens (All
+pages, search hits, the alias group's Related pages row) still open the file. An
 alias owned by a journal opens the journal. A name nothing claims or aliases is
 a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
 exported to the frontend through wasm so the unknown-name fallback runs the same
@@ -807,11 +813,15 @@ code). `page_inventory` entries carry the answer as an optional
 entries carry nothing). The field is in-memory and derived per read: nothing is
 persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
 delta's `rev` (a link depends on the key's alias owners, which travel in the
-delta, and on file claims, whose change refetches). The published snapshot
+delta, and on file claims, whose change refetches; a claimant flipping between
+content-free and content while its name is declared, or an alias edit naming a
+content-free claimant, also refetches). The published snapshot
 (quick share generation 1, `docs/contracts/quick-share.md`) does not carry it:
 its document is frozen, so adding the answer there is a format decision still
 open (CM step 2 receipt). Proof: `crates/tine-store/tests/inventory_delta.rs`
-`a_delta_keeps_the_link_answer_fresh`, `src/cmConformanceNavigate.test.ts`.
+`a_delta_keeps_the_link_answer_fresh`,
+`empty_alias_page_yields_its_name_to_the_alias_owner`,
+`empty_alias_follows_live_edits`, `src/cmConformanceNavigate.test.ts`.
 
 Which references name a journal day (Linked References, `[[day]]` backlink
 counts' needles) is every spelling the journal answerer accepts for that day:
