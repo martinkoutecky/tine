@@ -235,20 +235,6 @@ pub fn file_json(
     })
 }
 
-/// `nsClosure`: the spelling and its nonempty slash prefixes.
-pub fn closure(s: &str) -> Vec<String> {
-    let parts: Vec<&str> = s.split('/').collect();
-    let mut out = Vec::new();
-    for i in 1..parts.len() {
-        let prefix = parts[..i].join("/");
-        if !prefix.is_empty() {
-            out.push(prefix);
-        }
-    }
-    out.push(s.to_owned());
-    out
-}
-
 /// Every spelling the model may key: names, aliases, occurrences and their
 /// namespace prefixes, probes, query arguments and rename arguments.
 fn spellings(input: &Value, extra: &[String]) -> BTreeSet<String> {
@@ -731,6 +717,12 @@ pub fn model_input(
         .filter(|s| journal.parse(s.trim()).is_some())
         .map(|s| fold(&journal, s))
         .collect::<BTreeSet<_>>());
+    // Round 10 (S15): the model's `urlHasOrigin` is Tine's URL-origin test
+    // (OG `url?`), given per spelling.
+    input["urls"] = json!(keyed
+        .iter()
+        .filter(|s| tine_core::refs::url_has_origin(s))
+        .collect::<Vec<_>>());
     input
 }
 
@@ -993,9 +985,11 @@ impl<'a> Ctx<'a> {
         let mut ways = BTreeSet::new();
         let mut kinds = BTreeSet::new();
         for (kind, s) in occ {
-            for u in closure(s) {
-                let ku = self.key(&u);
-                let ns = u != *s;
+            // `occClosure` (round 10): a non-namespace spelling (`./x`, a
+            // URL) references only itself.
+            for u in tine_core::refs::namespace_refs(s) {
+                let ku = self.key(u);
+                let ns = u != s.as_str();
                 let way = if ku == t {
                     if ns {
                         "ns-prefix"
@@ -1189,6 +1183,10 @@ pub fn frontend_case(
             if e.empty_alias {
                 wire["empty_alias"] = json!(true);
             }
+            // As `inventory_wire::entry_wire` sets it (round 10, S15).
+            if e.name.contains('/') && !tine_core::refs::is_namespace_name(&e.name) {
+                wire["not_namespace"] = json!(true);
+            }
             wire
         })
         .collect();
@@ -1226,6 +1224,20 @@ pub fn frontend_case(
     // References panel on these answers).
     let (files, references) = view.page_backlink_counts();
     let counts = json!([files, references]);
+    // The views' parent of each model page (`Ref10.nsParent`, round 10).
+    let parents: BTreeMap<Page, Value> = ctx.model["pageParents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let page = &row["page"];
+            let page = (
+                page[0].as_str().unwrap().to_owned(),
+                page[1].as_str().unwrap().to_owned(),
+            );
+            (page, row["parent"].clone())
+        })
+        .collect();
     let mut pages = Vec::new();
     let mut backlinks = BTreeMap::new();
     for p in &ctx.pages {
@@ -1244,6 +1256,7 @@ pub fn frontend_case(
             "name": name,
             "owner": ctx.owner_of_page.get(p),
             "linkedRefs": model_panel(ctx, p).len(),
+            "parent": parents.get(p).cloned().unwrap_or(Value::Null),
         }));
     }
     let key_of: BTreeMap<String, String> = inventory
@@ -1322,9 +1335,9 @@ pub fn compare_names(ctx: &Ctx) -> Vec<Diff> {
         for f in ctx.files.values() {
             for (_, occ) in &f.blocks {
                 for (_, s) in occ {
-                    for u in closure(s) {
-                        if ctx.key(&u) == k {
-                            if u == *s {
+                    for u in tine_core::refs::namespace_refs(s) {
+                        if ctx.key(u) == k {
+                            if u == s.as_str() {
                                 occ_direct = true
                             } else {
                                 occ_prefix = true
@@ -1341,9 +1354,7 @@ pub fn compare_names(ctx: &Ctx) -> Vec<Diff> {
             o.push("occurrence-prefix");
         }
         if ctx.files.values().any(|f| {
-            closure(&f.name)
-                .iter()
-                .any(|u| *u != f.name && ctx.key(u) == k)
+            tine_core::refs::namespace_refs(&f.name).any(|u| u != f.name && ctx.key(u) == k)
         }) {
             o.push("file-name-prefix");
         }

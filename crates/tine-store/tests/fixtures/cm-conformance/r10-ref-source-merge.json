@@ -1,0 +1,13 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "- #kb\n",
+    "pages/n%2Fy.md": "- body\n",
+    "pages/q.md": "- {{query (page \"kb\")}}\n"
+  },
+  "renames": [
+    {
+      "old": "kb",
+      "new": "n/y"
+    }
+  ]
+}

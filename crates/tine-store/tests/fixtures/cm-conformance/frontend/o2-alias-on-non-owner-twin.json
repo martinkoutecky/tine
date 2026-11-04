@@ -134,14 +134,16 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     },
     {
       "key": "zed",
       "kind": "page",
       "linkedRefs": 1,
       "name": "zed",
-      "owner": null
+      "owner": null,
+      "parent": null
     }
   ],
   "spellings": {

@@ -1,0 +1,17 @@
+{
+  "files": {
+    "pages/scheme.md": "title:: https:\n\n- s\n",
+    "pages/url.md": "title:: https://a.b/c\n\n- u\n",
+    "pages/cc.md": "- [[https://a.b/c]] [[https:]]\n"
+  },
+  "renames": [
+    {
+      "old": "https:",
+      "new": "z"
+    },
+    {
+      "old": "https:",
+      "new": "https://a.b/c"
+    }
+  ]
+}

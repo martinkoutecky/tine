@@ -1,0 +1,203 @@
+{
+  "backlinks": {
+    ".": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "423f96dd-79db-8ba1-8688-ec9a1235bd6d",
+            "raw": "[[./x]] [[.]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "cc"
+      }
+    ],
+    "./x": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "423f96dd-79db-8ba1-8688-ec9a1235bd6d",
+            "raw": "[[./x]] [[.]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "cc"
+      }
+    ],
+    "cc": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/dot.md",
+        1
+      ],
+      [
+        "pages/cc.md",
+        0
+      ],
+      [
+        "pages/dotx.md",
+        1
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": ".",
+      "name": ".",
+      "target": {
+        "id": "pages/dot.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "./x",
+      "name": "./x",
+      "not_namespace": true,
+      "target": {
+        "id": "pages/dotx.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "cc",
+      "name": "cc",
+      "target": {
+        "id": "pages/cc.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    ".": ".",
+    "./x": "./x",
+    "cc": "cc"
+  },
+  "open": {
+    ".": {
+      "journal": [
+        "journal",
+        "."
+      ],
+      "page": [
+        "page",
+        "."
+      ]
+    },
+    "./x": {
+      "journal": [
+        "journal",
+        "./x"
+      ],
+      "page": [
+        "page",
+        "./x"
+      ]
+    },
+    "cc": {
+      "journal": [
+        "journal",
+        "cc"
+      ],
+      "page": [
+        "page",
+        "cc"
+      ]
+    }
+  },
+  "owner": {
+    ".": {
+      "journal": null,
+      "page": "pages/dot.md"
+    },
+    "./x": {
+      "journal": null,
+      "page": "pages/dotx.md"
+    },
+    "cc": {
+      "journal": null,
+      "page": "pages/cc.md"
+    }
+  },
+  "pages": [
+    {
+      "key": ".",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": ".",
+      "owner": "pages/dot.md",
+      "parent": null
+    },
+    {
+      "key": "./x",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "./x",
+      "owner": "pages/dotx.md",
+      "parent": null
+    },
+    {
+      "key": "cc",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "cc",
+      "owner": "pages/cc.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    ".": {
+      "backend": [
+        "page",
+        "."
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "."
+      ]
+    },
+    "./x": {
+      "backend": [
+        "page",
+        "./x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "./x"
+      ]
+    },
+    "cc": {
+      "backend": [
+        "page",
+        "cc"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "cc"
+      ]
+    }
+  }
+}

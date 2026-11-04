@@ -1,0 +1,192 @@
+{
+  "backlinks": {
+    "Oct 26th, 2026": [],
+    "kb": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1db45489-f00c-80a8-9d55-69b5311f8e24",
+            "raw": "#kb",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "kb/x": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/kb%2Fx.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
+    ],
+    [
+      [
+        "kb",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "kb",
+      "name": "kb",
+      "target": {
+        "id": "pages/kb.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "kb/x",
+      "name": "kb/x",
+      "target": {
+        "id": "pages/kb%2Fx.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "kb": "kb",
+    "kb/x": "kb/x"
+  },
+  "open": {
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "kb": {
+      "journal": [
+        "journal",
+        "kb"
+      ],
+      "page": [
+        "page",
+        "kb"
+      ]
+    },
+    "kb/x": {
+      "journal": [
+        "journal",
+        "kb/x"
+      ],
+      "page": [
+        "page",
+        "kb/x"
+      ]
+    }
+  },
+  "owner": {
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "kb": {
+      "journal": null,
+      "page": null
+    },
+    "kb/x": {
+      "journal": null,
+      "page": "pages/kb%2Fx.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md",
+      "parent": null
+    },
+    {
+      "key": "kb",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "kb",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "kb/x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "kb/x",
+      "owner": "pages/kb%2Fx.md",
+      "parent": "kb"
+    }
+  ],
+  "spellings": {
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "kb": {
+      "backend": [
+        "page",
+        "kb"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "kb"
+      ]
+    },
+    "kb/x": {
+      "backend": [
+        "page",
+        "kb/x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "kb/x"
+      ]
+    }
+  }
+}

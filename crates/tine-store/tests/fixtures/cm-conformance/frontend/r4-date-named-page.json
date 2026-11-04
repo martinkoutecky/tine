@@ -99,14 +99,16 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     },
     {
       "key": "oct 26th, 2026",
       "kind": "page",
       "linkedRefs": 1,
       "name": "2026-10-26",
-      "owner": "pages/2026-10-26.md"
+      "owner": "pages/2026-10-26.md",
+      "parent": null
     }
   ],
   "spellings": {

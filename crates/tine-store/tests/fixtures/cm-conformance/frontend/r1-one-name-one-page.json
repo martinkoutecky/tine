@@ -134,14 +134,16 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     },
     {
       "key": "project alpha",
       "kind": "page",
       "linkedRefs": 2,
       "name": "Project Alpha",
-      "owner": "pages/Project Alpha.md"
+      "owner": "pages/Project Alpha.md",
+      "parent": null
     }
   ],
   "spellings": {

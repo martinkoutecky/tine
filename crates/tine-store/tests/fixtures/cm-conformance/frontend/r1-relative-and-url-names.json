@@ -1,8 +1,5 @@
 {
   "backlinks": {
-    ".": [],
-    "..": [],
-    "../x": [],
     "../x/y": [
       {
         "blocks": [
@@ -64,8 +61,6 @@
         "page": "Notes"
       }
     ],
-    "https:": [],
-    "https://a.b": [],
     "https://a.b/c": [
       {
         "blocks": [
@@ -119,6 +114,7 @@
       "is_journal": false,
       "key": "../x/y",
       "name": "../x/y",
+      "not_namespace": true,
       "target": {
         "id": "pages/%2E%2E%2Fx%2Fy.md",
         "kind": "absent"
@@ -129,6 +125,7 @@
       "is_journal": false,
       "key": "./x",
       "name": "./x",
+      "not_namespace": true,
       "target": {
         "id": "pages/%2E%2Fx.md",
         "kind": "absent"
@@ -160,6 +157,7 @@
       "is_journal": false,
       "key": "https://a.b/c",
       "name": "https://a.b/c",
+      "not_namespace": true,
       "target": {
         "id": "pages/https%3A%2F%2Fa%2Eb%2Fc.md",
         "kind": "absent"
@@ -188,36 +186,6 @@
     "https://a.b/c": "https://a.b/c"
   },
   "open": {
-    ".": {
-      "journal": [
-        "journal",
-        "."
-      ],
-      "page": [
-        "page",
-        "."
-      ]
-    },
-    "..": {
-      "journal": [
-        "journal",
-        ".."
-      ],
-      "page": [
-        "page",
-        ".."
-      ]
-    },
-    "../x": {
-      "journal": [
-        "journal",
-        "../x"
-      ],
-      "page": [
-        "page",
-        "../x"
-      ]
-    },
     "../x/y": {
       "journal": [
         "journal",
@@ -268,36 +236,6 @@
         "a/b"
       ]
     },
-    "https:": {
-      "journal": [
-        "journal",
-        "https:"
-      ],
-      "page": [
-        "page",
-        "https:"
-      ]
-    },
-    "https:/": {
-      "journal": [
-        "journal",
-        "https:"
-      ],
-      "page": [
-        "page",
-        "https:"
-      ]
-    },
-    "https://a.b": {
-      "journal": [
-        "journal",
-        "https://a.b"
-      ],
-      "page": [
-        "page",
-        "https://a.b"
-      ]
-    },
     "https://a.b/c": {
       "journal": [
         "journal",
@@ -310,18 +248,6 @@
     }
   },
   "owner": {
-    ".": {
-      "journal": null,
-      "page": null
-    },
-    "..": {
-      "journal": null,
-      "page": null
-    },
-    "../x": {
-      "journal": null,
-      "page": null
-    },
     "../x/y": {
       "journal": null,
       "page": null
@@ -342,18 +268,6 @@
       "journal": null,
       "page": null
     },
-    "https:": {
-      "journal": null,
-      "page": null
-    },
-    "https:/": {
-      "journal": null,
-      "page": null
-    },
-    "https://a.b": {
-      "journal": null,
-      "page": null
-    },
     "https://a.b/c": {
       "journal": null,
       "page": null
@@ -361,117 +275,55 @@
   },
   "pages": [
     {
-      "key": ".",
-      "kind": "page",
-      "linkedRefs": 1,
-      "name": ".",
-      "owner": null
-    },
-    {
-      "key": "..",
-      "kind": "page",
-      "linkedRefs": 1,
-      "name": "..",
-      "owner": null
-    },
-    {
-      "key": "../x",
-      "kind": "page",
-      "linkedRefs": 1,
-      "name": "../x",
-      "owner": null
-    },
-    {
       "key": "../x/y",
       "kind": "page",
       "linkedRefs": 1,
       "name": "../x/y",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "./x",
       "kind": "page",
       "linkedRefs": 1,
       "name": "./x",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "a",
       "kind": "page",
       "linkedRefs": 1,
       "name": "a",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "a/b",
       "kind": "page",
       "linkedRefs": 1,
       "name": "a/b",
-      "owner": null
-    },
-    {
-      "key": "https:",
-      "kind": "page",
-      "linkedRefs": 1,
-      "name": "https:",
-      "owner": null
-    },
-    {
-      "key": "https://a.b",
-      "kind": "page",
-      "linkedRefs": 1,
-      "name": "https://a.b",
-      "owner": null
+      "owner": null,
+      "parent": "a"
     },
     {
       "key": "https://a.b/c",
       "kind": "page",
       "linkedRefs": 1,
       "name": "https://a.b/c",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "notes",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     }
   ],
   "spellings": {
-    ".": {
-      "backend": [
-        "page",
-        "."
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "."
-      ]
-    },
-    "..": {
-      "backend": [
-        "page",
-        ".."
-      ],
-      "day": null,
-      "model": [
-        "page",
-        ".."
-      ]
-    },
-    "../x": {
-      "backend": [
-        "page",
-        "../x"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "../x"
-      ]
-    },
     "../x/y": {
       "backend": [
         "page",
@@ -525,39 +377,6 @@
       "model": [
         "page",
         "a/b"
-      ]
-    },
-    "https:": {
-      "backend": [
-        "page",
-        "https:"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "https:"
-      ]
-    },
-    "https:/": {
-      "backend": [
-        "page",
-        "https:"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "https:"
-      ]
-    },
-    "https://a.b": {
-      "backend": [
-        "page",
-        "https://a.b"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "https://a.b"
       ]
     },
     "https://a.b/c": {
