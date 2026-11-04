@@ -1,0 +1,4 @@
+.link-scheme-prompt p { margin: 0; line-height: 1.45; }
+.link-scheme-target { white-space: pre-wrap; overflow-wrap: anywhere; }
+.link-scheme-prompt label { display: flex; align-items: baseline; gap: 8px; }
+.link-scheme-settings { display: grid; gap: 8px; }
