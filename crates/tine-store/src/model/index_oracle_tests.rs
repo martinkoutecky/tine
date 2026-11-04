@@ -442,7 +442,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     });
     step("edit a block");
 
-    let map = crate::RenameMap(vec![(target.clone(), renamed.clone())]);
+    let map = crate::RenameMap(vec![(target.clone(), renamed.clone())], Vec::new());
     let from = format!("pages/{target}.md");
     let to = format!("pages/{renamed}.md");
     let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));

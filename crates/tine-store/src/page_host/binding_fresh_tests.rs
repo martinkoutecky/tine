@@ -651,7 +651,7 @@ impl Run<'_> {
         let new = format!("Ren{}", self.renamed);
         let source = PageId::from(rel.as_str());
         let target = PageId::from(format!("pages/{new}.md"));
-        let map = crate::RenameMap(vec![(name.clone(), new.clone())]);
+        let map = crate::RenameMap(vec![(name.clone(), new.clone())], Vec::new());
         let mut outcome = Err(RenameRefusal::Refused);
         for _ in 0..20 {
             let view = live.store.whole_graph().unwrap();

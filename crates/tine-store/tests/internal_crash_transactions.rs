@@ -227,7 +227,7 @@ fn crash_rewritten_move_worker() {
         &source,
         rev,
         &destination,
-        Some(&RenameMap(vec![("Old".into(), "New".into())])),
+        Some(&RenameMap(vec![("Old".into(), "New".into())], Vec::new())),
     );
     store.inject_fault(point);
     let _ = tx.commit();
@@ -281,7 +281,7 @@ fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
         &source,
         rev,
         &destination,
-        Some(&RenameMap(vec![("Old".into(), "New".into())])),
+        Some(&RenameMap(vec![("Old".into(), "New".into())], Vec::new())),
     );
     store.inject_fault(FaultPoint::MoveAfterTrashCopyIo);
     assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));

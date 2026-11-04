@@ -11,6 +11,10 @@ use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
 #[path = "pages_rename_plan.rs"]
 mod rename_plan;
+pub use rename_plan::{RenameBlocked, RenameChoice};
+#[path = "pages_rename_offer.rs"]
+mod rename_offer;
+pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
 use rename_plan::{plan_rename, RenamePlan};
 
 impl RenamePlan {
@@ -180,14 +184,6 @@ fn existing(target: Resolved) -> Vec<PageId> {
     }
 }
 
-/// Every page a name reaches: its file claimants, or the owners of the alias.
-fn claimants(target: Resolved) -> Vec<PageId> {
-    match target {
-        Resolved::Alias { owners } => owners,
-        other => existing(other),
-    }
-}
-
 /// Every page with a block the rename rewrites although no reference names
 /// the page (so no referrers row selects it): a `{{query}}` page-name argument
 /// (D-20261031-CMQ), a `[[link]]` in another macro's argument (cloze,
@@ -236,14 +232,14 @@ fn rewrite_target_pages(
                 (raw.contains("{{") && spells_a_key(raw)) || (org && raw.contains("[[file:"))
             };
             if let Some(pre) = page.document.pre_block.as_deref() {
-                if may_hold(pre) && refs::rename_pre_block(pre, org, renames, format) != pre {
+                if may_hold(pre) && refs::rename_pre_block(pre, org, renames, None, format) != pre {
                     return true;
                 }
             }
             let mut stack: Vec<_> = page.document.roots.iter().collect();
             while let Some(block) = stack.pop() {
                 let raw = block.raw();
-                if may_hold(raw) && refs::rename_block_raw(raw, org, renames, format) != raw {
+                if may_hold(raw) && refs::rename_block_raw(raw, org, renames, None, format) != raw {
                     return true;
                 }
                 stack.extend(block.children.iter());
@@ -295,9 +291,9 @@ pub fn rename_would_change(
         .iter()
         .map(|text| {
             let after = if text.pre_block {
-                refs::rename_pre_block(&text.raw, text.org, &renames, format)
+                refs::rename_pre_block(&text.raw, text.org, &renames, None, format)
             } else {
-                refs::rename_block_raw(&text.raw, text.org, &renames, format)
+                refs::rename_block_raw(&text.raw, text.org, &renames, None, format)
             };
             after != text.raw
         })
@@ -431,7 +427,7 @@ pub fn rename_page_expected(
         old,
         new,
         expected_path,
-        None,
+        RenameChoice::Rename,
         &[],
         #[cfg(test)]
         || {},
@@ -487,16 +483,14 @@ pub fn rename_or_merge_page(
     merge_into: Option<&str>,
     unsaved_paths: &[String],
 ) -> io::Result<RenameReport> {
-    rename_page_after_inventory(
+    rename_page_as(
         store,
         host,
         old,
         new,
         expected_path,
-        merge_into,
+        merge_into.map_or(RenameChoice::Rename, RenameChoice::MergeInto),
         unsaved_paths,
-        #[cfg(test)]
-        || {},
     )
 }
 
@@ -578,7 +572,7 @@ fn rename_page_after_inventory(
     old: &str,
     new: &str,
     expected_path: Option<&str>,
-    merge_into: Option<&str>,
+    choice: RenameChoice<'_>,
     unsaved_paths: &[String],
     #[cfg(test)] after_inventory: impl Fn(),
 ) -> io::Result<RenameReport> {
@@ -596,7 +590,7 @@ fn rename_page_after_inventory(
             old,
             new,
             expected_path,
-            merge_into,
+            choice,
             #[cfg(test)]
             &after_inventory,
         )
@@ -796,6 +790,7 @@ fn rename_transaction<'s>(
         config,
         map,
         lookup,
+        query_lookup,
         moves,
         moved_titles_to_rebind,
         merge,
@@ -813,7 +808,15 @@ fn rename_transaction<'s>(
     // survivor is queued first because referrer rewrites are queued as the
     // candidates are read below.
     let merged = match &merge {
-        Some((src, dst)) => Some(merged_survivor(store, src, dst, Some(&lookup))?),
+        Some((src, dst)) => Some(merged_survivor(
+            store,
+            src,
+            dst,
+            Some(MergeNames {
+                links: &lookup,
+                queries: &query_lookup,
+            }),
+        )?),
         None => None,
     };
     if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
@@ -870,7 +873,8 @@ fn rename_transaction<'s>(
         // transaction's own rewrite, computed once from this read and
         // reused by preflight (GH #623).
         let changed = if moved || marked {
-            tine_core::refs::rename_rewrite(&content, org, &map.0, name_format) != content
+            tine_core::refs::rename_rewrite_with_queries(&content, org, &map.0, &map.1, name_format)
+                != content
                 || (!org && marked && own_title)
         } else {
             let title = if rebind {
@@ -1379,7 +1383,7 @@ fn merged_survivor(
     store: &Store,
     src: &PageId,
     dst: &PageId,
-    renames: Option<&HashMap<String, String>>,
+    renames: Option<MergeNames<'_>>,
 ) -> io::Result<Survivor> {
     let org = Format::from_path(src.as_str().as_ref()) == Format::Org;
     if org != (Format::from_path(dst.as_str().as_ref()) == Format::Org) {
@@ -1423,30 +1427,41 @@ fn merged_survivor(
     })
 }
 
+/// A merge's rename maps: `links` for every reference and namespace child
+/// (the typed name, ruling (b) of D-20261103-CMA), `queries` for a query's
+/// page-name arguments naming the source (the survivor's own name, ruling
+/// (a)); see [`refs::rename_rewrite_with_queries`].
+#[derive(Clone, Copy)]
+struct MergeNames<'a> {
+    links: &'a HashMap<String, String>,
+    queries: &'a HashMap<String, String>,
+}
+
 /// The merge survivor's own references to the merged page follow it: the
 /// same rewrite a rename applies to a page (`refs::rename_rewrite`), block by
 /// block.
 fn rename_doc(
     doc: &mut PageDto,
-    renames: &HashMap<String, String>,
+    names: MergeNames<'_>,
     org: bool,
     format: tine_core::config::FileNameFormat,
 ) {
     fn walk(
         blocks: &mut [tine_core::model::BlockDto],
-        renames: &HashMap<String, String>,
+        names: MergeNames<'_>,
         org: bool,
         format: tine_core::config::FileNameFormat,
     ) {
         for block in blocks {
-            block.raw = refs::rename_block_raw(&block.raw, org, renames, format);
-            walk(&mut block.children, renames, org, format);
+            block.raw =
+                refs::rename_block_raw(&block.raw, org, names.links, Some(names.queries), format);
+            walk(&mut block.children, names, org, format);
         }
     }
     if let Some(pre) = doc.pre_block.as_mut() {
-        *pre = refs::rename_pre_block(pre, org, renames, format);
+        *pre = refs::rename_pre_block(pre, org, names.links, Some(names.queries), format);
     }
-    walk(&mut doc.blocks, renames, org, format);
+    walk(&mut doc.blocks, names, org, format);
 }
 
 mod merge_payload;

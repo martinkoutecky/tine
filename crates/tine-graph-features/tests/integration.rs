@@ -59,6 +59,9 @@ mod rename_would_change;
 #[path = "cm_conformance_rename.rs"]
 mod cm_conformance_rename;
 
+#[path = "cm_merge_rules.rs"]
+mod cm_merge_rules;
+
 #[path = "cm_conformance_names.rs"]
 mod cm_conformance_names;
 

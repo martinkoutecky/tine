@@ -50,14 +50,21 @@ use crate::refs::{is_linkable_property_separator, page_key};
 /// whose name folds to it, `reference_evidence::visit_reference_targets`).
 pub(crate) struct Renames<'a> {
     pages: &'a HashMap<String, String>,
+    /// A query's page-name arguments that name one of these keys take this
+    /// name instead of `pages`' (a merge through an alias: the survivor's own
+    /// name, ruling (a) of D-20261103-CMA, the model's `queryMap`); every
+    /// other query argument follows `pages`.
+    queries: Option<&'a HashMap<String, String>>,
     keys: HashMap<String, &'a str>,
     file_name_format: FileNameFormat,
 }
 
 impl<'a> Renames<'a> {
-    /// `pages` maps `page_key(old)` to the new display name.
+    /// `pages` maps `page_key(old)` to the new display name; `queries` (keyed
+    /// the same way) overrides it for query page-name arguments only.
     pub(crate) fn new(
         pages: &'a HashMap<String, String>,
+        queries: Option<&'a HashMap<String, String>>,
         file_name_format: FileNameFormat,
     ) -> Self {
         let keys = pages
@@ -66,6 +73,7 @@ impl<'a> Renames<'a> {
             .collect();
         Self {
             pages,
+            queries: queries.filter(|queries| !queries.is_empty()),
             keys,
             file_name_format,
         }
@@ -73,6 +81,14 @@ impl<'a> Renames<'a> {
 
     fn page(&self, name: &str) -> Option<&'a str> {
         self.pages.get(&page_key(name)).map(String::as_str)
+    }
+
+    /// The new name of a query's page-name argument.
+    fn query_page(&self, name: &str) -> Option<&'a str> {
+        self.queries
+            .and_then(|queries| queries.get(&page_key(name)))
+            .map(String::as_str)
+            .or_else(|| self.page(name))
     }
 }
 
@@ -463,7 +479,7 @@ fn query_edits(
         };
         let mut local: Vec<Edit> = Vec::new();
         for (range, name) in names {
-            let Some(to) = renames.page(&name) else {
+            let Some(to) = renames.query_page(&name) else {
                 continue;
             };
             let token = &form[range.clone()];

@@ -96,7 +96,7 @@ fn rename_keeps_org_inline_literals() {
     let raw = "~[[Old]]~ =[[Old]]= [[Old]]";
     let map = HashMap::from([("old".to_string(), "New".to_string())]);
     assert_eq!(
-        refs::rename_block_raw(raw, true, &map, FileNameFormat::TripleLowbar),
+        refs::rename_block_raw(raw, true, &map, None, FileNameFormat::TripleLowbar),
         "~[[Old]]~ =[[Old]]= [[New]]"
     );
 }

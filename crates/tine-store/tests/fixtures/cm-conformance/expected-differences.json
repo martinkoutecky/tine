@@ -759,9 +759,8 @@
       "r6-file-descendant: old -> new": [],
       "r6-into-namespace: x -> n/y": [],
       "r6-merge-self-link: a -> b": [],
-      "r6-onto-alias: a -> c": [
-        "rename \"a\" -> \"c\": model allows; Tine refuses AlreadyExists, merges after confirmation (Merged)"
-      ],
+      "r6-onto-alias: a -> c": [],
+      "r6-onto-alias: a -> c (own page)": [],
       "r6-onto-real-page: a -> b": [],
       "r6-ref-only-descendant: old -> new": [
         "occurrences of pages/p.md: Tine has (\"link\", \"old/child\"), model does not (model [(\"link\", \"new\"), (\"link\", \"new/child\")], Tine [(\"link\", \"new\"), (\"link\", \"old/child\")])",
@@ -778,22 +777,13 @@
       ],
       "r6-task-marker-page: A -> Alpha": [],
       "r9-case-rename-onto-taken-file: N/y -> n/y": [
-        "rename \"N/y\" -> \"n/y\": model allows, Tine refuses: WouldBlock: page changed repeatedly during rename"
+        "rename \"N/y\" -> \"n/y\": model allows, Tine refuses: FileTaken: cannot rename: the file pages/n%2Fy.md belongs to the page “B”; rename or merge that page first"
       ],
-      "r9-merge-into-journal: meeting -> 2026-10-26": [
-        "rename \"meeting\" -> \"2026-10-26\": model refuses (base guard) (journal risks []) but merges into \"journals/2026_10_26.md\", Tine performs (Renamed)"
-      ],
-      "r9-merge-through-alias: ML notes -> ML": [
-        "query args of pages/q.md: Tine has (\"query arg\", \"ml\"), model does not (model [(\"query arg\", \"machine learning\")], Tine [(\"query arg\", \"ml\")])",
-        "query args of pages/q.md: model has (\"query arg\", \"machine learning\"), Tine does not (model [(\"query arg\", \"machine learning\")], Tine [(\"query arg\", \"ml\")])",
-        "rename \"ML notes\" -> \"ML\": model allows; Tine refuses AlreadyExists, merges after confirmation (Merged)"
-      ],
-      "r9-own-child-alias: a -> a/x": [
-        "rename \"a\" -> \"a/x\": model refuses (own child) and refuses the merge (own child) (merge journalRisks=[], source=\"pages/a.md\", target=\"pages/o.md\", targetInSubtree=false, typedInSubtree=true), Tine merges into pages/o.md (Merged)"
-      ],
-      "r9-own-child-page: Foo -> Foo/bar": [
-        "rename \"Foo\" -> \"Foo/bar\": model refuses (own child) and refuses the merge (own child) (merge journalRisks=[], source=\"pages/Foo.md\", target=\"pages/Foo%2Fbar.md\", targetInSubtree=true, typedInSubtree=true), Tine merges into pages/Foo%2Fbar.md (Merged)"
-      ],
+      "r9-merge-into-journal: meeting -> 2026-10-26": [],
+      "r9-merge-through-alias: ML notes -> ML": [],
+      "r9-merge-through-alias: ML notes -> ML (own page)": [],
+      "r9-own-child-alias: a -> a/x": [],
+      "r9-own-child-page: Foo -> Foo/bar": [],
       "r9-own-child-unused: Foo -> Foo/bar": []
     },
     "harnessSkipped": [],
@@ -1860,43 +1850,8 @@
           ]
         }
       },
-      "rename: model allows a plain rename, Tine only merges into the new name's claimant": {
-        "detail": "rename \"2026-10-26\" -> \"B\": model allows; Tine refuses AlreadyExists, merges after confirmation (Merged)",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "alias:: x, x\n\n- a mentioned\n",
-            "pages/2026-10-26.md": "",
-            "pages/n%2Fy.md": "alias:: B\n\n- n/y mentioned\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "n/y"
-                  },
-                  {
-                    "not": {
-                      "refs": "A"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[n/y]] (not [[A]]))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "B",
-              "old": "2026-10-26"
-            }
-          ]
-        }
-      },
-      "rename: model allows, Tine refuses (WouldBlock)": {
-        "detail": "rename \"N/y\" -> \"n/y\": model allows, Tine refuses: WouldBlock: page changed repeatedly during rename",
+      "rename: model allows, Tine refuses (FileTaken)": {
+        "detail": "rename \"N/y\" -> \"n/y\": model allows, Tine refuses: FileTaken: cannot rename: the file pages/n%2Fy.md belongs to the page “B”; rename or merge that page first",
         "graph": {
           "files": {
             "journals/2026_10_27.md": "",
@@ -1979,39 +1934,6 @@
           ]
         }
       },
-      "rename: model refuses (base guard) but merges, Tine performs": {
-        "detail": "rename \"x\" -> \"2026-10-26\": model refuses (base guard) (journal risks []) but merges into \"journals/2026_10_26.md\", Tine performs (Renamed)",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "",
-            "journals/2026_10_27.md": "alias:: N/y\n",
-            "pages/B.md": "title:: x\n\n- note\n  rel:: [[A]]\n- #N/y tagged\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "n/y"
-                  },
-                  {
-                    "refs": "N/y"
-                  }
-                ]
-              },
-              "tine": "(or [[n/y]] [[N/y]])"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "x"
-            }
-          ]
-        }
-      },
       "rename: model refuses (base guard), Tine performs": {
         "detail": "rename \"n/y\" -> \"x\": model refuses (base guard) (journal risks []), Tine performs (Renamed)",
         "graph": {
@@ -2041,45 +1963,6 @@
             {
               "new": "x",
               "old": "n/y"
-            }
-          ]
-        }
-      },
-      "rename: model refuses (own child), Tine performs": {
-        "detail": "rename \"n\" -> \"n/y\": model refuses (own child) (journal risks []), Tine performs (Renamed)",
-        "graph": {
-          "files": {
-            "pages/n.md": "alias:: N/y\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n/y"
-              },
-              "tine": "[[n/y]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "or": [
-                  {
-                    "name": "A"
-                  },
-                  {
-                    "name": "N/y"
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'A' or name = 'N/y')"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n/y",
-              "old": "n"
             }
           ]
         }

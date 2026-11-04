@@ -1,7 +1,6 @@
 //! The merge survivor's header and moved blocks: pure text over parsed
 //! pages, split from `pages.rs` along the plan/commit seam (no store, no I/O).
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 use tine_core::model::{Format, PageDto};
@@ -103,7 +102,7 @@ pub(super) fn header_of(page: &PageDto) -> Option<(HeaderAt, &str)> {
 pub(super) fn payload(
     survivor: &PageDto,
     source: &PageDto,
-    renames: Option<&HashMap<String, String>>,
+    renames: Option<super::MergeNames<'_>>,
     org: bool,
     format: tine_core::config::FileNameFormat,
 ) -> (Option<String>, Vec<tine_core::model::BlockDto>) {

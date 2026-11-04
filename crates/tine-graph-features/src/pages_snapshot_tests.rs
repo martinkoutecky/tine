@@ -273,7 +273,7 @@ fn prepared_referrer_rewrite_still_refuses_an_external_edit() {
         ("pages/Old.md", "- source\n"),
         ("pages/r.md", "- [[Old]]\n"),
     ]);
-    let mut first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+    let mut first = plan_rename(&store, "Old", "New", None, RenameChoice::Rename, &|| {}).unwrap();
     first.pages(&store).unwrap();
     disk::write(root.join("pages/r.md"), "- [[Old]] outside edit\n").unwrap();
     assert_eq!(preflight_rename(&store, "Old", first, &[]).unwrap(), None);
@@ -305,7 +305,7 @@ fn a_single_org_title_rebind_keeps_its_unwritable_refusal() {
 fn absent_destination_at_preflight_still_refuses_an_arrival_at_admission() {
     let (_temp, root, store) = b2_graph(&[("pages/Old.md", "- source\n")]);
     hosted(&store, |host| {
-        let first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+        let first = plan_rename(&store, "Old", "New", None, RenameChoice::Rename, &|| {}).unwrap();
         let RenameTransaction::Writes { tx, .. } =
             rename_transaction(&store, "Old", first, &[]).unwrap()
         else {
@@ -332,7 +332,8 @@ fn general_rename_includes_a_held_referrer_missing_from_the_plan() {
         host.open(session, 1, &PageId::from("pages/r.md"), "r")
             .unwrap();
         let plan = || {
-            let mut first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+            let mut first =
+                plan_rename(&store, "Old", "New", None, RenameChoice::Rename, &|| {}).unwrap();
             first.candidates.retain(|id| id.as_str() != "pages/r.md");
             Ok(first)
         };
@@ -353,7 +354,7 @@ fn clean_namespace_flush_reuses_its_selected_plan() {
     ]);
     hosted(&store, |host| {
         assert!(host.quiesce_for_tests(std::time::Duration::from_secs(10)));
-        let first = plan_rename(&store, "Old", "New", None, None, &|| {}).unwrap();
+        let first = plan_rename(&store, "Old", "New", None, RenameChoice::Rename, &|| {}).unwrap();
         assert!(first.single(&store).unwrap().is_none());
         multi_rename(
             &store,
@@ -434,31 +435,40 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let written = AtomicBool::new(false);
     hosted(&store, |host| {
-        rename_page_after_inventory(&store, host, "Old", "New", None, None, &[], || {
-            if written.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            std::thread::scope(|scope| {
-                scope
-                    .spawn(|| {
-                        let id = PageId::from("pages/Referrer.md");
-                        let read = store.page(&id).unwrap();
-                        let mut doc = read.doc;
-                        doc.blocks[0].raw = "[[Old]] concurrent".into();
-                        save_on(
-                            host,
-                            &store,
-                            tine_store::EditKind::ReplacePage,
-                            &id,
-                            SaveBase::Existing(read.rev),
-                            &doc,
-                        )
+        rename_page_after_inventory(
+            &store,
+            host,
+            "Old",
+            "New",
+            None,
+            RenameChoice::Rename,
+            &[],
+            || {
+                if written.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                std::thread::scope(|scope| {
+                    scope
+                        .spawn(|| {
+                            let id = PageId::from("pages/Referrer.md");
+                            let read = store.page(&id).unwrap();
+                            let mut doc = read.doc;
+                            doc.blocks[0].raw = "[[Old]] concurrent".into();
+                            save_on(
+                                host,
+                                &store,
+                                tine_store::EditKind::ReplacePage,
+                                &id,
+                                SaveBase::Existing(read.rev),
+                                &doc,
+                            )
+                            .unwrap();
+                        })
+                        .join()
                         .unwrap();
-                    })
-                    .join()
-                    .unwrap();
-            });
-        })
+                });
+            },
+        )
     })
     .unwrap();
     assert!(root.join("pages/New.md").is_file());
@@ -482,14 +492,23 @@ fn a_referrer_delivered_after_the_plan_replans_the_rename() {
     ]);
     let delivered = AtomicBool::new(false);
     hosted(&store, |host| {
-        rename_page_after_inventory(&store, host, "Old", "New", None, None, &[], || {
-            if delivered.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            disk::write(root.join("pages/late.md"), "- late [[Old]]\n").unwrap();
-            // The watcher's delivery, published now.
-            store.refresh(tine_store::Depth::Stamps).unwrap();
-        })
+        rename_page_after_inventory(
+            &store,
+            host,
+            "Old",
+            "New",
+            None,
+            RenameChoice::Rename,
+            &[],
+            || {
+                if delivered.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                disk::write(root.join("pages/late.md"), "- late [[Old]]\n").unwrap();
+                // The watcher's delivery, published now.
+                store.refresh(tine_store::Depth::Stamps).unwrap();
+            },
+        )
     })
     .unwrap();
     assert!(delivered.load(Ordering::Acquire));
@@ -831,7 +850,15 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
     }
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let shape = |old: &str, new: &str, into: Option<&str>| {
-        let plan = plan_rename(&store, old, new, None, into, &|| {}).unwrap();
+        let plan = plan_rename(
+            &store,
+            old,
+            new,
+            None,
+            into.map_or(RenameChoice::Rename, RenameChoice::MergeInto),
+            &|| {},
+        )
+        .unwrap();
         let single = plan.single(&store).unwrap();
         let single = single.map(|source| source.as_str().to_owned());
         (single, plan.input())
@@ -909,7 +936,15 @@ fn a_rename_planned_before_a_config_change_commits_nothing() {
             ("pages/Merged.md", "- merged\n"),
             ("pages/Done.md", "title:: Half\n\n- interrupted\n"),
         ]);
-        let plan = plan_rename(&store, old, new, None, into, &|| {}).unwrap();
+        let plan = plan_rename(
+            &store,
+            old,
+            new,
+            None,
+            into.map_or(RenameChoice::Rename, RenameChoice::MergeInto),
+            &|| {},
+        )
+        .unwrap();
         b2_deliver(&store, &root, B2_LOWBAR);
         let before = b2_tree(&root);
         assert!(
@@ -931,7 +966,7 @@ fn a_config_change_between_targets_and_write_set_replans() {
         ("pages/Ns.md", "- ns\n"),
         ("pages/Ns%2Fchild.md", "- child\n"),
     ]);
-    let mut plan = plan_rename(&store, "Ns", "Space", None, None, &|| {}).unwrap();
+    let mut plan = plan_rename(&store, "Ns", "Space", None, RenameChoice::Rename, &|| {}).unwrap();
     b2_deliver(&store, &root, B2_LOWBAR);
     let pages = plan.pages(&store).unwrap();
     assert!(
@@ -982,7 +1017,16 @@ fn a_config_changing_during_every_plan_exhausts_the_retries() {
     };
     crate::ATTEMPTS.with(|n| n.set(0));
     let err = hosted(&store, |host| {
-        rename_page_after_inventory(&store, host, "Ns", "Space", None, None, &[], toggle)
+        rename_page_after_inventory(
+            &store,
+            host,
+            "Ns",
+            "Space",
+            None,
+            RenameChoice::Rename,
+            &[],
+            toggle,
+        )
     })
     .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
@@ -998,7 +1042,16 @@ fn a_config_changing_during_every_plan_exhausts_the_retries() {
     );
     assert_eq!(b2_tree(&root), before, "no write");
     hosted(&store, |host| {
-        rename_page_after_inventory(&store, host, "Ns", "Space", None, None, &[], || {})
+        rename_page_after_inventory(
+            &store,
+            host,
+            "Ns",
+            "Space",
+            None,
+            RenameChoice::Rename,
+            &[],
+            || {},
+        )
     })
     .unwrap();
     let after = b2_tree(&root);
@@ -1027,11 +1080,20 @@ fn a_hosted_rename_planned_before_a_config_change_replans() {
     disk::create_dir_all(&app).unwrap();
     let host = tine_store::PageHost::start_for_tests(&store, &app).unwrap();
     let delivered = AtomicBool::new(false);
-    rename_page_after_inventory(&store, &host, "Start", "Begin/x", None, None, &[], || {
-        if !delivered.swap(true, Ordering::AcqRel) {
-            b2_deliver(&store, &root, B2_LOWBAR);
-        }
-    })
+    rename_page_after_inventory(
+        &store,
+        &host,
+        "Start",
+        "Begin/x",
+        None,
+        RenameChoice::Rename,
+        &[],
+        || {
+            if !delivered.swap(true, Ordering::AcqRel) {
+                b2_deliver(&store, &root, B2_LOWBAR);
+            }
+        },
+    )
     .unwrap();
     let after = b2_tree(&root);
     assert!(after.contains_key("Begin___x.md"), "{after:?}");
