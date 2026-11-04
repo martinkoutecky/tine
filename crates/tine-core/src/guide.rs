@@ -735,7 +735,9 @@ mod parity_guide_tests {
             "**Related pages in this alias group** lists the other names that do have their own page",
             "Their blocks are never merged into one view",
             "opens the page whose file path comes first in plain character order",
-            "A name with its own page file always opens that file",
+            "A name with its own page file opens that file",
+            // EMPTY-ALIAS (D-20261103-CMA): an empty page yields to the alias.
+            "A page file with no real content (no text and no properties, at most one empty bullet) gives its name to the alias",
         ] {
             assert!(guide.contains(phrase), "Guide missing {phrase}");
         }

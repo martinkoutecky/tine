@@ -62,6 +62,11 @@ pub(crate) struct PageInventoryEntryWire {
     /// prefixes.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     namespace_parent: bool,
+    /// EMPTY-ALIAS (D-20261103-CMA): this name's file has no real content and
+    /// the name is an alias, so `link` is the owner and a named route opens
+    /// it too (`InventoryEntry::empty_alias`). Sent only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    empty_alias: bool,
 }
 
 #[derive(Serialize)]
@@ -130,6 +135,7 @@ fn entry_wire(entry: &tine_store::InventoryEntry) -> PageInventoryEntryWire {
             kind: if link.is_journal { "journal" } else { "page" },
         }),
         namespace_parent: entry.namespace_parent,
+        empty_alias: entry.empty_alias,
     }
 }
 

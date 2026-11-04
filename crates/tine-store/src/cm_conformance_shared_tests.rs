@@ -1186,6 +1186,9 @@ pub fn frontend_case(
             if e.namespace_parent {
                 wire["namespace_parent"] = json!(true);
             }
+            if e.empty_alias {
+                wire["empty_alias"] = json!(true);
+            }
             wire
         })
         .collect();
