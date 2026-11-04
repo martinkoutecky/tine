@@ -61,7 +61,7 @@
       }
     ],
     "linker": [],
-    "oct 27th, 2026": [
+    "release day": [
       {
         "blocks": [
           {
@@ -322,13 +322,6 @@
       "key": "oct 27th, 2026",
       "kind": "journal",
       "linkedRefs": 1,
-      "name": "oct 27th, 2026",
-      "owner": null
-    },
-    {
-      "key": "release day",
-      "kind": "journal",
-      "linkedRefs": 1,
       "name": "Oct 27th, 2026",
       "owner": "journals/2026_10_27.md"
     },
@@ -352,6 +345,13 @@
       "linkedRefs": 1,
       "name": "Org Title",
       "owner": "pages/o.org"
+    },
+    {
+      "key": "release day",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "release day",
+      "owner": null
     },
     {
       "key": "shown title",
@@ -413,7 +413,7 @@
       ],
       "day": null,
       "model": [
-        "journal",
+        "page",
         "release day"
       ]
     },
