@@ -10,7 +10,8 @@
 //! handed to the bridge, so a difference is in the meaning layer (pages,
 //! owners, navigation, Linked References, counts, alias groups, the link
 //! table, queries), never in parsing. The identity fold handed to the model is
-//! Tine's: `page_key`, with a date-shaped spelling folded to its day.
+//! Tine's: `page_key`, with a date-shaped spelling folded to its day. So is
+//! the URL-origin half of the namespace test (`urls`, round-10 bridge).
 //!
 //! Rename (rule 6) needs the page host and `tine-graph-features`; it lives in
 //! `crates/tine-graph-features/tests/cm_conformance_rename.rs`, sharing

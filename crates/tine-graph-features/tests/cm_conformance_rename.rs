@@ -21,6 +21,11 @@
 //! stored query arguments through `Rulings9.queryMap`), a plain rename with
 //! the model's rename (whose refusal now includes CM-OWN-CHILD).
 //!
+//! Round-10 bridge: a reference-only source (`refSource`) is renamed by
+//! `rename10` and merged by `refMerge`, whose `source` is null (nothing to
+//! fold; the after graph is still compared). The model's namespace test is
+//! Tine's (`urls`, `shared::model_input`), so `./x` is no child of `.`.
+//!
 //! Favorites follow rename only in the frontend (`src/favorites.ts`, Q12):
 //! the model's `favorites` answer is not compared here (a harness gap).
 //!
