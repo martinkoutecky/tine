@@ -7,6 +7,8 @@
     "pages/caf%C3%A9.md": "- percent-encoded UTF-8\n",
     "pages/50%25 of 100%.md": "- a malformed escape after a valid one\n",
     "pages/contents.md": "- the contents page\n",
+    "pages/%E9.md": "- a lone non-UTF-8 escape\n",
+    "pages/___lead.md": "- lowbars are literal in Legacy, even leading\n",
     "pages/links.md": "- [[a/b]] [[Ten___Child]] [[café]] [[Contents]]\n"
   },
   "ogNames": {
@@ -15,6 +17,8 @@
     "pages/caf%C3%A9.md": "café",
     "pages/50%25 of 100%.md": "50%25 of 100%",
     "pages/contents.md": "Contents",
+    "pages/%E9.md": "%E9",
+    "pages/___lead.md": "___lead",
     "pages/links.md": "links"
   }
 }
