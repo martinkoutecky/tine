@@ -8,11 +8,11 @@ import { remote } from "webdriverio";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = process.env.MARGIN_BASELINE === "1";
-// E2E_MARGIN_POLISH_OUT puts the graph outside a git work tree: under the repo's
-// artifacts/ the graph sits in git, so the first comment asks for a name (GH #841).
+// E2E_MARGIN_POLISH_OUT overrides where the run (graph, XDG dirs, shots) lives.
 const OUT = process.env.E2E_MARGIN_POLISH_OUT || path.join(ROOT, "artifacts/margin-polish", process.env.MARGIN_RUN || (BASELINE ? "baseline" : "candidate"));
 const GRAPH = path.join(OUT, "graph");
 const PAGE = "Margin Polish";
@@ -25,6 +25,11 @@ const defects = [];
 fs.mkdirSync(OUT, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(OUT, "xdg", dir), { recursive: true });
+// Under the repo's artifacts/ the graph sits in a git work tree, where the first
+// comment asks for a name (GH #841). This journey isn't about that prompt: the
+// device has already answered it with Skip.
+fs.mkdirSync(path.join(OUT, "xdg/data", APP_ID), { recursive: true });
+fs.writeFileSync(path.join(OUT, "xdg/data", APP_ID, "tine-settings.json"), JSON.stringify({ comment_name_prompt_declined: "1" }));
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
 fs.writeFileSync(FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- An independent block.\n  - Keep this remark\n    tine.quote:: independent\n    tine.author:: Ada Test  \t\n`);
 const now = new Date();
