@@ -1,6 +1,7 @@
 import { t } from "./i18n";
 import { initDebug } from "./debug";
 import { Toasts } from "./components/Toasts";
+import { LinkSchemePrompt } from "./components/LinkSchemePrompt";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
 // running app pops on a `tine --capture` signal. It renders the SAME block tree
 // the main app uses (Block + Editor) over an isolated scratch store — so all
@@ -739,6 +740,7 @@ function Capture() {
         </Show>
       </div>
       <DatePicker />
+      <LinkSchemePrompt />
       <Toasts />
     </CaptureCtx.Provider>
   );

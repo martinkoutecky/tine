@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import { InlineText } from "./inline";
@@ -6,6 +6,8 @@ import { initParser } from "./parse";
 import { backend } from "../backend";
 import { setToasts, toasts } from "../toasts";
 import { linkScheme } from "../components/ExternalLink";
+import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
+import { initLinkSchemeSettings } from "../linkSchemeSettings";
 
 // GH #503 (UI-CUSTOM-SCHEME-LINK-503): a link to another app's scheme
 // (`shortcuts://`, `zotero://`, `obsidian://` …) opens in that app after the
@@ -14,7 +16,15 @@ import { linkScheme } from "../components/ExternalLink";
 // only produced "unsupported url scheme" (iOS 0.6.982 included).
 
 beforeAll(initParser);
+const disposers: (() => void)[] = [];
+beforeEach(async () => {
+  vi.spyOn(backend(), "getAppString").mockResolvedValue("[]");
+  await initLinkSchemeSettings();
+  const host = document.createElement("div"); document.body.append(host);
+  disposers.push(render(() => <LinkSchemePrompt />, host));
+});
 afterEach(() => {
+  disposers.splice(0).forEach(dispose => dispose());
   vi.restoreAllMocks();
   document.body.replaceChildren();
   setToasts([]);
@@ -25,7 +35,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 function clickLink(source: string): void {
   const host = document.createElement("div");
   document.body.append(host);
-  render(() => <InlineText text={source} />, host);
+  disposers.push(render(() => <InlineText text={source} />, host));
   const link = host.querySelector("a");
   expect(link, `expected a rendered link for ${source}`).not.toBeNull();
   link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -38,32 +48,33 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
     ["[note](obsidian://open?vault=Work&file=Plan)", "obsidian://open?vault=Work&file=Plan", "obsidian"],
   ] as const) {
     it(`asks, naming ${scheme}: and the full target, then hands ${dest} to the OS`, async () => {
-      const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
       const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
       clickLink(source);
       await flush();
-      expect(confirm).toHaveBeenCalledOnce();
-      const [message, title] = confirm.mock.calls[0];
-      expect(`${title} ${message}`).toContain(`${scheme}:`);
-      expect(message).toContain(dest);
+      const prompt = document.querySelector<HTMLFormElement>('[role="dialog"]')!;
+      expect(prompt.textContent).toContain(`${scheme}:`);
+      expect(prompt.textContent).toContain(dest);
+      prompt.requestSubmit();
+      await flush();
       expect(open).toHaveBeenCalledExactlyOnceWith(dest, scheme);
       expect(toasts()).toEqual([]);
     });
   }
 
   it("declining the prompt opens nothing", async () => {
-    vi.spyOn(backend(), "confirm").mockResolvedValue(false);
     const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
     clickLink("[abc](shortcuts://run-shortcut?name=abc)");
+    await flush();
+    document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="button"]')!.click();
     await flush();
     expect(open).not.toHaveBeenCalled();
   });
 
   it("a refusal or failure after the confirm is shown, not swallowed", async () => {
-    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     vi.spyOn(backend(), "openExternal").mockRejectedValue(new Error("no app handles zotero:"));
     clickLink("[item](zotero://select/items/A)");
     await flush();
+    document.querySelector<HTMLFormElement>('[role="dialog"]')!.requestSubmit();
     await flush();
     expect(toasts().map((toast) => toast.message).join("\n")).toContain("no app handles zotero:");
   });
@@ -74,21 +85,19 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
     ["[file](file:///tmp/report.odt)", "file:///tmp/report.odt"],
   ] as const) {
     it(`${dest} keeps today's direct open, with no prompt`, async () => {
-      const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
       const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
       clickLink(source);
       await flush();
-      expect(confirm).not.toHaveBeenCalled();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
       expect(open).toHaveBeenCalledExactlyOnceWith(dest);
     });
   }
 
   it("javascript: and data: links never reach the prompt or the opener", async () => {
-    const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
     for (const source of ["[x](javascript:alert(1))", "[x](data:text/html,hi)"]) clickLink(source);
     await flush();
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(open).not.toHaveBeenCalled();
   });
 
@@ -98,7 +107,7 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
   });
 
   it("the never-opened scheme list matches the native opener's (one rule, two layers)", () => {
-    const ts = readFileSync("src/components/ExternalLink.tsx", "utf8");
+    const ts = readFileSync("src/linkSchemePolicy.ts", "utf8");
     const rs = readFileSync("src-tauri/src/platform.rs", "utf8");
     const list = (text: RegExpExecArray | null) => [...(text?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map((m) => m[1]).sort();
     const tsList = list(/NEVER_OPENED_SCHEMES = new Set\(\[([^\]]*)\]/.exec(ts));

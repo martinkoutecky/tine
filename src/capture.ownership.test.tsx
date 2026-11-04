@@ -68,4 +68,18 @@ describe("capture preference request ownership", () => {
     expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("private capture preference detail");
     read.mockRestore();
   });
+
+  it("hosts the shared app-link consent prompt in the separate Capture entrypoint", async () => {
+    vi.spyOn(backend(), "getAppString").mockResolvedValue("[]");
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+    const { initLinkSchemeSettings } = await import("./linkSchemeSettings");
+    await initLinkSchemeSettings();
+    const { openOutboundLink } = await import("./components/ExternalLink");
+    const pending = openOutboundLink("shortcuts://capture", false);
+    await vi.waitFor(() => expect(document.querySelector('.link-scheme-prompt')).not.toBeNull());
+    const form = document.querySelector<HTMLFormElement>('.link-scheme-prompt')!;
+    expect(form.textContent).toContain("shortcuts://capture");
+    form.requestSubmit(); await pending;
+    expect(open).toHaveBeenCalledExactlyOnceWith("shortcuts://capture", "shortcuts");
+  });
 });
