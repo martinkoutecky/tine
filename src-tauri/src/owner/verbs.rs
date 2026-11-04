@@ -490,12 +490,7 @@ pub(super) fn journal_write_page(
     graph: &WholeGraph,
     day: JournalDate,
 ) -> Result<PageId, ErrorBody> {
-    let config = slot.store.config();
-    let title = JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    )
-    .title(day);
+    let title = slot.store.config().journal_format().title(day);
     if let Resolved::Existing { id, mut others } = graph.resolve(&title, true) {
         if !others.is_empty() {
             others.insert(0, id);
