@@ -118,16 +118,23 @@ jobs:
           $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & "$driverDir\msedgedriver.exe" --version
       - name: Run Windows WebView2 smoke
-        if: ${{ matrix.scenario != 'probe-863-809' }}
+        if: ${{ !startsWith(matrix.scenario, 'probe-863-809') }}
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
         run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
       - name: Run the #863 / #809 diagnostic probe (diag branch only)
-        if: ${{ matrix.scenario == 'probe-863-809' }}
+        if: ${{ startsWith(matrix.scenario, 'probe-863-809') }}
         shell: pwsh
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
         run: |
+          if ("${{ matrix.scenario }}" -eq "probe-863-809-x86") {
+            rustup target add i686-pc-windows-msvc
+            cargo build --release --features custom-protocol --target i686-pc-windows-msvc --manifest-path src-tauri/Cargo.toml
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $env:TINE_APP = "${{ github.workspace }}\target\i686-pc-windows-msvc\release\tine.exe"
+          }
+          Write-Host "probing $env:TINE_APP"
           $env:TAURI_DRIVER = (Get-Command msedgedriver).Source
           $base = "$PWD\test-results\e2e\windows-smoke"
           $env:E2E_ARTIFACT_DIR = "$base\863"; $env:ONLY = "863"
