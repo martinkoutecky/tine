@@ -398,7 +398,7 @@ pub(super) fn execute_pages(
     // names. They follow the baseline-adjusted names the editor sees.
     let parents = if include_names {
         graph
-            .completion_namespace_parents(&referenced_names)
+            .completion_namespace_parents(&file_pages, &referenced_names)
             .into_iter()
             .map(|name| std::borrow::Cow::Owned(name.to_owned()))
             .collect()

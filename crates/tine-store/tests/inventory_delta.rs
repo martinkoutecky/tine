@@ -1122,7 +1122,10 @@ fn bracket_completion_offers_namespace_parents() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture(&[
         ("pages/x.md", "title:: Work/Plan\n- body\n"),
-        ("pages/Notes.md", "- [[Area/Sub/Leaf]] [[./rel/x]] [[Named]] [[Named/Kid]]\n"),
+        (
+            "pages/Notes.md",
+            "- [[Area/Sub/Leaf]] [[./rel/x]] [[Named]] [[Named/Kid]]\n",
+        ),
         ("pages/Owned%2FChild.md", "- c\n"),
         ("pages/Owned.md", "- the parent has its own file\n"),
         ("pages/Editing.md", "- [[Draft/Chapter]]\n"),

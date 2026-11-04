@@ -74,18 +74,29 @@ impl ReadSnapshot {
         &'a self,
         table: &'a ReferencedNameTable,
     ) -> BTreeMap<String, &'a str> {
-        self.namespace_seeds_over(table.iter().map(|(_, referrers)| referrers.spelling.as_str()))
+        self.namespace_seeds_over(
+            self.real_page_names
+                .claims_from("")
+                .map(|(_, path, name)| (path.as_path(), name.as_str())),
+            table
+                .iter()
+                .map(|(_, referrers)| referrers.spelling.as_str()),
+        )
     }
 
-    /// [`Self::namespace_seeds`] over any list of referenced names in place of
-    /// the table's: `[[` completion's list is the table's after the editing
-    /// block's reference baseline, and its parents follow that list.
+    /// [`Self::namespace_seeds`] over any list of file claims `(path, page
+    /// name)` and referenced names in place of the generation's own: `[[`
+    /// completion already holds the page list (the same claims) and its
+    /// referenced names are the table's after the editing block's reference
+    /// baseline, so its parents follow those lists without a second walk of
+    /// the claim tree.
     pub(crate) fn namespace_seeds_over<'a>(
         &'a self,
+        claims: impl Iterator<Item = (&'a std::path::Path, &'a str)>,
         referenced: impl Iterator<Item = &'a str>,
     ) -> BTreeMap<String, &'a str> {
         let mut seeds: BTreeMap<String, Option<&'a str>> = BTreeMap::new();
-        for (_, path, name) in self.real_page_names.claims_from("") {
+        for (path, name) in claims {
             if name.contains('/') && self.file_supplies_parents(path) {
                 for (prefix, key) in parent_prefixes(name) {
                     keep_least(seeds.entry(key).or_default(), prefix);
@@ -108,16 +119,23 @@ impl ReadSnapshot {
     /// The namespace parents `[[` completion and page search offer (OG's page
     /// search indexes every page entity, parents included, with no ranking of
     /// their own: `search/db.cljs make-pages-title-indice!` over
-    /// `db/get-pages`): the seeds over `referenced`, less the keys a file
-    /// claims and the keys `referenced` names directly (those are ordinary
-    /// referenced names, offered once). `referenced` must be in page-key
-    /// order, as the name table and its baseline-adjusted copy are. Aliases
-    /// are the caller's exclusion (it already holds every alias key).
+    /// `db/get-pages`): the seeds over `files` (the page list, which is the
+    /// claim list) and `referenced`, less the keys a file claims and the keys
+    /// `referenced` names directly (those are ordinary referenced names,
+    /// offered once). `referenced` must be in page-key order, as the name
+    /// table and its baseline-adjusted copy are. Aliases are the caller's
+    /// exclusion (it already holds every alias key).
     pub(crate) fn completion_namespace_parents<'a>(
         &'a self,
+        files: &'a [tine_core::model::PageEntry],
         referenced: &'a [std::borrow::Cow<'a, str>],
     ) -> Vec<&'a str> {
-        let seeds = self.namespace_seeds_over(referenced.iter().map(|name| name.as_ref()));
+        let seeds = self.namespace_seeds_over(
+            files
+                .iter()
+                .map(|file| (file.path.as_path(), file.name.as_str())),
+            referenced.iter().map(|name| name.as_ref()),
+        );
         seeds
             .into_iter()
             .filter(|(key, _)| {
