@@ -395,10 +395,6 @@
       "n3-org-file-links-legacy": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
-      "n5-title-differs-from-stem": [
-        "frontend all pages: model page (\"journal\", \"oct 27th, 2026\") is reference-only and has no row",
-        "frontend all pages: row ref:release day (count 1) owns no model page"
-      ],
       "n7-sync-conflict-names": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
@@ -500,6 +496,12 @@
       "r7-page-queries": [
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r9-case-rename-onto-taken-file": [
+        "frontend all pages: file pages/n%2Fy.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r9-own-child-alias": [
+        "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)"
       ]
     }
   },
