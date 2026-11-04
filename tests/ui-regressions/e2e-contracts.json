@@ -734,6 +734,23 @@
       ],
       "stability": "stable"
     },
+    "scripts/e2e-cm-empty-alias.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With Machine Learning declaring alias:: ML and an empty pages/ML.md, clicking a rendered [[ML]] opens Machine Learning with its body; the alias group's Related pages row opens the empty ML page; typing into it makes [[ML]] open ML, and clearing it makes [[ML]] open Machine Learning again, without a restart; no page file is created and the other pages keep their bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing and title decoration may vary while the routed page and its body are the expected ones; the cleared ML.md may be empty or a single empty bullet."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-favorites.mjs": {
       "contracts": [
         {

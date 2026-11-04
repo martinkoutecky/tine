@@ -13,7 +13,7 @@ import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openInNewTab } from "../router";
+import { openPage, openPageInNewTab, openPageTarget, openPageTargetInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
@@ -27,11 +27,12 @@ import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
 import type { Inline, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
 import type { PageKind } from "../types";
+import type { PageTarget } from "../routeTypes";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
-import { linkTarget, resolvedTarget, type LinkDestination } from "../pageIndex";
+import { linkTarget, ownerPath, resolvedTarget, type LinkDestination } from "../pageIndex";
 import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "../components/PageIcon";
@@ -348,7 +349,18 @@ function createPeekBridge(disabled: () => boolean) {
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+export function PageRef(props: {
+  name: string;
+  alias?: JSX.Element;
+  tag?: boolean;
+  blockId?: string;
+  spanAttrs?: SpanDomAttrs;
+  /** Open the page file claiming `name` itself, not what a `[[name]]` link
+   *  opens: the alias group's "Related pages" row, the one deliberate way to
+   *  an empty alias page (EMPTY-ALIAS, D-20261103-CMA; Logseq's alias group
+   *  headers also bypass its redirect). */
+  file?: boolean;
+}): JSX.Element {
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLAnchorElement | undefined;
@@ -360,8 +372,13 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
   // What the link opens: the store's answer (`linkTarget`), never re-derived.
-  const link = (): LinkDestination => (isGuidePageName(targetName()) ? { name: targetName(), kind: "page" } : linkTarget(targetName()));
+  const link = (): LinkDestination => (isGuidePageName(targetName()) || props.file ? { name: targetName(), kind: "page" } : linkTarget(targetName()));
   const kind = (): PageKind => link().kind;
+  // `file`: the claimant's exact path, which the router keeps (no redirect).
+  const target = (): PageTarget => {
+    const path = props.file ? ownerPath(resolvedTarget(targetName(), "page")) : undefined;
+    return { name: link().name, pageKind: kind(), ...(path ? { path } : {}) };
+  };
   // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
   // link signals a blank destination. Tags are exempt: a tag whose page has no
   // file is ordinary Logseq usage, and dimming them would mark most tags in a
@@ -376,16 +393,17 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     e.stopPropagation();
     // Shared modified-click contract (linkGesture.ts, GH #283/#438).
     const dest = internalLinkDest(e);
-    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(link().name, kind());
+    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(target());
     else if (dest === "background") openBackgroundTab();
     else if (dest === "pane")
-      openRouteInOtherPane({ kind: "page", name: link().name, pageKind: kind() }, pane?.paneId ?? focusedPaneId());
+      openRouteInOtherPane({ kind: "page", ...target() }, pane?.paneId ?? focusedPaneId());
+    else if (props.file) openPageTarget(target());
     else openPage(link().name, kind());
   };
   // A background tab belongs to the pane that was already active, not
   // necessarily the pane containing this link (GH #87): the pane tracker keeps
   // the active pane across a middle-button press (ui.ts installPaneTracker).
-  const openBackgroundTab = () => openPageInNewTab(link().name, kind());
+  const openBackgroundTab = () => (props.file ? openPageTargetInNewTab(target()) : openPageInNewTab(link().name, kind()));
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
@@ -404,7 +422,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       ...new Set([pageChangeKey(targetName()), pageChangeKey(previewPage() ?? targetName())]),
     ])}` : null),
     async () => {
-      const result = await readOwned(graphOwner(), backend().getPage(targetName(), kind()));
+      // The page the click opens (`link`): an alias's owner, and an empty
+      // alias page's owner too (EMPTY-ALIAS), never a different page.
+      const result = await readOwned(graphOwner(), backend().getPage(link().name, kind()));
       if (result.kind === "stale") return null;
       setPreviewPage(result.value?.name);
       return result.value;

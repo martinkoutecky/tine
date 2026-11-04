@@ -224,6 +224,11 @@ export interface PageInventoryEntry {
    *  (`n` for `n/y`; conceptual model rule 1, `InventoryEntry::namespace_parent`).
    *  Absent means false. */
   namespace_parent?: boolean;
+  /** EMPTY-ALIAS (D-20261103-CMA, as Logseq): this name's file has no real
+   *  content and some page declares the name as an alias, so `link` is that
+   *  owner and a named route opens it too (`InventoryEntry::empty_alias`).
+   *  Only a route to the exact file opens the empty page. Absent means false. */
+  empty_alias?: boolean;
 }
 
 /** What one publication changed in the `page_inventory` answer when no page

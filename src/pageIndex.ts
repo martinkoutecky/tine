@@ -319,11 +319,14 @@ export function linkTarget(name: string): LinkDestination {
 
 /** A named ordinary-page route (not a link): an alias opens what the store
  *  says its link opens (the owner, of the owner's kind: a journal's alias
- *  opens the journal); any other name stays an ordinary page of that name. */
+ *  opens the journal), and so does a content-free file the store marks
+ *  `empty_alias` (EMPTY-ALIAS, as Logseq's `get-redirect-page-name`); any
+ *  other name stays an ordinary page of that name. A route carrying the
+ *  file's path never comes here (the router keeps an exact owner). */
 export function navigationTarget(name: string): LinkDestination {
   ensureInstalled();
   const entry = held()?.pages.get(pageIdentityKey(name));
-  if (entry?.target.kind === "alias" && entry.link) return entry.link;
+  if ((entry?.target.kind === "alias" || entry?.empty_alias) && entry.link) return entry.link;
   return { name: navigationName(name), kind: "page" };
 }
 
