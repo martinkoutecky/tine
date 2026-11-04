@@ -55,3 +55,11 @@ pages-namespaces-count = { $pages ->
     [one] { NUMBER($namespaces, useGrouping: 0) } namespace
    *[other] { NUMBER($namespaces, useGrouping: 0) } namespaces
     }
+rename-alias-choice-title = “{ $to }” is another page's alias
+rename-alias-choice-body = “{ $to }” is an alias of “{ $owner }”. Merge “{ $from }” into “{ $owner }”, or make “{ $to }” a page of its own? A page of its own stays an alias of “{ $owner }” too, so links to “{ $to }” still show in the Linked References of “{ $owner }”.
+rename-alias-choice-no-merge = Merging is not offered: “{ $owner }” is inside “{ $from }” and would move with it.
+rename-alias-choice-merge = Merge into “{ $owner }”
+rename-alias-choice-own-page = Make “{ $to }” its own page (still an alias of “{ $owner }”)
+rename-refused-own-child = Couldn't rename “{ $old }” to “{ $new }”: “{ $new }” is already a page or an alias inside “{ $old }”, and every page under “{ $old }” moves with it.
+rename-refused-file-taken = Couldn't rename: the file { $file } belongs to the page “{ $page }”. Rename or merge that page first.
+rename-alias-choice-stale-what = The rename

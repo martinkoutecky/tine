@@ -1616,6 +1616,13 @@ mod rename_guide_tests {
             "or in Org by `#+TITLE:`, gets the new name",
             "Opening a graph never renames journal files",
             "**Rename to date names**",
+            // CM step 2 batch 12: M-Q5 (D-20261102-MC5), M-Q6, M-Q7, rulings (a)(b), R14.
+            "offers to merge into the journal, whichever way the date is written",
+            "**Make “ML” its own page (still an alias of “Machine Learning”)**",
+            "links to `[[ML]]` still show in its Linked References",
+            "name the page that remains (`Machine Learning`)",
+            "inside its own namespace that is already used",
+            "is refused with that page's name",
         ] {
             assert!(
                 tips.contains(control),

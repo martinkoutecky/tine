@@ -7,6 +7,7 @@ import { AudioOverlay } from "./AudioOverlay";
 import { HelpPopup } from "./HelpShortcuts";
 import { DatePicker } from "./DatePicker";
 import { FormulaEditor } from "./FormulaEditor";
+import { RenameAliasChoice } from "./RenameAliasChoice";
 import { PageProps } from "./PageProps";
 import { ExportModal } from "./ExportModal";
 import { PdfExportDialog } from "./PdfExportDialog";
@@ -47,6 +48,7 @@ export function WindowOverlays(props: {
         <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
         <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
         <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>
+        <FailureBoundary region="The rename dialog"><RenameAliasChoice /></FailureBoundary>
       </Show>
       {props.keyboardToolbar}
       <Show when={here()}>

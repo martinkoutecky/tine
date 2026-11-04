@@ -23,7 +23,7 @@ import { resetPageIndex } from "./pageIndex";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta } from "./types";
+import type { BlockDto, GraphMeta, RenameRefusal } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -37,7 +37,8 @@ import { reportUiFailure } from "./uiFailure";
 import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
-import { msg, t } from "./i18n";
+import { msg, t, type Msg } from "./i18n";
+import { chooseAliasRename } from "./renameAliasChoice";
 import { primeQuickShareGate } from "./quickShareGate";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
@@ -472,46 +473,66 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 installRenameRefreshHandler(refreshAfterRename);
 installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded });
 
-export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled";
+export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled" | { refused: RenameRefusal };
 
-/** Rename a page; when `to` reaches one other page (its file, or the owner of
- *  that alias), ask to merge into it as OG Logseq does (GH #327,
- *  `merge-pages!`): the backend appends the source's blocks, unites aliases,
- *  rewrites references and trashes the source in one transaction; a `from`
- *  with no file only has its references repointed. `cancelled`: the user
- *  declined or the graph changed before anything was written. The other
- *  outcomes are `renamePageOnDisk`'s; `renameOutcomeMessage` words them.
- *  `onRefreshed` receives the graph owner captured after the rename's refresh.
- *  The merge target is not re-resolved after the confirm: the backend re-checks
- *  it. A `to` reaching several pages is not offered as a merge; the backend
- *  refuses that rename. Backend errors reject. Cost: one or two name resolutions, a confirm dialog
- *  when merging, plus the rename. */
+/** Rename a page, asking first what the backend's rename planner says the
+ *  rename needs (`rename_offer`; the window never re-derives it, M-Q6):
+ *  - `to` is one other page's (its file, or a journal day under any date
+ *    spelling, M-Q7): confirm a merge into it as OG Logseq does (GH #327,
+ *    `merge-pages!`): the backend appends the source's blocks, unites aliases,
+ *    rewrites references and trashes the source in one transaction; a `from`
+ *    with no file only has its references repointed.
+ *  - `to` is only another page's alias (M-Q5, D-20261102-MC5): the in-app
+ *    dialog offers Merge into the owner / Make `to` its own page (still an
+ *    alias of the owner) / Cancel; the merge only when the backend allows it.
+ *  - refused (CM-OWN-CHILD, R14): `{ refused }`, worded by
+ *    `renameOutcomeMessage`; nothing is written.
+ *  `cancelled`: the user declined or the graph changed before anything was
+ *  written. The other outcomes are `renamePageOnDisk`'s. `onRefreshed`
+ *  receives the graph owner captured after the rename's refresh. The answer is
+ *  not re-asked after the dialog: the rename re-plans and refuses if the graph
+ *  changed. Backend errors reject. Cost: one rename plan for the question,
+ *  a dialog when merging, plus the rename. */
 export async function renameOrMergePage(
   from: string, to: string, target?: PageTarget, onRefreshed?: (owner: Owner) => void,
 ): Promise<RenameOutcome> {
   const owner = bindingOwner();
-  const found = await readOwned(owner, backend().resolvePage(to, "page"));
-  if (found.kind === "stale") return "cancelled";
-  const reached = found.value.kind === "existing" ? (found.value.others.length ? [] : [found.value.id])
-    : found.value.kind === "alias" ? found.value.owners : [];
+  const asked = await readOwned(owner, backend().renameOffer(from, to, target?.path));
+  if (asked.kind === "stale") return "cancelled";
+  const offer = asked.value;
   let into: string | undefined;
-  if (reached.length === 1) {
-    const source = target?.path ?? await readOwned(owner, backend().resolvePage(from, target?.pageKind ?? "page"))
-      .then((own) => own.kind !== "stale" && own.value.kind === "existing" ? own.value.id : undefined);
-    if (source !== reached[0]) into = reached[0];
+  let ownPage = false;
+  switch (offer.kind) {
+    case "refused": return { refused: offer.reason };
+    case "merge": {
+      const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: offer.name, from: from }), { okLabel: t("confirm-merge-pages"), cancelLabel: t("confirm-cancel") }));
+      if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
+      into = offer.into;
+      break;
+    }
+    case "aliasOf": {
+      const answer = await chooseAliasRename(from, to, offer.name, offer.merge);
+      if (!answer || !owner()) return "cancelled";
+      if (answer === "merge") into = offer.owner;
+      else ownPage = true;
+      break;
+    }
+    case "rename": break;
   }
-  if (into) {
-    const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: to, from: from }), { okLabel: t("confirm-merge-pages"), cancelLabel: t("confirm-cancel") }));
-    if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
-  }
-  const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
+  const done = await renamePageOnDisk(from, to, target, into, onRefreshed, ownPage);
   return done === "stale" ? "cancelled" : done;
 }
 
 /** The user-facing message for a rename that did not rename, or null (for
  *  `renamed`, `merged` and `cancelled`). `unchanged` is worded by its cause: a
  *  spelling already in use, or a name no file and no reference uses. */
-export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | null {
+export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | Msg | null {
+  if (typeof outcome === "object" && "refused" in outcome) {
+    const reason = outcome.refused;
+    return reason.kind === "ownChild"
+      ? msg("rename-refused-own-child", { old: reason.old, new: reason.new })
+      : msg("rename-refused-file-taken", { file: reason.file, page: reason.page });
+  }
   if (typeof outcome === "object") {
     return outcome.mentions
       ? `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save, and they mention “${from}”, so the rename could not update them. Save or discard those changes, then rename again. Your pending edits are still here.`

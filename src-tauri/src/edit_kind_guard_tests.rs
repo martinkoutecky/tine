@@ -80,20 +80,21 @@ fn pdf_open_reads_state_without_a_graph_write() {
 fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const COMMANDS: &str = include_str!("commands.rs");
     const CONCORD: &str = include_str!("commands/concord.rs");
+    const RENAME: &str = include_str!("commands/rename.rs");
     // The backup module is two files since the og-B seam split; scan both so
     // the split never shrinks this census.
     const BACKUP: &str = include_str!("backup/restore.rs");
     const BACKUP_SNAPSHOT: &str = include_str!("backup.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
+    const RENAME_ANSWER: &str =
+        include_str!("../../crates/tine-graph-features/src/pages_rename_offer.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
     const PDF: &str = include_str!("../../crates/tine-graph-features/src/pdf.rs");
     const GUIDE: &str = include_str!("../../crates/tine-graph-features/src/guide.rs");
     const JOURNALS: &str = include_str!("../../crates/tine-graph-features/src/journals.rs");
+    // The rename commands live in their own module (CM step 2 batch 12).
+    let rename_routes = [("rename_page", "tine_graph_features::pages::rename_page_as")];
     let routes = [
-        (
-            "rename_page",
-            "tine_graph_features::pages::rename_or_merge_page",
-        ),
         (
             "copy_guide_into_graph",
             "tine_graph_features::guide::copy_guide_into_graph",
@@ -136,12 +137,15 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         ),
     ];
     assert_eq!(
-        routes.len() + concord_routes.len(),
+        routes.len() + concord_routes.len() + rename_routes.len(),
         11,
         "OG-RULES Rule 8: update the page-writer census; exemplar src-tauri/src/commands.rs"
     );
     for (name, route) in routes {
         assert!(calls(body(COMMANDS, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands.rs");
+    }
+    for (name, route) in rename_routes {
+        assert!(calls(body(RENAME, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/rename.rs");
     }
     for (name, route) in concord_routes {
         assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
@@ -149,6 +153,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     let destinations = [
         // Every rename plans rename_transaction as one HostOp through
         // multi_rename; folded entry moves run on the host driver.
+        (RENAME_ANSWER, "rename_page_as", "rename_page_after_inventory("),
         (PAGES, "rename_page_after_inventory", "multi_rename("),
         (PAGES, "multi_rename", "rename_transaction("),
         (

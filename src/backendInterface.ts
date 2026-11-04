@@ -202,7 +202,11 @@ export interface Backend {
    *  changed. Without it, a `next` another page already has is refused.
    *  `unsavedPaths`: page files whose edits could not be saved; the rename
    *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
-  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
+  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[], ownPage?: boolean): Promise<import("./types").RenameDone>;
+  /** What renaming `old` to `next` asks of the user: the backend rename's own
+   *  answer (`pages::rename_offer`), read-only. `ownPage` on `renamePage` is
+   *  the "make it its own page" answer to an `aliasOf` offer (M-Q5). */
+  renameOffer(old: string, next: string, expectedPath?: string): Promise<import("./types").RenameOffer>;
   /** Per text (an unsaved page's pre-block or block, as the window holds it):
    *  whether renaming `old` to `next` would rewrite it. The backend's own rename answer
    *  (`pages::rename_would_change`), so the stuck-page check cannot disagree

@@ -2318,6 +2318,14 @@ export interface MessageArgs {
   "reload-on-focus-live-file-notifications-are-back-for-this-graph": {};
   "reload-on-focus-live-file-notifications-are-unavailable-for-this-graph": { "message": string | number };
   "reload-on-focus-tine-couldn-t-finish-checking-for-external-changes": { "error": string | number };
+  "rename-alias-choice-body": { "from": string | number; "owner": string | number; "to": string | number };
+  "rename-alias-choice-merge": { "owner": string | number };
+  "rename-alias-choice-no-merge": { "from": string | number; "owner": string | number };
+  "rename-alias-choice-own-page": { "owner": string | number; "to": string | number };
+  "rename-alias-choice-stale-what": {};
+  "rename-alias-choice-title": { "to": string | number };
+  "rename-refused-file-taken": { "file": string | number; "page": string | number };
+  "rename-refused-own-child": { "new": string | number; "old": string | number };
   "render-asset-moved-to-trash": {};
   "render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more": {};
   "render-click-to-open-the-highlight-in-its-pdf-shift-click-sidebar-right-click-for-more": {};
