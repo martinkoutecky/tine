@@ -118,9 +118,24 @@ jobs:
           $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & "$driverDir\msedgedriver.exe" --version
       - name: Run Windows WebView2 smoke
+        if: ${{ matrix.scenario != 'probe-863-809' }}
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
         run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
+      - name: Run the #863 / #809 diagnostic probe (diag branch only)
+        if: ${{ matrix.scenario == 'probe-863-809' }}
+        shell: pwsh
+        env:
+          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+        run: |
+          $env:TAURI_DRIVER = (Get-Command msedgedriver).Source
+          $base = "$PWD\test-results\e2e\windows-smoke"
+          $env:E2E_ARTIFACT_DIR = "$base\863"; $env:ONLY = "863"
+          node scripts/e2e-beta-win-863-809.mjs; $a = $LASTEXITCODE
+          $env:E2E_ARTIFACT_DIR = "$base\809"; $env:ONLY = "809"
+          node scripts/e2e-beta-win-863-809.mjs; $b = $LASTEXITCODE
+          Write-Host "863 exit $a, 809 exit $b"
+          if ($a -ne 0 -or $b -ne 0) { exit 1 }
       - name: Upload Windows E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
