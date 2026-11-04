@@ -745,8 +745,18 @@ pub(crate) fn snapshot_at(
         let context = ExecutionContext {
             current_page: Some(home.to_owned()),
         };
+        // The page the query ran on, named only when it is an exported page
+        // (its canonical name): an unexported host is omitted, never named
+        // (closure, `docs/contracts/quick-share.md`).
         let executed_context = ExecutionContext {
-            current_page: request.current_page.clone(),
+            current_page: request.current_page.as_deref().and_then(|host| {
+                let key = page_key(host);
+                corpus
+                    .pages
+                    .iter()
+                    .find(|page| page_key(&page.name) == key)
+                    .map(|page| page.name.clone())
+            }),
         };
         if with_query {
             let view = anchored_view(parsed, parsed.query.anchor);
@@ -801,7 +811,7 @@ pub(crate) fn snapshot_at(
         corpus,
         &inventory,
         home_query.map(|_| home),
-    );
+    )?;
     let snapshot = json!({ "schema": 1, "name": name, "exported_at": exported_at,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries,
@@ -1034,44 +1044,48 @@ pub fn publish_query_with_sheets_in(
         return Err(refusal("query has no pages to export"));
     }
     let mut warnings = Vec::new();
-    let mut files = collect_static(
-        store,
-        &graph,
-        &planned.selected,
-        &SheetIndex::new(sheets),
-        true,
-        request
-            .asset_budget_bytes
-            .unwrap_or(QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES),
-        &mut warnings,
-    )?;
-    let mut taken: HashSet<_> = planned
-        .selected
-        .pages
-        .iter()
-        .map(|p| page_key(&p.name))
-        .collect();
-    let mut home = request.name.trim().to_owned();
-    if taken.contains(&page_key(&home)) {
-        home.push_str(" (export)");
-    }
-    while !taken.insert(page_key(&home)) {
-        home.push_str(" 2");
-    }
-    let snap = crate::build_graph::with_build_graph(
+    // Every emitted file (the static HTML fallback and the snapshot) is
+    // rendered from the private build graph: an unexported page can change no
+    // byte of it (closure, `docs/contracts/quick-share.md`). Asset bytes are
+    // still read from the real store.
+    let (mut files, snap) = crate::build_graph::with_build_graph(
         store,
         &planned.selected.pages,
         scratch,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
-            snapshot(
+            let files = collect_static(
+                store,
+                build,
+                &corpus,
+                &SheetIndex::new(sheets),
+                true,
+                request
+                    .asset_budget_bytes
+                    .unwrap_or(QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES),
+                &mut warnings,
+            )?;
+            // The synthetic home must not shadow a name the build graph
+            // answers (a page, journal or alias, single- or multi-owner):
+            // rename it, as before, against the complete inventory.
+            let inventory = build.inventory(tine_store::InventoryScope::All);
+            let taken = |name: &str| crate::published_answers::home_name_taken(&inventory, name);
+            let mut home = request.name.trim().to_owned();
+            if taken(&home) {
+                home.push_str(" (export)");
+            }
+            while taken(&home) {
+                home.push_str(" 2");
+            }
+            let snap = snapshot(
                 build,
                 meta,
                 &corpus,
                 &request.name,
                 &home,
                 Some((request, &planned.parsed, &planned.result)),
-            )
+            )?;
+            Ok((files, snap))
         },
     )?;
     app_files(&mut files, bundle, snap, &request.name)?;
@@ -1230,21 +1244,25 @@ fn live(
         }
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    let mut files = collect_static(
-        store,
-        &graph,
-        &corpus,
-        &SheetIndex::new(sheets),
-        false,
-        32 * 1024 * 1024,
-        &mut Vec::new(),
-    )?;
-    let snap = crate::build_graph::with_build_graph(
+    // The static fallback and the snapshot both come from the build graph
+    // (see `publish_query_with_sheets_in`).
+    let (mut files, snap) = crate::build_graph::with_build_graph(
         store,
         &corpus.pages,
         scratch,
         BUILD_GRAPH_REFUSED,
-        |build, meta, corpus| snapshot(build, meta, &corpus, name, &home, None),
+        |build, meta, corpus| {
+            let files = collect_static(
+                store,
+                build,
+                &corpus,
+                &SheetIndex::new(sheets),
+                false,
+                32 * 1024 * 1024,
+                &mut Vec::new(),
+            )?;
+            Ok((files, snapshot(build, meta, &corpus, name, &home, None)?))
+        },
     )?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
@@ -1272,15 +1290,25 @@ pub fn publish_static(
         return Err(refusal("static export selects too many pages"));
     }
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
-    // No frontend computes sheets for a CLI export: every sheet block stays a plain outline.
-    let files = collect_static(
+    // No frontend computes sheets for a CLI export: every sheet block stays a
+    // plain outline. Rendered from the private build graph (see
+    // `publish_query_with_sheets_in`), under the system temp directory.
+    let files = crate::build_graph::with_build_graph(
         store,
-        &graph,
-        &corpus,
-        &SheetIndex::default(),
-        false,
-        32 * 1024 * 1024,
-        &mut Vec::new(),
+        &corpus.pages,
+        &std::env::temp_dir(),
+        BUILD_GRAPH_REFUSED,
+        |build, _meta, corpus| {
+            collect_static(
+                store,
+                build,
+                &corpus,
+                &SheetIndex::default(),
+                false,
+                32 * 1024 * 1024,
+                &mut Vec::new(),
+            )
+        },
     )?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }

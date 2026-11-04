@@ -380,6 +380,17 @@ pub fn prepare(
                 (name.clone(), name, None)
             } else {
                 let title = request.name.trim().to_owned();
+                // The synthetic home must not shadow a name the build graph
+                // answers (a shared page or journal, an alias of one or of
+                // several shared pages): its links would open the list.
+                // Threat: malformed input, a share name colliding with a
+                // shared name. Recovery: the user names the share otherwise.
+                let inventory = private_graph.inventory(tine_store::InventoryScope::All);
+                if crate::published_answers::home_name_taken(&inventory, &title) {
+                    return Err(refusal(format!(
+                        "a shared page or alias is already called \"{title}\"; give the share another name"
+                    )));
+                }
                 (
                     title.clone(),
                     title,

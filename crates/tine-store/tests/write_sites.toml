@@ -355,12 +355,12 @@ mutations = ".write_all=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/build_graph.rs"
-fn = "with_build_graph"
+fn = "build_and_answer"
 domain = "scratch"
 guard = ""
 test = "crates/tine-graph-features/tests/published_answers.rs#answers_are_closed_by_the_exported_documents"
 oracle = false
-note = "Private temporary build graph of the exported pages plus logseq/config.edn (quick share and the static export, CM step 2 Q13), in a tempdir removed before return; a crash leaves disposable scratch output. Moved from quick_share.rs::prepare."
+note = "Private temporary build graph of the exported pages plus logseq/config.edn (quick share and the static export, CM step 2 Q13), in a tempdir that with_build_graph removes before return (a removal failure is reported as an export error); a crash leaves disposable scratch output. Moved from quick_share.rs::prepare."
 mutations = "fs::create_dir_all=2, fs::write=2"
 
 [[site]]

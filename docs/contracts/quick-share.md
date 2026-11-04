@@ -89,8 +89,15 @@ P        = gzip (RFC 1952) of the UTF-8 share document
 - **One page shared:** `home` and `title` are that page's name. **Several:**
   `home` and `title` are the share's name, and the home page is a synthetic
   page (`path` "") whose blocks are one `[[page]]` link per shared page. Its
-  name never equals a shared page's name or alias under page identity (the
-  writer refuses the share name; the viewer refuses such a document). The
+  name never equals, under page identity, a name the build graph answers: a
+  shared page or journal, an alias of one or of several shared pages, or a
+  spelling whose link opens one (`published_answers::home_name_taken`; only a
+  reference-only name may be taken). The writer refuses such a share name
+  (threat: malformed input, a share name colliding with a shared name, whose
+  links would open the list; recovery: name the share otherwise); the static
+  query export renames its home with ` (export)`, then ` 2`; the viewer
+  refuses a document whose home is named like a shared page or an alias its
+  `aliases` lists. The
   selecting query is never shipped (`include_query_text` is forced off).
 - Query records (`queries`) are looked up by host page, argument, dialect and
   `tine.*` block properties. Two identical macros in one page produce two
@@ -176,10 +183,21 @@ pages; `tests/published_answers.rs`). The answers are therefore the live
 answers *of the shared pages*, which can differ from the whole graph's by
 design (an alias also declared by an unshared page opens the shared owner; an
 empty shared file whose name only an unshared page declares stays itself).
-The static export builds the same private graph (`build_graph.rs`). Hidden folders (`:hidden`) are never selectable. The private
-graph lives in a caller-given scratch directory and is removed before
-`prepare` returns. A page that reads back differently from the reviewed
-selection, or that is private in the bytes actually copied, refuses the share.
+The static exports (`publish_live`, `publish_query`, the CLI's
+`publish_static`) build the same private graph (`build_graph.rs`) and render
+*every* file they emit from it, the HTML fallback included (only asset bytes
+come from the real store): a query's "results on non-public pages omitted"
+notice counts only names the exported documents link without exporting a file
+of that name, never an unexported page. A query export's home-query record
+names its execution page (`executed_context.current_page`) only when that page
+is exported, by its exported name; an unexported host is omitted. Hidden
+folders (`:hidden`) are never selectable. The private graph lives in a
+caller-given scratch directory and is removed before `prepare` (or the export)
+returns; a removal failure fails the share or export with the scratch path
+(threat: disk errors, which would otherwise leave a copy of the exported pages
+and the config behind silently). A page that reads back differently from the
+reviewed selection, or that is private in the bytes actually copied, refuses
+the share.
 
 ## Limits (`quick-share-limits.json`)
 

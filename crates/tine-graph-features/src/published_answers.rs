@@ -27,26 +27,45 @@
 use crate::inventory_wire::{alias_group_wire, entry_wire, PageInventoryEntryWire, ResolvedWire};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::io;
 use tine_core::model::GraphMeta;
 use tine_core::refs::page_key;
 use tine_core::Corpus;
-use tine_store::{Inventory, WholeGraph};
+use tine_store::{Inventory, Resolved, WholeGraph};
 
 /// The `answers.v` this writer emits.
 pub(crate) const ANSWERS_VERSION: u32 = 1;
+
+/// Whether a synthetic home page called `name` would shadow a name the build
+/// graph answers: a page or journal file, an alias (single- or multi-owner),
+/// or a listed spelling whose link opens something. Such a home would replace
+/// that row, so links and permalinks to the name would open the home list
+/// instead of the page the build graph opens. Only reference-only names (and
+/// namespace parents) answer nothing and may be taken. Cost O(rows).
+pub(crate) fn home_name_taken(inventory: &Inventory, name: &str) -> bool {
+    let key = page_key(name);
+    inventory.0.iter().any(|entry| {
+        (!matches!(entry.target, Resolved::Absent { .. }) || entry.link.is_some())
+            && page_key(&entry.name) == key
+    })
+}
 
 /// The `answers` value for a snapshot of `corpus` over its build graph
 /// `graph` (whose metadata is `meta` and whose `inventory(All)` is
 /// `inventory`). `home` is the synthetic home page's name, when the
 /// publication has one. Cost O(rows + exported pages × alias group), two
 /// O(1) `resolve` calls per row; no I/O.
+///
+/// Refuses a `home` that [`home_name_taken`] (the writers rename or refuse
+/// such a home first; threat: malformed input, a publication name that
+/// collides with an exported name, which would misdirect its links).
 pub(crate) fn answers(
     graph: &WholeGraph,
     meta: &GraphMeta,
     corpus: &Corpus,
     inventory: &Inventory,
     home: Option<&str>,
-) -> Value {
+) -> io::Result<Value> {
     let mut rows: Vec<PageInventoryEntryWire> = inventory.0.iter().map(entry_wire).collect();
     let mut resolve = Vec::new();
     let answered: HashSet<(String, bool)> = rows
@@ -70,12 +89,14 @@ pub(crate) fn answers(
     }
     if let Some(home) = home {
         // The synthetic home page is a file of this publication only. It
-        // replaces a reference-only row of its name (the writers refuse a home
-        // named like an exported page or alias).
+        // replaces a reference-only row of its name and nothing else.
+        if home_name_taken(inventory, home) {
+            return Err(crate::publish_query::refusal(
+                "the publication's home page is named like an exported page or alias; give it another name",
+            ));
+        }
         let key = page_key(home);
-        rows.retain(|row| {
-            row.is_journal || row.key != key || matches!(row.target, ResolvedWire::Existing { .. })
-        });
+        rows.retain(|row| row.is_journal || row.key != key);
         let at = rows
             .partition_point(|row| (row.key.as_str(), row.name.as_str()) <= (key.as_str(), home));
         rows.insert(
@@ -112,7 +133,7 @@ pub(crate) fn answers(
         .collect();
     content_days.sort_unstable();
     content_days.dedup();
-    json!({
+    Ok(json!({
         "v": ANSWERS_VERSION,
         "inventory": rows,
         "resolve": resolve,
@@ -122,5 +143,5 @@ pub(crate) fn answers(
             "file_name_format": meta.journal_file_name_format,
             "content_days": content_days,
         },
-    })
+    }))
 }
