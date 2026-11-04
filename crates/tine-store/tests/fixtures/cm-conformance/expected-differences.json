@@ -726,6 +726,9 @@
       ],
       "r1-title-names-page": [
         "pages/file-name.md: launch walk \"file-name\", answer Some(\"Real Name\")"
+      ],
+      "r9-case-rename-onto-taken-file": [
+        "pages/n%2Fy.md: launch walk \"n/y\", answer Some(\"B\")"
       ]
     },
     "harnessSkipped": [],
