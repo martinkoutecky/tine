@@ -8,11 +8,11 @@ import { remote } from "webdriverio";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = process.env.MARGIN_BASELINE === "1";
-// E2E_MARGIN_POLISH_OUT puts the graph outside a git work tree: under the repo's
-// artifacts/ the graph sits in git, so the first comment asks for a name (GH #841).
+// E2E_MARGIN_POLISH_OUT overrides where the run (graph, XDG dirs, shots) lives.
 const OUT = process.env.E2E_MARGIN_POLISH_OUT || path.join(ROOT, "artifacts/margin-polish", process.env.MARGIN_RUN || (BASELINE ? "baseline" : "candidate"));
 const GRAPH = path.join(OUT, "graph");
 const PAGE = "Margin Polish";
@@ -25,6 +25,11 @@ const defects = [];
 fs.mkdirSync(OUT, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(OUT, "xdg", dir), { recursive: true });
+// Under the repo's artifacts/ the graph sits in a git work tree, where the first
+// comment asks for a name (GH #841). This journey isn't about that prompt: the
+// device has already answered it with Skip.
+fs.mkdirSync(path.join(OUT, "xdg/data", APP_ID), { recursive: true });
+fs.writeFileSync(path.join(OUT, "xdg/data", APP_ID, "tine-settings.json"), JSON.stringify({ comment_name_prompt_declined: "1" }));
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
 fs.writeFileSync(FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- An independent block.\n  - Keep this remark\n    tine.quote:: independent\n    tine.author:: Ada Test  \t\n`);
 const now = new Date();
@@ -85,12 +90,16 @@ async function editText(text) {
   await readyEditor();
 }
 async function action(text, cls) {
-  return browser.execute((text, cls) => {
+  const button = await browser.execute((text, cls) => {
     const row = [...document.querySelectorAll(".ls-block")].find(el => el.querySelector(":scope > .block-main .block-content")?.textContent.includes(text));
-    const button = row?.querySelector(`:scope > .comment-quote .${cls}, :scope > .block-main .${cls}`);
-    if (!button) return false;
-    button.click(); return true;
+    // Actions may move between the quote, header and body. Target this reply's
+    // own control, never a nested reply's action.
+    return [...(row?.querySelectorAll(`button.${cls}`) ?? [])].find(button => button.closest(".ls-block") === row) ?? null;
   }, text, cls);
+  if (!button) return false;
+  await browser.$(button).moveTo();
+  await browser.$(button).click();
+  return true;
 }
 async function persisted(...words) {
   return waitForFileText(FILE, text => words.every(word => text.includes(word)), { timeoutMs: 20_000 });
@@ -178,7 +187,7 @@ try {
   if (canDelete) {
     await waitForFileText(FILE, text => !text.includes(NESTED) && text.includes(REPLY), { timeoutMs: 20_000 });
     await shot("07-reply-deleted");
-    await action(COMMENT, "comment-delete");
+    check(await action(COMMENT, "comment-delete"), "Thread has no Delete affordance");
     await waitForFileText(FILE, text => !text.includes(COMMENT) && !text.includes(REPLY), { timeoutMs: 20_000 });
     await shot("08-thread-deleted");
     await browser.keys(["Control", "z"]);
@@ -261,7 +270,7 @@ try {
   console.error(`Failure in ${step}: ${String(error)}`);
   if (browser) { try { console.error(await browser.execute(() => document.body?.innerText.slice(0, 3000))); } catch {} }
   if (browser) { try { await shot(`failure-${step}`); } catch {} }
-  fs.writeFileSync(path.join(OUT, "failure.json"), JSON.stringify({ commit: "5de3d7c9c + Round 2 working diff", journey: step, expected: "durable visible comment thread workflow", observed: String(error), classification: "ambiguous", defects }, null, 2));
+  fs.writeFileSync(path.join(OUT, "failure.json"), JSON.stringify({ commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), journey: step, expected: "durable visible comment thread workflow", observed: String(error), classification: "ambiguous", defects }, null, 2));
   throw error;
 } finally {
   fs.writeFileSync(path.join(OUT, "defects.json"), JSON.stringify(defects, null, 2));

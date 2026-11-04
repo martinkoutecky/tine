@@ -62,6 +62,19 @@ struct Graph {
 
 impl Graph {
     fn new() -> Self {
+        Self::watching(Default::default())
+    }
+
+    /// A graph whose store sees the disk by polling every three seconds, not
+    /// by notifications 200 ms after a write. A test that edits a file behind
+    /// the store and expects the store to lag (the host-read tests) needs
+    /// this: under load the 200 ms debounce elapses before the verb runs and
+    /// the store re-indexes the edit it was meant not to have seen.
+    fn lagging() -> Self {
+        Self::watching(tine_store::WatchMode::Poll)
+    }
+
+    fn watching(watch: tine_store::WatchMode) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let graph = dir.path().join("graph");
         std::fs::create_dir_all(graph.join("pages")).unwrap();
@@ -87,7 +100,11 @@ impl Graph {
         let owners = dir.path().join("owners");
         std::fs::create_dir_all(&app_data).unwrap();
         std::fs::create_dir_all(&owners).unwrap();
-        let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+        let opts = tine_store::OpenOptions {
+            watch,
+            ..Default::default()
+        };
+        let store = Arc::new(Store::open(&graph, opts).unwrap().0);
         store.whole_graph().unwrap();
         let root = Store::canonical_root(&graph).unwrap();
         Self {
@@ -2137,7 +2154,7 @@ fn block_show_prints_page_absolute_handles_a_write_accepts() {
 /// must name `U`, never the other block.
 #[test]
 fn block_show_fingerprints_the_text_the_host_holds() {
-    let graph = Graph::new();
+    let graph = Graph::lagging();
     let u = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d";
     let path = graph.root.join("pages/lag.md");
     std::fs::write(&path, format!("- old\n  id:: {u}\n")).unwrap();
@@ -2167,7 +2184,7 @@ fn block_show_fingerprints_the_text_the_host_holds() {
 /// `b.md`.
 #[test]
 fn block_show_names_the_page_it_read_not_its_new_title() {
-    let graph = Graph::new();
+    let graph = Graph::lagging();
     let u = "6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e";
     let a = graph.root.join("pages/a.md");
     let b = graph.root.join("pages/b.md");
