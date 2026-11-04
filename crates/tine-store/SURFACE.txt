@@ -354,7 +354,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 23)
+## WholeGraph: Names (ceiling: 24)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
@@ -375,6 +375,12 @@ field store::InventoryEntry.link
 # is a flag on the same entry (sent only when true), not a sibling method or
 # scope: every entry carries it and the namespace views nest by it. 22 -> 23.
 field store::InventoryEntry.namespace_parent
+# CM step 2 EMPTY-ALIAS (S14, D-20261103-CMA): a name whose files are all
+# content-free yields to its alias owner; that this is why `link` differs is a
+# flag on the same entry (sent only when true), not a sibling method or scope:
+# `link` alone cannot say it (a date-shaped name's link also moves), and named
+# routes follow `link` only for alias entries and these. 23 -> 24.
+field store::InventoryEntry.empty_alias
 struct store::LinkTarget
 field store::LinkTarget.name
 field store::LinkTarget.is_journal
