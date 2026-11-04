@@ -566,6 +566,23 @@
   },
   "frontendNamespaces": {
     "fixtures": {
+      "r1-relative-and-url-names": [
+        "frontend hierarchy \"..\": model [../x, ../x/y], Tine [../x/y]",
+        "frontend hierarchy \"https:\": model [https://a.b, https://a.b/c], Tine [https://a.b/c]",
+        "frontend namespace tree: \"../x/y\" sits under ../x in the model, under the top in Tine",
+        "frontend namespace tree: \"./x\" sits under . in the model, under the top in Tine",
+        "frontend namespace tree: \"https://a.b/c\" sits under https://a.b in the model, under the top in Tine",
+        "frontend namespace tree: model has node \".\" (under the top), Tine does not",
+        "frontend namespace tree: model has node \"..\" (under the top), Tine does not",
+        "frontend namespace tree: model has node \"../x\" (under ..), Tine does not",
+        "frontend namespace tree: model has node \"https:\" (under the top), Tine does not",
+        "frontend namespace tree: model has node \"https://a.b\" (under https:), Tine does not",
+        "frontend {{namespace ../x}}: model [../x/y], Tine []",
+        "frontend {{namespace ..}}: model [../x, ../x/y], Tine []",
+        "frontend {{namespace .}}: model [./x], Tine []",
+        "frontend {{namespace https://a.b}}: model [https://a.b/c], Tine []",
+        "frontend {{namespace https:}}: model [https://a.b, https://a.b/c], Tine []"
+      ],
       "r6-refused-journal-risk": [
         "frontend hierarchy \"old\": model [], Tine [old/sub]",
         "frontend namespace tree: Tine has node \"old\", the model does not",
@@ -2049,6 +2066,23 @@
       "q6-task-and-priority-pages": [],
       "r1-namespace-parent": [],
       "r1-one-name-one-page": [],
+      "r1-relative-and-url-names": [
+        "Linked References of (\"page\", \".\"): model has block (\"pages/Notes.md\", 0), Tine does not",
+        "Linked References of (\"page\", \"..\"): model has block (\"pages/Notes.md\", 0), Tine does not",
+        "Linked References of (\"page\", \"../x\"): model has block (\"pages/Notes.md\", 0), Tine does not",
+        "Linked References of (\"page\", \"https:\"): model has block (\"pages/Notes.md\", 0), Tine does not",
+        "Linked References of (\"page\", \"https://a.b\"): model has block (\"pages/Notes.md\", 0), Tine does not",
+        "link \"notes\" -> \".\": model has it, Tine does not",
+        "link \"notes\" -> \"..\": model has it, Tine does not",
+        "link \"notes\" -> \"../x\": model has it, Tine does not",
+        "link \"notes\" -> \"https:\": model has it, Tine does not",
+        "link \"notes\" -> \"https://a.b\": model has it, Tine does not",
+        "pages: model has (\"page\", \".\"), Tine does not",
+        "pages: model has (\"page\", \"..\"), Tine does not",
+        "pages: model has (\"page\", \"../x\"), Tine does not",
+        "pages: model has (\"page\", \"https:\"), Tine does not",
+        "pages: model has (\"page\", \"https://a.b\"), Tine does not"
+      ],
       "r1-title-names-page": [],
       "r2-alias-backlinks": [],
       "r2-alias-chain": [],
