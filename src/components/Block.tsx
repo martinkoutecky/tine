@@ -2616,7 +2616,11 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      selectBlock(position().id, position().scope); // exit editing into block-selection mode
+      if (codeShown()) {
+        commit(raw);
+        codeView.revealRaw(ref);
+        autosize();
+      } else selectBlock(position().id, position().scope); // exit raw editing into block selection
     }
   };
 
