@@ -17,6 +17,7 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release", process.platform === "win32" ? "tine.exe" : "tine");
@@ -588,6 +589,11 @@ try {
   await browser.keys(["Escape"]);
   await clearActiveEditor(browser);
   await browser.keys(["Escape"]);
+  // The restart below SIGKILLs the app, so the clear must be on disk first. A
+  // debounced save may already have written `[[FEx`; if the clearing save is
+  // still in flight at the kill, that page reference survives, FEx exists
+  // after the restart and `Create "FEx"` is no longer the first option.
+  await waitForFileText(TEST_PAGE, (text) => !text.includes("FEx"));
 
   // Restart the actual app with the same XDG directory. This proves startup
   // initialization from device settings, not merely the live Solid signal.
