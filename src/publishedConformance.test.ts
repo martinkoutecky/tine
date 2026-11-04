@@ -8,10 +8,12 @@
 // whole graph): what `[[s]]` opens (`spellings[s].backend`) and which file
 // `getPage(name, kind)` reads (`owner`).
 //
-// Where the published answer differs by design (the build graph holds only the
-// exported pages, so `public:: false` pages are not there), the difference is
-// recorded in `tests/fixtures/published-answers/conformance-differences.json`
-// with its reason in the design note; `CM_REFRESH=1` rewrites that file.
+// Every spelling the exported content links has a published row of its own
+// (pinned in cm_conformance_published.rs), so it answers as the app. The only
+// differences left, in `tests/fixtures/published-answers/conformance-differences.json`
+// (reasons in the design note), are spellings no exported page writes: d1's
+// typed `25-10-2026` and o1's probe `getPage journal "2026-10-26"`. A site
+// visitor reaches them only by typing the address. `CM_REFRESH=1` rewrites it.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
