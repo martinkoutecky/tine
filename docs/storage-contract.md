@@ -1669,7 +1669,17 @@ derived per read from the claims and the in-memory referenced-name table.
 Proof: `crates/tine-store/tests/inventory_delta.rs`, the conformance harness
 (`cm_conformance_tests.rs`, `src/cmConformanceNamespaces.test.ts`). The
 frontend's namespace views (sidebar tree, Namespaces, `{{namespace}}`,
-Hierarchy) nest the listed names by `/` and add no level of their own.
+Hierarchy, the page's crumb) nest the listed names by `/` and add no level of
+their own. Only a namespace name nests (`tine_core::refs::is_namespace_name`,
+OG `namespace-page?`; model round 10, S15): a listed name that contains `/` but
+is a relative path or an origin-bearing URL (`./x`, `../x/y`, `https://a.b/c`)
+carries `not_namespace: true` on its wire row (sent only when true;
+`inventory_wire.rs entry_wire`), and the views neither split nor nest it
+(`pageIndex.ts isNamespaceName`; no TypeScript copy of the test). The published
+snapshot's `answers` v1 rows never carry it (v1 is frozen,
+`docs/contracts/quick-share.md`). Rename asks the same test: the moved subtree
+(`InventoryScope::FilesAtOrUnder`) and the own-child guard take only namespace
+names under the old name, so renaming `.` leaves `./x` alone.
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

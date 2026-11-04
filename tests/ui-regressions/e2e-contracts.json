@@ -674,7 +674,7 @@
       "contracts": [
         {
           "class": "core-operation",
-          "userOutcome": "With a block naming Work/Plan, typing [[Wor in an editing block offers the page Work (a namespace parent no file or link names itself) once, beside Work/Plan, and choosing it inserts [[Work]]; a block naming ./rel/x, ../up/y and https://a.b/c makes no page named . or .. or https: appear, neither in the [[ popup nor in All pages, and All pages lists Work; offering a parent writes no file.",
+          "userOutcome": "With a block naming Work/Plan, typing [[Wor in an editing block offers the page Work (a namespace parent no file or link names itself) once, beside Work/Plan, and choosing it inserts [[Work]]; a block naming ./rel/x, ../up/y and https://a.b/c makes no page named . or .. or https: appear, neither in the [[ popup nor in All pages, and All pages lists Work; offering a parent writes no file. The sidebar Namespaces tree shows Work with Plan below it and nothing else, the Namespaces view lists exactly Work and Work/Plan, the page Work/Plan shows its Hierarchy section and namespace crumb, and the page ./rel/x shows neither (a relative path or a URL is no namespace name, as in Logseq).",
           "blocking": true
         }
       ],

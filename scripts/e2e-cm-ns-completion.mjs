@@ -4,6 +4,10 @@
 // names), once, and inserting it writes `[[Work]]`; a relative path or a URL
 // (`./rel/x`, `https://a.b/c`) makes no parent, neither in the completion
 // popup (`.`, `..`, `https:`) nor in All pages. Written by the cm-ns-followups lane.
+// Batch 15 (model round 10, S15): the namespace views follow the same answer:
+// the sidebar tree and the Namespaces view list Work/Plan under Work and no
+// relative or URL name; the page `./rel/x` has no Hierarchy section and no
+// crumb, while `Work/Plan` keeps both.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +15,7 @@ import assert from "node:assert/strict";
 import { remote } from "webdriverio";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -104,7 +108,40 @@ try {
   }
   assert.ok(!fs.existsSync(path.join(graph, "pages/Work.md")), "offering a parent writes no file");
 
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "[[ completion offers a namespace parent once and inserts it; ./x, ../x and URL names make no parent in the popup or All pages", graph }, null, 2));
+  stage = "the sidebar tree nests Work/Plan and lists no relative or URL name";
+  const clickText = (selector, text) => browser.execute((sel, label) => {
+    const el = [...document.querySelectorAll(sel)].find((node) => node.textContent?.includes(label));
+    el?.click();
+    return !!el;
+  }, selector, text);
+  await browser.waitUntil(() => clickText(".nav-section-header", "NAMESPACES"), { timeout: 20_000, interval: 300 });
+  await browser.$(".ns-tree").waitForExist({ timeout: 10_000 });
+  const tree = await browser.execute(() => [...document.querySelectorAll(".ns-tree .ns-node-label")].map((el) => el.textContent?.trim() ?? ""));
+  assert.deepEqual(tree, ["Work", "Plan"], `sidebar tree: ${JSON.stringify(tree)}`);
+
+  stage = "the Namespaces view lists only Work and Work/Plan";
+  await browser.$(".nav-namespaces-open").click();
+  await browser.$(".ns-view-open").waitForExist({ timeout: 10_000 });
+  const listed = await browser.execute(() => [...document.querySelectorAll(".ns-view-open")].map((el) => el.title));
+  assert.deepEqual(listed, ["Work", "Work/Plan"], `Namespaces view: ${JSON.stringify(listed)}`);
+
+  stage = "Work/Plan keeps its Hierarchy section and crumb";
+  await openPageByName(browser, "Work/Plan");
+  await browser.$(".ns-hier-row").waitForExist({ timeout: 15_000 });
+  assert.ok(await browser.$(".ns-crumb").isExisting(), "Work/Plan shows its namespace crumb");
+
+  stage = "./rel/x has no Hierarchy section and no crumb";
+  await openPageByName(browser, "./rel/x");
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "./rel/x", { timeout: 15_000 });
+  // The Hierarchy section and the crumb render with the page (a memo over the
+  // held inventory), so the title of ./rel/x means they are settled.
+  const views = await browser.execute(() => ({
+    hierarchy: document.querySelector(".page-hierarchy") !== null,
+    crumb: document.querySelector(".ns-crumb") !== null,
+  }));
+  assert.deepEqual(views, { hierarchy: false, crumb: false }, `./rel/x namespace views: ${JSON.stringify(views)}`);
+
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "[[ completion offers a namespace parent once and inserts it; ./x, ../x and URL names make no parent in the popup or All pages; the sidebar tree, the Namespaces view, the Hierarchy section and the crumb treat only namespace names as namespaces", graph }, null, 2));
   console.log(`PASS CM namespace parents in completion. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
