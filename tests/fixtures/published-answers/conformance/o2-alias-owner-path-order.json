@@ -1,0 +1,144 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "shared"
+        ],
+        "name": "a b",
+        "pages": [
+          "x"
+        ]
+      },
+      {
+        "aliases": [
+          "shared"
+        ],
+        "name": "x",
+        "pages": [
+          "a b"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a b",
+        "name": "a b",
+        "target": {
+          "id": "pages/a b.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "shared",
+        "link": {
+          "kind": "page",
+          "name": "a b"
+        },
+        "name": "shared",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/a b.md",
+            "pages/a/x.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "x",
+        "name": "x",
+        "target": {
+          "id": "pages/a/x.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "a b",
+      "path": "pages/a b.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "x",
+      "path": "pages/a/x.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Notes",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "a b",
+      "path": "pages/a b.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "a b"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "x",
+      "path": "pages/a/x.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "x"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

@@ -385,6 +385,8 @@ fn quick_share_generation_1_fixtures_stay_readable() {
     for (case, argument, name) in [
         ("pages", MANY, "Fixture share"),
         ("one-page", "@page and name = 'Project'", "Ignored"),
+        // Written with `answers` v1 (CM step 2, census Q13).
+        ("answers", MANY, "Fixture share"),
     ] {
         let (_, doc) = document(&store, &root, argument, name);
         let mut fresh: Value = serde_json::from_slice(&doc).unwrap();
@@ -424,6 +426,15 @@ fn quick_share_generation_1_fixtures_stay_readable() {
             fs::write(&golden, &fresh_text).unwrap();
         }
         let mut frozen: Value = serde_json::from_slice(&frozen_doc).unwrap();
+        // `answers` is additive (contract, "Published answers"): a document
+        // frozen before it existed is compared without it. The golden above
+        // pins it exactly, and a document frozen with it compares whole.
+        if frozen["snapshot"].get("answers").is_none() {
+            fresh_canonical["snapshot"]
+                .as_object_mut()
+                .unwrap()
+                .remove("answers");
+        }
         canonical_page_order(&mut frozen);
         canonical_page_order(&mut fresh_canonical);
         normalize(&mut frozen);

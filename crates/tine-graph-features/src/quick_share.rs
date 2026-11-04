@@ -23,11 +23,9 @@ use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::hkdf;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
-use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use tine_core::model::{FileId, Format};
-use tine_store::{OpenOptions, Store, StoreError, WatchMode};
+use tine_store::Store;
 
 /// The generation this module writes: link path `/s/1/`, envelope version 1,
 /// document `quick_share: 1`, snapshot schema 1.
@@ -49,7 +47,6 @@ const HEADER_LEN: usize = 4 + 1 + 16;
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 const ENC_INFO: &[u8] = b"tine-share/1/enc";
-const CONFIG_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// What a share would carry, shown before anything is uploaded.
 #[derive(Clone, Debug, Serialize)]
@@ -246,10 +243,6 @@ pub fn gunzip_bounded(payload: &[u8], max: usize) -> io::Result<Vec<u8>> {
     Ok(out)
 }
 
-fn store_error(error: StoreError) -> io::Error {
-    io::Error::other(format!("{error:?}"))
-}
-
 /// The viewer's admission checks (`quick-share-limits.json` `viewer`), run on
 /// the writer side so a share the viewer would refuse is refused at prepare.
 pub fn validate_document(document: &[u8]) -> io::Result<()> {
@@ -359,93 +352,52 @@ pub fn prepare(
 
     // The private build graph: the selected documents as they were reviewed,
     // plus the graph's parse configuration (journal formats, property rules).
-    let dir = tempfile::Builder::new()
-        .prefix("tine-quick-share-")
-        .tempdir_in(scratch)?;
-    match store.read(
-        &FileId::from("logseq/config.edn".to_owned()),
-        Some(CONFIG_MAX_BYTES),
-    ) {
-        Ok((bytes, _)) => {
-            std::fs::create_dir_all(dir.path().join("logseq"))?;
-            std::fs::write(dir.path().join("logseq/config.edn"), bytes)?;
-        }
-        Err(StoreError::NotFound) => {}
-        Err(error) => return Err(store_error(error)),
-    }
-    for page in &selected.pages {
-        let rel = page.id.as_str();
-        let text = match Format::from_path(Path::new(rel)) {
-            Format::Org => tine_core::org::serialize_org(&page.document),
-            _ => tine_core::doc::serialize(&page.document),
-        };
-        let target = dir.path().join(rel);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(target, text)?;
-    }
-    let (private, _, _) = Store::open(
-        dir.path(),
-        OpenOptions {
-            approved_external_assets: None,
-            watch: WatchMode::Poll,
-            launch_checkpoint: None,
+    let (title, snapshot) = crate::build_graph::with_build_graph(
+        store,
+        &selected.pages,
+        scratch,
+        "the shared pages did not read back as the same pages; nothing was shared",
+        |private_graph, meta, mut corpus| {
+            // The private store lists its pages in directory order, which differs
+            // by filesystem (hash order on ext4, name order on NTFS). The share
+            // lists them in the order the review showed: by path, as the plan.
+            corpus
+                .pages
+                .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+            // The export rules hold for the bytes actually shared, not only for
+            // the whole-graph view the plan was made from.
+            if corpus
+                .pages
+                .iter()
+                .any(|page| render::export_left_out(page).is_some())
+            {
+                return Err(refusal(
+                    "a shared page is private or the exports page; nothing was shared",
+                ));
+            }
+            let (title, home, home_query) = if corpus.pages.len() == 1 {
+                let name = corpus.pages[0].name.clone();
+                (name.clone(), name, None)
+            } else {
+                let title = request.name.trim().to_owned();
+                (
+                    title.clone(),
+                    title,
+                    Some((&request, &planned.parsed, &planned.result)),
+                )
+            };
+            let snapshot = snapshot_at(
+                private_graph,
+                meta,
+                &corpus,
+                &title,
+                &home,
+                home_query,
+                created_at,
+            )?;
+            Ok((title, snapshot))
         },
-    )
-    .map_err(|error| io::Error::other(format!("{error:?}")))?;
-    let result = (|| {
-        let private_graph = private
-            .whole_graph()
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
-        let mut corpus = private_graph.corpus(None);
-        // The private store lists its pages in directory order, which differs
-        // by filesystem (hash order on ext4, name order on NTFS). The share
-        // lists them in the order the review showed: by path, as the plan.
-        corpus
-            .pages
-            .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
-        let wanted: BTreeSet<_> = selected.pages.iter().map(|p| p.id.as_str()).collect();
-        let got: BTreeSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();
-        if wanted != got {
-            return Err(refusal(
-                "the shared pages did not read back as the same pages; nothing was shared",
-            ));
-        }
-        // The export rules hold for the bytes actually shared, not only for
-        // the whole-graph view the plan was made from.
-        if corpus
-            .pages
-            .iter()
-            .any(|page| render::export_left_out(page).is_some())
-        {
-            return Err(refusal(
-                "a shared page is private or the exports page; nothing was shared",
-            ));
-        }
-        let (title, home, home_query) = if corpus.pages.len() == 1 {
-            let name = corpus.pages[0].name.clone();
-            (name.clone(), name, None)
-        } else {
-            let title = request.name.trim().to_owned();
-            (
-                title.clone(),
-                title,
-                Some((&request, &planned.parsed, &planned.result)),
-            )
-        };
-        let snapshot = snapshot_at(
-            &private_graph,
-            &corpus,
-            &title,
-            &home,
-            home_query,
-            created_at,
-        )?;
-        Ok((title, snapshot))
-    })();
-    private.close();
-    let (title, snapshot) = result?;
+    )?;
 
     let mut document = Vec::with_capacity(snapshot.len() + 128);
     document.extend_from_slice(

@@ -1,0 +1,181 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026-10-2",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 2nd, 2026"
+        },
+        "name": "2026-10-2",
+        "target": {
+          "id": "pages/2026-10-2.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261022,
+        "is_journal": true,
+        "key": "oct 22nd, 2026",
+        "name": "Oct 22nd, 2026",
+        "target": {
+          "id": "journals/2026_10_22.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "oct 22st, 2026",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 22nd, 2026"
+        },
+        "name": "Oct 22st, 2026",
+        "target": {
+          "id": "pages/Oct 22st, 2026.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": 20261002,
+        "is_journal": true,
+        "key": "oct 2nd, 2026",
+        "name": "Oct 2nd, 2026",
+        "target": {
+          "id": "journals/2026_10_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "october 22nd, 2026",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 22nd, 2026"
+        },
+        "name": "October 22nd, 2026",
+        "target": {
+          "id": "pages/October 22nd, 2026.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261002,
+        20261022
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026-10-2",
+        "target": {
+          "id": "journals/2026_10_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "Oct 22st, 2026",
+        "target": {
+          "id": "journals/2026_10_22.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "October 22nd, 2026",
+        "target": {
+          "id": "journals/2026_10_22.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": 20261022,
+      "kind": "journal",
+      "name": "Oct 22nd, 2026",
+      "path": "journals/2026_10_22.md"
+    },
+    {
+      "date_key": 20261002,
+      "kind": "journal",
+      "name": "Oct 2nd, 2026",
+      "path": "journals/2026_10_02.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Notes",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 22nd, 2026",
+      "path": "journals/2026_10_22.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 22nd, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 2nd, 2026",
+      "path": "journals/2026_10_02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 2nd, 2026"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

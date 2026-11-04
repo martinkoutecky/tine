@@ -69,6 +69,14 @@ impl PublicationError {
 
 /// Publish a reviewed query into the graph's query-output leaf. Typed asset
 /// refusals let the dialog offer Settings; all heavy work runs off the UI thread.
+/// Where a publication's private build graph is written while it is
+/// projected (the app cache; never the graph). See `build_graph.rs`.
+fn export_scratch(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map_err(|_| "Tine has no cache folder".to_owned())
+}
+
 #[tauri::command]
 pub(crate) async fn publish_query(
     request: QueryExportRequest,
@@ -78,13 +86,16 @@ pub(crate) async fn publish_query(
 ) -> Result<ExportReceipt, PublicationError> {
     let slot = slot_for_context(&state).map_err(PublicationError::other)?;
     let bundle = embedded_bundle(state.window.app_handle());
+    let scratch = export_scratch(state.window.app_handle()).map_err(PublicationError::other)?;
     tauri::async_runtime::spawn_blocking(move || {
-        publish_query::publish_query_with_sheets(
+        std::fs::create_dir_all(&scratch).map_err(PublicationError::from_io)?;
+        publish_query::publish_query_with_sheets_in(
             &slot.store,
             &request,
             &fingerprint,
             &bundle,
             sheets,
+            &scratch,
         )
         .map_err(PublicationError::from_io)
     })
@@ -104,14 +115,17 @@ pub(crate) async fn publish_live(
 ) -> Result<ExportReceipt, String> {
     let slot = slot_for_context(&state)?;
     let bundle = embedded_bundle(state.window.app_handle());
+    let scratch = export_scratch(state.window.app_handle())?;
     tauri::async_runtime::spawn_blocking(move || {
-        publish_query::publish_live_with_sheets(
+        std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+        publish_query::publish_live_with_sheets_in(
             &slot.store,
             &PathBuf::from(destination),
             &name,
             all_pages,
             &bundle,
             sheets,
+            &scratch,
         )
         .map_err(|e| e.to_string())
     })

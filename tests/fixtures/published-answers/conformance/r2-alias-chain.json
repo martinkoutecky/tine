@@ -1,0 +1,187 @@
+{
+  "aliases": [
+    [
+      "D",
+      "C"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "D"
+        ],
+        "name": "A",
+        "pages": [
+          "B",
+          "C"
+        ]
+      },
+      {
+        "aliases": [
+          "D"
+        ],
+        "name": "B",
+        "pages": [
+          "A",
+          "C"
+        ]
+      },
+      {
+        "aliases": [
+          "D"
+        ],
+        "name": "C",
+        "pages": [
+          "A",
+          "B"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "A",
+        "target": {
+          "id": "pages/A.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "b",
+        "name": "B",
+        "target": {
+          "id": "pages/B.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "C",
+        "target": {
+          "id": "pages/C.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "d",
+        "link": {
+          "kind": "page",
+          "name": "C"
+        },
+        "name": "D",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/C.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "A",
+      "path": "pages/A.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "B",
+      "path": "pages/B.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "C",
+      "path": "pages/C.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "A",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "A",
+      "path": "pages/A.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "A"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "B",
+      "path": "pages/B.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "B"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "C",
+      "path": "pages/C.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "C"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

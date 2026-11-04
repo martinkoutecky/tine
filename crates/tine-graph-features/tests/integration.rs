@@ -70,6 +70,9 @@ mod cm_favorites_rename;
 #[path = "cm_keys_publish.rs"]
 mod cm_keys_publish;
 
+#[path = "cm_conformance_published.rs"]
+mod cm_conformance_published;
+
 #[path = "c3w_rename_unreadable.rs"]
 mod c3w_rename_unreadable;
 
@@ -249,6 +252,9 @@ mod query_owner_context;
 
 #[path = "query_publication.rs"]
 mod query_publication;
+
+#[path = "published_answers.rs"]
+mod published_answers;
 
 #[path = "quick_share.rs"]
 mod quick_share;

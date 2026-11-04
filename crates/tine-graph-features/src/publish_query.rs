@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::Path;
-use tine_core::model::PageKind;
+use tine_core::model::{GraphMeta, PageKind};
 use tine_core::query::ir::{ExecutionContext, QueryResult, QueryRows};
 use tine_core::query::macro_text::query_macro_extents;
 use tine_core::query::wire_parse::{
@@ -203,7 +203,7 @@ impl std::fmt::Display for AssetBudgetExceeded {
 }
 impl std::error::Error for AssetBudgetExceeded {}
 
-fn refusal(message: impl Into<String>) -> io::Error {
+pub(crate) fn refusal(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
 }
 
@@ -643,18 +643,22 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
 
 fn snapshot(
     graph: &WholeGraph,
+    meta: &GraphMeta,
     corpus: &tine_core::Corpus,
     name: &str,
     home: &str,
     home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
 ) -> io::Result<Vec<u8>> {
-    snapshot_at(graph, corpus, name, home, home_query, &export_time()?)
+    snapshot_at(graph, meta, corpus, name, home, home_query, &export_time()?)
 }
 
 /// [`snapshot`] stamped with a given `exported_at` (quick share stamps its
-/// share document's `created_at`).
+/// share document's `created_at`). `graph` is the private build graph of
+/// `corpus` (`build_graph.rs`) and `meta` its metadata: every answer below,
+/// `answers` included, is then closed by the exported pages.
 pub(crate) fn snapshot_at(
     graph: &WholeGraph,
+    meta: &GraphMeta,
     corpus: &tine_core::Corpus,
     name: &str,
     home: &str,
@@ -791,9 +795,17 @@ pub(crate) fn snapshot_at(
         })
         .collect();
     let block_ref_counts = corpus.block_ref_counts();
+    let answers = crate::published_answers::answers(
+        graph,
+        meta,
+        corpus,
+        &inventory,
+        home_query.map(|_| home),
+    );
     let snapshot = json!({ "schema": 1, "name": name, "exported_at": exported_at,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
-        "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
+        "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries,
+        "answers": answers });
     let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
     if home_query.is_none() && bytes.len() > MAX_EXPORT_BYTES {
         return Err(refusal("snapshot byte budget exceeded"));
@@ -991,6 +1003,26 @@ pub fn publish_query_with_sheets(
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
+    publish_query_with_sheets_in(
+        store,
+        request,
+        fingerprint,
+        bundle,
+        sheets,
+        &std::env::temp_dir(),
+    )
+}
+
+/// `publish_query_with_sheets` building its private build graph
+/// (`build_graph.rs`) under `scratch` (the app passes its cache directory).
+pub fn publish_query_with_sheets_in(
+    store: &Store,
+    request: &QueryExportRequest,
+    fingerprint: &str,
+    bundle: &[(String, Vec<u8>)],
+    sheets: Vec<SheetExport>,
+    scratch: &Path,
+) -> io::Result<ExportReceipt> {
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
@@ -1026,12 +1058,21 @@ pub fn publish_query_with_sheets(
     while !taken.insert(page_key(&home)) {
         home.push_str(" 2");
     }
-    let snap = snapshot(
-        &graph,
-        &planned.selected,
-        &request.name,
-        &home,
-        Some((request, &planned.parsed, &planned.result)),
+    let snap = crate::build_graph::with_build_graph(
+        store,
+        &planned.selected.pages,
+        scratch,
+        BUILD_GRAPH_REFUSED,
+        |build, meta, corpus| {
+            snapshot(
+                build,
+                meta,
+                &corpus,
+                &request.name,
+                &home,
+                Some((request, &planned.parsed, &planned.result)),
+            )
+        },
     )?;
     app_files(&mut files, bundle, snap, &request.name)?;
     let receipt = store
@@ -1091,7 +1132,17 @@ pub fn publish_live_home(
     home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
-    live(store, parent, name, all_pages, home, bundle, Vec::new())
+    let scratch = std::env::temp_dir();
+    live(
+        store,
+        parent,
+        name,
+        all_pages,
+        home,
+        bundle,
+        Vec::new(),
+        &scratch,
+    )
 }
 
 /// `publish_live` with the app's computed sheets; a sheet block without one
@@ -1104,9 +1155,35 @@ pub fn publish_live_with_sheets(
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
-    live(store, parent, name, all_pages, None, bundle, sheets)
+    let scratch = std::env::temp_dir();
+    live(
+        store, parent, name, all_pages, None, bundle, sheets, &scratch,
+    )
 }
 
+/// `publish_live_with_sheets` building its private build graph
+/// (`build_graph.rs`) under `scratch` (the app passes its cache directory).
+pub fn publish_live_with_sheets_in(
+    store: &Store,
+    parent: &Path,
+    name: &str,
+    all_pages: bool,
+    bundle: &[(String, Vec<u8>)],
+    sheets: Vec<SheetExport>,
+    scratch: &Path,
+) -> io::Result<ExportReceipt> {
+    live(
+        store, parent, name, all_pages, None, bundle, sheets, scratch,
+    )
+}
+
+/// Refusal when an exported page set does not read back as itself in its
+/// build graph (threat: malformed input or a parser round-trip defect;
+/// `build_graph::with_build_graph`).
+const BUILD_GRAPH_REFUSED: &str =
+    "the exported pages did not read back as the same pages; nothing was exported";
+
+#[allow(clippy::too_many_arguments)]
 fn live(
     store: &Store,
     parent: &Path,
@@ -1115,6 +1192,7 @@ fn live(
     requested_home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
+    scratch: &Path,
 ) -> io::Result<ExportReceipt> {
     if name.trim().is_empty() || name.len() > 256 {
         return Err(refusal("live export name is invalid"));
@@ -1161,7 +1239,13 @@ fn live(
         32 * 1024 * 1024,
         &mut Vec::new(),
     )?;
-    let snap = snapshot(&graph, &corpus, name, &home, None)?;
+    let snap = crate::build_graph::with_build_graph(
+        store,
+        &corpus.pages,
+        scratch,
+        BUILD_GRAPH_REFUSED,
+        |build, meta, corpus| snapshot(build, meta, &corpus, name, &home, None),
+    )?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }
@@ -1261,7 +1345,14 @@ mod snapshot_consistency_tests {
         )
         .unwrap();
         store.refresh(tine_store::Depth::Stamps).unwrap();
-        let bytes = snapshot(&graph, &reviewed.selected, "Export", "Public", None).unwrap();
+        let bytes = crate::build_graph::with_build_graph(
+            &store,
+            &reviewed.selected.pages,
+            temp.path(),
+            BUILD_GRAPH_REFUSED,
+            |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None),
+        )
+        .unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["pages"][0]["blocks"][0]["raw"], "TODO reviewed", "I-20: all publication projections use the held reviewed corpus; exemplar publish_query::snapshot");
         let repeated = resolve_plan(&store, &graph, &request).unwrap();

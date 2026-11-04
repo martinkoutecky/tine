@@ -8,6 +8,103 @@
         "Project"
       ]
     ],
+    "answers": {
+      "alias_groups": [
+        {
+          "aliases": [
+            "Proj"
+          ],
+          "name": "Project",
+          "pages": []
+        }
+      ],
+      "inventory": [
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "a.b",
+          "name": "a.b",
+          "target": {
+            "id": "pages/a.b.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "dup",
+          "name": "dup",
+          "target": {
+            "id": "pages/dup.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "notes ü",
+          "name": "Notes ü",
+          "target": {
+            "id": "pages/Notes ü.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "proj",
+          "link": {
+            "kind": "page",
+            "name": "Project"
+          },
+          "name": "Proj",
+          "target": {
+            "kind": "alias",
+            "owners": [
+              "pages/Project.md"
+            ]
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "project",
+          "name": "Project",
+          "target": {
+            "id": "pages/Project.md",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "status",
+          "name": "status",
+          "target": {
+            "id": "pages/status.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "todo",
+          "name": "TODO",
+          "target": {
+            "id": "pages/TODO.md",
+            "kind": "absent"
+          }
+        }
+      ],
+      "journals": {
+        "content_days": [],
+        "file_name_format": "yyyy_MM_dd",
+        "title_format": "MMM do, yyyy"
+      },
+      "resolve": [],
+      "v": 1
+    },
     "backlinks": {},
     "block_ref_counts": {
       "6512a000-0000-4000-8000-000000000002": 1

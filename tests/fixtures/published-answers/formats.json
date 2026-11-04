@@ -1,0 +1,142 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "26.10.2026",
+        "name": "26.10.2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "links",
+        "name": "Links",
+        "target": {
+          "id": "pages/Links.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "dd.MM.yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {
+    "26.10.2026": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-0",
+            "raw": "[[26.10.2026]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-0",
+            "occurrences": [
+              {
+                "canonical": "26.10.2026",
+                "kind": "explicit",
+                "matched_name": "26.10.2026",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 14,
+                  "start": 0
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ]
+  },
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "26.10.2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Links",
+      "path": "pages/Links.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "26.10.2026",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-1",
+          "raw": "formatted journal body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "journal",
+      "name": "26.10.2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "26.10.2026"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-0",
+          "raw": "[[26.10.2026]]"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Links",
+      "path": "pages/Links.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "Links"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

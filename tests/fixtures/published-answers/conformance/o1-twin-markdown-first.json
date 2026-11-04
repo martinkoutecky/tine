@@ -1,0 +1,112 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "foo",
+        "name": "Foo",
+        "target": {
+          "id": "pages/foo.md",
+          "kind": "existing",
+          "others": [
+            "pages/Foo.markdown"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "foo",
+        "name": "foo",
+        "target": {
+          "id": "pages/foo.md",
+          "kind": "existing",
+          "others": [
+            "pages/Foo.markdown"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Foo",
+      "path": "pages/Foo.markdown"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "foo",
+      "path": "pages/foo.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Foo",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Foo",
+      "path": "pages/Foo.markdown",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Foo"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "foo",
+      "path": "pages/foo.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "foo"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

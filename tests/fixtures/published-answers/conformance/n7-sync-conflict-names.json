@@ -1,0 +1,148 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "a",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/a.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a/b",
+        "name": "a/b",
+        "target": {
+          "id": "pages/a.b.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "bar",
+        "name": "Bar",
+        "target": {
+          "id": "pages/foo.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "linker",
+        "name": "linker",
+        "target": {
+          "id": "pages/linker.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Bar",
+      "path": "pages/foo.md"
+    },
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "a/b",
+      "path": "pages/a.b.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "linker",
+      "path": "pages/linker.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Bar",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Bar",
+      "path": "pages/foo.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Bar"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 26th, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "a/b",
+      "path": "pages/a.b.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "a/b"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "linker",
+      "path": "pages/linker.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "linker"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

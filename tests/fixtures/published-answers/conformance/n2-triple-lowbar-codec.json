@@ -1,0 +1,292 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "%e9",
+        "name": "%E9",
+        "target": {
+          "id": "pages/%E9.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "a",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/a.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a.b",
+        "name": "a.b",
+        "target": {
+          "id": "pages/a.b.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a/b",
+        "name": "a/b",
+        "target": {
+          "id": "pages/a___b.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "bad%e9",
+        "name": "bad%E9",
+        "target": {
+          "id": "pages/bad%E9.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "café",
+        "name": "café",
+        "target": {
+          "id": "pages/caf%C3%A9.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "lead",
+        "name": "lead",
+        "target": {
+          "id": "pages/___lead.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "links",
+        "name": "links",
+        "target": {
+          "id": "pages/links.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "trail",
+        "name": "trail",
+        "target": {
+          "id": "pages/trail___.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "x",
+        "name": "x",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/x.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "x/y",
+        "name": "x/y",
+        "target": {
+          "id": "pages/x______y.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "%E9",
+      "path": "pages/%E9.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "a.b",
+      "path": "pages/a.b.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "a/b",
+      "path": "pages/a___b.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "bad%E9",
+      "path": "pages/bad%E9.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "café",
+      "path": "pages/caf%C3%A9.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "lead",
+      "path": "pages/___lead.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "links",
+      "path": "pages/links.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "trail",
+      "path": "pages/trail___.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "x/y",
+      "path": "pages/x______y.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "%E9",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "%E9",
+      "path": "pages/%E9.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "%E9"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "a.b",
+      "path": "pages/a.b.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "a.b"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "a/b",
+      "path": "pages/a___b.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "a/b"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "bad%E9",
+      "path": "pages/bad%E9.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "bad%E9"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "café",
+      "path": "pages/caf%C3%A9.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "café"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "lead",
+      "path": "pages/___lead.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "lead"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "links",
+      "path": "pages/links.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "links"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "trail",
+      "path": "pages/trail___.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "trail"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "x/y",
+      "path": "pages/x______y.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "x/y"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

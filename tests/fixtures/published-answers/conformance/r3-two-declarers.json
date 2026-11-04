@@ -1,0 +1,144 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "Shared"
+        ],
+        "name": "Alpha",
+        "pages": [
+          "Beta"
+        ]
+      },
+      {
+        "aliases": [
+          "Shared"
+        ],
+        "name": "Beta",
+        "pages": [
+          "Alpha"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "alpha",
+        "name": "Alpha",
+        "target": {
+          "id": "pages/Alpha.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "beta",
+        "name": "Beta",
+        "target": {
+          "id": "pages/Beta.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "shared",
+        "link": {
+          "kind": "page",
+          "name": "Alpha"
+        },
+        "name": "Shared",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Alpha.md",
+            "pages/Beta.md"
+          ]
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Alpha",
+      "path": "pages/Alpha.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Beta",
+      "path": "pages/Beta.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Alpha",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Alpha",
+      "path": "pages/Alpha.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Alpha"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Beta",
+      "path": "pages/Beta.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Beta"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

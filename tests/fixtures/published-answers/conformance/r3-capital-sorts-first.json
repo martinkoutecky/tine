@@ -1,0 +1,144 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "Shared"
+        ],
+        "name": "Zed",
+        "pages": [
+          "alpha"
+        ]
+      },
+      {
+        "aliases": [
+          "Shared"
+        ],
+        "name": "alpha",
+        "pages": [
+          "Zed"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "alpha",
+        "name": "alpha",
+        "target": {
+          "id": "pages/alpha.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "shared",
+        "link": {
+          "kind": "page",
+          "name": "Zed"
+        },
+        "name": "Shared",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Zed.md",
+            "pages/alpha.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "zed",
+        "name": "Zed",
+        "target": {
+          "id": "pages/Zed.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Zed",
+      "path": "pages/Zed.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "alpha",
+      "path": "pages/alpha.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Notes",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Zed",
+      "path": "pages/Zed.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Zed"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "alpha",
+      "path": "pages/alpha.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "alpha"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

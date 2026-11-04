@@ -1,0 +1,2088 @@
+{
+  "g1/pages": {
+    "formats": [
+      "MMM do, yyyy",
+      "yyyy_MM_dd"
+    ],
+    "inventory": [
+      {
+        "key": "fixture share",
+        "name": "Fixture share",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "",
+          "others": []
+        }
+      },
+      {
+        "key": "project",
+        "name": "Project",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        }
+      },
+      {
+        "key": "empty",
+        "name": "Empty",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Empty.md",
+          "others": []
+        }
+      },
+      {
+        "key": "notes ü",
+        "name": "Notes ü",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Notes ü.md",
+          "others": []
+        }
+      },
+      {
+        "key": "org page",
+        "name": "Org page",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Org page.org",
+          "others": []
+        }
+      },
+      {
+        "key": "dashboard",
+        "name": "Dashboard",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Dashboard.md",
+          "others": []
+        }
+      },
+      {
+        "key": "oct 17th, 2026",
+        "name": "Oct 17th, 2026",
+        "is_journal": true,
+        "day": 20261017,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_17.md",
+          "others": []
+        }
+      }
+    ],
+    "content_days": [
+      20261017
+    ],
+    "feed": [
+      "journals/2026_10_17.md"
+    ],
+    "names": {
+      "2026-10-26": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "2026_10_17": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Dashboard": {
+        "page": "pages/Dashboard.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Dashboard.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Dashboard.md"
+      },
+      "Empty": {
+        "page": "pages/Empty.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Empty.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Empty.md"
+      },
+      "Fixture share": {
+        "page": "",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": ""
+      },
+      "ML": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Notes ü": {
+        "page": "pages/Notes ü.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Notes ü.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Project"
+        ],
+        "permalink": "pages/Notes ü.md"
+      },
+      "Oct 17th, 2026": {
+        "page": null,
+        "journal": "journals/2026_10_17.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_17.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "journals/2026_10_17.md"
+      },
+      "Org page": {
+        "page": "pages/Org page.org",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Org page.org",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Org page.org"
+      },
+      "PROJECT": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Oct 17th, 2026",
+          "Notes ü",
+          "Org page"
+        ],
+        "permalink": "pages/Project.md"
+      },
+      "Proj": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Project.md"
+      },
+      "Project": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Oct 17th, 2026",
+          "Notes ü",
+          "Org page"
+        ],
+        "permalink": "pages/Project.md"
+      },
+      "Shared": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "launch day": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "missing page": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "proj": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Project.md"
+      }
+    }
+  },
+  "g1/one-page": {
+    "formats": [
+      "MMM do, yyyy",
+      "yyyy_MM_dd"
+    ],
+    "inventory": [
+      {
+        "key": "project",
+        "name": "Project",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        }
+      }
+    ],
+    "content_days": [],
+    "feed": [],
+    "names": {
+      "2026-10-26": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "2026_10_17": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "ML": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "PROJECT": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Project.md"
+      },
+      "Proj": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Project.md"
+      },
+      "Project": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Project.md"
+      },
+      "Shared": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "launch day": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "missing page": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "proj": {
+        "page": "pages/Project.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Project.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Project.md"
+      }
+    }
+  },
+  "cases without answers": {
+    "formats": [
+      "MMM do, yyyy",
+      "yyyy_MM_dd"
+    ],
+    "inventory": [
+      {
+        "key": "alpha",
+        "name": "Alpha",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Alpha.md",
+          "others": []
+        }
+      },
+      {
+        "key": "beta",
+        "name": "Beta",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Beta.md",
+          "others": []
+        }
+      },
+      {
+        "key": "group a",
+        "name": "Group A",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Group A.md",
+          "others": []
+        }
+      },
+      {
+        "key": "group b",
+        "name": "Group B",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Group B.md",
+          "others": []
+        }
+      },
+      {
+        "key": "links",
+        "name": "Links",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        }
+      },
+      {
+        "key": "ml",
+        "name": "ML",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/ML.md",
+          "others": []
+        }
+      },
+      {
+        "key": "machine learning",
+        "name": "Machine Learning",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Machine Learning.md",
+          "others": []
+        }
+      },
+      {
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "is_journal": true,
+        "day": 20261026,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        }
+      },
+      {
+        "key": "oct 27th, 2026",
+        "name": "Oct 27th, 2026",
+        "is_journal": true,
+        "day": 20261027,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_27.md",
+          "others": []
+        }
+      },
+      {
+        "key": "n/y",
+        "name": "n/y",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/n___y.md",
+          "others": []
+        }
+      }
+    ],
+    "content_days": [
+      20261026,
+      20261027
+    ],
+    "feed": [
+      "journals/2026_10_27.md",
+      "journals/2026_10_26.md"
+    ],
+    "names": {
+      "2026-10-26": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "2026_10_17": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Alpha": {
+        "page": "pages/Alpha.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Alpha.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Beta",
+          "Links"
+        ],
+        "permalink": "pages/Alpha.md"
+      },
+      "Beta": {
+        "page": "pages/Beta.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Beta.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Alpha",
+          "Links"
+        ],
+        "permalink": "pages/Beta.md"
+      },
+      "Group A": {
+        "page": "pages/Group A.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Group A.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Group B",
+          "Links"
+        ],
+        "permalink": "pages/Group A.md"
+      },
+      "Group B": {
+        "page": "pages/Group B.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Group B.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "pages/Group B.md"
+      },
+      "Links": {
+        "page": "pages/Links.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Links.md"
+      },
+      "ML": {
+        "page": "pages/ML.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/ML.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links",
+          "Machine Learning"
+        ],
+        "permalink": "pages/ML.md"
+      },
+      "Machine Learning": {
+        "page": "pages/Machine Learning.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Machine Learning.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "pages/Machine Learning.md"
+      },
+      "Oct 26th, 2026": {
+        "page": null,
+        "journal": "journals/2026_10_26.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "journals/2026_10_26.md"
+      },
+      "Oct 27th, 2026": {
+        "page": null,
+        "journal": "journals/2026_10_27.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_27.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "journals/2026_10_27.md"
+      },
+      "PROJECT": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Shared": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "launch day": {
+        "page": null,
+        "journal": "journals/2026_10_26.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "journals/2026_10_26.md"
+      },
+      "missing page": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n/y": {
+        "page": "pages/n___y.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/n___y.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/n___y.md"
+      },
+      "proj": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      }
+    }
+  },
+  "cases with answers v2": {
+    "formats": [
+      "MMM do, yyyy",
+      "yyyy_MM_dd"
+    ],
+    "inventory": [
+      {
+        "key": "alpha",
+        "name": "Alpha",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Alpha.md",
+          "others": []
+        }
+      },
+      {
+        "key": "beta",
+        "name": "Beta",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Beta.md",
+          "others": []
+        }
+      },
+      {
+        "key": "group a",
+        "name": "Group A",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Group A.md",
+          "others": []
+        }
+      },
+      {
+        "key": "group b",
+        "name": "Group B",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Group B.md",
+          "others": []
+        }
+      },
+      {
+        "key": "links",
+        "name": "Links",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        }
+      },
+      {
+        "key": "ml",
+        "name": "ML",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/ML.md",
+          "others": []
+        }
+      },
+      {
+        "key": "machine learning",
+        "name": "Machine Learning",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Machine Learning.md",
+          "others": []
+        }
+      },
+      {
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "is_journal": true,
+        "day": 20261026,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        }
+      },
+      {
+        "key": "oct 27th, 2026",
+        "name": "Oct 27th, 2026",
+        "is_journal": true,
+        "day": 20261027,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_27.md",
+          "others": []
+        }
+      },
+      {
+        "key": "n/y",
+        "name": "n/y",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/n___y.md",
+          "others": []
+        }
+      }
+    ],
+    "content_days": [
+      20261026,
+      20261027
+    ],
+    "feed": [
+      "journals/2026_10_27.md",
+      "journals/2026_10_26.md"
+    ],
+    "names": {
+      "2026-10-26": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "2026_10_17": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Alpha": {
+        "page": "pages/Alpha.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Alpha.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Beta",
+          "Links"
+        ],
+        "permalink": "pages/Alpha.md"
+      },
+      "Beta": {
+        "page": "pages/Beta.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Beta.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Alpha",
+          "Links"
+        ],
+        "permalink": "pages/Beta.md"
+      },
+      "Group A": {
+        "page": "pages/Group A.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Group A.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Group B",
+          "Links"
+        ],
+        "permalink": "pages/Group A.md"
+      },
+      "Group B": {
+        "page": "pages/Group B.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Group B.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "pages/Group B.md"
+      },
+      "Links": {
+        "page": "pages/Links.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Links.md"
+      },
+      "ML": {
+        "page": "pages/ML.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/ML.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links",
+          "Machine Learning"
+        ],
+        "permalink": "pages/ML.md"
+      },
+      "Machine Learning": {
+        "page": "pages/Machine Learning.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Machine Learning.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "pages/Machine Learning.md"
+      },
+      "Oct 26th, 2026": {
+        "page": null,
+        "journal": "journals/2026_10_26.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "journals/2026_10_26.md"
+      },
+      "Oct 27th, 2026": {
+        "page": null,
+        "journal": "journals/2026_10_27.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_27.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "journals/2026_10_27.md"
+      },
+      "PROJECT": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Shared": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "launch day": {
+        "page": null,
+        "journal": "journals/2026_10_26.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "journals/2026_10_26.md"
+      },
+      "missing page": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n/y": {
+        "page": "pages/n___y.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/n___y.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/n___y.md"
+      },
+      "proj": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      }
+    }
+  },
+  "formats without answers": {
+    "formats": [
+      "MMM do, yyyy",
+      "yyyy_MM_dd"
+    ],
+    "inventory": [
+      {
+        "key": "26.10.2026",
+        "name": "26.10.2026",
+        "is_journal": true,
+        "day": 20261026,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        }
+      },
+      {
+        "key": "links",
+        "name": "Links",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        }
+      }
+    ],
+    "content_days": [
+      20261026
+    ],
+    "feed": [
+      "journals/2026_10_26.md"
+    ],
+    "names": {
+      "2026-10-26": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "2026_10_17": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "26.10.2026": {
+        "page": null,
+        "journal": "journals/2026_10_26.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "journals/2026_10_26.md"
+      },
+      "Links": {
+        "page": "pages/Links.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Links.md"
+      },
+      "ML": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "PROJECT": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Shared": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "launch day": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "missing page": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "proj": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      }
+    }
+  },
+  "formats with answers v2": {
+    "formats": [
+      "MMM do, yyyy",
+      "yyyy_MM_dd"
+    ],
+    "inventory": [
+      {
+        "key": "26.10.2026",
+        "name": "26.10.2026",
+        "is_journal": true,
+        "day": 20261026,
+        "target": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        }
+      },
+      {
+        "key": "links",
+        "name": "Links",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        }
+      }
+    ],
+    "content_days": [
+      20261026
+    ],
+    "feed": [
+      "journals/2026_10_26.md"
+    ],
+    "names": {
+      "2026-10-26": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "2026_10_17": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "26.10.2026": {
+        "page": null,
+        "journal": "journals/2026_10_26.md",
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "existing",
+          "id": "journals/2026_10_26.md",
+          "others": []
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [
+          "Links"
+        ],
+        "permalink": "journals/2026_10_26.md"
+      },
+      "Links": {
+        "page": "pages/Links.md",
+        "journal": null,
+        "resolve_page": {
+          "kind": "existing",
+          "id": "pages/Links.md",
+          "others": []
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": "pages/Links.md"
+      },
+      "ML": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "PROJECT": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "Shared": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "launch day": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "missing page": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "n": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      },
+      "proj": {
+        "page": null,
+        "journal": null,
+        "resolve_page": {
+          "kind": "absent",
+          "id": ""
+        },
+        "resolve_journal": {
+          "kind": "absent",
+          "id": ""
+        },
+        "group": {
+          "aliases": [],
+          "pages": []
+        },
+        "backlinks": [],
+        "permalink": null
+      }
+    }
+  }
+}

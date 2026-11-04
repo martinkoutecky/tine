@@ -1,38 +1,12 @@
 //! Name-discovery transport: readable names plus the unreadable paths, and
-//! the wire form of one name's resolution.
+//! the wire form of one name's resolution. The row, resolution and alias
+//! group shapes live in `tine_graph_features::inventory_wire`, shared with the
+//! published snapshot's `answers` (one serializer per answer, I-12).
 use super::WholeGraph;
 use serde::Serialize;
-use tine_store::{PageId, Resolved};
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ResolvedWire {
-    Existing { id: String, others: Vec<String> },
-    Alias { owners: Vec<String> },
-    Absent { id: String },
-}
-
-impl From<Resolved> for ResolvedWire {
-    fn from(value: Resolved) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&Resolved> for ResolvedWire {
-    fn from(value: &Resolved) -> Self {
-        let id = |id: &PageId| id.as_str().to_owned();
-        match value {
-            Resolved::Existing { id: first, others } => Self::Existing {
-                id: id(first),
-                others: others.iter().map(id).collect(),
-            },
-            Resolved::Alias { owners } => Self::Alias {
-                owners: owners.iter().map(id).collect(),
-            },
-            Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
-        }
-    }
-}
+pub(crate) use tine_graph_features::inventory_wire::{
+    alias_group_wire, entry_wire, AliasGroupWire, PageInventoryEntryWire, ResolvedWire,
+};
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {
@@ -42,60 +16,6 @@ pub(crate) struct PageInventoryWire {
     entries: Vec<PageInventoryEntryWire>,
     /// Graph-relative paths and read reasons, as on the journal feed wire.
     unreadable: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct PageInventoryEntryWire {
-    /// `refs::page_key(name)`: the frontend looks names up by this key only.
-    key: String,
-    name: String,
-    is_journal: bool,
-    day: Option<i64>,
-    target: ResolvedWire,
-    /// What a `[[name]]` link opens when that is not this entry itself
-    /// (`WholeGraph::link_target`): sent only then, so most entries cost no
-    /// bytes. `PageRef` routes by it; the frontend decides nothing itself.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    link: Option<LinkWire>,
-    /// Listed only because a listed name lies under it (`n` for `n/y`):
-    /// sent only when true. The namespace views read it; none re-derives
-    /// prefixes.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    namespace_parent: bool,
-    /// EMPTY-ALIAS (D-20261103-CMA): this name's file has no real content and
-    /// the name is an alias, so `link` is the owner and a named route opens
-    /// it too (`InventoryEntry::empty_alias`). Sent only when true.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    empty_alias: bool,
-}
-
-#[derive(Serialize)]
-pub(crate) struct LinkWire {
-    name: String,
-    kind: &'static str,
-}
-
-/// The page header's alias group (D-20261019-AL2): the other names with no
-/// file of their own (a link opens an owner), and the other names a file
-/// claims (a link opens that file).
-#[derive(Serialize)]
-pub(crate) struct AliasGroupWire {
-    aliases: Vec<String>,
-    pages: Vec<String>,
-}
-
-pub(super) fn alias_group_wire(view: &WholeGraph, name: &str) -> AliasGroupWire {
-    let (mut aliases, mut pages) = (Vec::new(), Vec::new());
-    for entry in &view
-        .inventory(tine_store::InventoryScope::AliasGroup(name))
-        .0
-    {
-        match entry.target {
-            Resolved::Existing { .. } => pages.push(entry.name.clone()),
-            _ => aliases.push(entry.name.clone()),
-        }
-    }
-    AliasGroupWire { aliases, pages }
 }
 
 /// Last-modified times for the All pages view: `[graph-relative path, Unix
@@ -121,22 +41,6 @@ pub(super) fn page_modified_wire(view: &WholeGraph) -> PageModifiedWire {
 // travel on the inventory so the frontend reports them (I-2).
 pub(super) fn resolve_name(view: WholeGraph, name: &str, journal: bool) -> ResolvedWire {
     view.resolve(name, journal).into()
-}
-
-fn entry_wire(entry: &tine_store::InventoryEntry) -> PageInventoryEntryWire {
-    PageInventoryEntryWire {
-        key: tine_core::refs::page_key(&entry.name),
-        name: entry.name.clone(),
-        is_journal: entry.is_journal,
-        day: entry.day.map(|day| day.0),
-        target: ResolvedWire::from(&entry.target),
-        link: entry.link.as_ref().map(|link| LinkWire {
-            name: link.name.clone(),
-            kind: if link.is_journal { "journal" } else { "page" },
-        }),
-        namespace_parent: entry.namespace_parent,
-        empty_alias: entry.empty_alias,
-    }
 }
 
 /// The wire form of one publication's inventory delta (cost-model audit
