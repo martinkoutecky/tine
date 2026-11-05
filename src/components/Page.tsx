@@ -468,8 +468,7 @@ export function PageView(): JSX.Element {
     const owned = () => surfaceAlive && epoch === graphEpoch()
       && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), r);
     const routeOwner = graphOwner(owned);
-    let cancelRetry: (() => void) | undefined;
-    onCleanup(() => cancelRetry?.());
+    let cancelRetry: (() => void) | undefined; onCleanup(() => cancelRetry?.());
     setReady(false);
     setLoadError(null);
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
@@ -589,11 +588,8 @@ export function PageView(): JSX.Element {
           // load errored with empty content.
           const refusal = loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
           if (refusal) {
-            // Ending the feed edit can leave its host close in flight. Retry
-            // through the same safety gate; never replace an unsettled owner.
-            cancelRetry = whenPageReplaceable(refusal.page, retryKey, () => {
-              if (owned()) setLoadRetry(value => value + 1);
-            });
+            // Ending the feed edit can leave its host close in flight: retry through the same gate (GH #863).
+            cancelRetry = whenPageReplaceable(refusal.page, retryKey, () => { if (owned()) setLoadRetry(v => v + 1); });
             throw new Error(pageLoadRefusalMessage(refusal));
           }
           if (r.path && pageByName(r.name)?.id !== r.path)
