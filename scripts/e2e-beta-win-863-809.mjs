@@ -50,6 +50,7 @@ const fixture = accountHomeFixture(run, out);
 // The shared Windows launcher takes its profile root from the harness process.
 process.env.E2E_WEBVIEW_USER_DATA_ROOT = path.join(run, "webview");
 const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
+  TINE_DEBUG: "1", TINE_DEBUG_LOG: path.join(out, "native-debug.log"),
   XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"),
   XDG_CACHE_HOME: path.join(run, "cache"), XDG_STATE_HOME: path.join(run, "state"),
   APPDATA: path.join(run, "appdata"), LOCALAPPDATA: path.join(run, "localappdata"),
@@ -60,7 +61,7 @@ const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd:
 const write = () => fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(report, null, 2) + "\n");
 const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, detail }); write(); console.log(`ok: ${stage}`); };
 write();
-let target, driver, browser, log, wm;
+let target, driver, browser, log, wm, main;
 const { xdo } = x11Tools(env);
 async function shot(name) {
   // WebKitWebDriver cannot screenshot a related popup (its automation flag
@@ -98,6 +99,11 @@ try {
     wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], { env, stdio: "ignore" });
   }
   target = await startWebdriverApplication(app, env, nativePort, "gh863-809");
+  if (target.debuggerAddress) {
+    const version = await (await fetch(`http://${target.debuggerAddress}/json/version`, { signal: AbortSignal.timeout(2000) })).json();
+    report.webview2 = { browser: version.Browser, userAgent: version["User-Agent"], v8: version["V8-Version"] };
+    write();
+  }
   log = fs.openSync(path.join(out, "driver.log"), "w");
   driver = spawn(process.env.TAURI_DRIVER || "tauri-driver",
     webdriverServerArgs(port, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
@@ -109,7 +115,8 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
-  const main = await browser.getWindowHandle();
+  report.nativeApp = (await diagnostics()).app;
+  main = await browser.getWindowHandle();
   step("app-ready", await browser.execute(() => ({ title: document.title, ua: navigator.userAgent })));
 
   if (issues.some(issue => issue.startsWith("863"))) {
@@ -177,6 +184,34 @@ try {
   if (issues.includes("809")) {
     await openPageByName(browser, pageName);
     const before = new Set(await browser.getWindowHandles());
+    await browser.execute(() => {
+      const probe = window.__gh809Probe = { ticks: 0, opens: [], errors: [], popupStates: [] };
+      const tick = setInterval(() => {
+        probe.ticks++;
+        const popup = window.__gh809Popup;
+        if (!popup) return;
+        try {
+          // Read only the proxy marker until native association is confirmed.
+          const state = { closed: popup.closed, nativeLabel: popup.__TINE_WORKSPACE_WINDOW_LABEL__ ?? null };
+          const last = probe.popupStates.at(-1);
+          if (JSON.stringify(last?.state) !== JSON.stringify(state) && probe.popupStates.length < 16) {
+            probe.popupStates.push({ tick: probe.ticks, state });
+          }
+        } catch (error) {
+          if (probe.errors.length < 8) probe.errors.push(String(error));
+        }
+      }, 100);
+      setTimeout(() => clearInterval(tick), 60_000);
+      addEventListener("error", event => { if (probe.errors.length < 8) probe.errors.push(event.message); });
+      const open = window.open;
+      window.open = function (...args) {
+        window.open = open;
+        const popup = Reflect.apply(open, this, args);
+        window.__gh809Popup = popup;
+        probe.opens.push({ url: args[0], label: args[1], returned: !!popup });
+        return popup;
+      };
+    });
     await browser.keys(["Control", "k"]);
     await browser.$(".switcher-input").waitForExist({ timeout: 5000 });
     await browser.$(".switcher-input").setValue(pageName);
@@ -199,6 +234,7 @@ try {
       popup = (await browser.getWindowHandles()).find(handle => !before.has(handle));
       return !!popup;
     }, { timeout: 15_000, timeoutMsg: "No separate workspace window appeared" });
+    step("809-popup-handle", { main, popup });
     await browser.switchToWindow(popup);
     await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("GH809 original page body")),
       { timeout: 15_000, timeoutMsg: "Popup stayed blank instead of showing the selected page" });
@@ -240,6 +276,33 @@ try {
 } catch (error) {
   report.status = "failed"; report.classification ??= "ambiguous"; report.observed = String(error);
   write();
+  // Probe the opener even if WebDriver has lost the popup target. Record each
+  // result separately so a subsequent native hang cannot erase the evidence.
+  if (issues.includes("809") && browser && main) {
+    if (target?.debuggerAddress) {
+      try {
+        report.devtoolsTargets = await (await fetch(`http://${target.debuggerAddress}/json/list`, { signal: AbortSignal.timeout(2000) })).json();
+        write();
+      } catch (error) { report.devtoolsTargetsError = String(error); write(); }
+    }
+    try {
+      report.failureWindows = await browser.getWindowHandles(); write();
+      await browser.switchToWindow(main);
+      report.openerAfterFailure = await browser.execute(() => {
+        const popup = window.__gh809Popup;
+        const result = { title: document.title, probe: window.__gh809Probe, popup: null };
+        if (popup) {
+          try {
+            const label = popup.__TINE_WORKSPACE_WINDOW_LABEL__;
+            result.popup = { closed: popup.closed, nativeLabel: label ?? null,
+              body: label ? popup.document.body?.textContent?.slice(0, 1500) : null };
+          } catch (error) { result.popup = { error: String(error) }; }
+        }
+        return result;
+      });
+      write();
+    } catch (error) { report.openerAfterFailureError = String(error); write(); }
+  }
   try {
     report.dom = await browser?.execute(() => document.body.textContent?.slice(0, 6000));
     if (issues.some(issue => issue.startsWith("863"))) fs.writeFileSync(path.join(out, "failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));

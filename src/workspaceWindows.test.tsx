@@ -10,12 +10,14 @@ const native = vi.hoisted(() => ({
   closeRequested: undefined as ((event: { payload: string }) => void) | undefined,
   destroyed: undefined as ((event: { payload: string }) => void) | undefined,
   label: 0,
+  documentReady: true,
+  deferred: true,
 }));
 vi.mock("./backend", async (importOriginal) => ({ ...(await importOriginal<typeof import("./backend")>()), isTauri: () => true }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string, args: unknown) => {
     native.calls.push({ cmd, args });
-    return cmd === "workspace_window_prepare" ? `ws-main-${++native.label}` : undefined;
+    return cmd === "workspace_window_prepare" ? { label: `ws-main-${++native.label}`, deferred: native.deferred } : undefined;
   }),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -57,15 +59,18 @@ const cleanups: (() => void)[] = [];
 beforeEach(() => {
   native.calls = [];
   native.label = 0;
+  native.documentReady = true;
+  native.deferred = true;
   saves.flushAll.mockClear();
   setToasts([]);
   setActiveWindowId(MAIN_WINDOW_ID);
   resetPaneLayoutToSingle();
-  vi.spyOn(mainWindow, "open").mockImplementation(() => {
+  vi.spyOn(mainWindow, "open").mockImplementation((_url, label) => {
     const frame = document.createElement("iframe");
     document.body.append(frame);
     frames.push(frame);
     const win = frame.contentWindow as Realm;
+    Object.assign(win, { __TINE_WORKSPACE_WINDOW_LABEL__: native.documentReady ? label : "pending" });
     win.focus = () => {};
     // The native window's own close: the iframe goes away.
     win.close = () => { frame.remove(); };
@@ -94,6 +99,29 @@ async function openReady(name = "Alpha"): Promise<{ id: string; win: Realm }> {
 }
 
 describe("workspace window lifecycle (P4)", () => {
+  it("opens a directly associated WebKit document without waiting for initialization scripts", async () => {
+    native.deferred = false;
+    native.documentReady = false;
+    const { win } = await openReady();
+    expect(win.document.querySelector(".shell")).toBeTruthy();
+  });
+
+  it("waits for the associated native document before rendering into a deferred popup (GH #809)", async () => {
+    native.documentReady = false;
+    const id = openRouteInNewWindow(page("Alpha"))!;
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
+    // Drain the open/ready continuations. A temporary WindowProxy already
+    // exposes a body, but it is replaced when the native deferral completes.
+    await new Promise<void>((resolve) => mainWindow.setTimeout(resolve, 0));
+    const win = frames[0].contentWindow as Realm;
+    expect(win.document.body).toBeTruthy();
+    expect(win.document.querySelector(".shell")).toBeNull();
+    expect(windowById(id)).toBeUndefined();
+    Object.assign(win, { __TINE_WORKSPACE_WINDOW_LABEL__: "ws-main-1" });
+    await vi.waitFor(() => expect(windowById(id)).toBe(win));
+    expect(win.document.querySelector(`[data-shell="${id}"]`)).toBeTruthy();
+  });
+
   it("installs the pane tree synchronously, then opens, mirrors styles and renders the shell", async () => {
     const style = document.createElement("style");
     style.textContent = ".probe{color:red}";
