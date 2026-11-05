@@ -879,6 +879,17 @@ flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
 
 Every page rename is planned as a `HostOp`, including one moved page.
+Renames and confirmed merges rewrite bare `alias::` / `aliases::` members
+(Org `#+alias:` / `#+aliases:` too) through the same reference scanner and
+guarded save as links (D-20261105-CM13, deliberate OG difference). The
+explicit-reference index includes declaring files even without another link.
+Namespace members follow the typed-name substitution; stored page-name query
+arguments naming a merged source use the selected survivor's own name.
+Renaming an alias-only name rewrites every declarer without choosing a source
+owner, moving its contents, or creating a file for the alias (CM12). It has
+no OwnPage answer. A redirecting empty alias target selects its unique
+declaring owner through the shared CM11 selector and retains the empty file.
+Same-key alias respelling is a rename. Ambiguous target owners still refuse.
 Single-page selection refuses unsaved input only where the rewrite changes
 it, and includes held referrers absent from the index. Admission checks that
 selection's held buffers, versions, saved status, spellings and membership.

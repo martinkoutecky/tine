@@ -33,6 +33,8 @@
 //! `answer` projections (including cancellation's original bytes). OwnPage may
 //! fill an existing empty alias file. Historical rename10 success no longer
 //! implies a menu option. Source kind comes directly from the bridge.
+//! Round 12 adds aliasOnly sources and their full target matrix, including
+//! source ties, empty targets, same-key respelling and separate query maps.
 //!
 //! Shares `cm_conformance_shared_tests.rs` with the store harness (which also holds
 //! the test-side alias extractor copy to the original). Step 1 changes no
@@ -285,6 +287,18 @@ fn run_rename(
         "r11-empty-alias-source" => assert_eq!(operation["sourceKind"], "emptyAliasFile"),
         _ => {}
     }
+    if spec.name.starts_with("r12-alias-source-") {
+        assert_eq!(operation["sourceKind"], "aliasOnly", "{}", spec.name);
+        assert_eq!(operation["aliasSource"], true);
+        assert_eq!(operation["noFileSource"], true);
+        let own = operation["answers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|answer| answer["choice"] == "ownPage")
+            .unwrap();
+        assert_eq!(own["allowed"], false, "no file to make into its own page");
+    }
     let mg = model["merges"].get(0).cloned();
     let offers: Vec<&str> = operation["offers"]
         .as_array()
@@ -392,7 +406,7 @@ fn run_rename(
             }
             // Round 10: a reference-only source (`refSource`) has no file,
             // so a null `source` is no refusal reason there.
-            if m["source"].is_null() && m["refSource"] != true {
+            if m["source"].is_null() && m["noFileSource"] != true {
                 why.push("no single source");
             }
             if m["typedInSubtree"] == true || m["targetInSubtree"] == true {

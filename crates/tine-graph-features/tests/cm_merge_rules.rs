@@ -93,6 +93,99 @@ const ML: &[(&str, &str)] = &[
     ),
 ];
 
+/// CM12/CM13: an alias-only source changes every declarer, including files
+/// with no ordinary link. Reload must retain the renamed alias group.
+#[test]
+fn alias_source_rewrites_all_declarers_and_survives_reload() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "alias-source",
+        &[
+            ("pages/owner.md", "alias:: ML\n\n- owner\n"),
+            ("pages/other.md", "aliases:: ML, keep\n\n- other\n"),
+            ("pages/sub.md", "alias:: ML/sub，[[ML/other]]\n\n- sub\n"),
+            ("pages/q.md", "- [[ML]] [[ML]]\n- {{query (page \"ML\")}}\n"),
+        ],
+    );
+    assert_eq!(
+        rename_offer(&store, "ML", "AI", None).unwrap(),
+        RenameOffer::Rename
+    );
+    assert!(rename(&store, "ML", "AI", RenameChoice::OwnPage).is_err());
+    rename(&store, "ML", "AI", RenameChoice::Rename).unwrap();
+    assert_eq!(snapshot(&root)["pages/owner.md"], "alias:: AI\n\n- owner\n");
+    assert_eq!(
+        snapshot(&root)["pages/other.md"],
+        "aliases:: AI, keep\n\n- other\n"
+    );
+    assert_eq!(
+        snapshot(&root)["pages/sub.md"],
+        "alias:: AI/sub，[[AI/other]]\n\n- sub\n"
+    );
+    assert!(!snapshot(&root).contains_key("pages/AI.md"));
+    store.close();
+    let reloaded = Store::open(&root, Default::default()).unwrap().0;
+    assert!(matches!(resolve(&reloaded, "AI"), Resolved::Alias { owners } if owners.len() == 2));
+    assert!(!matches!(resolve(&reloaded, "ML"), Resolved::Alias { .. }));
+    assert!(backlink_pages(&reloaded, "owner").contains(&"q".to_owned()));
+}
+
+/// C6/C7/C13: no fake OwnPage, the shared empty-target owner selection,
+/// survivor query name, and same-key respelling through the real API.
+#[test]
+fn alias_source_empty_target_and_same_key() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "alias-empty-target",
+        &[
+            ("pages/owner.md", "alias:: ML\n\n- owner\n"),
+            ("pages/target.md", "alias:: AI\n\n- target\n"),
+            ("pages/AI.md", ""),
+            ("pages/q.md", "- [[ML]]\n- {{query (page \"ML\")}}\n"),
+        ],
+    );
+    assert!(
+        matches!(rename_offer(&store, "ML", "AI", None).unwrap(), RenameOffer::AliasOf {
+        owner, merge: true, own_page: false, ..
+    } if owner == "pages/target.md")
+    );
+    assert!(rename(&store, "ML", "AI", RenameChoice::OwnPage).is_err());
+    rename(
+        &store,
+        "ML",
+        "AI",
+        RenameChoice::MergeInto("pages/target.md"),
+    )
+    .unwrap();
+    let after = snapshot(&root);
+    assert_eq!(after["pages/AI.md"], "");
+    assert_eq!(after["pages/owner.md"], "alias:: AI\n\n- owner\n");
+    assert_eq!(
+        after["pages/q.md"],
+        "- [[AI]]\n- {{query (page \"target\")}}\n"
+    );
+    assert_eq!(
+        rename_offer(&store, "AI", "ai", None).unwrap(),
+        RenameOffer::Rename
+    );
+    // This source now has an actual empty file; exercise alias-only respelling
+    // on a separate source, where no owner choice can resolve the source tie.
+    let (root, store) = fixture(
+        "alias-respell",
+        &[
+            ("pages/a.md", "alias:: ML\n"),
+            ("pages/b.md", "alias:: ML\n"),
+        ],
+    );
+    assert_eq!(
+        rename_offer(&store, "ML", "ml", None).unwrap(),
+        RenameOffer::Rename
+    );
+    rename(&store, "ML", "ml", RenameChoice::Rename).unwrap();
+    assert_eq!(snapshot(&root)["pages/a.md"], "alias:: ml\n");
+    assert_eq!(snapshot(&root)["pages/b.md"], "alias:: ml\n");
+}
+
 /// CM-R9-EMPTYDIALOG: an empty alias target must offer the owner, retain the
 /// empty file on merge, and fill that exact file on OwnPage.
 #[test]

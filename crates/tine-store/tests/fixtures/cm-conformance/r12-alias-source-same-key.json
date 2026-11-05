@@ -1,0 +1,8 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: ML\n\n- owner\n",
+    "pages/other.md": "alias:: ML\n\n- other\n",
+    "pages/c.md": "- [[ML]]\n- {{query (page \"ML\")}}\n"
+  },
+  "renames": [{"old": "ML", "new": "ml"}]
+}

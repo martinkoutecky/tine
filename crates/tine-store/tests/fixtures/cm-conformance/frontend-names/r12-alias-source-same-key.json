@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "other",
+      "path": "pages/other.md",
+      "preBlock": "alias:: ML",
+      "title": null
+    },
+    {
+      "format": "md",
+      "name": "owner",
+      "path": "pages/owner.md",
+      "preBlock": "alias:: ML",
+      "title": null
+    }
+  ],
+  "links": []
+}

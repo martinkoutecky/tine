@@ -106,6 +106,20 @@ it("an alias-only name asks merge / own page / cancel and sends the answer", asy
   expect(confirm).not.toHaveBeenCalled();
 });
 
+it("an alias-only source uses Rust's merge-only offer and submits no source file", async () => {
+  const asked = offer({ kind: "aliasOf", owner: "pages/Artificial Intelligence.md", name: "Artificial Intelligence", merge: true, ownPage: false });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
+  const pending = renameOrMergePage("ML", "AI", { name: "ML", pageKind: "page" });
+  await vi.waitFor(() => expect(aliasRenameRequest()).not.toBeNull());
+  const request = aliasRenameRequest()!;
+  expect(request.ownPage).toBe(false);
+  expect(request.owner).toBe("Artificial Intelligence");
+  request.finish("merge");
+  expect(await pending).toBe("merged");
+  expect(asked).toHaveBeenCalledWith("ML", "AI", undefined);
+  expect(rename).toHaveBeenCalledWith("ML", "AI", "rename-page", undefined, "pages/Artificial Intelligence.md", []);
+});
+
 // CM-OWN-CHILD / M-Q6 and R14: the backend's refusal reaches the user with
 // its reason, and nothing is sent to rename.
 it("a refused rename writes nothing and words the backend's reason", async () => {

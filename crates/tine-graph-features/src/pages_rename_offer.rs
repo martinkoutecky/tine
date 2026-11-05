@@ -106,7 +106,9 @@ pub enum RenameOffer {
     },
     /// M-Q5 (D-20261102-MC5): the name is only an alias of `owner` (its
     /// file; `name` its own name). Ask: merge into it (when `merge`), make
-    /// the name its own page (still an alias of the owner), or cancel.
+    /// the name its own page (when `own_page`, still an alias of the owner),
+    /// or cancel. Sources without files, including alias-only names, cannot
+    /// become their own page (CM11/CM12).
     AliasOf {
         owner: String,
         name: String,

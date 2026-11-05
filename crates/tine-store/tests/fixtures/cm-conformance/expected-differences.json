@@ -64,33 +64,9 @@
       "md/nested/words": [
         "evidence-only explicit_nested_link: [[x]] nested [old page]"
       ],
-      "md/page-tags/ns": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [ns/old alias]"
-      ],
-      "md/page-tags/plain": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [old alias]"
-      ],
-      "md/page-tags/unicode": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [über alias]"
-      ],
-      "md/page-tags/words": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [old page alias]"
-      ],
       "md/priority/plain": [
         "evidence-only explicit_priority: [#x] [a]",
         "evidence-only explicit_task_marker: bare [todo]"
-      ],
-      "md/prop-alias-bare/ns": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [ns/old]"
-      ],
-      "md/prop-alias-bare/plain": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [old]"
-      ],
-      "md/prop-alias-bare/unicode": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [über]"
-      ],
-      "md/prop-alias-bare/words": [
-        "evidence-only implicit_linkable_property: bare value of alias:: [old page]"
       ],
       "md/query-and/ns": [
         "rename-only: [[x]] in {{query}} [ns/old]"
@@ -734,7 +710,7 @@
     "q1-duplicate-claim": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r1-title-names-page": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r10-ref-source-alias-target": "R10-Q4 (out of scope for batch 15, divergence R15): renaming a reference-only name (kb, no file) onto an alias-only name (ML of o). The model's rename10 allows it as a plain rewrite (M-Q5 answer two, which for a file-less source creates no page); Tine refuses the plain rename and offers the M-Q5 dialog (D-20261102-MC5); the harness confirms the merge, which matches refMerge. Kept as today's Tine behaviour until Martin answers R10-Q4 (recommendation: offer only the merge for a file-less source). The random class 'rename: model allows, Tine refuses (AlreadyExists)' is the same question with two alias owners (no single merge target).",
-    "r10-ref-source-journal-risk": "R10-Q2 (out of scope for batch 15, divergence S16): the frontendNamespaces rows list the journal's alias spelling kb/sub under kb, as OG does; the model (Q9) has no page kb/sub, so kb has nothing below it. Same family as r6-refused-journal-risk and r9-own-child-alias.",
+    "r10-ref-source-journal-risk": "R10-Q2 namespace comparisons are green since batch 16 and remain green on r12: alias-only kb/sub is no tree node. The separate rename journal-risk difference remains CM3-1, out of scope for batch 17.",
     "r10-relative-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r10-url-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure."
   },
@@ -745,7 +721,8 @@
       "o1-twin-journal-day: duplicate days": [],
       "r10-ref-source-alias-target: kb -> ML": [],
       "r10-ref-source-journal-risk: kb -> kc": [
-        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]"
+        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
+        "rename \"kb\" -> \"kc\": model refuses (base guard + journal risk) (journal risks [\"\\\"kb/sub\\\"\"]), Tine performs (Renamed)"
       ],
       "r10-ref-source-merge: kb -> n/y": [],
       "r10-ref-source-own-child: kb -> kb/x": [],
@@ -756,21 +733,43 @@
       "r10-relative-real-pages: . -> z": [],
       "r10-url-real-pages: https: -> https://a.b/c": [],
       "r10-url-real-pages: https: -> z": [],
-      "r11-empty-alias-source: B -> ML": [
-        "aliases of pages/Machine Learning.md: Tine has (\"alias\", \"b\"), model does not (model [(\"alias\", \"ml\")], Tine [(\"alias\", \"b\"), (\"alias\", \"ml\")])",
-        "occurrences of pages/Machine Learning.md: Tine has (\"linkableValue\", \"b\"), model does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])",
-        "occurrences of pages/Machine Learning.md: model has (\"linkableValue\", \"ml\"), Tine does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])"
-      ],
-      "r11-empty-alias-source: B -> ML (own page)": [
-        "aliases of pages/Machine Learning.md: Tine has (\"alias\", \"b\"), model does not (model [(\"alias\", \"ml\")], Tine [(\"alias\", \"b\"), (\"alias\", \"ml\")])",
-        "occurrences of pages/Machine Learning.md: Tine has (\"linkableValue\", \"b\"), model does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])",
-        "occurrences of pages/Machine Learning.md: model has (\"linkableValue\", \"ml\"), Tine does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])"
-      ],
+      "r11-empty-alias-source: B -> ML": [],
+      "r11-empty-alias-source: B -> ML (own page)": [],
       "r11-empty-alias-target: ML notes -> ML": [],
       "r11-empty-alias-target: ML notes -> ML (own page)": [],
       "r11-fileless-empty-alias-target: B -> ML": [],
       "r11-leading-legacy-stem: /n -> z": [],
       "r11-leading-title: /n -> z": [],
+      "r12-alias-source-date: 2026-10-26 -> AI": [],
+      "r12-alias-source-date: ML -> 2026-10-26": [],
+      "r12-alias-source-empty-target: ML -> AI": [],
+      "r12-alias-source-journal-declarer: ML -> AI": [
+        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
+        "rename \"ML\" -> \"AI\": model refuses (base guard + journal risk) (journal risks [\"\\\"ml\\\"\"]), Tine performs (Renamed)"
+      ],
+      "r12-alias-source-journal-target: ML -> 2026-10-26": [],
+      "r12-alias-source-journal: ML -> AI": [
+        "rename \"ML\" -> \"AI\": model refuses (base guard + journal risk) and refuses the merge (journal risk) (merge journalRisks=[\"ml/sub\"], source=null, target=\"pages/AI.md\", targetInSubtree=false, typedInSubtree=false), Tine merges into pages/AI.md (Merged)",
+        "model [\"cancel\"], Tine [\"mergeOwner\", \"cancel\"]"
+      ],
+      "r12-alias-source-journal: ML -> fresh": [
+        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
+        "rename \"ML\" -> \"fresh\": model refuses (base guard + journal risk) (journal risks [\"\\\"ml/sub\\\"\"]), Tine performs (Renamed)"
+      ],
+      "r12-alias-source-namespace: old/sub -> new/sub": [],
+      "r12-alias-source-other-owner: ML -> AI": [],
+      "r12-alias-source-own-child: ML -> ML/alias": [],
+      "r12-alias-source-own-child: ML -> ML/child": [],
+      "r12-alias-source-own-child: ML -> ML/linked": [],
+      "r12-alias-source-own-child: ML -> ML/unused": [],
+      "r12-alias-source-real: ML -> AI": [],
+      "r12-alias-source-reference-target: ML -> AI": [],
+      "r12-alias-source-same-key: ML -> ml": [],
+      "r12-alias-source-same-owner: ML -> AI": [],
+      "r12-alias-source-two-declarers: ML -> AI": [],
+      "r12-alias-source-two-empty-targets: ML -> AI": [],
+      "r12-alias-source-two-targets: ML -> AI": [],
+      "r12-alias-source-unused: ML -> AI": [],
       "r6-case-only: Foo -> foo": [],
       "r6-file-descendant: old -> new": [],
       "r6-into-namespace: x -> n/y": [],
@@ -778,20 +777,12 @@
       "r6-onto-alias: a -> c": [],
       "r6-onto-alias: a -> c (own page)": [],
       "r6-onto-real-page: a -> b": [],
-      "r6-ref-only-descendant: old -> new": [
-        "occurrences of pages/p.md: Tine has (\"link\", \"old/child\"), model does not (model [(\"link\", \"new\"), (\"link\", \"new/child\")], Tine [(\"link\", \"new\"), (\"link\", \"old/child\")])",
-        "occurrences of pages/p.md: model has (\"link\", \"new/child\"), Tine does not (model [(\"link\", \"new\"), (\"link\", \"new/child\")], Tine [(\"link\", \"new\"), (\"link\", \"old/child\")])"
-      ],
+      "r6-ref-only-descendant: old -> new": [],
       "r6-refused-journal-risk: old -> new": [
         "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
         "rename \"old\" -> \"new\": model refuses (journal risk) (journal risks [\"\\\"old/sub\\\"\"]), Tine performs (Renamed)"
       ],
-      "r6-rewrite-set: Tasks -> Chores": [
-        "aliases of pages/ref.md: Tine has (\"alias\", \"tasks\"), model does not (model [(\"alias\", \"chores\")], Tine [(\"alias\", \"tasks\")])",
-        "aliases of pages/ref.md: model has (\"alias\", \"chores\"), Tine does not (model [(\"alias\", \"chores\")], Tine [(\"alias\", \"tasks\")])",
-        "occurrences of pages/ref.md: Tine has (\"linkableValue\", \"tasks\"), model does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])",
-        "occurrences of pages/ref.md: model has (\"linkableValue\", \"chores\"), Tine does not (model [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"chores\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"chores\"), (\"link\", \"chores\"), (\"linkableValue\", \"tasks\"), (\"pageEmbed\", \"chores\"), (\"priority\", \"a\"), (\"propertyKey\", \"chores\"), (\"propertyKey\", \"rel\"), (\"tag\", \"chores\"), (\"taskMarker\", \"todo\")])"
-      ],
+      "r6-rewrite-set: Tasks -> Chores": [],
       "r6-task-marker-page: A -> Alpha": [],
       "r9-case-rename-onto-taken-file: N/y -> n/y": [
         "model [\"rename\", \"cancel\"], Tine [\"cancel\"]",
@@ -806,58 +797,6 @@
     },
     "harnessSkipped": [],
     "random": {
-      "[duplicate claim] rename aliases: Tine-only alias": {
-        "detail": "aliases of pages/Z.md: Tine has (\"alias\", \"n/y\"), model does not (model [(\"alias\", \"z\")], Tine [(\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/N%2Fy.md": "alias:: n/y\n",
-            "pages/a.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            }
-          ],
-          "renames": [
-            {
-              "new": "Z",
-              "old": "N/y"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] rename aliases: model-only alias": {
-        "detail": "aliases of pages/Z.md: model has (\"alias\", \"z\"), Tine does not (model [(\"alias\", \"z\")], Tine [(\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/N%2Fy.md": "alias:: n/y\n",
-            "pages/a.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            }
-          ],
-          "renames": [
-            {
-              "new": "Z",
-              "old": "N/y"
-            }
-          ]
-        }
-      },
       "[duplicate claim] rename occurrences: Tine-only link": {
         "detail": "occurrences of pages/x.md: Tine has (\"link\", \"n\"), model does not (model [], Tine [(\"link\", \"n\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"tag\", \"n/y\")])",
         "graph": {
@@ -898,27 +837,49 @@
         }
       },
       "[duplicate claim] rename occurrences: Tine-only linkableValue": {
-        "detail": "occurrences of pages/Z.md: Tine has (\"linkableValue\", \"n/y\"), model does not (model [(\"linkableValue\", \"z\")], Tine [(\"linkableValue\", \"n/y\")])",
+        "detail": "occurrences of pages/a.md: Tine has (\"linkableValue\", \"oct 26th, 2026\"), model does not (model [], Tine [(\"linkableValue\", \"oct 26th, 2026\")])",
         "graph": {
           "files": {
-            "pages/A.md": "",
-            "pages/N%2Fy.md": "alias:: n/y\n",
-            "pages/a.md": ""
+            "journals/2026_10_27.md": "",
+            "pages/A.md": "- #n/y tagged\n",
+            "pages/a.md": "alias:: 2026-10-26\n",
+            "pages/x.md": "- plain words\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "refs": "n"
+                "or": [
+                  {
+                    "page": {
+                      "name": "N/y"
+                    }
+                  },
+                  {
+                    "page": {
+                      "name": "a"
+                    }
+                  }
+                ]
               },
-              "tine": "[[n]]"
+              "tine": "(or (page \"N/y\") (page \"a\"))"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "not": {
+                  "name": "n"
+                }
+              },
+              "tine": "@page and not (name = 'n')"
             }
           ],
           "renames": [
             {
               "new": "Z",
-              "old": "N/y"
+              "old": "x"
             }
           ]
         }
@@ -1054,32 +1015,6 @@
           ]
         }
       },
-      "[duplicate claim] rename occurrences: model-only linkableValue": {
-        "detail": "occurrences of pages/Z.md: model has (\"linkableValue\", \"z\"), Tine does not (model [(\"linkableValue\", \"z\")], Tine [(\"linkableValue\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/N%2Fy.md": "alias:: n/y\n",
-            "pages/a.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            }
-          ],
-          "renames": [
-            {
-              "new": "Z",
-              "old": "N/y"
-            }
-          ]
-        }
-      },
       "[duplicate claim] rename offers: model and Tine offer different answers": {
         "detail": "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
         "graph": {
@@ -1204,704 +1139,6 @@
           ]
         }
       },
-      "rename aliases: Tine-only alias of old name": {
-        "detail": "aliases of pages/n.md: Tine has (\"alias\", \"a\"), model does not (model [(\"alias\", \"n\"), (\"alias\", \"n/y\")], Tine [(\"alias\", \"a\"), (\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "alias:: A, N/y\n\n- see [[A]]\n- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "page": {
-                    "name": "N/y"
-                  }
-                }
-              },
-              "tine": "(not (page \"N/y\"))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "a"
-            }
-          ]
-        }
-      },
-      "rename aliases: Tine-only alias of old name (confirmed merge)": {
-        "detail": "aliases of pages/2026-10-26%2Fy.md: Tine has (\"alias\", \"n/y\"), model does not (model [(\"alias\", \"2026-10-26/y\")], Tine [(\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "alias:: x\n",
-            "pages/n%2Fy.md": "alias:: n/y\n\n- see [[x]]\n- [[a]] and [[n]]\n- note\n  rel:: [[x]]\n",
-            "pages/n.md": "alias:: n, A\n\n- see [[N/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "page": {
-                      "name": "n/y"
-                    }
-                  },
-                  {
-                    "refs": "N/y"
-                  }
-                ]
-              },
-              "tine": "(or (page \"n/y\") [[N/y]])"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename aliases: model-only alias of new name": {
-        "detail": "aliases of pages/n.md: model has (\"alias\", \"n\"), Tine does not (model [(\"alias\", \"n\"), (\"alias\", \"n/y\")], Tine [(\"alias\", \"a\"), (\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "alias:: A, N/y\n\n- see [[A]]\n- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "page": {
-                    "name": "N/y"
-                  }
-                }
-              },
-              "tine": "(not (page \"N/y\"))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "a"
-            }
-          ]
-        }
-      },
-      "rename aliases: model-only alias of new name (confirmed merge)": {
-        "detail": "aliases of pages/2026-10-26%2Fy.md: model has (\"alias\", \"2026-10-26/y\"), Tine does not (model [(\"alias\", \"2026-10-26/y\")], Tine [(\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "alias:: x\n",
-            "pages/n%2Fy.md": "alias:: n/y\n\n- see [[x]]\n- [[a]] and [[n]]\n- note\n  rel:: [[x]]\n",
-            "pages/n.md": "alias:: n, A\n\n- see [[N/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "page": {
-                      "name": "n/y"
-                    }
-                  },
-                  {
-                    "refs": "N/y"
-                  }
-                ]
-              },
-              "tine": "(or (page \"n/y\") [[N/y]])"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename aliases: model-only alias of old name": {
-        "detail": "aliases of pages/n.md: model has (\"alias\", \"n\"), Tine does not (model [(\"alias\", \"n\")], Tine [(\"alias\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "",
-            "pages/N%2Fy.md": "alias:: N/y\n\n- B mentioned\n- #2026-10-26 tagged\n- note\n  rel:: [[n/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "page": {
-                      "name": "2026-10-26"
-                    }
-                  },
-                  {
-                    "not": {
-                      "refs": "x"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and (page \"2026-10-26\") (not [[x]]))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "n/y"
-              },
-              "tine": "@page and name = 'n/y'"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "N/y"
-            }
-          ]
-        }
-      },
-      "rename occurrences: Tine-only link of old name": {
-        "detail": "occurrences of pages/2026-10-26.md: Tine has (\"link\", \"n/y\"), model does not (model [(\"link\", \"b\"), (\"link\", \"n/y\"), (\"link\", \"n/y/y\"), (\"tag\", \"b\")], Tine [(\"link\", \"b\"), (\"link\", \"n/y\"), (\"link\", \"n/y\"), (\"tag\", \"b\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "- see [[n]]\n- #B tagged\n- [[B]] and [[n/y]]\n",
-            "pages/n.md": "- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "n"
-                }
-              },
-              "tine": "(not [[n]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "n/y"
-              },
-              "tine": "@page and name = 'n/y'"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n/y",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: Tine-only link of old name (confirmed merge)": {
-        "detail": "occurrences of pages/a.md: Tine has (\"link\", \"n/y\"), model does not (model [(\"link\", \"a\"), (\"link\", \"a/y\"), (\"link\", \"a/y\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"x\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"rel\"), (\"tag\", \"a\")], Tine [(\"link\", \"a\"), (\"link\", \"n/y\"), (\"link\", \"n/y\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"x\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"rel\"), (\"tag\", \"a\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "title:: n\n\n- note\n  rel:: [[a]]\n- x mentioned\n",
-            "pages/a.md": "title:: a\nalias:: x\n\n- [#A] priority\n  - child [[2026-10-26]]\n- #n tagged\n- note\n  rel:: [[N/y]]\n  - child [[n/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "a"
-                  },
-                  {
-                    "not": {
-                      "refs": "n"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[a]] (not [[n]]))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "A",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: Tine-only linkableValue of old name": {
-        "detail": "occurrences of pages/n.md: Tine has (\"linkableValue\", \"a\"), model does not (model [(\"link\", \"n\"), (\"linkableValue\", \"n\"), (\"linkableValue\", \"n/y\")], Tine [(\"link\", \"n\"), (\"linkableValue\", \"a\"), (\"linkableValue\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "alias:: A, N/y\n\n- see [[A]]\n- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "page": {
-                    "name": "N/y"
-                  }
-                }
-              },
-              "tine": "(not (page \"N/y\"))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "a"
-            }
-          ]
-        }
-      },
-      "rename occurrences: Tine-only linkableValue of old name (confirmed merge)": {
-        "detail": "occurrences of pages/2026-10-26%2Fy.md: Tine has (\"linkableValue\", \"n/y\"), model does not (model [(\"link\", \"a\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"x\"), (\"link\", \"x\"), (\"linkableValue\", \"2026-10-26/y\"), (\"propertyKey\", \"rel\")], Tine [(\"link\", \"a\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"x\"), (\"link\", \"x\"), (\"linkableValue\", \"n/y\"), (\"propertyKey\", \"rel\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "alias:: x\n",
-            "pages/n%2Fy.md": "alias:: n/y\n\n- see [[x]]\n- [[a]] and [[n]]\n- note\n  rel:: [[x]]\n",
-            "pages/n.md": "alias:: n, A\n\n- see [[N/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "page": {
-                      "name": "n/y"
-                    }
-                  },
-                  {
-                    "refs": "N/y"
-                  }
-                ]
-              },
-              "tine": "(or (page \"n/y\") [[N/y]])"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: Tine-only tag of old name": {
-        "detail": "occurrences of pages/a.md: Tine has (\"tag\", \"n/y\"), model does not (model [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"b\"), (\"linkableValue\", \"a\"), (\"tag\", \"2026-10-26/y\")], Tine [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"b\"), (\"linkableValue\", \"a\"), (\"tag\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "title:: x\nalias:: A\n\n- #n/y tagged\n  - child [[B]]\n- [[a]] and [[a]]\n",
-            "pages/n.md": "- n mentioned\n  - child [[2026-10-26]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "and": [
-                  {
-                    "name": "x"
-                  },
-                  {
-                    "not": {
-                      "name": "2026-10-26"
-                    }
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'x' and not (name = '2026-10-26'))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: Tine-only tag of old name (confirmed merge)": {
-        "detail": "occurrences of pages/A.md: Tine has (\"tag\", \"n/y\"), model does not (model [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"a/y\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"priority\", \"a\"), (\"tag\", \"a/y\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"n/y\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"priority\", \"a\"), (\"tag\", \"n/y\"), (\"taskMarker\", \"todo\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "- plain words\n- see [[2026-10-26]]\n- [[A]] and [[2026-10-26]]\n",
-            "pages/B.md": "",
-            "pages/n.md": "alias:: 2026-10-26, 2026-10-26\n\n- #n/y tagged\n- TODO task [[n/y]]\n  - child [[A]]\n- [#A] priority\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "A"
-                  },
-                  {
-                    "page": {
-                      "name": "A"
-                    }
-                  }
-                ]
-              },
-              "tine": "(or [[A]] (page \"A\"))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "a",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only link of new name": {
-        "detail": "occurrences of pages/2026-10-26.md: model has (\"link\", \"2026-10-26/y\"), Tine does not (model [(\"link\", \"2026-10-26/y\"), (\"tag\", \"a\")], Tine [(\"link\", \"n/y\"), (\"tag\", \"a\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "",
-            "pages/n.md": "- #A tagged\n  - child [[n/y]]\n- plain words\n",
-            "pages/x.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "page": {
-                    "name": "n"
-                  }
-                }
-              },
-              "tine": "(not (page \"n\"))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "not": {
-                  "name": "2026-10-26"
-                }
-              },
-              "tine": "@page and not (name = '2026-10-26')"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only link of new name (confirmed merge)": {
-        "detail": "occurrences of pages/a.md: model has (\"link\", \"a/y\"), Tine does not (model [(\"link\", \"a\"), (\"link\", \"a/y\"), (\"link\", \"a/y\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"x\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"rel\"), (\"tag\", \"a\")], Tine [(\"link\", \"a\"), (\"link\", \"n/y\"), (\"link\", \"n/y\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"x\"), (\"priority\", \"a\"), (\"propertyKey\", \"rel\"), (\"propertyKey\", \"rel\"), (\"tag\", \"a\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "title:: n\n\n- note\n  rel:: [[a]]\n- x mentioned\n",
-            "pages/a.md": "title:: a\nalias:: x\n\n- [#A] priority\n  - child [[2026-10-26]]\n- #n tagged\n- note\n  rel:: [[N/y]]\n  - child [[n/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "a"
-                  },
-                  {
-                    "not": {
-                      "refs": "n"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[a]] (not [[n]]))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "A",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only link of old name": {
-        "detail": "occurrences of pages/2026-10-26.md: model has (\"link\", \"n/y/y\"), Tine does not (model [(\"link\", \"b\"), (\"link\", \"n/y\"), (\"link\", \"n/y/y\"), (\"tag\", \"b\")], Tine [(\"link\", \"b\"), (\"link\", \"n/y\"), (\"link\", \"n/y\"), (\"tag\", \"b\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "- see [[n]]\n- #B tagged\n- [[B]] and [[n/y]]\n",
-            "pages/n.md": "- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "n"
-                }
-              },
-              "tine": "(not [[n]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "n/y"
-              },
-              "tine": "@page and name = 'n/y'"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n/y",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only linkableValue of new name": {
-        "detail": "occurrences of pages/n.md: model has (\"linkableValue\", \"n\"), Tine does not (model [(\"link\", \"n\"), (\"linkableValue\", \"n\"), (\"linkableValue\", \"n/y\")], Tine [(\"link\", \"n\"), (\"linkableValue\", \"a\"), (\"linkableValue\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "alias:: A, N/y\n\n- see [[A]]\n- plain words\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "page": {
-                    "name": "N/y"
-                  }
-                }
-              },
-              "tine": "(not (page \"N/y\"))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "a"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only linkableValue of new name (confirmed merge)": {
-        "detail": "occurrences of pages/2026-10-26%2Fy.md: model has (\"linkableValue\", \"2026-10-26/y\"), Tine does not (model [(\"link\", \"a\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"x\"), (\"link\", \"x\"), (\"linkableValue\", \"2026-10-26/y\"), (\"propertyKey\", \"rel\")], Tine [(\"link\", \"a\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"x\"), (\"link\", \"x\"), (\"linkableValue\", \"n/y\"), (\"propertyKey\", \"rel\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "alias:: x\n",
-            "pages/n%2Fy.md": "alias:: n/y\n\n- see [[x]]\n- [[a]] and [[n]]\n- note\n  rel:: [[x]]\n",
-            "pages/n.md": "alias:: n, A\n\n- see [[N/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "page": {
-                      "name": "n/y"
-                    }
-                  },
-                  {
-                    "refs": "N/y"
-                  }
-                ]
-              },
-              "tine": "(or (page \"n/y\") [[N/y]])"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only linkableValue of old name": {
-        "detail": "occurrences of pages/n.md: model has (\"linkableValue\", \"n\"), Tine does not (model [(\"link\", \"n\"), (\"linkableValue\", \"n\"), (\"propertyKey\", \"rel\"), (\"tag\", \"oct 26th, 2026\")], Tine [(\"link\", \"n\"), (\"linkableValue\", \"n/y\"), (\"propertyKey\", \"rel\"), (\"tag\", \"oct 26th, 2026\")])",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "",
-            "pages/N%2Fy.md": "alias:: N/y\n\n- B mentioned\n- #2026-10-26 tagged\n- note\n  rel:: [[n/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "page": {
-                      "name": "2026-10-26"
-                    }
-                  },
-                  {
-                    "not": {
-                      "refs": "x"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and (page \"2026-10-26\") (not [[x]]))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "n/y"
-              },
-              "tine": "@page and name = 'n/y'"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "N/y"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only tag of new name": {
-        "detail": "occurrences of pages/a.md: model has (\"tag\", \"2026-10-26/y\"), Tine does not (model [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"b\"), (\"linkableValue\", \"a\"), (\"tag\", \"2026-10-26/y\")], Tine [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"b\"), (\"linkableValue\", \"a\"), (\"tag\", \"n/y\")])",
-        "graph": {
-          "files": {
-            "pages/a.md": "title:: x\nalias:: A\n\n- #n/y tagged\n  - child [[B]]\n- [[a]] and [[a]]\n",
-            "pages/n.md": "- n mentioned\n  - child [[2026-10-26]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "and": [
-                  {
-                    "name": "x"
-                  },
-                  {
-                    "not": {
-                      "name": "2026-10-26"
-                    }
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'x' and not (name = '2026-10-26'))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "2026-10-26",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only tag of new name (confirmed merge)": {
-        "detail": "occurrences of pages/A.md: model has (\"tag\", \"a/y\"), Tine does not (model [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"a/y\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"priority\", \"a\"), (\"tag\", \"a/y\"), (\"taskMarker\", \"todo\")], Tine [(\"link\", \"a\"), (\"link\", \"a\"), (\"link\", \"n/y\"), (\"link\", \"oct 26th, 2026\"), (\"link\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"linkableValue\", \"oct 26th, 2026\"), (\"priority\", \"a\"), (\"tag\", \"n/y\"), (\"taskMarker\", \"todo\")])",
-        "graph": {
-          "files": {
-            "pages/A.md": "- plain words\n- see [[2026-10-26]]\n- [[A]] and [[2026-10-26]]\n",
-            "pages/B.md": "",
-            "pages/n.md": "alias:: 2026-10-26, 2026-10-26\n\n- #n/y tagged\n- TODO task [[n/y]]\n  - child [[A]]\n- [#A] priority\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "A"
-                  },
-                  {
-                    "page": {
-                      "name": "A"
-                    }
-                  }
-                ]
-              },
-              "tine": "(or [[A]] (page \"A\"))"
-            }
-          ],
-          "renames": [
-            {
-              "new": "a",
-              "old": "n"
-            }
-          ]
-        }
-      },
-      "rename occurrences: model-only tag of old name": {
-        "detail": "occurrences of journals/2026_10_27.md: model has (\"tag\", \"n/y/y\"), Tine does not (model [(\"link\", \"b\"), (\"link\", \"n/y/y\"), (\"link\", \"n/y/y\"), (\"link\", \"oct 26th, 2026\"), (\"tag\", \"n/y/y\"), (\"tag\", \"x\")], Tine [(\"link\", \"b\"), (\"link\", \"n/y\"), (\"link\", \"n/y\"), (\"link\", \"oct 26th, 2026\"), (\"tag\", \"n/y\"), (\"tag\", \"x\")])",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "- #N/y tagged\n  - child [[2026-10-26]]\n- #x tagged\n  - child [[B]]\n- [[n/y]] and [[n/y]]\n",
-            "pages/B.md": "title:: n\n",
-            "pages/x.md": "alias:: B\n\n- plain words\n- #2026-10-26 tagged\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "n"
-              },
-              "tine": "[[n]]"
-            }
-          ],
-          "renames": [
-            {
-              "new": "N/y",
-              "old": "n"
-            }
-          ]
-        }
-      },
       "rename offers: model and Tine offer different answers": {
         "detail": "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
         "graph": {
@@ -2015,39 +1252,6 @@
             {
               "new": "n",
               "old": "A"
-            }
-          ]
-        }
-      },
-      "rename: model refuses (base guard), Tine performs": {
-        "detail": "rename \"n/y\" -> \"x\": model refuses (base guard) (journal risks []), Tine performs (Renamed)",
-        "graph": {
-          "files": {
-            "pages/A.md": "alias:: N/y, n\n\n- TODO task [[n/y]]\n- TODO task [[n]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "page": {
-                      "name": "A"
-                    }
-                  },
-                  {
-                    "refs": "A"
-                  }
-                ]
-              },
-              "tine": "(or (page \"A\") [[A]])"
-            }
-          ],
-          "renames": [
-            {
-              "new": "x",
-              "old": "n/y"
             }
           ]
         }
@@ -2167,6 +1371,22 @@
       "r11-leading-legacy-stem": [],
       "r11-leading-title": [],
       "r11-sparse-alias-parent": [],
+      "r12-alias-source-date": [],
+      "r12-alias-source-empty-target": [],
+      "r12-alias-source-journal": [],
+      "r12-alias-source-journal-declarer": [],
+      "r12-alias-source-journal-target": [],
+      "r12-alias-source-namespace": [],
+      "r12-alias-source-other-owner": [],
+      "r12-alias-source-own-child": [],
+      "r12-alias-source-real": [],
+      "r12-alias-source-reference-target": [],
+      "r12-alias-source-same-key": [],
+      "r12-alias-source-same-owner": [],
+      "r12-alias-source-two-declarers": [],
+      "r12-alias-source-two-empty-targets": [],
+      "r12-alias-source-two-targets": [],
+      "r12-alias-source-unused": [],
       "r2-alias-backlinks": [],
       "r2-alias-chain": [],
       "r2-journal-in-alias-group": [

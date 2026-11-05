@@ -566,16 +566,18 @@ pub(super) fn plan_rename(
     let mut ref_merge = false;
     let mut ref_survivor = None;
     if !primary_is_file && old != new {
-        // R10-Q3 remains open: preserve the previous alias-only-source path.
-        let alias_source = matches!(graph.resolve(old, false), Resolved::Alias { .. });
-        if choice == RenameChoice::OwnPage && !alias_source {
+        // CM12 C6: alias-only sources have no file either. OwnPage would
+        // pretend to create one while merely substituting a name.
+        if choice == RenameChoice::OwnPage {
             return Err(error(
                 io::ErrorKind::InvalidInput,
                 "a file-less source cannot become its own page",
             ));
         }
-        let destination = if alias_source {
-            None
+        let destination = if refs::normalize(new) == old_key {
+            // CM12 C13: respelling an alias's own key is a rename, even
+            // when several pages declare it. No source owner is selected.
+            Some(Holder::Free)
         } else {
             graph.redirecting_alias_owners(new).map(Holder::Aliases)
         };
@@ -595,9 +597,8 @@ pub(super) fn plan_rename(
                 ref_survivor = Some(owner.clone());
             }
             (RenameChoice::MergeInto(_), _) => {}
-            (RenameChoice::OwnPage, _) if alias_only && alias_source => {}
             (_, [owner]) => {
-                return Err(if alias_only && !alias_source {
+                return Err(if alias_only {
                     RenameBlocked::AliasOf {
                         owner: owner.as_str().to_owned(),
                         merge: true,

@@ -1,0 +1,191 @@
+{
+  "aliases": [
+    [
+      "AI",
+      "Artificial Intelligence"
+    ],
+    [
+      "ML",
+      "Machine Learning"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "AI"
+        ],
+        "name": "Artificial Intelligence",
+        "pages": []
+      },
+      {
+        "aliases": [
+          "ML"
+        ],
+        "name": "Machine Learning",
+        "pages": []
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ai",
+        "link": {
+          "kind": "page",
+          "name": "Artificial Intelligence"
+        },
+        "name": "AI",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Artificial Intelligence.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "artificial intelligence",
+        "name": "Artificial Intelligence",
+        "target": {
+          "id": "pages/Artificial Intelligence.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "c",
+        "target": {
+          "id": "pages/c.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "machine learning",
+        "name": "Machine Learning",
+        "target": {
+          "id": "pages/Machine Learning.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml",
+        "link": {
+          "kind": "page",
+          "name": "Machine Learning"
+        },
+        "name": "ML",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Machine Learning.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml/x",
+        "name": "ML/x",
+        "target": {
+          "id": "pages/ML%2Fx.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Artificial Intelligence",
+      "path": "pages/Artificial Intelligence.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "ML/x",
+      "path": "pages/ML%2Fx.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Artificial Intelligence",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Artificial Intelligence",
+      "path": "pages/Artificial Intelligence.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Artificial Intelligence"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "ML/x",
+      "path": "pages/ML%2Fx.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "ML/x"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Machine Learning"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "c"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

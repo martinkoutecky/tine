@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Renaming a page now also updates bare `alias::` and `aliases::` values naming it, so aliases stay attached after a reload. You can rename a name that exists only as an alias: its declaring lines and references change without renaming the declaring pages or creating a file for the alias. Such a name can merge into an existing page or alias owner, with no “make it its own page” choice.
+
 ### Fixed
 
 - Renaming onto an empty file whose name is another page's alias now asks whether to merge into the owner or make the name its own page. Merging into the owner retains the empty file; making it its own page fills that file. A source with no file offers only the merge and Cancel. Alias-only names no longer appear in namespace trees, namespace counts, macros or Hierarchy; alias completion and navigation remain available. Published sites keep their existing namespace behavior (UI-CM-R11-ALIAS-DIALOG, UI-CM-R11-ALIAS-NAMESPACE).

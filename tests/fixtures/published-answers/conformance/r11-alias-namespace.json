@@ -1,0 +1,221 @@
+{
+  "aliases": [
+    [
+      "old/sub",
+      "owner"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [],
+        "name": "other",
+        "pages": [
+          "real/alias"
+        ]
+      },
+      {
+        "aliases": [
+          "old/sub"
+        ],
+        "name": "owner",
+        "pages": []
+      },
+      {
+        "aliases": [],
+        "name": "real/alias",
+        "pages": [
+          "other"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "c",
+        "target": {
+          "id": "pages/c.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "old",
+        "name": "old",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/old.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "old/sub",
+        "link": {
+          "kind": "page",
+          "name": "owner"
+        },
+        "name": "old/sub",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "other",
+        "name": "other",
+        "target": {
+          "id": "pages/other.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "owner",
+        "name": "owner",
+        "target": {
+          "id": "pages/owner.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "real",
+        "name": "real",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/real.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "real/alias",
+        "name": "real/alias",
+        "target": {
+          "id": "pages/real%2Falias.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ref",
+        "name": "ref",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/ref.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ref/only",
+        "name": "ref/only",
+        "target": {
+          "id": "pages/ref%2Fonly.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "other",
+      "path": "pages/other.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "real/alias",
+      "path": "pages/real%2Falias.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "c",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "c"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "other",
+      "path": "pages/other.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "other"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "owner"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "real/alias",
+      "path": "pages/real%2Falias.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "real/alias"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

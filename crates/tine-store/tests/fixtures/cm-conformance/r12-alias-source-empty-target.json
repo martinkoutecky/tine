@@ -1,0 +1,9 @@
+{
+  "files": {
+    "pages/Machine Learning.md": "alias:: ML\n\n- owner\n",
+    "pages/Artificial Intelligence.md": "alias:: AI\n\n- target\n",
+    "pages/AI.md": "",
+    "pages/c.md": "- [[ML]]\n- {{query (page \"ML\")}}\n"
+  },
+  "renames": [{"old": "ML", "new": "AI"}]
+}
