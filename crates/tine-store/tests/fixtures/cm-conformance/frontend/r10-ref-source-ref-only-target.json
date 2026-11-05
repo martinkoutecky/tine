@@ -1,0 +1,255 @@
+{
+  "backlinks": {
+    "Oct 26th, 2026": [],
+    "kb": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "1db45489-f00c-80a8-9d55-69b5311f8e24",
+            "raw": "#kb",
+            "tags": []
+          }
+        ],
+        "kind": "journal",
+        "page": "Oct 26th, 2026"
+      }
+    ],
+    "p": [],
+    "x": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3fb2c382-2c99-8de9-a02d-183b9c95ee56",
+            "raw": "[[x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "p"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/p.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
+    ],
+    [
+      [
+        "kb",
+        1
+      ],
+      [
+        "x",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "kb",
+      "name": "kb",
+      "target": {
+        "id": "pages/kb.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "p",
+      "name": "p",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "x",
+      "name": "x",
+      "target": {
+        "id": "pages/x.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "kb": "kb",
+    "p": "p",
+    "x": "x"
+  },
+  "open": {
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "kb": {
+      "journal": [
+        "journal",
+        "kb"
+      ],
+      "page": [
+        "page",
+        "kb"
+      ]
+    },
+    "p": {
+      "journal": [
+        "journal",
+        "p"
+      ],
+      "page": [
+        "page",
+        "p"
+      ]
+    },
+    "x": {
+      "journal": [
+        "journal",
+        "x"
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  },
+  "owner": {
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "kb": {
+      "journal": null,
+      "page": null
+    },
+    "p": {
+      "journal": null,
+      "page": "pages/p.md"
+    },
+    "x": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md",
+      "parent": null
+    },
+    {
+      "key": "kb",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "kb",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "p",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "p",
+      "owner": "pages/p.md",
+      "parent": null
+    },
+    {
+      "key": "x",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "x",
+      "owner": null,
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "kb": {
+      "backend": [
+        "page",
+        "kb"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "kb"
+      ]
+    },
+    "p": {
+      "backend": [
+        "page",
+        "p"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "p"
+      ]
+    },
+    "x": {
+      "backend": [
+        "page",
+        "x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "x"
+      ]
+    }
+  }
+}

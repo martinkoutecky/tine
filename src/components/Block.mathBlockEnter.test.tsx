@@ -28,6 +28,15 @@ function editing(name: string, raw: string) {
 // (frontend/util/thingatpt.cljs `admonition&src-at-point`) knows only ``` and
 // `#+BEGIN_`, so OG splits the bullet and breaks the environment too.
 describe("Enter inside a $$ display-math environment", () => {
+  it.each(["$$fdfdfdf$$", "$$fdfdfdf$$\ndddddfafafafd", "intro\n$$fdfdfdf$$", "$$\nx\n$$"])("creates the next block after completed standalone math: %s (GH #862)", raw => {
+    const { id, ta, dispose } = editing("Closed math", raw);
+    try {
+      pressEditorEnter(ta, ta.value().length);
+      expect(pageByName("Closed math")!.roots).toHaveLength(2);
+      expect(doc.byId[id].raw).toBe(raw);
+      expect(doc.byId[pageByName("Closed math")!.roots[1]].raw).toBe("");
+    } finally { dispose(); }
+  });
   it("inserts a newline and does NOT split the block", () => {
     const { id, ta, dispose } = editing("Math", "$$\ntest\n$$");
     try {

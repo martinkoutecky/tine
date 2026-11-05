@@ -10,7 +10,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
-import { allPageNameKeys } from "../pageIndex";
+import { allPageNameKeys, isNamespaceName } from "../pageIndex";
 import { EmojiText } from "../render/emoji";
 import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
@@ -42,7 +42,8 @@ export function nsLink(name: string, after?: () => void, stop = false) {
 }
 
 export function NamespaceCrumb(props: { name: string }): JSX.Element {
-  const parts = () => props.name.split("/");
+  // `./x` or a URL is no namespace name (the store's answer): no crumb.
+  const parts = () => (isNamespaceName(props.name) ? props.name.split("/") : [props.name]);
   return (
     <Show when={parts().length > 1}>
       <div class="ns-crumb">
@@ -77,11 +78,13 @@ export interface NsNode {
  *  that the list also holds. The backend lists every namespace parent
  *  (`InventoryEntry.namespace_parent`), so no level is synthesized here; a name
  *  whose prefixes are not listed (only an empty-key prefix, as in `/x`) is a top
- *  node. `seg` is the part of the name below its parent. Names with no `/` and no
- *  listed name below them are not namespaces and have no node. O(names x length)
- *  when the list holds each name's immediate prefix, as the inventory does. */
+ *  node. `seg` is the part of the name below its parent. Names that are not
+ *  namespace names (no `/`, or the store's `not_namespace`: `./x`, a URL; model
+ *  round 10, S15) and have no listed name below them have no node.
+ *  O(names x length) when the list holds each name's immediate prefix, as the
+ *  inventory does. */
 export function buildNamespaceTree(names: readonly string[]): NsNode[] {
-  // Every name with `/` is a node. A name without `/` can only be a first
+  // Every namespace name is a node. A name without `/` can only be a first
   // segment, so only first-segment keys are wanted from plain names.
   const nodes = new Map<string, NsNode>();
   const slashed: [NsNode, string[]][] = [];
@@ -89,7 +92,7 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
   for (const name of names) {
     if (!name.includes("/")) continue;
     const key = pageIdentityKey(name);
-    if (nodes.has(key)) continue;
+    if (nodes.has(key) || !isNamespaceName(name, key)) continue;
     const node: NsNode = { seg: name, full: name, children: [] };
     nodes.set(key, node);
     const segs = name.split("/");
@@ -319,7 +322,10 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
  *  from a descendant's spelling. A namespaced leaf with nothing below it gets
  *  one row: its own parent path, the segments of its own name (as
  *  `NamespaceCrumb` shows them; declared: a split of the page's own name, not a
- *  page set). O(names), and no key call per name for an `allPageNames()` list. */
+ *  page set). Only namespace names count (`isNamespaceName`, the store's
+ *  answer): `./x` lies below no page `.` and has no row of its own, as in
+ *  Logseq (`hierarchy.cljs` asks `namespace-page?`). O(names), and no key call
+ *  per name for an `allPageNames()` list. */
 export function namespaceHierarchyRows(allNames: readonly string[], name: string): string[][] {
   const prefix = `${pageIdentityKey(name)}/`;
   const known = allPageNameKeys(allNames);
@@ -327,12 +333,12 @@ export function namespaceHierarchyRows(allNames: readonly string[], name: string
   allNames.forEach((n, at) => {
     if (!n.includes("/")) return;
     const key = known?.[at] ?? pageIdentityKey(n);
-    if (key.startsWith(prefix)) below.push([key, n.split("/")]);
+    if (key.startsWith(prefix) && isNamespaceName(n, key)) below.push([key, n.split("/")]);
   });
   if (below.length) {
     return below.sort((a, b) => a[0].localeCompare(b[0])).map(([, segs]) => segs);
   }
-  if (name.includes("/")) return [name.split("/").slice(0, -1)];
+  if (isNamespaceName(name)) return [name.split("/").slice(0, -1)];
   return [];
 }
 

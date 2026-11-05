@@ -17,6 +17,9 @@
 //! - `a_synthetic_home_never_shadows_an_answered_name`: a multi-page
 //!   publication's home named like a page or alias (single- or multi-owner)
 //!   is renamed by the static export and refused by quick share.
+//! - `not_namespace_is_live_only`: the live inventory row of `./x` or a URL
+//!   says `not_namespace` (model round 10, S15); answers v1 is frozen, so the
+//!   published row does not.
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -553,4 +556,45 @@ fn a_synthetic_home_never_shadows_an_answered_name() {
     let root = tempfile::tempdir().unwrap();
     let (snapshot, _) = query_export(root.path(), CLASH, &clash_request("Nowhere"));
     assert_eq!(snapshot["home"], "Nowhere");
+}
+
+#[test]
+fn not_namespace_is_live_only() {
+    let _integration_guard = crate::integration_lock();
+    let files = [
+        (
+            "pages/dot.md",
+            "title:: .\n\n- [[./x]] [[a/b]] [[https://a.b/c]]\n",
+        ),
+        ("pages/dotx.md", "title:: ./x\n\n- x\n"),
+    ];
+    let root = tempfile::tempdir().unwrap();
+    let store = graph(&root.path().join("live"), &files);
+    let view = store.whole_graph().unwrap();
+    let live: Vec<_> = view
+        .inventory(tine_store::InventoryScope::All)
+        .0
+        .iter()
+        .map(tine_graph_features::inventory_wire::entry_wire)
+        .map(|row| (row.name, row.not_namespace))
+        .collect();
+    for (name, flagged) in [
+        ("./x", true),
+        ("https://a.b/c", true),
+        ("a/b", false),
+        (".", false),
+    ] {
+        assert!(
+            live.contains(&(name.to_owned(), flagged)),
+            "{name}: {live:?}"
+        );
+    }
+    store.close();
+    let snapshot = static_snapshot(&root.path().join("site"), &files, true);
+    for name in ["./x", "https://a.b/c"] {
+        assert!(
+            row(&snapshot, name).get("not_namespace").is_none(),
+            "{name}"
+        );
+    }
 }

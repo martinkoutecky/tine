@@ -309,6 +309,71 @@ fn own_namespace_child_refuses_when_used() {
     assert!(!snapshot(&root).contains_key("pages/Foo.md"));
 }
 
+/// S15 (model round 10, OG `namespace-page?`): `./x` and `https://a.b/c` are
+/// not namespace names, so they are no children of the pages `.` and `https:`.
+/// Renaming `.` leaves the page `./x` and its links alone (OG
+/// `rename-namespace-pages!` selects children by `:block/namespace`, never set
+/// for `./x`), and renaming `.` onto `./x` is a merge into that page, not a
+/// refusal as "inside its own namespace". The same for a URL name.
+#[test]
+fn relative_and_url_names_are_no_namespace_children() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/dot.md", "title:: .\n\n- dot\n"),
+        ("pages/dotx.md", "title:: ./x\n\n- dot x\n"),
+        ("pages/scheme.md", "title:: https:\n\n- scheme\n"),
+        ("pages/url.md", "title:: https://a.b/c\n\n- url\n"),
+        (
+            "pages/p.md",
+            "- see [[.]] and [[./x]]\n- see [[https:]] and [[https://a.b/c]]\n",
+        ),
+    ];
+    for (old, child, child_path, new) in [
+        (".", "./x", "pages/dotx.md", "z"),
+        ("https:", "https://a.b/c", "pages/url.md", "w"),
+    ] {
+        // Onto the other page: a merge is offered, not an own-child refusal.
+        let (_root, store) = fixture("relative-offer", files);
+        assert_eq!(
+            rename_offer(&store, old, child, None).unwrap(),
+            RenameOffer::Merge {
+                into: child_path.into(),
+                name: child.into(),
+                journal: false,
+            },
+            "{old} -> {child}"
+        );
+        // A plain rename moves `old` only.
+        let (root, store) = fixture("relative-rename", files);
+        let before = snapshot(&root);
+        assert_eq!(
+            rename(&store, old, new, RenameChoice::Rename).unwrap(),
+            RenameOutcome::Renamed,
+            "{old} -> {new}"
+        );
+        let after = snapshot(&root);
+        assert_eq!(
+            after.get(child_path),
+            before.get(child_path),
+            "{old} -> {new}: {child} is no child of {old}"
+        );
+        assert!(
+            after["pages/p.md"].contains(&format!("[[{child}]]")),
+            "{old} -> {new}: {}",
+            after["pages/p.md"]
+        );
+        assert!(
+            after["pages/p.md"].contains(&format!("[[{new}]]")),
+            "{old} -> {new}: {}",
+            after["pages/p.md"]
+        );
+        match resolve(&store, child) {
+            Resolved::Existing { id, .. } => assert_eq!(id.as_str(), child_path),
+            other => panic!("{old} -> {new}: {child} keeps its page: {other:?}"),
+        }
+    }
+}
+
 /// R14: the case-only destination file `pages/n%2Fy.md` is page B's. The
 /// refusal names that (a retry cannot help) and every file is unchanged.
 #[test]

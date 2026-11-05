@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { registerFindSheet, sheetFindChild } from "../sheet/find";
 import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
@@ -325,6 +326,13 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   });
 
   onCleanup(registerSheetVisibilityHook(props.id, ensureSelectionVisible, surfaceId));
+  onCleanup(registerFindSheet(() => gridRef, (id) => {
+    const rowId = sheetFindChild(id, props.id);
+    if (!rowId) return;
+    const cellId = sheetFindChild(id, rowId);
+    const row = rowIds().indexOf(rowId), col = cellId ? blockChildren(rowId).indexOf(cellId) : 0;
+    if (row >= 0 && col >= 0) ensureSelectionVisible({ kind: "cell", gridId: props.id, surfaceId, row, col });
+  }));
   onCleanup(registerSheetViewAdapter(props.id, {
     bounds: () => ({ rows: rowIds().length, cols: rowIds().length ? fullColumnCount() : 0 }),
     blockIdAt: (row, col) => blockChildren(rowIds()[row] ?? "")[col] ?? null,

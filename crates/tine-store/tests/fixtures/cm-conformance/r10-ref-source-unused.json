@@ -1,0 +1,11 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "- #kb\n"
+  },
+  "renames": [
+    {
+      "old": "kb",
+      "new": "kc"
+    }
+  ]
+}

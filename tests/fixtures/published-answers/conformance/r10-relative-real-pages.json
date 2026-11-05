@@ -1,0 +1,108 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": ".",
+        "name": ".",
+        "target": {
+          "id": "pages/dot.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "./x",
+        "name": "./x",
+        "target": {
+          "id": "pages/dotx.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "cc",
+        "name": "cc",
+        "target": {
+          "id": "pages/cc.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": ".",
+      "path": "pages/dot.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "./x",
+      "path": "pages/dotx.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "cc",
+      "path": "pages/cc.md"
+    }
+  ],
+  "exported_at": "",
+  "home": ".",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": ".",
+      "path": "pages/dot.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "."
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "./x",
+      "path": "pages/dotx.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "./x"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "cc",
+      "path": "pages/cc.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "cc"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

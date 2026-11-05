@@ -137,14 +137,16 @@
       "kind": "page",
       "linkedRefs": 2,
       "name": "Machine Learning",
-      "owner": "pages/Machine Learning.md"
+      "owner": "pages/Machine Learning.md",
+      "parent": null
     },
     {
       "key": "notes",
       "kind": "page",
       "linkedRefs": 0,
       "name": "notes",
-      "owner": "pages/notes.md"
+      "owner": "pages/notes.md",
+      "parent": null
     }
   ],
   "spellings": {

@@ -144,21 +144,24 @@
       "kind": "page",
       "linkedRefs": 1,
       "name": "old",
-      "owner": "pages/old.md"
+      "owner": "pages/old.md",
+      "parent": null
     },
     {
       "key": "old/sub",
       "kind": "page",
       "linkedRefs": 1,
       "name": "old/sub",
-      "owner": "pages/old%2Fsub.md"
+      "owner": "pages/old%2Fsub.md",
+      "parent": "old"
     },
     {
       "key": "p",
       "kind": "page",
       "linkedRefs": 0,
       "name": "p",
-      "owner": "pages/p.md"
+      "owner": "pages/p.md",
+      "parent": null
     }
   ],
   "spellings": {

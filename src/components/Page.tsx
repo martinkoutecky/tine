@@ -411,6 +411,7 @@ export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Pro
 export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
+  const retryKey = `page-route:${useWindowId()}:${pane.paneId}`;
   let feedRoot: HTMLDivElement | undefined;
   let releaseFeedAnchor: (() => void) | undefined;
   const captureFeedViewport = () => {
@@ -439,6 +440,7 @@ export function PageView(): JSX.Element {
   // an older rejected request could replace a newer page with its error state.
   const [loadedRoute, setLoadedRoute] = createSignal<ReturnType<PaneRouter["route"]> | null>(null);
   const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [loadRetry, setLoadRetry] = createSignal(0);
 
   // Depend on the active route BY VALUE: opening a background tab (or pinning /
   // reordering / closing another tab) mutates the `tabs` signal but not the active
@@ -458,6 +460,7 @@ export function PageView(): JSX.Element {
     onCleanup(() => journalCompletionOwners.delete(owner));
   });
   createEffect(() => {
+    loadRetry();
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
     const tabId = router.activeId();
@@ -465,6 +468,7 @@ export function PageView(): JSX.Element {
     const owned = () => surfaceAlive && epoch === graphEpoch()
       && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), r);
     const routeOwner = graphOwner(owned);
+    let cancelRetry: (() => void) | undefined; onCleanup(() => cancelRetry?.());
     setReady(false);
     setLoadError(null);
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
@@ -583,7 +587,11 @@ export function PageView(): JSX.Element {
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
           const refusal = loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
-          if (refusal) throw new Error(pageLoadRefusalMessage(refusal));
+          if (refusal) {
+            // Ending the feed edit can leave its host close in flight: retry through the same gate (GH #863).
+            cancelRetry = whenPageReplaceable(refusal.page, retryKey, () => { if (owned()) setLoadRetry(v => v + 1); });
+            throw new Error(pageLoadRefusalMessage(refusal));
+          }
           if (r.path && pageByName(r.name)?.id !== r.path)
             throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
         }

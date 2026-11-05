@@ -276,42 +276,48 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "Book",
-      "owner": "pages/Book.md"
+      "owner": "pages/Book.md",
+      "parent": null
     },
     {
       "key": "done-at",
       "kind": "page",
       "linkedRefs": 1,
       "name": "done-at",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "rating",
       "kind": "page",
       "linkedRefs": 1,
       "name": "rating",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "shelf",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Shelf",
-      "owner": "pages/Shelf.md"
+      "owner": "pages/Shelf.md",
+      "parent": null
     },
     {
       "key": "status",
       "kind": "page",
       "linkedRefs": 1,
       "name": "status",
-      "owner": "pages/status.md"
+      "owner": "pages/status.md",
+      "parent": null
     },
     {
       "key": "type",
       "kind": "page",
       "linkedRefs": 2,
       "name": "type",
-      "owner": null
+      "owner": null,
+      "parent": null
     }
   ],
   "spellings": {

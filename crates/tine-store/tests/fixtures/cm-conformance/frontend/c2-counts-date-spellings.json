@@ -288,28 +288,32 @@
       "kind": "journal",
       "linkedRefs": 3,
       "name": "Oct 26th, 2026",
-      "owner": "journals/2026_10_26.md"
+      "owner": "journals/2026_10_26.md",
+      "parent": null
     },
     {
       "key": "oct 27th, 2026",
       "kind": "journal",
       "linkedRefs": 2,
       "name": "Oct 27th, 2026",
-      "owner": "journals/2026_10_27.md"
+      "owner": "journals/2026_10_27.md",
+      "parent": null
     },
     {
       "key": "launch",
       "kind": "page",
       "linkedRefs": 3,
       "name": "Launch",
-      "owner": "pages/Launch.md"
+      "owner": "pages/Launch.md",
+      "parent": null
     },
     {
       "key": "n",
       "kind": "page",
       "linkedRefs": 0,
       "name": "n",
-      "owner": "pages/n.md"
+      "owner": "pages/n.md",
+      "parent": null
     }
   ],
   "spellings": {

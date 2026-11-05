@@ -1,0 +1,17 @@
+{
+  "files": {
+    "pages/dot.md": "title:: .\n\n- dot\n",
+    "pages/dotx.md": "title:: ./x\n\n- x\n",
+    "pages/cc.md": "- [[./x]] [[.]]\n"
+  },
+  "renames": [
+    {
+      "old": ".",
+      "new": "z"
+    },
+    {
+      "old": ".",
+      "new": "./x"
+    }
+  ]
+}

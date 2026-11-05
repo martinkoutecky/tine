@@ -147,6 +147,22 @@ claims the same name through `title::`. Editing a title rekeys the published
 name without moving the file. New page filenames use a reversible, injective
 Windows-safe codec; existing noncanonical paths remain pinned.
 
+Virtual journal feed days have no physical owner: a feed DTO with `rev: null`
+may carry a proposed filename, which the frontend discards before working-set
+admission. Initial, reference-completion and paginated feed reads share this
+rule. Header actions and zoom breadcrumbs resolve that logical day when opened,
+so an external creation under another accepted filename is opened even while
+editing defers a feed refresh (GH #863). A successful first save supplies the
+concrete owner. File-backed feed days retain their exact path; duplicate-day,
+dirty-owner and conflict guards remain in force.
+Likewise, installing a host no-file response uses its proposed path only to
+choose the editor format, and adopts no new physical owner. An existing owner
+survives a no-file response after external deletion.
+A routed load refused by the working-set gate retries when that owner becomes
+replaceable, including a host close still in flight after leaving a feed edit.
+The retry belongs to that route and graph; leaving either cancels it. Reads and
+exact-path checks run again, and unsaved or conflicted owners remain protected.
+
 Several files claiming one name (including duplicate journal days) are an
 invalid graph state (D-20261019-ZY2, narrowed by AL1); alias equivalence is
 unchanged. `WholeGraph::resolve` and `inventory` retain the competing file ids
@@ -950,6 +966,26 @@ collected under, and the window drops mail of any other. Proof
 `crates/tine-store/src/page_host/binding_tests.rs`
 `e101_every_host_instance_and_reload_draws_a_fresh_session`.
 
+**Live conflicts (GH #875).** Every successful disk observation uses the host's
+exact-byte read table: disk equal to the saved base clears the conflict while
+retaining unsaved input; disk equal to the serialized editor buffer advances
+the base and clears the conflict. Differing versions retain both the conflict
+and the editor buffer. A taken input that remains conflicted schedules one
+fresh observation, even without another watcher event; the last observation
+alone cannot authorize retirement. Failed reads keep the input and conflict
+and use the existing observation retry/error path. Comparison is over the
+save serializer's bytes (including Org), never the resolver's block similarity.
+The window's banner, page review and Conflicts overview follow the host's
+state for all panes and journal feed pages. Retirement itself writes no page;
+existing draft custody and guarded saves still complete normally. Unit cost:
+one extra page read per taken conflicted input, no extra read for ordinary
+edits, no new persisted record, 0 added bytes/files/transport bytes per edit
+for both 1-block and 60-block pages. Proof: `page_host/driver_tests.rs`
+`gh875_a_conflicted_submit_rechecks_exact_current_disk_bytes`,
+`page_host/mutation_tests.rs`
+`gh875_later_delivery_retires_only_exact_buffer_or_saved_base_matches`, and
+`scripts/e2e-beta-conflict-875.mjs`.
+
 **Window close (Q-TS5, J6).** The window sends no `page_close` for a page
 while the host owes it a save: a failed attempt (the notice), a conflict, or
 any version the host took from this window that has not published. That last
@@ -1669,7 +1705,17 @@ derived per read from the claims and the in-memory referenced-name table.
 Proof: `crates/tine-store/tests/inventory_delta.rs`, the conformance harness
 (`cm_conformance_tests.rs`, `src/cmConformanceNamespaces.test.ts`). The
 frontend's namespace views (sidebar tree, Namespaces, `{{namespace}}`,
-Hierarchy) nest the listed names by `/` and add no level of their own.
+Hierarchy, the page's crumb) nest the listed names by `/` and add no level of
+their own. Only a namespace name nests (`tine_core::refs::is_namespace_name`,
+OG `namespace-page?`; model round 10, S15): a listed name that contains `/` but
+is a relative path or an origin-bearing URL (`./x`, `../x/y`, `https://a.b/c`)
+carries `not_namespace: true` on its wire row (sent only when true;
+`inventory_wire.rs entry_wire`), and the views neither split nor nest it
+(`pageIndex.ts isNamespaceName`; no TypeScript copy of the test). The published
+snapshot's `answers` v1 rows never carry it (v1 is frozen,
+`docs/contracts/quick-share.md`). Rename asks the same test: the moved subtree
+(`InventoryScope::FilesAtOrUnder`) and the own-child guard take only namespace
+names under the old name, so renaming `.` leaves `./x` alone.
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

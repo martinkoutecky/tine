@@ -561,84 +561,96 @@
       "kind": "journal",
       "linkedRefs": 0,
       "name": "Oct 26th, 2026",
-      "owner": "journals/2026_10_26.md"
+      "owner": "journals/2026_10_26.md",
+      "parent": null
     },
     {
       "key": "a",
       "kind": "page",
       "linkedRefs": 2,
       "name": "a",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "b",
       "kind": "page",
       "linkedRefs": 1,
       "name": "b",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "c",
       "kind": "page",
       "linkedRefs": 1,
       "name": "c",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "canceled",
       "kind": "page",
       "linkedRefs": 1,
       "name": "canceled",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "doing",
       "kind": "page",
       "linkedRefs": 1,
       "name": "doing",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "done",
       "kind": "page",
       "linkedRefs": 1,
       "name": "done",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "later",
       "kind": "page",
       "linkedRefs": 1,
       "name": "later",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "now",
       "kind": "page",
       "linkedRefs": 1,
       "name": "now",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "p",
       "kind": "page",
       "linkedRefs": 0,
       "name": "p",
-      "owner": "pages/p.md"
+      "owner": "pages/p.md",
+      "parent": null
     },
     {
       "key": "todo",
       "kind": "page",
       "linkedRefs": 2,
       "name": "todo",
-      "owner": "pages/todo.md"
+      "owner": "pages/todo.md",
+      "parent": null
     },
     {
       "key": "waiting",
       "kind": "page",
       "linkedRefs": 1,
       "name": "waiting",
-      "owner": null
+      "owner": null,
+      "parent": null
     }
   ],
   "spellings": {

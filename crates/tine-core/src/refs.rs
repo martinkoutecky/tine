@@ -28,14 +28,23 @@ pub fn normalize(name: &str) -> String {
 /// them, not for `mailto:`, `file:` or an unknown scheme). Every consumer of
 /// "which namespace pages does this name give" asks this, through
 /// [`namespace_refs`]: a page's namespace parents, Linked References' namespace
-/// closure, the queries' namespace closure. The URL parse runs only for a name
-/// with both `/` and `:`.
+/// closure, the queries' namespace closure; and directly the rename's moved
+/// subtree and own-child guard (model round 10, S15) and the inventory wire's
+/// `not_namespace` flag the namespace views read. The URL parse runs only for
+/// a name with both `/` and `:`.
 pub fn is_namespace_name(name: &str) -> bool {
     name.contains('/')
         && !name.starts_with("../")
         && !name.starts_with("./")
-        && !(name.contains(':')
-            && url::Url::parse(name).is_ok_and(|parsed| parsed.origin().is_tuple()))
+        && !url_has_origin(name)
+}
+
+/// OG `gp-util/url?` (`util.cljs:82`): `name` parses as a WHATWG URL whose
+/// origin is not opaque (`"null"`). Only [`is_namespace_name`] asks it (and the
+/// conformance harness, which hands it to the model as `urlHasOrigin`). Cheap
+/// for a name without `:` (no parse).
+pub fn url_has_origin(name: &str) -> bool {
+    name.contains(':') && url::Url::parse(name).is_ok_and(|parsed| parsed.origin().is_tuple())
 }
 
 /// OG's page-reference closure: the name and each nonempty namespace ancestor

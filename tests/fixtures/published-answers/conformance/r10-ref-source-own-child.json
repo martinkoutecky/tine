@@ -1,0 +1,93 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "kb",
+        "name": "kb",
+        "target": {
+          "id": "pages/kb.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "kb/x",
+        "name": "kb/x",
+        "target": {
+          "id": "pages/kb%2Fx.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "kb/x",
+      "path": "pages/kb%2Fx.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Oct 26th, 2026",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 26th, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "kb/x",
+      "path": "pages/kb%2Fx.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "kb/x"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

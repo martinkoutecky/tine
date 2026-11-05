@@ -60,6 +60,12 @@ pub struct PageInventoryEntryWire {
     /// it too (`InventoryEntry::empty_alias`). Sent only when true.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub empty_alias: bool,
+    /// The name has a `/` but is no namespace name (`./x`, `../x/y`, a URL
+    /// with an origin: `refs::is_namespace_name`, model round 10 S15), so no
+    /// namespace view splits or nests it. Sent only when true; the views read
+    /// it and test no spelling themselves.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub not_namespace: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,6 +88,7 @@ pub fn entry_wire(entry: &InventoryEntry) -> PageInventoryEntryWire {
         }),
         namespace_parent: entry.namespace_parent,
         empty_alias: entry.empty_alias,
+        not_namespace: entry.name.contains('/') && !tine_core::refs::is_namespace_name(&entry.name),
     }
 }
 
