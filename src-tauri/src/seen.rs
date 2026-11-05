@@ -184,6 +184,7 @@ mod tests {
     #[test]
     fn seen_record_is_dropped_by_tine_rename_merge_and_delete() {
         let commands = include_str!("commands.rs");
+        let rename = include_str!("commands/rename.rs");
         let pages = include_str!("page_commands.rs");
         let body = |source: &'static str, name: &str| {
             let start = source
@@ -192,7 +193,7 @@ mod tests {
             let tail = &source[start..];
             &tail[..tail.find("\n}\n").unwrap()]
         };
-        assert!(body(commands, "rename_page").contains("crate::seen::page_renamed(&app, &slot"));
+        assert!(body(rename, "rename_page").contains("crate::seen::page_renamed(&app, &slot"));
         let renamed = &include_str!("seen.rs")[include_str!("seen.rs")
             .find("pub(crate) fn page_renamed")
             .unwrap()..];

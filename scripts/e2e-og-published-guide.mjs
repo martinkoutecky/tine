@@ -33,7 +33,9 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${origin}/#/page/${queryFixture ? "Selected%20tasks" : "Features%2FQueries"}`);
-  await page.getByText(queryFixture ? "Selected tasks" : "A query in action").first().waitFor();
+  // The visible match: a parent block's text also renders, hidden until it
+  // sticks, in its sticky-ancestor label (StickyAncestor.tsx, GH #643).
+  await page.getByText(queryFixture ? "Selected tasks" : "A query in action").filter({ visible: true }).first().waitFor();
   assert.equal(new URL(page.url()).pathname, "/app/");
   assert.match(await page.locator("body").innerText(), queryFixture ? /Ship the M0 vertical slice/ : /Every open task in this graph/);
   assert.equal(await page.locator(".new-page-btn:visible").count(), 0);

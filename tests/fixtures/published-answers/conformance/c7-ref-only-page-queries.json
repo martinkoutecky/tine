@@ -1,0 +1,95 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "A",
+        "target": {
+          "id": "pages/A.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "b",
+        "name": "B",
+        "target": {
+          "id": "pages/B.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "proj",
+        "name": "proj",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/proj.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "proj/sub",
+        "name": "proj/sub",
+        "target": {
+          "id": "pages/proj%2Fsub.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "todo",
+        "name": "TODO",
+        "target": {
+          "id": "pages/TODO.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "A",
+      "path": "pages/A.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "A",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "A",
+      "path": "pages/A.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "A"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

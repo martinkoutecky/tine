@@ -144,21 +144,24 @@
       "kind": "page",
       "linkedRefs": 1,
       "name": "Custom Name",
-      "owner": "pages/custom.md"
+      "owner": "pages/custom.md",
+      "parent": null
     },
     {
       "key": "linker",
       "kind": "page",
       "linkedRefs": 0,
       "name": "linker",
-      "owner": "pages/linker.md"
+      "owner": "pages/linker.md",
+      "parent": null
     },
     {
       "key": "shown title",
       "kind": "page",
       "linkedRefs": 1,
       "name": "Shown Title",
-      "owner": "pages/stem-name.md"
+      "owner": "pages/stem-name.md",
+      "parent": null
     }
   ],
   "spellings": {

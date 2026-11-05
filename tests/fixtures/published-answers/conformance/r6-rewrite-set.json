@@ -1,0 +1,126 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [],
+        "name": "Tasks",
+        "pages": [
+          "ref"
+        ]
+      },
+      {
+        "aliases": [],
+        "name": "ref",
+        "pages": [
+          "Tasks"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "A",
+        "target": {
+          "id": "pages/A.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ref",
+        "name": "ref",
+        "target": {
+          "id": "pages/ref.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "rel",
+        "name": "rel",
+        "target": {
+          "id": "pages/rel.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "tasks",
+        "name": "Tasks",
+        "target": {
+          "id": "pages/Tasks.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "todo",
+        "name": "TODO",
+        "target": {
+          "id": "pages/TODO.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Tasks",
+      "path": "pages/Tasks.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "ref",
+      "path": "pages/ref.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Tasks",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Tasks",
+      "path": "pages/Tasks.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Tasks"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "ref",
+      "path": "pages/ref.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "ref"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

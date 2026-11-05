@@ -335,7 +335,7 @@ mutations = ".publish=1, .write=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/publish_query.rs"
-fn = "publish_query_with_sheets"
+fn = "publish_query_with_sheets_in"
 domain = "graph"
 guard = "crates/tine-store/src/publish.rs#Store::publish_site_at"
 test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"
@@ -350,8 +350,38 @@ domain = "scratch"
 guard = ""
 test = ""
 oracle = false
-note = "Builds a private temporary graph/archive for sharing; a crash leaves disposable scratch output."
-mutations = ".write_all=1, fs::create_dir_all=2, fs::write=2"
+note = "In-memory gzip of the share document; the private build graph is with_build_graph's."
+mutations = ".write_all=1"
+
+[[site]]
+file = "crates/tine-graph-features/src/build_graph.rs"
+fn = "build_and_answer"
+domain = "scratch"
+guard = ""
+test = "crates/tine-graph-features/tests/published_answers.rs#answers_are_closed_by_the_exported_documents"
+oracle = false
+note = "Private temporary build graph of the exported pages plus logseq/config.edn (quick share and the static export, CM step 2 Q13), in a tempdir that with_build_graph removes before return (a removal failure is reported as an export error); a crash leaves disposable scratch output. Moved from quick_share.rs::prepare."
+mutations = "fs::create_dir_all=2, fs::write=2"
+
+[[site]]
+file = "src-tauri/src/commands/query_export.rs"
+fn = "publish_live"
+domain = "scratch"
+guard = ""
+test = ""
+oracle = false
+note = "Creates the app cache directory that holds the static export's private build graph (with_build_graph). Not the graph and not the output."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/commands/query_export.rs"
+fn = "publish_query"
+domain = "scratch"
+guard = ""
+test = ""
+oracle = false
+note = "Creates the app cache directory that holds the query export's private build graph (with_build_graph). Not the graph and not the output."
+mutations = "fs::create_dir_all=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"

@@ -1,0 +1,108 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "custom name",
+        "name": "Custom Name",
+        "target": {
+          "id": "pages/custom.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "linker",
+        "name": "linker",
+        "target": {
+          "id": "pages/linker.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "shown title",
+        "name": "Shown Title",
+        "target": {
+          "id": "pages/stem-name.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Custom Name",
+      "path": "pages/custom.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Shown Title",
+      "path": "pages/stem-name.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "linker",
+      "path": "pages/linker.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Custom Name",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Custom Name",
+      "path": "pages/custom.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Custom Name"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Shown Title",
+      "path": "pages/stem-name.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Shown Title"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "linker",
+      "path": "pages/linker.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "linker"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

@@ -1,0 +1,203 @@
+{
+  "backlinks": {
+    "cc": [],
+    "https:": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "423f96dd-79db-8ba1-8688-ec9a1235bd6d",
+            "raw": "[[https://a.b/c]] [[https:]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "cc"
+      }
+    ],
+    "https://a.b/c": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "423f96dd-79db-8ba1-8688-ec9a1235bd6d",
+            "raw": "[[https://a.b/c]] [[https:]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "cc"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/cc.md",
+        0
+      ],
+      [
+        "pages/url.md",
+        1
+      ],
+      [
+        "pages/scheme.md",
+        1
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "cc",
+      "name": "cc",
+      "target": {
+        "id": "pages/cc.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "https:",
+      "name": "https:",
+      "target": {
+        "id": "pages/scheme.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "https://a.b/c",
+      "name": "https://a.b/c",
+      "not_namespace": true,
+      "target": {
+        "id": "pages/url.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "cc": "cc",
+    "https:": "https:",
+    "https://a.b/c": "https://a.b/c"
+  },
+  "open": {
+    "cc": {
+      "journal": [
+        "journal",
+        "cc"
+      ],
+      "page": [
+        "page",
+        "cc"
+      ]
+    },
+    "https:": {
+      "journal": [
+        "journal",
+        "https:"
+      ],
+      "page": [
+        "page",
+        "https:"
+      ]
+    },
+    "https://a.b/c": {
+      "journal": [
+        "journal",
+        "https://a.b/c"
+      ],
+      "page": [
+        "page",
+        "https://a.b/c"
+      ]
+    }
+  },
+  "owner": {
+    "cc": {
+      "journal": null,
+      "page": "pages/cc.md"
+    },
+    "https:": {
+      "journal": null,
+      "page": "pages/scheme.md"
+    },
+    "https://a.b/c": {
+      "journal": null,
+      "page": "pages/url.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "cc",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "cc",
+      "owner": "pages/cc.md",
+      "parent": null
+    },
+    {
+      "key": "https:",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "https:",
+      "owner": "pages/scheme.md",
+      "parent": null
+    },
+    {
+      "key": "https://a.b/c",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "https://a.b/c",
+      "owner": "pages/url.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "cc": {
+      "backend": [
+        "page",
+        "cc"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "cc"
+      ]
+    },
+    "https:": {
+      "backend": [
+        "page",
+        "https:"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "https:"
+      ]
+    },
+    "https://a.b/c": {
+      "backend": [
+        "page",
+        "https://a.b/c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "https://a.b/c"
+      ]
+    }
+  }
+}

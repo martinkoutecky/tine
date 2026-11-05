@@ -902,6 +902,9 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
     "crates/tine-graph-features/src/pages_rename_plan.rs",
+    // `pages::rename_page_as`, the rename's census-writer entry, split out
+    // of pages.rs along the size-ratchet seam (`#[path]` child of `pages`).
+    "crates/tine-graph-features/src/pages_rename_offer.rs",
     "crates/tine-graph-features/src/conflicts.rs",
     "crates/tine-graph-features/src/journals.rs",
     "crates/tine-graph-features/src/pdf.rs",

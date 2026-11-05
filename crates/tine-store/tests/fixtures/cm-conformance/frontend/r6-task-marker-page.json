@@ -188,28 +188,32 @@
       "kind": "page",
       "linkedRefs": 1,
       "name": "A",
-      "owner": "pages/A.md"
+      "owner": "pages/A.md",
+      "parent": null
     },
     {
       "key": "a]",
       "kind": "page",
       "linkedRefs": 1,
       "name": "a]",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "p",
       "kind": "page",
       "linkedRefs": 0,
       "name": "p",
-      "owner": "pages/p.md"
+      "owner": "pages/p.md",
+      "parent": null
     },
     {
       "key": "todo",
       "kind": "page",
       "linkedRefs": 1,
       "name": "todo",
-      "owner": null
+      "owner": null,
+      "parent": null
     }
   ],
   "spellings": {

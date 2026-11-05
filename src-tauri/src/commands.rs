@@ -317,6 +317,8 @@ pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifie
 
 mod journals_feed;
 pub(crate) use journals_feed::*;
+mod rename;
+pub(crate) use rename::*;
 #[tauri::command]
 pub(crate) async fn get_page(
     name: String,
@@ -564,55 +566,19 @@ pub(crate) async fn block_referrers(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
-pub(crate) async fn rename_page(
-    old: String,
-    new: String,
-    expected_path: Option<String>,
-    merge_into: Option<String>,
-    unsaved_paths: Option<Vec<String>>,
-    app: tauri::AppHandle,
-    state: GraphContext<'_>,
-) -> Result<tine_graph_features::pages::RenameReport, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        // A rename is the page host's (STEP3 §7): a revoked slot is the
-        // stale-binding refusal, an off one refuses with no write. One
-        // statement-temporary guard (A-K3, `host_slot_guard_tests.rs`).
-        // On a git graph that autocommits, bracketed by commits (ADR 0078).
-        crate::git_settings::around(
-            &slot.root_key,
-            || match &merge_into {
-                Some(_) => format!("Merge page \"{old}\" into \"{new}\""),
-                None => format!("Rename page \"{old}\" to \"{new}\""),
-            },
-            || {
-                tine_graph_features::pages::rename_or_merge_page(
-                    &slot.store,
-                    slot.host_slot()?.running()?,
-                    &old,
-                    &new,
-                    expected_path.as_deref(),
-                    merge_into.as_deref(),
-                    unsaved_paths.as_deref().unwrap_or_default(),
-                )
-                .map_err(|e| e.to_string())
-            },
-        )
-        .inspect(|report| crate::seen::page_renamed(&app, &slot, &old, report))
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
 #[cfg(test)]
 mod graph_wide_command_boundary_tests {
     #[test]
     fn expensive_reference_and_rename_commands_cross_the_blocking_pool() {
-        let source = include_str!("commands.rs");
+        let source = [
+            include_str!("commands.rs"),
+            include_str!("commands/rename.rs"),
+        ]
+        .concat();
         for name in [
             "get_backlinks",
             "get_unlinked_refs",
+            "rename_offer",
             "rename_page",
             "merge_pages",
             "rename_file_to_page",

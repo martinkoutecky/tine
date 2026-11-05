@@ -4,7 +4,7 @@ import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
-import { absentLinkIsJournal } from "./journal";
+import { linkTargetIn, ownerPath, type LinkDestination } from "./inventoryRows";
 import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
@@ -283,38 +283,17 @@ export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedP
   return (kind === "journal" ? current?.journals : current?.pages)?.get(pageIdentityKey(name))?.target;
 }
 
-/** The file a resolved name opens: the claimant order's owner for
- *  `existing` (its `id`), the page an alias-only name opens for `alias` (the
- *  backend lists owners each once in relative-path order and the first is the
- *  owner, D-20261019-AL2/CI4), nothing for `absent`. The backend decides; this
- *  is the frontend's one reader of that answer (CM step 2, I-12; a guard test
- *  forbids reading `owners[0]` anywhere else). */
-export function ownerPath(
-  target: ResolvedPage | { readonly kind: "alias"; readonly owners: readonly string[] } | null | undefined,
-): string | undefined {
-  if (target?.kind === "existing") return target.id;
-  if (target?.kind === "alias") return target.owners[0];
-  return undefined;
-}
+// The pure row readers live in `inventoryRows.ts`, shared with the published
+// site's answers; this module applies them to the one held inventory.
+export { ownerPath, type LinkDestination } from "./inventoryRows";
 
-/** Where a link or a named route goes: a page name and its kind. */
-export interface LinkDestination { readonly name: string; readonly kind: PageKind }
-
-/** What `[[name]]` opens. The store's answer (`WholeGraph::link_target`,
- *  carried as the inventory entry's `link`) for every name the inventory lists;
- *  a name it does not list (unsaved text, before the first load) is claimed by
- *  no file, alias or reference, so its answer is an absent page whose kind the
- *  Rust rule `JournalFormat::absent_link_is_journal` gives (through wasm). This
- *  module decides nothing itself. O(1), no IPC. */
+/** What `[[name]]` opens: `linkTargetIn` over the held inventory (the store's
+ *  `WholeGraph::link_target`, carried as the entry's `link`; a name the
+ *  inventory does not list answers as an absent page of the Rust-decided
+ *  kind). O(1), no IPC. */
 export function linkTarget(name: string): LinkDestination {
   ensureInstalled();
-  const current = held();
-  const key = pageIdentityKey(name);
-  const page = current?.pages.get(key);
-  if (page) return page.link ?? { name: page.target.kind === "absent" ? name : page.name, kind: "page" };
-  const journal = current?.journals.get(key);
-  if (journal) return { name: journal.name, kind: "journal" };
-  return { name, kind: absentLinkIsJournal(name) ? "journal" : "page" };
+  return linkTargetIn(held(), name);
 }
 
 /** A named ordinary-page route (not a link): an alias opens what the store
@@ -362,6 +341,19 @@ export function referenceOnlyPages(): PageEntry[] {
 /** Physical, alias and reference-only page names (`[]` until loaded). */
 export function allPageNames(): string[] {
   return ensureInstalled().allPageNames();
+}
+
+/** Whether `name` is a namespace name, as the store answers it (Logseq's
+ *  `namespace-page?`, `refs::is_namespace_name`; model round 10, S15): it
+ *  contains `/` and its inventory entry carries no `not_namespace`. A name the
+ *  inventory does not list (none loaded yet) counts by its `/` alone. `key` is
+ *  `pageIdentityKey(name)` when the caller already has it. O(1). */
+export function isNamespaceName(name: string, key?: string): boolean {
+  if (!name.includes("/")) return false;
+  const current = held();
+  if (!current) return true;
+  const k = key ?? pageIdentityKey(name);
+  return !(current.pages.get(k) ?? current.journals.get(k))?.not_namespace;
 }
 
 const keysOfNames = new WeakMap<readonly string[], readonly string[]>();

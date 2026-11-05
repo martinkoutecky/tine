@@ -54,7 +54,8 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "a",
-      "owner": "pages/a.md"
+      "owner": "pages/a.md",
+      "parent": null
     }
   ],
   "spellings": {

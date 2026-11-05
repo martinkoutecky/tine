@@ -128,10 +128,14 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // Plus the private writer (create_new owner-only temporary + write_all, then fsync + rename) of the two quick
   // share records, the only caller (src-tauri/src/quick_share/records.rs via device_io::atomic_write_private).
   "crates/tine-store/src/atomic_file.rs": { sites: 3, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm. +2: atomic_write_private, Martin 2026-10-18 D-20261018-Q1 S1; docs/adr/0076" },
-  // Not a persisted format: the share's private build graph, a copy of the selected pages and config.edn in a
-  // tempdir under app cache that is removed before prepare returns (DESIGN §3.1), plus the in-memory gzip of the
-  // share document. Martin 2026-10-18 D-20261018-Q1 S1; docs/adr/0076.
-  "crates/tine-graph-features/src/quick_share.rs": { sites: 3, approval: "Martin 2026-10-18 D-20261018-Q1 S1 (scratch build graph removed before prepare returns, in-memory gzip); docs/adr/0076" },
+  // Not a persisted format: the in-memory gzip of the share document. Martin 2026-10-18 D-20261018-Q1 S1;
+  // docs/adr/0076.
+  "crates/tine-graph-features/src/quick_share.rs": { sites: 1, approval: "Martin 2026-10-18 D-20261018-Q1 S1 (in-memory gzip); docs/adr/0076" },
+  // Not a persisted format: the private build graph, a copy of the exported pages and config.edn in a tempdir
+  // under app cache that is removed before the export returns (quick share DESIGN §3.1). Moved here unchanged
+  // from quick_share.rs (2 of its 3 sites) so the static export answers from the same graph (CM step 2, Q13;
+  // docs/contracts/quick-share.md, "Published answers").
+  "crates/tine-graph-features/src/build_graph.rs": { sites: 2, approval: "Martin 2026-10-18 D-20261018-Q1 S1 (scratch build graph removed before the export returns), moved from quick_share.rs; docs/adr/0076" },
   // Bench-only NDJSON event log: written only when TINE_BENCH_EVENTS names a
   // path, never read back by Tine, absent in normal use (docs/bench-storage-ab.md
   // on og-storage-perf-ab). Not a persisted format.

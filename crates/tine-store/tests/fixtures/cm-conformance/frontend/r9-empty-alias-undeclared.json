@@ -99,14 +99,16 @@
       "kind": "page",
       "linkedRefs": 1,
       "name": "ML",
-      "owner": "pages/ML.md"
+      "owner": "pages/ML.md",
+      "parent": null
     },
     {
       "key": "notes",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     }
   ],
   "spellings": {

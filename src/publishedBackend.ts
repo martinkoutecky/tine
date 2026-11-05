@@ -24,6 +24,7 @@ import { searchSubstringSpans } from "./editor/searchQuery";
 import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
 import { setQuickSharePrefix } from "./publishedPermalink";
+import { admitPublishedAnswers, publishedAnswerer } from "./publishedAnswers";
 import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
@@ -70,6 +71,9 @@ export interface PublishedSnapshot {
   aliases: [string, string][];
   icons: Record<string, string>;
   queries: PublishedQuery[];
+  /** The Rust name answers (`publishedAnswers.ts`); absent in snapshots
+   *  written before them, which the legacy upgrade answers. */
+  answers?: unknown;
 }
 
 /** The snapshot's relative URL when this document is a published export, else null. */
@@ -176,6 +180,9 @@ export function validateSnapshot(snapshot: PublishedSnapshot): void {
   for (const key of ["name", "home", "pages", "entries", "backlinks", "block_ref_counts", "aliases", "icons", "queries"] as const) {
     if (!(key in snapshot)) throw new Error(`snapshot lacks ${key}`);
   }
+  // A recognized `answers` is admitted field by field; damaged is refused,
+  // never read as a legacy snapshot (`DamagedAnswersError`).
+  admitPublishedAnswers(snapshot);
 }
 
 /** Admission bound for served JSON and query keys. Iterative O(JSON nodes),
@@ -299,13 +306,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   let activationSeq = 0;
   const unsubscribed = async () => () => {};
 
-  const pageByName = (snapshot: PublishedSnapshot, name: string): PublishedPage | null => {
-    const wanted = pageIdentityKey(name);
-    const direct = snapshot.pages.find((page) => pageIdentityKey(page.name) === wanted);
-    if (direct) return direct;
-    const alias = snapshot.aliases.find(([from]) => pageIdentityKey(from) === wanted);
-    return alias ? snapshot.pages.find((page) => pageIdentityKey(page.name) === pageIdentityKey(alias[1])) ?? null : null;
-  };
+  // Every name question is a lookup in the snapshot's answers
+  // (`publishedAnswers.ts`): Rust's tables, or the declared legacy upgrade.
+  const answersOf = async () => publishedAnswerer(await load());
   const walk = (blocks: BlockDto[], visit: (block: BlockDto, ancestors: string[]) => void, ancestors: string[] = []) => {
     for (const block of blocks) {
       visit(block, ancestors);
@@ -364,6 +367,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       .map((entry) => structuredClone(entry));
   };
   const backlinkGroups = (snapshot: PublishedSnapshot, name: string): RefGroup[] => {
+    name = publishedAnswerer(snapshot).backlinksName(name);
     const exact = snapshot.backlinks[name];
     if (exact) return exact;
     const wanted = pageIdentityKey(name);
@@ -409,6 +413,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     // ---- graph identity ----
     async loadGraph(): Promise<LoadGraphResult> {
       const snapshot = await load();
+      const formats = publishedAnswerer(snapshot).journalFormats();
       return {
         kind: "loaded",
         binding_generation: 1,
@@ -423,8 +428,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           default_journal_template: null,
           default_home: snapshot.home,
           favorites: [],
-          journal_page_title_format: "MMM do, yyyy",
-          journal_file_name_format: "yyyy_MM_dd",
+          journal_page_title_format: formats.title_format,
+          journal_file_name_format: formats.file_name_format,
           preferred_format: "md",
           macros: {},
           enable_timetracking: true,
@@ -447,12 +452,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     // ---- pages ----
     async pageInventory() {
-      const entries = (await load()).entries.map((entry) => ({
-        key: pageIdentityKey(entry.name), name: entry.name,
-        is_journal: entry.kind === "journal", day: entry.date_key,
-        target: { kind: "existing" as const, id: entry.path, others: [] },
-      }));
-      return { rev: "0", entries, unreadable: [] };
+      return { rev: "0", entries: structuredClone((await answersOf()).inventory()), unreadable: [] };
     },
     // A published export carries no file times: the Updated column shows dashes.
     async pageModified() {
@@ -460,21 +460,14 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], []]; },
     async resolvePage(name: string, kind: "journal" | "page") {
-      const snapshot = await load();
-      const page = pageByName(snapshot, name);
-      return page && page.kind === kind
-        ? { kind: "existing" as const, id: page.path, others: [] }
-        : { kind: "absent" as const, id: "" };
+      return structuredClone((await answersOf()).resolve(name, kind));
     },
-    // A snapshot carries no alias relation: the page header shows the page's
-    // own declared names, sorted by the snapshot's inventory.
-    async pageAliasGroup() {
-      return { aliases: [], pages: [] };
+    async pageAliasGroup(name: string) {
+      return (await answersOf()).aliasGroup(name);
     },
     async getPage(name: string, kind: "journal" | "page") {
-      const snapshot = await load();
-      const page = pageByName(snapshot, name);
-      if (!page || page.kind !== kind) return null;
+      const page = (await answersOf()).page(name, kind);
+      if (!page) return null;
       return { ...structuredClone(page), id: page.path } satisfies PageRead;
     },
     async getPageByPath(path: string) {
@@ -492,7 +485,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
         .sort((a, b) => (b.date_key as number) - (a.date_key as number));
       const rows = candidates.slice(0, limit);
       const pages = rows
-        .map((entry) => pageByName(snapshot, entry.name))
+        .map((entry) => publishedAnswerer(snapshot).feedPage(entry))
         .filter((page): page is PublishedPage => page !== null)
         .map((page) => ({ ...structuredClone(page), id: page.path } satisfies PageRead));
       const done = rows.length === candidates.length;
@@ -504,10 +497,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       };
     },
     async journalContentDays() {
-      const snapshot = await load();
-      return snapshot.entries
-        .filter((entry) => entry.kind === "journal" && entry.date_key !== null)
-        .map((entry) => entry.date_key as number);
+      return (await answersOf()).journalContentDays();
     },
     async pageIcons(names: string[]) {
       const snapshot = await load();

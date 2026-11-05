@@ -988,6 +988,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async renamePage(): Promise<import("./types").RenameDone> {
       return { outcome: "unchanged", touched: [] }; // no-op in mock
     },
+    async renameOffer(): Promise<import("./types").RenameOffer> {
+      return { kind: "rename" }; // the mock renames nothing (renamePage above)
+    },
     async renameWouldChange(old: string, _next: string, texts: import("./types").RenameProbeText[]): Promise<boolean[]> {
       // The mock has no rename answer to ask: any text spelling the name may
       // change (over-approximate, so a stuck page refuses rather than loses).

@@ -384,7 +384,7 @@ pub(super) fn execute_pages(
     );
     // The resident referenced-name table answers; only the editing block's
     // page is re-read for its baseline (cost-model audit 2026-11-02, row 2a).
-    for name in if include_names {
+    let referenced_names = if include_names {
         graph.referenced_names_for_completion(
             plan.editor_reference_baseline
                 .as_ref()
@@ -392,7 +392,21 @@ pub(super) fn execute_pages(
         )
     } else {
         Vec::new()
-    } {
+    };
+    // Namespace parents are pages too (OG's page search lists them; the one
+    // answerer is `model::namespace_parents`), offered beside the referenced
+    // names. They follow the baseline-adjusted names the editor sees.
+    let parents = if include_names {
+        graph
+            .completion_namespace_parents(&file_pages, &referenced_names)
+            .into_iter()
+            .map(|name| std::borrow::Cow::Owned(name.to_owned()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let parents: Vec<std::borrow::Cow<'_, str>> = parents;
+    for name in parents.into_iter().chain(referenced_names) {
         if cancelled() {
             return None;
         }

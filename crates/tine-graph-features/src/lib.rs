@@ -5,11 +5,13 @@
 //! Callers need no graph path, lock, cache state, or write protocol.
 
 pub mod assets;
+mod build_graph;
 pub mod config;
 pub mod conflicts;
 pub mod custom_css;
 pub mod graph_verification;
 pub mod guide;
+pub mod inventory_wire;
 pub mod journals;
 pub mod live_conflict;
 mod macro_budget;
@@ -19,6 +21,7 @@ pub mod pdf;
 pub mod print;
 pub mod publish;
 pub mod publish_query;
+mod published_answers;
 pub mod quick_share;
 mod render;
 mod render_query_cache;

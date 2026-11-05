@@ -694,6 +694,23 @@
       ],
       "stability": "burn-in"
     },
+    "scripts/e2e-cm-ns-completion.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With a block naming Work/Plan, typing [[Wor in an editing block offers the page Work (a namespace parent no file or link names itself) once, beside Work/Plan, and choosing it inserts [[Work]]; a block naming ./rel/x, ../up/y and https://a.b/c makes no page named . or .. or https: appear, neither in the [[ popup nor in All pages, and All pages lists Work; offering a parent writes no file. The sidebar Namespaces tree shows Work with Plan below it and nothing else, the Namespaces view lists exactly Work and Work/Plan, the page Work/Plan shows its Hierarchy section and namespace crumb, and the page ./rel/x shows neither (a relative path or a URL is no namespace name, as in Logseq).",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Popup row order, refresh latency and layout may vary while the offered names and the inserted text are as stated."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-counts-refonly.mjs": {
       "contracts": [
         {
@@ -1354,6 +1371,15 @@
       ],
       "acceptableVariations": ["Palette ranking, selection highlight, save latency and where the caret sits when the key is pressed."],
       "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK; the CM6 editor, which the render-level tests cover."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-cm-merge-rules.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Renaming a page through its title to a name that is only another page's alias (ML notes to ML, where Machine Learning has alias:: ML) opens Tine's own dialog with three choices: Merge into “Machine Learning”, Make “ML” its own page (still an alias of “Machine Learning”), and Cancel. Cancel changes no file. Making it its own page moves the page to pages/ML.md, rewrites [[ML notes]] to [[ML]], leaves Machine Learning's file byte-identical (alias:: ML stays), opens the renamed page, and a block linking [[ML]] still shows in Machine Learning's Linked References.","blocking":true,"authority":"D-20261102-MC5 (M-Q5); CM step 2 batch 12 (divergence R4)"},
+        {"class":"exact-safety-interoperability","userOutcome":"Renaming Foo to Foo/bar, where Foo/bar is already a page, is refused: an error toast says that Foo/bar is already a page or an alias inside Foo, no choice dialog opens, and every page and journal file is byte-identical.","blocking":true,"authority":"M-Q6; D-20261103-CMA (CM-OWN-CHILD); CM step 2 batch 12 (divergence R12)"}
+      ],
+      "acceptableVariations": ["Dialog styling, toast timing and the rendered layout of Linked References may vary while the choices, the message and the files are as stated."],
+      "nonRequirements": ["The merge choice's file outcome (covered by crates/tine-graph-features/tests/cm_merge_rules.rs).", "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run."],
       "stability":"burn-in"
     }
   }

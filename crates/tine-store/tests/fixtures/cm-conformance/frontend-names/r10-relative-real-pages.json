@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": ".",
+      "path": "pages/dot.md",
+      "preBlock": "title:: .",
+      "title": "."
+    },
+    {
+      "format": "md",
+      "name": "./x",
+      "path": "pages/dotx.md",
+      "preBlock": "title:: ./x",
+      "title": "./x"
+    }
+  ],
+  "links": []
+}

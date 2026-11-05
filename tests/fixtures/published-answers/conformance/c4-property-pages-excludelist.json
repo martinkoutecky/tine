@@ -1,0 +1,64 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "a",
+        "target": {
+          "id": "pages/a.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "public-key",
+        "name": "public-key",
+        "target": {
+          "id": "pages/public-key.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "a",
+      "path": "pages/a.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "a",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "a",
+      "path": "pages/a.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "a"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

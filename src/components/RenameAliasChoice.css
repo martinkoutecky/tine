@@ -1,0 +1,25 @@
+/* Above page content and menus, like the graph chooser below Welcome. */
+.tine-rename-alias-overlay { z-index: 9050; }
+.tine-rename-alias-choice {
+  padding: 24px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 12px;
+  width: min(560px, 100%);
+  max-height: 70vh;
+  overflow: auto;
+  box-sizing: border-box;
+}
+.tine-rename-alias-choice button {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.tine-rename-alias-choice button:hover { background: var(--bg-tertiary); }
+.tine-rename-alias-choice button:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }

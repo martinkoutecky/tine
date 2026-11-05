@@ -66,6 +66,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         include_str!("identity_follow.rs"),
         include_str!("rename_would_change.rs"),
         include_str!("commands/concord.rs"),
+        include_str!("commands/rename.rs"),
         include_str!("backup.rs"),
         include_str!("backup/restore.rs"),
         include_str!("settings.rs"),

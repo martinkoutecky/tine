@@ -175,6 +175,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "deletePage",
   "renamePage",
   "renameWouldChange",
+  "renameOffer",
   "revealExport",
   "readCssFile",
   "saveCssFile",

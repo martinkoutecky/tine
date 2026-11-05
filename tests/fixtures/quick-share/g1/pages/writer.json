@@ -8,6 +8,191 @@
         "Project"
       ]
     ],
+    "answers": {
+      "alias_groups": [
+        {
+          "aliases": [
+            "Proj"
+          ],
+          "name": "Project",
+          "pages": []
+        }
+      ],
+      "inventory": [
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "a.b",
+          "name": "a.b",
+          "target": {
+            "id": "pages/a.b.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "dashboard",
+          "name": "Dashboard",
+          "target": {
+            "id": "pages/Dashboard.md",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "description",
+          "name": "description",
+          "target": {
+            "id": "pages/description.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "dup",
+          "name": "dup",
+          "target": {
+            "id": "pages/dup.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "empty",
+          "name": "Empty",
+          "target": {
+            "id": "pages/Empty.md",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "fixture share",
+          "name": "Fixture share",
+          "target": {
+            "id": "",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "notes ü",
+          "name": "Notes ü",
+          "target": {
+            "id": "pages/Notes ü.md",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": 20261017,
+          "is_journal": true,
+          "key": "oct 17th, 2026",
+          "name": "Oct 17th, 2026",
+          "target": {
+            "id": "journals/2026_10_17.md",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "org page",
+          "name": "Org page",
+          "target": {
+            "id": "pages/Org page.org",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "proj",
+          "link": {
+            "kind": "page",
+            "name": "Project"
+          },
+          "name": "Proj",
+          "target": {
+            "kind": "alias",
+            "owners": [
+              "pages/Project.md"
+            ]
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "project",
+          "name": "Project",
+          "target": {
+            "id": "pages/Project.md",
+            "kind": "existing",
+            "others": []
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "related",
+          "name": "related",
+          "target": {
+            "id": "pages/related.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "status",
+          "name": "status",
+          "target": {
+            "id": "pages/status.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "todo",
+          "name": "TODO",
+          "target": {
+            "id": "pages/TODO.md",
+            "kind": "absent"
+          }
+        },
+        {
+          "day": null,
+          "is_journal": false,
+          "key": "type",
+          "name": "type",
+          "target": {
+            "id": "pages/type.md",
+            "kind": "absent"
+          }
+        }
+      ],
+      "journals": {
+        "content_days": [
+          20261017
+        ],
+        "file_name_format": "yyyy_MM_dd",
+        "title_format": "MMM do, yyyy"
+      },
+      "resolve": [],
+      "v": 1
+    },
     "backlinks": {
       "Notes ü": [
         {

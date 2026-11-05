@@ -1,0 +1,149 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [],
+        "name": "Launch",
+        "pages": [
+          "Oct 26th, 2026"
+        ]
+      },
+      {
+        "aliases": [],
+        "name": "Oct 26th, 2026",
+        "pages": [
+          "Launch"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026-10-26",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 26th, 2026"
+        },
+        "name": "2026-10-26",
+        "target": {
+          "id": "pages/2026-10-26.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "launch",
+        "name": "Launch",
+        "target": {
+          "id": "pages/Launch.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "n",
+        "name": "n",
+        "target": {
+          "id": "pages/n.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026-10-26",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Launch",
+      "path": "pages/Launch.md"
+    },
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "n",
+      "path": "pages/n.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Launch",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Launch",
+      "path": "pages/Launch.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Launch"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 26th, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "n",
+      "path": "pages/n.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "n"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

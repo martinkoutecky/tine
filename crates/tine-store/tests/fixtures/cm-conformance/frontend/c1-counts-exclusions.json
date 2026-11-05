@@ -278,35 +278,40 @@
       "kind": "journal",
       "linkedRefs": 0,
       "name": "Oct 26th, 2026",
-      "owner": "journals/2026_10_26.md"
+      "owner": "journals/2026_10_26.md",
+      "parent": null
     },
     {
       "key": "favs",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Favs",
-      "owner": "pages/Favs.md"
+      "owner": "pages/Favs.md",
+      "parent": null
     },
     {
       "key": "hub",
       "kind": "page",
       "linkedRefs": 6,
       "name": "Hub",
-      "owner": "pages/Hub.md"
+      "owner": "pages/Hub.md",
+      "parent": null
     },
     {
       "key": "topic",
       "kind": "page",
       "linkedRefs": 1,
       "name": "topic",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "x",
       "kind": "page",
       "linkedRefs": 0,
       "name": "x",
-      "owner": "pages/x.md"
+      "owner": "pages/x.md",
+      "parent": null
     }
   ],
   "spellings": {

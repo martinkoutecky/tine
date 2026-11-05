@@ -1,0 +1,5 @@
+{
+ "files": {
+  "pages/Notes.md": "- [[./x]] [[../x/y]] [[https://a.b/c]]\n- [[a/b]]\n"
+ }
+}

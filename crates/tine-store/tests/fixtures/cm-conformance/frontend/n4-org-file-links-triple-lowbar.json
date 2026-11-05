@@ -219,35 +219,40 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "a.b",
-      "owner": "pages/a.b.org"
+      "owner": "pages/a.b.org",
+      "parent": null
     },
     {
       "key": "ab",
       "kind": "page",
       "linkedRefs": 1,
       "name": "ab",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "note",
       "kind": "page",
       "linkedRefs": 0,
       "name": "note",
-      "owner": "pages/note.org"
+      "owner": "pages/note.org",
+      "parent": null
     },
     {
       "key": "ten",
       "kind": "page",
       "linkedRefs": 1,
       "name": "ten",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "ten/child",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Ten/Child",
-      "owner": "pages/Ten___Child.org"
+      "owner": "pages/Ten___Child.org",
+      "parent": "ten"
     }
   ],
   "spellings": {

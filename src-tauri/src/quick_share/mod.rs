@@ -57,6 +57,22 @@ fn viewer_attested(proof: Option<&str>) -> bool {
     };
     let fixtures: &[(&str, &[u8])] = &[
         (
+            "answers/document.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/answers/document.json"),
+        ),
+        (
+            "answers/link.txt",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/answers/link.txt"),
+        ),
+        (
+            "answers/tine-share.bin",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/answers/tine-share.bin"),
+        ),
+        (
+            "answers/writer.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/answers/writer.json"),
+        ),
+        (
             "one-page/document.json",
             include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/document.json"),
         ),

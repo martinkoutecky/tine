@@ -73,7 +73,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
   const itself = label === "renamed page itself stuck";
   graph("Other");
   const { save, written } = await stuckDisk(itself ? "Old" : "Other", family);
-  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({
     outcome: "renamed",
     touched: [{ path: "pages/Old.md", moved: true }, { path: "pages/Referrer.md", moved: false }],
@@ -117,7 +117,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
 
 it("a rename with every page saved sends no unsaved paths and keeps untouched pages", async () => {
   graph("Other");
-  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/Old.md", moved: true }] });
   const other = doc.byId.other;
   expect(await renameOrMergePage("Old", "New")).toBe("renamed");
@@ -129,7 +129,7 @@ it("a rename with every page saved sends no unsaved paths and keeps untouched pa
 
 it("a rewritten page that cannot be re-read leaves the working set instead of staying stale", async () => {
   graph("Other");
-  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
   vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/Referrer.md", moved: false }] });
   vi.spyOn(backend(), "getPageByPath").mockRejectedValue(new Error("io:NotFound"));
   expect(await renameOrMergePage("Old", "New")).toBe("renamed");
@@ -148,7 +148,7 @@ it("a rewritten page that cannot be re-read leaves the working set instead of st
 it.each([true, false])("a stuck page blocks a rename exactly when the rename would rewrite its text (answer %s)", async (changes) => {
   graph("Other");
   await stuckDisk("Other", "io:PermissionDenied");
-  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
   const asked = vi.spyOn(backend(), "renameWouldChange").mockResolvedValue([false, changes]);
   setDoc("pages", doc.pages.findIndex((loaded) => loaded.name === "Other"), "preBlock", "title:: Other");

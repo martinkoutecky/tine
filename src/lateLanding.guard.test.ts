@@ -151,7 +151,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "captureTarget", "bindCaptureGraph", "captureReceipt", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "pageBacklinkCounts", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage", "pageAliasGroup", "renameWouldChange",
+  "getPage", "resolvePage", "pageAliasGroup", "renameWouldChange", "renameOffer",
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.

@@ -1,0 +1,12 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "- #kb {{embed [[kb]]}}\n",
+    "pages/o.md": "alias:: ML\n\n- o\n"
+  },
+  "renames": [
+    {
+      "old": "kb",
+      "new": "ML"
+    }
+  ]
+}

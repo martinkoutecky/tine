@@ -119,8 +119,13 @@ pub enum TrashIf {
 /// without being rewritten. Code spans are not rewritten. Bracketed references
 /// inside `alias::`, `title::`, and query arguments are rewritten because the
 /// raw-text rewriter scans those regions too.
+///
+/// The second list overrides the first for a query's page-name arguments
+/// only (`tine_core::refs::rename_rewrite_with_queries`): a merge through an
+/// alias writes the survivor's own name there (ruling (a) of D-20261103-CMA);
+/// empty for every other rename.
 #[derive(Clone, Debug, Default)]
-pub struct RenameMap(pub Vec<(String, String)>);
+pub struct RenameMap(pub Vec<(String, String)>, pub Vec<(String, String)>);
 
 /// I/O error with a stable kind for handling and a message for display.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -793,7 +798,13 @@ impl<'a> PagePlan<'a> {
                 let name_format = self.store.config().file_name_format;
                 let is_org = tine_core::model::Format::from_path(Path::new(file.as_str()))
                     == tine_core::model::Format::Org;
-                let new = tine_core::refs::rename_rewrite(text, is_org, &renames.0, name_format);
+                let new = tine_core::refs::rename_rewrite_with_queries(
+                    text,
+                    is_org,
+                    &renames.0,
+                    &renames.1,
+                    name_format,
+                );
                 if new == text {
                     RewriteEffect::Unchanged
                 } else {

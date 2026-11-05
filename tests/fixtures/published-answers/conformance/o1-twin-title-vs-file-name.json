@@ -1,0 +1,112 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "zed",
+        "name": "ZED",
+        "target": {
+          "id": "pages/zed.md",
+          "kind": "existing",
+          "others": [
+            "pages/a.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "zed",
+        "name": "zed",
+        "target": {
+          "id": "pages/zed.md",
+          "kind": "existing",
+          "others": [
+            "pages/a.md"
+          ]
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "ZED",
+      "path": "pages/a.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "zed",
+      "path": "pages/zed.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Notes",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "ZED",
+      "path": "pages/a.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "ZED"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "zed",
+      "path": "pages/zed.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "zed"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

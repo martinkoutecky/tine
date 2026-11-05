@@ -89,8 +89,15 @@ P        = gzip (RFC 1952) of the UTF-8 share document
 - **One page shared:** `home` and `title` are that page's name. **Several:**
   `home` and `title` are the share's name, and the home page is a synthetic
   page (`path` "") whose blocks are one `[[page]]` link per shared page. Its
-  name never equals a shared page's name or alias under page identity (the
-  writer refuses the share name; the viewer refuses such a document). The
+  name never equals, under page identity, a name the build graph answers: a
+  shared page or journal, an alias of one or of several shared pages, or a
+  spelling whose link opens one (`published_answers::home_name_taken`; only a
+  reference-only name may be taken). The writer refuses such a share name
+  (threat: malformed input, a share name colliding with a shared name, whose
+  links would open the list; recovery: name the share otherwise); the static
+  query export renames its home with ` (export)`, then ` 2`; the viewer
+  refuses a document whose home is named like a shared page or an alias its
+  `aliases` lists. The
   selecting query is never shipped (`include_query_text` is forced off).
 - Query records (`queries`) are looked up by host page, argument, dialect and
   `tine.*` block properties. Two identical macros in one page produce two
@@ -101,6 +108,61 @@ P        = gzip (RFC 1952) of the UTF-8 share document
 - Known gap (generation 1, additive to fix): a `{{query}}` inside page
   properties has no baked record, so the reader shows its static-export
   notice there.
+- `answers` (optional; see "Published answers" below): the name answers the
+  reader looks up. A document without it, or with an `answers.v` the viewer
+  does not read, is read as before the field existed.
+
+### Published answers (`answers`, version 1)
+
+The published reader computes no name answer itself (CM step 2, census Q13).
+What `[[x]]` opens, which file a name reads, the inventory, a page's alias
+group, which journals have content and the journal formats are looked up in
+`answers`, which the writer fills with the live answerers over the private
+build graph (closure, below). The same field is written by the static export
+(`publish_live`, `publish_query`), whose viewer ships in the same build.
+
+```
+"answers": {"v": 1, "inventory": [...], "resolve": [...], "alias_groups": [...],
+            "journals": {"title_format": "...", "file_name_format": "...", "content_days": [...]}}
+```
+
+- `inventory`: `WholeGraph::inventory(All)` of the build graph, each row in the
+  app's `page_inventory` wire shape (`key`, `name`, `is_journal`, `day`,
+  `target`, and `link`, `namespace_parent`, `empty_alias` when they apply), in
+  its order. A multi-page share adds its synthetic home page as an `existing`
+  row with id `""`.
+- `resolve`: `WholeGraph::resolve(name, kind)` for a listed name asked as the
+  kind its row does not answer (a date spelling asked as a journal, a journal
+  title asked as a page), only where the answer is a file or an alias.
+- `alias_groups`: `{name, aliases, pages}`, the page header's alias group of
+  every exported page whose group is not empty.
+- `journals`: the effective `:journal/page-title-format` and
+  `:journal/file-name-format` (the two configuration values a snapshot carries
+  on purpose; the reader's date parser needs them) and the days whose journal
+  has content.
+- Reader: links and `[[` destinations use the rows' `link`
+  (`inventoryRows.ts linkTargetIn`, the app's own reader); a named route uses
+  `navigationTarget`; `getPage` / `resolvePage(name, kind)` read the row's
+  `target` or a `resolve` entry; `getPageByPath` reads the exact file; a
+  permalink `#…/page/<name>` opens what `[[<name>]]` opens. A name no table
+  lists is absent; a permalink to it opens the home page.
+- **Permanence.** `v: 1` means this, forever: every `/s/1/` viewer reads it so
+  (a later viewer that also understands `v: 2` still reads `v: 1`). A change
+  to a table writes a new `v`; a viewer that does not know it reads the
+  document as one without `answers`.
+- **Admission.** A recognized `v: 1` is admitted field by field like the rest
+  (`admitPublishedAnswers` in `publishedAnswers.ts`, called by `admitShape` and
+  the static loader): row shapes, and every `existing` id, `others` id and
+  alias owner must be the path of a page in the snapshot. A damaged recognized
+  field refuses the document as damaged (threat: malformed input, a truncated
+  or corrupted file or a defective writer); it is never read as legacy.
+  Unknown keys inside `answers` are ignored, and `answers` counts against the
+  depth and size caps like any data.
+- **Legacy.** A document without a recognized `answers` is answered by
+  `upgradeLegacySnapshot` (`publishedLegacy.ts`, the declared I-12 exception:
+  generation-1 snapshots written before `answers` carry no Rust answer; retire
+  with `/s/1/`). It reproduces the reader before `answers` exactly, pinned by
+  the frozen fixtures written before it (`pages`, `one-page`).
 
 The frozen documents in the fixtures are the normative examples. The writer
 golden (`writer.json`, the document with runtime ids renumbered) must match a
@@ -112,12 +174,30 @@ fresh writer run: an app-side DTO change that would alter generation 1 fails
 The writer selects the query's owner pages, removes the export rules' pages
 (`public:: false`, the exports page: `export-definitions.md`), and projects the
 snapshot from a **private build graph** made of only those documents and the
-graph's `logseq/config.edn`. Backlinks, aliases, icons, block reference counts
-and baked queries are answered by that graph, so no text of an unshared page
-reaches a share. Hidden folders (`:hidden`) are never selectable. The private
-graph lives in a caller-given scratch directory and is removed before
-`prepare` returns. A page that reads back differently from the reviewed
-selection, or that is private in the bytes actually copied, refuses the share.
+graph's `logseq/config.edn`. Backlinks, aliases, icons, block reference counts,
+baked queries and every `answers` table are answered by that graph, so no
+text of an unshared page reaches a share and nothing names, relates or reveals
+one: an unshared page has no influence at all (two graphs whose shared
+documents are identical write identical `answers`, whatever their other
+pages; `tests/published_answers.rs`). The answers are therefore the live
+answers *of the shared pages*, which can differ from the whole graph's by
+design (an alias also declared by an unshared page opens the shared owner; an
+empty shared file whose name only an unshared page declares stays itself).
+The static exports (`publish_live`, `publish_query`, the CLI's
+`publish_static`) build the same private graph (`build_graph.rs`) and render
+*every* file they emit from it, the HTML fallback included (only asset bytes
+come from the real store): a query's "results on non-public pages omitted"
+notice counts only names the exported documents link without exporting a file
+of that name, never an unexported page. A query export's home-query record
+names its execution page (`executed_context.current_page`) only when that page
+is exported, by its exported name; an unexported host is omitted. Hidden
+folders (`:hidden`) are never selectable. The private graph lives in a
+caller-given scratch directory and is removed before `prepare` (or the export)
+returns; a removal failure fails the share or export with the scratch path
+(threat: disk errors, which would otherwise leave a copy of the exported pages
+and the config behind silently). A page that reads back differently from the
+reviewed selection, or that is private in the bytes actually copied, refuses
+the share.
 
 ## Limits (`quick-share-limits.json`)
 
@@ -142,7 +222,14 @@ tine-graph-features --test integration quick_share`, which adds missing cases
 and refreshes goldens. Cases: `pages` (aliases, two identical macros in one
 block, a query in page properties, page-property backlinks, dotted and
 duplicate property keys, `id::` uuids with reference counts, an Org page, a
-journal, a Unicode name, an empty page, a private page left out) and `one-page`.
+journal, a Unicode name, an empty page, a private page left out) and `one-page`,
+both frozen before `answers`; `answers` (the `pages` selection written with
+`answers` v1). The frozen-document comparison ignores only `answers`, and only
+for a frozen document written without it; `writer.json` pins `answers`
+exactly. Order (design Q13): the viewer that reads `answers` is deployed with
+the new fixture as current, old builds retained, before a writer emitting it
+creates shares; the build gate's fixture digest enforces that (a writer built
+with the new fixture stays off until a viewer that passes it is deployed).
 
 ## Writer side: GitHub, device records, commands (phase 2)
 

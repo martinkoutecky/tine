@@ -173,21 +173,24 @@
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 26th, 2026",
-      "owner": "journals/2026_10_26.md"
+      "owner": "journals/2026_10_26.md",
+      "parent": null
     },
     {
       "key": "meeting",
       "kind": "page",
       "linkedRefs": 1,
       "name": "meeting",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "notes",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     }
   ],
   "spellings": {

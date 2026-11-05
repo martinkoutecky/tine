@@ -99,14 +99,16 @@
       "kind": "page",
       "linkedRefs": 0,
       "name": "a",
-      "owner": "pages/a.md"
+      "owner": "pages/a.md",
+      "parent": null
     },
     {
       "key": "b",
       "kind": "page",
       "linkedRefs": 1,
       "name": "b",
-      "owner": "pages/b.md"
+      "owner": "pages/b.md",
+      "parent": null
     }
   ],
   "spellings": {

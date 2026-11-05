@@ -1,0 +1,128 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a.b",
+        "name": "a.b",
+        "target": {
+          "id": "pages/a.b.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ab",
+        "name": "ab",
+        "target": {
+          "id": "pages/ab.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "note",
+        "name": "note",
+        "target": {
+          "id": "pages/note.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ten",
+        "name": "ten",
+        "target": {
+          "id": "pages/ten.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ten/child",
+        "name": "Ten/Child",
+        "target": {
+          "id": "pages/Ten___Child.org",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Ten/Child",
+      "path": "pages/Ten___Child.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "a.b",
+      "path": "pages/a.b.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "note",
+      "path": "pages/note.org"
+    }
+  ],
+  "exported_at": "",
+  "home": "Ten/Child",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "Ten/Child",
+      "path": "pages/Ten___Child.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Ten/Child"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "a.b",
+      "path": "pages/a.b.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "a.b"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "note",
+      "path": "pages/note.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "note"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

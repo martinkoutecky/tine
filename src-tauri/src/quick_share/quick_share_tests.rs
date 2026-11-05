@@ -1714,6 +1714,45 @@ fn an_unattested_debug_build_does_not_offer_dead_share_links() {
     }
 }
 
+/// The writer gate's compiled-in fixture list covers every file the viewer
+/// build fingerprints (`fixtureFingerprint` in scripts/quick-share-viewer-lib.mjs:
+/// every file under g1, sorted by path, `name NUL bytes`). A fixture case the
+/// list missed would leave quick share switched off forever.
+#[test]
+fn the_writer_gate_digest_covers_every_g1_fixture_file() {
+    use sha2::{Digest, Sha256};
+    fn walk(dir: &std::path::Path, prefix: &str, out: &mut Vec<(String, std::path::PathBuf)>) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if entry.file_type().unwrap().is_dir() {
+                walk(&entry.path(), &format!("{name}/"), out);
+            } else {
+                out.push((name, entry.path()));
+            }
+        }
+    }
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/quick-share/g1");
+    let mut files = Vec::new();
+    walk(&root, "", &mut files);
+    let mut hash = Sha256::new();
+    for (name, path) in &files {
+        hash.update(name.as_bytes());
+        hash.update([0]);
+        hash.update(std::fs::read(path).unwrap());
+    }
+    assert!(
+        super::viewer_attested(Some(&format!("{:x}", hash.finalize()))),
+        "add every g1 fixture file to viewer_attested's list: {:?}",
+        files.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn e2e_github_override_accepts_only_a_bare_loopback_origin() {
     assert!(Endpoints::loopback_test("http://127.0.0.1:54321").is_some());

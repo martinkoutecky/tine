@@ -190,28 +190,32 @@
       "kind": "page",
       "linkedRefs": 1,
       "name": "B",
-      "owner": "pages/n%2Fy.md"
+      "owner": "pages/n%2Fy.md",
+      "parent": null
     },
     {
       "key": "n",
       "kind": "page",
       "linkedRefs": 1,
       "name": "n",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "n/y",
       "kind": "page",
       "linkedRefs": 1,
       "name": "N/y",
-      "owner": "pages/N%2Fy.md"
+      "owner": "pages/N%2Fy.md",
+      "parent": "n"
     },
     {
       "key": "p",
       "kind": "page",
       "linkedRefs": 0,
       "name": "p",
-      "owner": "pages/p.md"
+      "owner": "pages/p.md",
+      "parent": null
     }
   ],
   "spellings": {

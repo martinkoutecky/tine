@@ -132,7 +132,7 @@ fn rename_cost_is_independent_of_registered_keys() {
 use crate::RenameMap;
 
 fn map(from: &str, to: &str) -> RenameMap {
-    RenameMap(vec![(from.into(), to.into())])
+    RenameMap(vec![(from.into(), to.into())], Vec::new())
 }
 
 /// Retry stale planning contexts as the feature does (B2).

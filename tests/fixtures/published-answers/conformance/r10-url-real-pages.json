@@ -1,0 +1,108 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "cc",
+        "name": "cc",
+        "target": {
+          "id": "pages/cc.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "https:",
+        "name": "https:",
+        "target": {
+          "id": "pages/scheme.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "https://a.b/c",
+        "name": "https://a.b/c",
+        "target": {
+          "id": "pages/url.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "cc",
+      "path": "pages/cc.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "https:",
+      "path": "pages/scheme.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "https://a.b/c",
+      "path": "pages/url.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "cc",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "cc",
+      "path": "pages/cc.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "cc"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "https:",
+      "path": "pages/scheme.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "https:"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "https://a.b/c",
+      "path": "pages/url.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "https://a.b/c"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

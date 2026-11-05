@@ -1,0 +1,200 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "a",
+        "name": "A",
+        "target": {
+          "id": "pages/A.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "b",
+        "name": "B",
+        "target": {
+          "id": "pages/B.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "C",
+        "target": {
+          "id": "pages/C.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "canceled",
+        "name": "CANCELED",
+        "target": {
+          "id": "pages/CANCELED.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "doing",
+        "name": "DOING",
+        "target": {
+          "id": "pages/DOING.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "done",
+        "name": "DONE",
+        "target": {
+          "id": "pages/DONE.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "later",
+        "name": "LATER",
+        "target": {
+          "id": "pages/LATER.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "now",
+        "name": "NOW",
+        "target": {
+          "id": "pages/NOW.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "p",
+        "name": "p",
+        "target": {
+          "id": "pages/p.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "todo",
+        "name": "todo",
+        "target": {
+          "id": "pages/todo.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "waiting",
+        "name": "WAITING",
+        "target": {
+          "id": "pages/WAITING.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "p",
+      "path": "pages/p.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "todo",
+      "path": "pages/todo.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Oct 26th, 2026",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 26th, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "p",
+      "path": "pages/p.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "p"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "todo",
+      "path": "pages/todo.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "todo"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

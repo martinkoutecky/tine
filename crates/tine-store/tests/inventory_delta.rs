@@ -1055,3 +1055,132 @@ fn empty_alias_follows_live_edits() {
     );
     store.close();
 }
+
+/// CM step 2 batch 14 (S8 follow-up, OG `text.cljs namespace-page?`): a
+/// relative path or a URL is not a namespace, so `[[./x]]`, `[[../x/y]]` and
+/// `[[https://a.b/c]]` make no parent page (`.`, `..`, `https:`, `../x`, ...)
+/// and are no reference to one; an ordinary `[[a/b]]` still does both.
+#[test]
+fn relative_and_url_names_make_no_namespace_parents() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/Dot.md", "title:: .\n\n- the page named dot\n"),
+        (
+            "pages/Notes.md",
+            "- [[./x]] [[../x/y]] [[https://a.b/c]] [[a/b]]\n",
+        ),
+    ]);
+    let mut listed = fileless(&store);
+    listed.sort();
+    assert_eq!(
+        listed,
+        [
+            ("../x/y".to_owned(), false),
+            ("./x".to_owned(), false),
+            ("a".to_owned(), true),
+            ("a/b".to_owned(), false),
+            ("https://a.b/c".to_owned(), false),
+        ]
+    );
+    let view = store.whole_graph().unwrap();
+    let mut names = view.graph.reference_only_page_names();
+    names.sort_unstable();
+    assert_eq!(names, ["../x/y", "./x", "a", "a/b", "https://a.b/c"]);
+    // Linked References: `[[./x]]` is no reference to the page named `.`,
+    // `[[a/b]]` still is one to `a`.
+    assert!(view.backlinks(".").unwrap().is_empty());
+    assert!(view.backlinks("..").unwrap().is_empty());
+    assert!(view.backlinks("https:").unwrap().is_empty());
+    assert_eq!(view.backlinks("a").unwrap().len(), 1);
+    // The live path agrees: naming a relative name adds no parent; removing
+    // an ordinary child removes its parent.
+    let parents = |store: &Store| -> Vec<String> {
+        let mut names: Vec<String> = fileless(store)
+            .into_iter()
+            .filter(|(_, parent)| *parent)
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(parents(&store), ["a"]);
+    assert_patch(&store, "pages/Notes.md", "[[./y/z]] [[http://h/p/q]]");
+    assert_eq!(parents(&store), Vec::<String>::new());
+    assert_patch(&store, "pages/Notes.md", "[[b/c]] [[./y/z]]");
+    assert_eq!(parents(&store), ["b"]);
+    store.close();
+}
+
+/// CM step 2 batch 14 (S8 follow-up, OG `search/db.cljs
+/// make-pages-title-indice!`: page search indexes every page entity): `[[`
+/// completion (and quick switch) offers a namespace parent as a page, once,
+/// from the same answer the inventory lists; a parent some file claims, some
+/// reference names or the editing block's own unsaved draft alone supplies is
+/// not offered as a second row.
+#[test]
+fn bracket_completion_offers_namespace_parents() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("pages/x.md", "title:: Work/Plan\n- body\n"),
+        (
+            "pages/Notes.md",
+            "- [[Area/Sub/Leaf]] [[./rel/x]] [[Named]] [[Named/Kid]]\n",
+        ),
+        ("pages/Owned%2FChild.md", "- c\n"),
+        ("pages/Owned.md", "- the parent has its own file\n"),
+        ("pages/Editing.md", "- [[Draft/Chapter]]\n"),
+    ]);
+    let view = store.whole_graph().unwrap();
+    let rows = |query: &str, editor: Option<(&str, &str, &str)>| -> Vec<String> {
+        view.complete_page_names(query, 50, editor, false, None)
+            .into_iter()
+            .map(|(entry, _)| entry.name)
+            .collect()
+    };
+    let once = |rows: &[String], name: &str| rows.iter().filter(|row| row.as_str() == name).count();
+    // Parents of a file name and of referenced names, each once.
+    assert_eq!(once(&rows("Work", None), "Work"), 1);
+    assert_eq!(once(&rows("Area", None), "Area"), 1);
+    assert_eq!(once(&rows("Area/Sub", None), "Area/Sub"), 1);
+    // A parent a reference names, or a file claims, is the ordinary row only.
+    assert_eq!(once(&rows("Named", None), "Named"), 1);
+    assert_eq!(once(&rows("Owned", None), "Owned"), 1);
+    // Relative and URL names make no parent.
+    assert!(rows(".", None).iter().all(|row| row != "." && row != ".."));
+    assert_eq!(once(&rows("rel", None), "./rel"), 0);
+    // Every parent the inventory lists is offered, and only those.
+    let inventory = view.inventory(InventoryScope::All);
+    for entry in &inventory.0 {
+        if entry.namespace_parent {
+            assert_eq!(
+                once(&rows(&entry.name, None), &entry.name),
+                1,
+                "{}",
+                entry.name
+            );
+        }
+    }
+    // The editor baseline: `Draft` exists only because the editing block's
+    // autosaved draft names `Draft/Chapter`; its baseline lacks the name,
+    // so the draft supplies no parent there.
+    let id = view
+        .graph
+        .pages
+        .iter()
+        .find(|(entry, _)| entry.name == "Editing")
+        .unwrap()
+        .1
+        .roots[0]
+        .uuid
+        .clone();
+    assert_eq!(once(&rows("Draft", None), "Draft"), 1);
+    assert_eq!(once(&rows("Draft", Some(("Editing", &id, ""))), "Draft"), 0);
+    assert_eq!(
+        once(
+            &rows("Draft", Some(("Editing", &id, "[[Draft/Chapter]]"))),
+            "Draft"
+        ),
+        1
+    );
+    store.close();
+}

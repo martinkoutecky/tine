@@ -147,7 +147,7 @@ fn public_asset_move_rewrites_links_and_preserves_its_read_only_page_dependency(
         &src,
         f.rev(&src),
         &dst,
-        Some(&RenameMap(vec![("Old".into(), "New".into())])),
+        Some(&RenameMap(vec![("Old".into(), "New".into())], Vec::new())),
     );
     let steps = committed(tx.commit());
     assert!(matches!(&steps[0], StepResult::Unchanged { file, .. } if file == &dependency));
@@ -624,7 +624,7 @@ fn step_successes_and_noop() {
         &PageId::from("pages/B.md"),
         f.rev(&b),
         None,
-        &RenameMap(vec![("A".into(), "C".into())]),
+        &RenameMap(vec![("A".into(), "C".into())], Vec::new()),
         TitleRebind::Keep,
     );
     host.apply(plan.plan().unwrap()).unwrap();
@@ -904,7 +904,7 @@ fn stage_one_conflicts_for_guarded_steps() {
         &a,
         stale.clone(),
         None,
-        &RenameMap(vec![("A".into(), "B".into())]),
+        &RenameMap(vec![("A".into(), "B".into())], Vec::new()),
         TitleRebind::Keep,
     );
     assert!(matches!(tx.plan().unwrap_err(), Why::Conflict { .. }));
@@ -1130,7 +1130,7 @@ mod faults {
             &b,
             f.rev(&b),
             &d,
-            Some(&RenameMap(vec![("A".into(), "D".into())])),
+            Some(&RenameMap(vec![("A".into(), "D".into())], Vec::new())),
         );
         tx.trash(&c, f.rev(&c), crate::TrashIf::Any);
         f.store.inject_fault(point);
@@ -1255,7 +1255,7 @@ mod faults {
                         &b,
                         f.rev(&b),
                         &f.id(Area::Assets, "Moved.md"),
-                        Some(&RenameMap(vec![("A".into(), "Z".into())])),
+                        Some(&RenameMap(vec![("A".into(), "Z".into())], Vec::new())),
                     );
                 }
                 5 => {
@@ -1555,7 +1555,7 @@ fn rewrite_refs_reports_its_effect_and_a_self_move_is_refused() {
     f.put("pages/Plain.md", b"- nothing here\n");
     f.put("pages/New.md", b"title:: Old\n\n- [[Old]]\n");
     let (_app, host) = f.host();
-    let map = RenameMap(vec![("A".into(), "C".into())]);
+    let map = RenameMap(vec![("A".into(), "C".into())], Vec::new());
     let b = PageId::from("pages/B.md");
     let plain = PageId::from("pages/Plain.md");
     let mut tx = f.store.page_plan(Some(crate::EditKind::RenamePage));
@@ -1587,7 +1587,7 @@ fn rewrite_refs_reports_its_effect_and_a_self_move_is_refused() {
     assert_eq!(f.bytes("pages/Plain.md").unwrap(), b"- nothing here\n");
 
     let new = f.id(Area::Pages, "New.md");
-    let title_map = RenameMap(vec![("Old".into(), "New".into())]);
+    let title_map = RenameMap(vec![("Old".into(), "New".into())], Vec::new());
     let mut tx = f.store.page_plan(Some(crate::EditKind::RenamePage));
     tx.move_file(&new, f.rev(&new), &new, Some(&title_map));
     assert!(matches!(

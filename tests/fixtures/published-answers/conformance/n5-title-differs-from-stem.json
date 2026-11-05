@@ -1,0 +1,184 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "caps title",
+        "name": "Caps Title",
+        "target": {
+          "id": "pages/caps.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "linker",
+        "name": "linker",
+        "target": {
+          "id": "pages/linker.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261027,
+        "is_journal": true,
+        "key": "oct 27th, 2026",
+        "name": "Oct 27th, 2026",
+        "target": {
+          "id": "journals/2026_10_27.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "org title",
+        "name": "Org Title",
+        "target": {
+          "id": "pages/o.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "release day",
+        "name": "Release day",
+        "target": {
+          "id": "pages/Release day.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "shown title",
+        "name": "Shown Title",
+        "target": {
+          "id": "pages/stem-name.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "stem-name",
+        "name": "stem-name",
+        "target": {
+          "id": "pages/stem-name.md",
+          "kind": "absent"
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261027
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Caps Title",
+      "path": "pages/caps.md"
+    },
+    {
+      "date_key": 20261027,
+      "kind": "journal",
+      "name": "Oct 27th, 2026",
+      "path": "journals/2026_10_27.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Org Title",
+      "path": "pages/o.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Shown Title",
+      "path": "pages/stem-name.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "linker",
+      "path": "pages/linker.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Caps Title",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Caps Title",
+      "path": "pages/caps.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Caps Title"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 27th, 2026",
+      "path": "journals/2026_10_27.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 27th, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "Org Title",
+      "path": "pages/o.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Org Title"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Shown Title",
+      "path": "pages/stem-name.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Shown Title"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "linker",
+      "path": "pages/linker.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "linker"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

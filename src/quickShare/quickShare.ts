@@ -13,6 +13,7 @@ import limits from "../../docs/contracts/quick-share-limits.json";
 import blockedGists from "./blocked-gists.json";
 import type { PublishedSnapshot } from "../publishedBackend";
 import { readBounded, validateSnapshot } from "../publishedBackend";
+import { admitPublishedAnswers } from "../publishedAnswers";
 
 export const QUICK_SHARE_GENERATION = 1;
 const MAGIC = [0x54, 0x53, 0x48, 0x31]; // "TSH1"
@@ -188,6 +189,13 @@ function admitShape(snapshot: Record<string, unknown>): number {
       && isObject(q.parsed) && isObject(q.context) && isObject(q.executed_context) && isObject(q.view) && isObject(q.result)
       && (q.execution === undefined || q.execution === null || (isObject(q.execution) && isString(q.execution.argument) && isObject(q.execution.parsed))));
   if (!ok) fail("invalid", "This share is damaged.");
+  // `answers`: a recognized v1 is admitted field by field, damaged refuses;
+  // absent or another `v` reads as before it existed (publishedAnswers.ts).
+  try {
+    admitPublishedAnswers(snapshot);
+  } catch {
+    fail("invalid", "This share is damaged.");
+  }
   return count.blocks;
 }
 
