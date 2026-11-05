@@ -127,7 +127,7 @@ export function openRouteInNewWindow(route: Route): string | null {
 
 async function launch(entry: Entry, geometry: WindowGeometry | null, activate: boolean): Promise<void> {
   try {
-    const { label, deferred } = await nativeInvoke<{ label: string; deferred: boolean }>("workspace_window_prepare", { geometry });
+    const label = await nativeInvoke<string>("workspace_window_prepare", { geometry });
     if (entry.disposed) return;
     entry.label = label;
     // The target name is the fresh native label: WebView2 hangs reopening a
@@ -135,7 +135,7 @@ async function launch(entry: Entry, geometry: WindowGeometry | null, activate: b
     const popup = mainWindow.open("about:blank", label, "popup") as Realm | null;
     if (!popup) throw new Error("window.open returned no window");
     entry.popup = popup;
-    await documentReady(popup, deferred ? label : null);
+    await documentReady(popup);
     if (entry.disposed) return void destroyNative(entry);
     bootstrap(entry, popup);
     if (activate) popup.focus();
@@ -162,17 +162,12 @@ function sleepOnEitherClock(popup: Realm, ms: number): Promise<void> {
   });
 }
 
-/** WebView2 returns a temporary WindowProxy while native creation is deferred.
- * Its body can exist before SetNewWindow replaces the document. Wait for the
- * native initialization script in the associated document before rendering.
- * Bound by elapsed time so a throttled clock cannot stretch the bound. */
-async function documentReady(popup: Realm, label: string | null): Promise<void> {
+/** A popup's about:blank Document appears asynchronously; poll it. Bounded by
+ * elapsed time, not by ticks, so a throttled clock cannot stretch the bound. */
+async function documentReady(popup: Realm): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < 5000) {
-    try {
-      if ((label === null || (popup as Realm & { __TINE_WORKSPACE_WINDOW_LABEL__?: string }).__TINE_WORKSPACE_WINDOW_LABEL__ === label)
-        && popup.document?.body) return;
-    } catch { /* not yet reachable */ }
+    try { if (popup.document?.body) return; } catch { /* not yet reachable */ }
     await sleepOnEitherClock(popup, 25);
   }
   throw new Error("workspace window document never appeared");

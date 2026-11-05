@@ -2,7 +2,7 @@
 //! panes of the SAME graph over the opener's one JS context.
 //!
 //! The opener's JS calls `window.open("about:blank")`; the native popup is
-//! built here in `on_new_window`. The UI runs in the opener's heap, so a
+//! built here in `on_new_window`. All script runs in the opener's heap, so a
 //! popup has no store, save engine or IPC of its own: `ws-*` labels are in no
 //! capability file, and every command a popup's UI triggers is invoked by its
 //! opener. This module owns only the native lifecycle:
@@ -121,17 +121,6 @@ pub(crate) fn place(saved: Option<Geometry>, monitors: &[Area]) -> Placement {
 #[derive(Default)]
 pub(crate) struct Pending(Mutex<HashMap<String, (String, Placement)>>);
 
-#[derive(serde::Serialize)]
-pub(crate) struct Prepared {
-    label: String,
-    deferred: bool,
-}
-
-/// Wry defers WebView2 association; WebKit returns the related view directly.
-fn creation_is_deferred(target_os: &str) -> bool {
-    target_os == "windows"
-}
-
 /// Close requests already handed to an opener: popup label -> first request.
 #[derive(Default)]
 pub(crate) struct CloseRequests(Mutex<HashMap<String, Instant>>);
@@ -187,14 +176,14 @@ fn monitor_areas<R: tauri::Runtime>(window: &tauri::Window<R>) -> Vec<Area> {
 }
 
 /// Arm one `window.open("about:blank")` from the calling window and return the
-/// native label and whether association is deferred. Refuses past [`MAX_WORKSPACE_WINDOWS`]
+/// native label its popup will get. Refuses past [`MAX_WORKSPACE_WINDOWS`]
 /// popups (I-22 resource bound; no storage effect). Re-arming replaces an
 /// unused arm. O(windows + monitors).
 #[tauri::command]
 pub(crate) fn workspace_window_prepare(
     window: tauri::Window,
     geometry: Option<Geometry>,
-) -> Result<Prepared, String> {
+) -> Result<String, String> {
     #[cfg(mobile)]
     {
         let _ = (window, geometry);
@@ -205,7 +194,7 @@ pub(crate) fn workspace_window_prepare(
 }
 
 #[cfg(desktop)]
-fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<Prepared, String> {
+fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<String, String> {
     let opener = window.label().to_string();
     if opener != "main" && !opener.starts_with("graph-") {
         return Err("only a graph window can open a workspace window".into());
@@ -226,10 +215,7 @@ fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<
         .lock()
         .map_err(|_| "workspace window state unavailable".to_string())?
         .insert(opener, (label.clone(), placement));
-    Ok(Prepared {
-        label,
-        deferred: creation_is_deferred(std::env::consts::OS),
-    })
+    Ok(label)
 }
 
 /// Destroy one of the calling window's popups after its UI was disposed.
@@ -261,7 +247,6 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
     let app = app.clone();
     let opener = opener.to_string();
     builder.on_new_window(move |url, features| {
-        crate::debug::diag("workspace-window-requested");
         let armed = app.try_state::<Pending>().and_then(|pending| {
             pending
                 .0
@@ -277,41 +262,20 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
         }
         let builder =
             tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(url))
-                .window_features(features);
-        // WebKit's initial about:blank may not execute initialization scripts.
-        // Only WebView2 defers association and needs this document handshake.
-        let builder = if creation_is_deferred(std::env::consts::OS) {
-            builder.initialization_script(format!(
-                "window.__TINE_WORKSPACE_WINDOW_LABEL__ = {};",
-                serde_json::to_string(&label).expect("workspace label is serializable")
-            ))
-        } else {
-            builder
-        };
-        let builder = builder
-            .title("Tine")
-            .decorations(true)
-            .min_inner_size(MIN_SIZE.0, MIN_SIZE.1)
-            .inner_size(placement.width, placement.height)
-            .on_document_title_changed(|window, title| {
-                let _ = window.set_title(&title);
-            });
+                .window_features(features)
+                .title("Tine")
+                .decorations(true)
+                .min_inner_size(MIN_SIZE.0, MIN_SIZE.1)
+                .inner_size(placement.width, placement.height)
+                .on_document_title_changed(|window, title| {
+                    let _ = window.set_title(&title);
+                });
         let builder = match placement.position {
             Some((x, y)) => builder.position(x, y),
             None => builder,
         };
-        crate::debug::diag_private(
-            "workspace-window-build-started",
-            format!("workspace-window-build-started {label}"),
-        );
         match builder.build() {
-            Ok(window) => {
-                crate::debug::diag_private(
-                    "workspace-window-build-finished",
-                    format!("workspace-window-build-finished {label}"),
-                );
-                tauri::webview::NewWindowResponse::Create { window }
-            }
+            Ok(window) => tauri::webview::NewWindowResponse::Create { window },
             Err(error) => {
                 crate::debug::diag_private("workspace-window-build-failed", error.to_string());
                 tauri::webview::NewWindowResponse::Deny
@@ -466,16 +430,6 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 /// Page-load hook: an opener that starts a new document (a reload) has lost
 /// the JS heap its popups were drawn from, so they are destroyed.
 pub(crate) fn page_load(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
-    if opener_of(webview.label()).is_some() {
-        crate::debug::diag_private(
-            "workspace-window-page-load",
-            format!(
-                "workspace-window-page-load {} {:?}",
-                webview.label(),
-                payload.event()
-            ),
-        );
-    }
     if payload.event() != tauri::webview::PageLoadEvent::Started {
         return;
     }
@@ -488,19 +442,6 @@ pub(crate) fn page_load(webview: &tauri::Webview, payload: &tauri::webview::Page
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_webview2_defers_popup_association_on_the_five_shipped_targets() {
-        for (target, expected) in [
-            ("linux", false),
-            ("windows", true),
-            ("macos", false),
-            ("ios", false),
-            ("android", false),
-        ] {
-            assert_eq!(creation_is_deferred(target), expected, "{target}");
-        }
-    }
 
     const SCREEN: Area = Area {
         x: 0.0,
