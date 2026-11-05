@@ -1,5 +1,8 @@
 // GH #863 / #809 diagnostic journeys for Linux WebKitGTK and Windows WebView2.
 // ONLY=863 or ONLY=809 runs one report, so a native freeze cannot hide the other.
+// #863 lifecycle cases: 863-created, 863-created-blur,
+// 863-created-unreferenced, 863-external, 863-external-alternate,
+// 863-external-alternate-blur, and 863-custom. Each starts a fresh fixture.
 // Fixture data only. A passing Linux run does not establish a Windows fix.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -10,6 +13,7 @@ import { remote } from "webdriverio";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 import { x11Tools } from "./lib/e2e-x11.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
@@ -22,22 +26,31 @@ const app = path.resolve(process.env.TINE_APP || path.join(root, "target/debug",
 const port = Number(process.env.E2E_DRIVER_PORT || 4672);
 const nativePort = Number(process.env.E2E_NATIVE_PORT || 4673);
 const issues = process.env.ONLY ? process.env.ONLY.split(",") : ["863", "809"];
+// Run each journal lifecycle independently with ONLY=863-<case>.
+const journalCase = issues.find(issue => issue.startsWith("863")) ?? "863";
+const creates = journalCase.startsWith("863-created");
+const external = journalCase.startsWith("863-external");
+const custom = journalCase === "863-custom";
+const virtual = creates || external;
+const referenced = virtual && journalCase !== "863-created-unreferenced";
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["home", "data", "config", "cache", "state", "appdata", "localappdata", "webview"]) fs.mkdirSync(path.join(run, dir), { recursive: true });
 const now = new Date();
 const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-const journalRel = `journals/${day.replaceAll("-", "_")}.md`;
+const journalRel = `journals/${custom ? day : day.replaceAll("-", "_")}.md`;
 const journalFile = path.join(graph, journalRel);
 const journalBytes = "- GH863 existing journal body\n";
 const pageName = "Probe Alpha";
 const pageFile = path.join(graph, `pages/${pageName}.md`);
-fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:journal/page-title-format "yyyy-MM-dd"}\n');
-fs.writeFileSync(journalFile, journalBytes);
+fs.writeFileSync(path.join(graph, "logseq/config.edn"), `{:journal/page-title-format "yyyy-MM-dd"${custom ? ' :journal/file-name-format "yyyy-MM-dd"' : ""}}\n`);
+if (!virtual) fs.writeFileSync(journalFile, journalBytes);
 fs.writeFileSync(pageFile, "- GH809 original page body\n");
+if (referenced) fs.writeFileSync(path.join(graph, "pages/Journal mentions.md"), `- [[${day}]]\n`);
 const fixture = accountHomeFixture(run, out);
 // The shared Windows launcher takes its profile root from the harness process.
 process.env.E2E_WEBVIEW_USER_DATA_ROOT = path.join(run, "webview");
 const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
+  TINE_DEBUG: "1", TINE_DEBUG_LOG: path.join(out, "native-debug.log"),
   XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"),
   XDG_CACHE_HOME: path.join(run, "cache"), XDG_STATE_HOME: path.join(run, "state"),
   APPDATA: path.join(run, "appdata"), LOCALAPPDATA: path.join(run, "localappdata"),
@@ -48,7 +61,7 @@ const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd:
 const write = () => fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(report, null, 2) + "\n");
 const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, detail }); write(); console.log(`ok: ${stage}`); };
 write();
-let target, driver, browser, log, wm;
+let target, driver, browser, log, wm, main;
 const { xdo } = x11Tools(env);
 async function shot(name) {
   // WebKitWebDriver cannot screenshot a related popup (its automation flag
@@ -57,6 +70,14 @@ async function shot(name) {
     if (process.platform === "linux") execFileSync("import", ["-window", "root", path.join(out, name)], { env, timeout: 5000 });
     else await browser.saveScreenshot(path.join(out, name));
   } catch (error) { console.log(`Screenshot unavailable: ${String(error)}`); }
+}
+async function diagnostics() {
+  const result = await browser.executeAsync(done => {
+    window.__TAURI_INTERNALS__.invoke("diagnostic_report", { buildCommit: "", buildTime: "", renderer: null })
+      .then(value => done({ text: value.text }), error => done({ error: String(error) }));
+  });
+  if (result.error) throw new Error(`Diagnostic capture failed: ${result.error}`);
+  return JSON.parse(result.text);
 }
 function stop() {
   if (driver?.pid) {
@@ -78,6 +99,11 @@ try {
     wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], { env, stdio: "ignore" });
   }
   target = await startWebdriverApplication(app, env, nativePort, "gh863-809");
+  if (target.debuggerAddress) {
+    const version = await (await fetch(`http://${target.debuggerAddress}/json/version`, { signal: AbortSignal.timeout(2000) })).json();
+    report.webview2 = { browser: version.Browser, userAgent: version["User-Agent"], v8: version["V8-Version"] };
+    write();
+  }
   log = fs.openSync(path.join(out, "driver.log"), "w");
   driver = spawn(process.env.TAURI_DRIVER || "tauri-driver",
     webdriverServerArgs(port, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
@@ -89,10 +115,11 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
-  const main = await browser.getWindowHandle();
+  report.nativeApp = (await diagnostics()).app;
+  main = await browser.getWindowHandle();
   step("app-ready", await browser.execute(() => ({ title: document.title, ua: navigator.userAgent })));
 
-  if (issues.includes("863")) {
+  if (issues.some(issue => issue.startsWith("863"))) {
     await openPageByName(browser, pageName); // The route starts on an ordinary page.
     const clicked = await browser.execute(() => {
       const button = document.querySelector('.topbar-optional-action[title="Journals"]');
@@ -100,6 +127,36 @@ try {
     });
     if (!clicked) throw new Error("Journals toolbar button was absent");
     await browser.waitUntil(() => browser.execute(() => !!document.querySelector("h1.journal-title")), { timeout: 15_000 });
+    let openedFile = journalFile;
+    let expectedBytes = journalBytes;
+    let expectedBody = "GH863 existing journal body";
+    if (virtual) {
+      // References finishing proves the native completion that admits virtual
+      // referenced days has arrived, rather than just frontend withToday().
+      if (referenced) await browser.waitUntil(() => browser.execute(() =>
+        [...document.querySelectorAll(".references-count")].some(el => el.textContent.trim() === "1")), { timeout: 15_000 });
+      if (fs.existsSync(journalFile)) throw new Error("Virtual fixture unexpectedly already has a journal file");
+      await browser.$(".main-content .page-section .block-content-wrapper").click();
+      const editor = await browser.$(".main-content textarea.block-editor");
+      await editor.waitForExist({ timeout: 10_000 });
+      if (creates) {
+        expectedBody = "GH863 created in feed";
+        await editor.addValue(expectedBody);
+        expectedBytes = await waitForFileText(journalFile, text => text.includes(expectedBody));
+      } else {
+        const before = (await diagnostics()).sessions.current.filter(event => event.event === "watcher.batch").length;
+        if (journalCase.startsWith("863-external-alternate")) openedFile = path.join(graph, `journals/${day}.md`);
+        expectedBody = "GH863 externally created journal";
+        expectedBytes = `- ${expectedBody}\n`;
+        fs.writeFileSync(openedFile, expectedBytes);
+        await browser.waitUntil(async () =>
+          (await diagnostics()).sessions.current.filter(event => event.event === "watcher.batch").length > before,
+        { timeout: 15_000, interval: 500, timeoutMsg: "External journal creation was not observed by the watcher" });
+      }
+      if (journalCase.endsWith("-blur")) await browser.keys(["Escape"]);
+      step("863-file-created", { journalCase, openedFile, editorActive: await editor.isExisting(), expectedBytes });
+      fs.writeFileSync(path.join(out, "before-click-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
+    }
     step("863-before-title-click", await browser.execute(() => ({
       titles: [...document.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim()),
       body: document.querySelector(".main-content")?.textContent,
@@ -109,11 +166,17 @@ try {
       if (!heading) throw new Error(`Journal title ${title} absent`);
       heading.click();
     }, day);
-    await browser.waitUntil(() => browser.execute(() => {
-      if (document.body.textContent.includes("no longer available at that path")) throw new Error("GH863 physical-page refusal");
-      return !!document.querySelector("h1.page-title") && document.querySelector(".main-content")?.textContent.includes("GH863 existing journal body");
-    }), { timeout: 15_000, timeoutMsg: "Journal title did not open the existing body on its own route" });
-    if (fs.readFileSync(journalFile, "utf8") !== journalBytes) throw new Error("Opening the journal changed its bytes");
+    let outcome;
+    await browser.waitUntil(async () => {
+      outcome = await browser.execute((body) => {
+        if (document.body.textContent.includes("no longer available at that path")) return "refused";
+        return !!document.querySelector("h1.page-title") && document.querySelector(".main-content")?.textContent.includes(body) ? "opened" : null;
+      }, expectedBody);
+      return outcome !== null;
+    }, { timeout: 15_000, timeoutMsg: "Journal title did not open the existing body on its own route" });
+    if (outcome === "refused") { report.classification = "product"; throw new Error("GH863 physical-page refusal"); }
+    if (fs.readFileSync(openedFile, "utf8") !== expectedBytes) throw new Error("Opening the journal changed its bytes");
+    if (virtual && fs.readdirSync(path.join(graph, "journals")).join() !== path.basename(openedFile)) throw new Error("Virtual journal opening created an extra file");
     await shot("863-routed-journal.png");
     step("863-pass", "Toolbar Journals > today's title opened its existing file without changing bytes");
   }
@@ -121,6 +184,34 @@ try {
   if (issues.includes("809")) {
     await openPageByName(browser, pageName);
     const before = new Set(await browser.getWindowHandles());
+    await browser.execute(() => {
+      const probe = window.__gh809Probe = { ticks: 0, opens: [], errors: [], popupStates: [] };
+      const tick = setInterval(() => {
+        probe.ticks++;
+        const popup = window.__gh809Popup;
+        if (!popup) return;
+        try {
+          // Read only the proxy marker until native association is confirmed.
+          const state = { closed: popup.closed, nativeLabel: popup.__TINE_WORKSPACE_WINDOW_LABEL__ ?? null };
+          const last = probe.popupStates.at(-1);
+          if (JSON.stringify(last?.state) !== JSON.stringify(state) && probe.popupStates.length < 16) {
+            probe.popupStates.push({ tick: probe.ticks, state });
+          }
+        } catch (error) {
+          if (probe.errors.length < 8) probe.errors.push(String(error));
+        }
+      }, 100);
+      setTimeout(() => clearInterval(tick), 60_000);
+      addEventListener("error", event => { if (probe.errors.length < 8) probe.errors.push(event.message); });
+      const open = window.open;
+      window.open = function (...args) {
+        window.open = open;
+        const popup = Reflect.apply(open, this, args);
+        window.__gh809Popup = popup;
+        probe.opens.push({ url: args[0], label: args[1], returned: !!popup });
+        return popup;
+      };
+    });
     await browser.keys(["Control", "k"]);
     await browser.$(".switcher-input").waitForExist({ timeout: 5000 });
     await browser.$(".switcher-input").setValue(pageName);
@@ -143,6 +234,7 @@ try {
       popup = (await browser.getWindowHandles()).find(handle => !before.has(handle));
       return !!popup;
     }, { timeout: 15_000, timeoutMsg: "No separate workspace window appeared" });
+    step("809-popup-handle", { main, popup });
     await browser.switchToWindow(popup);
     await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("GH809 original page body")),
       { timeout: 15_000, timeoutMsg: "Popup stayed blank instead of showing the selected page" });
@@ -182,10 +274,38 @@ try {
   }
   fixture.verify(); report.status = "passed"; write();
 } catch (error) {
-  report.status = "failed"; report.classification = "ambiguous"; report.observed = String(error);
+  report.status = "failed"; report.classification ??= "ambiguous"; report.observed = String(error);
   write();
+  // Probe the opener even if WebDriver has lost the popup target. Record each
+  // result separately so a subsequent native hang cannot erase the evidence.
+  if (issues.includes("809") && browser && main) {
+    if (target?.debuggerAddress) {
+      try {
+        report.devtoolsTargets = await (await fetch(`http://${target.debuggerAddress}/json/list`, { signal: AbortSignal.timeout(2000) })).json();
+        write();
+      } catch (error) { report.devtoolsTargetsError = String(error); write(); }
+    }
+    try {
+      report.failureWindows = await browser.getWindowHandles(); write();
+      await browser.switchToWindow(main);
+      report.openerAfterFailure = await browser.execute(() => {
+        const popup = window.__gh809Popup;
+        const result = { title: document.title, probe: window.__gh809Probe, popup: null };
+        if (popup) {
+          try {
+            const label = popup.__TINE_WORKSPACE_WINDOW_LABEL__;
+            result.popup = { closed: popup.closed, nativeLabel: label ?? null,
+              body: label ? popup.document.body?.textContent?.slice(0, 1500) : null };
+          } catch (error) { result.popup = { error: String(error) }; }
+        }
+        return result;
+      });
+      write();
+    } catch (error) { report.openerAfterFailureError = String(error); write(); }
+  }
   try {
     report.dom = await browser?.execute(() => document.body.textContent?.slice(0, 6000));
+    if (issues.some(issue => issue.startsWith("863"))) fs.writeFileSync(path.join(out, "failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
     await shot("failure.png");
   } catch { /* A frozen renderer cannot provide a screenshot or DOM. */ }
   write(); process.exitCode = 1; console.error(error);
