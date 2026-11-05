@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- The "changed on disk while you were editing" banner clears automatically when a conflicted draft becomes exactly identical to the disk version, including after a later sync delivery. Differing versions keep the unsaved edits and conflict review (GH #875).
 - Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
 - `tine` command line: a write (`add`, `edit`, `prop`, `move`, `delete`, `ref`, `embed`) to a page name that two files claim, for example after a sync conflict, a case twin (`Foo.md` and `foo.md`) or a `title::` that repeats another page's name, is refused and names both files. Before, it went silently to one of them and the other was never mentioned. Reading the page still shows the file that owns the name; `page rename` and `page delete` already refused (REG-CLI-DUPNAME-WRITE-ONE-TWIN).
 
