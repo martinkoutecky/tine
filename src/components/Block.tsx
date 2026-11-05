@@ -1,4 +1,5 @@
 import { shortcutKey } from "../shortcutKey";
+import { plainTextPaste } from "../editor/plainTextPaste";
 import { bindCollapseCommandSurface } from "../collapseCommandSurface";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
@@ -1163,18 +1164,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
   const { uploadAsset, capturePhotoCmd, voiceMemoToggle, desktopVoiceMemoToggle, createDrawioDiagram, pasteClipboardFiles } = assets;
 
-  let pasteRaw = false;
-  let pasteRawToken = 0;
-  let pasteRawTimer: number | undefined;
-  const clearPasteRaw = () => {
-    pasteRaw = false;
-    pasteRawToken += 1;
-    if (pasteRawTimer !== undefined) {
-      window.clearTimeout(pasteRawTimer);
-      pasteRawTimer = undefined;
-    }
-  };
-  onCleanup(clearPasteRaw);
+  const plainPaste = plainTextPaste();
+  const clearPasteRaw = plainPaste.clearRaw;
+  onCleanup(plainPaste.dispose);
 
   const pasteLiteralText = (text: string) => {
     const start = ref.selectionStart;
@@ -1185,6 +1177,16 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
+  };
+
+  const capturePlainPaste = () => {
+    const value = ref.value, start = ref.selectionStart, end = ref.selectionEnd;
+    return {
+      current: () => editorMounted && ref.isConnected && ref.ownerDocument.activeElement === ref
+        && blockWritable(props.id) && !compositionActive && ref.value === value
+        && ref.selectionStart === start && ref.selectionEnd === end,
+      insert: pasteLiteralText,
+    };
   };
 
   const selectAc = (item: AcItem) => {
@@ -2032,6 +2034,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       case "editor/paste-as-link":
         void pasteAsLinkCmd();
         return true;
+      case "editor/paste-plain":
+        plainPaste.request(capturePlainPaste);
+        return true;
     }
   };
   let unregisterFocusedEditorBridge: (() => void) | undefined;
@@ -2217,20 +2222,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       return;
     }
 
-    // Ctrl/Cmd+Shift+V is Logseq's universal raw-paste gesture.
-    // ClipboardEvent does not expose modifier keys, so remember the preceding
-    // keydown briefly and consume it in onPaste. Do not preventDefault: the
-    // platform still has to perform the native clipboard read and dispatch paste.
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && shortcutKey(e) === "v") {
-      clearPasteRaw();
-      pasteRaw = true;
-      const token = ++pasteRawToken;
-      pasteRawTimer = window.setTimeout(() => {
-        if (pasteRawToken === token) clearPasteRaw();
-      }, 1_000);
-      return;
-    }
-    if (pasteRaw) clearPasteRaw();
+    if (plainPaste.keydown(e, capturePlainPaste)) return;
 
     if (acVisible() && e.key === "Escape") {
       e.preventDefault(); closeAc(); return;
@@ -2625,7 +2617,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   };
 
   const onBlur = (e: FocusEvent) => {
-    clearPasteRaw();
+    plainPaste.dispose();
     // The palette must retain the source occurrence until its contextual
     // Select embedding block action runs. Blur still commits the draft.
     if (embedNavExit && (e.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) {
@@ -2732,8 +2724,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const onPaste = (e: ClipboardEvent) => {
     // Consume the modifier latch on EVERY paste, including file/image pastes.
     // Otherwise an intercepted shortcut could affect a later context-menu paste.
-    const rawPaste = pasteRaw;
-    clearPasteRaw();
+    const rawPaste = plainPaste.consume();
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (rawPaste) {
       e.preventDefault();

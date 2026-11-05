@@ -86,6 +86,7 @@ import {
 import { openGuide } from "./guide";
 import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed } from "./blockRefActions";
 import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
+import { installPlainPasteMenu } from "./editor/plainPasteMenu";
 import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
@@ -603,14 +604,12 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     binding: "mod+c",
     label: msg("command-builtin-editor-copy-block-ref"),
   },
-  // GH #513 / #81. OG: `:editor/paste-text-in-one-block-at-point` (mod+shift+v,
-  // handler/paste.cljs editor-on-paste-raw!). Not a remappable command: the key
-  // has to reach the platform's own paste so the clipboard can be read (Block.tsx
-  // keeps a one-shot latch between the keydown and the paste event).
+  // GH #857 / #513 / #81. macOS reads plain text explicitly; other desktop
+  // platforms use the native paste event with the shared one-shot latch.
   {
     id: "builtin/editor/paste-plain",
     scope: "editor",
-    binding: "mod+shift+v",
+    binding: isMac ? "mod+shift+v / alt+mod+shift+v" : "mod+shift+v",
     label: msg("command-builtin-editor-paste-plain"),
     details: msg("commands-inserts-the-clipboard-s-plain-text-as-typed"),
   },
@@ -1248,6 +1247,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     else goForward();
   };
   let disposed = false;
+  const uninstallPlainPasteMenu = installPlainPasteMenu();
   let unlistenNativeMouseHistory = () => {};
   if ("__TAURI_INTERNALS__" in window) {
     void Promise.all([import("@tauri-apps/api/event"), import("@tauri-apps/api/window")]).then(
@@ -1291,6 +1291,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   });
   return () => {
     disposed = true;
+    uninstallPlainPasteMenu();
     unlistenNativeMouseHistory();
     uninstallWindows();
   };

@@ -64,6 +64,7 @@ mod owner;
 mod owner_protection;
 mod page_backlinks;
 mod page_commands;
+mod paste_menu;
 mod pdf_crop_rollback;
 mod platform;
 mod plugins;
@@ -902,6 +903,10 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            if let Err(error) = paste_menu::install(app) {
+                debug::diag_private("paste-menu", error.to_string());
+            }
             root_identity::capture_container_change(app.handle());
             // After the single-instance plugin: a forwarded second launch has
             // already exited and cannot rotate the primary's diagnostics.

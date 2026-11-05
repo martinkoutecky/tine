@@ -15,6 +15,7 @@ export type MobileEditorCommandId =
   | "editor/insert-block-ref"
   | "editor/open-slash-menu"
   | "editor/paste-as-link"
+  | "editor/paste-plain"
   | "editor/select-embedding-block";
 
 export interface FocusedEditorCommandBridge {
