@@ -722,6 +722,14 @@
       "r1-title-names-page": [
         "pages/file-name.md: launch walk \"file-name\", answer Some(\"Real Name\")"
       ],
+      "r10-relative-real-pages": [
+        "pages/dot.md: launch walk \"dot\", answer Some(\".\")",
+        "pages/dotx.md: launch walk \"dotx\", answer Some(\"./x\")"
+      ],
+      "r10-url-real-pages": [
+        "pages/scheme.md: launch walk \"scheme\", answer Some(\"https:\")",
+        "pages/url.md: launch walk \"url\", answer Some(\"https://a.b/c\")"
+      ],
       "r9-case-rename-onto-taken-file": [
         "pages/n%2Fy.md: launch walk \"n/y\", answer Some(\"B\")"
       ]
@@ -744,6 +752,8 @@
     "o2-date-alias-on-twin": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "q1-duplicate-claim": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r1-title-names-page": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "r10-relative-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "r10-url-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r10-ref-source-alias-target": "R10-Q4 (out of scope for batch 15, divergence R15): renaming a reference-only name (kb, no file) onto an alias-only name (ML of o). The model's rename10 allows it as a plain rewrite (M-Q5 answer two, which for a file-less source creates no page); Tine refuses the plain rename and offers the M-Q5 dialog (D-20261102-MC5); the harness confirms the merge, which matches refMerge. Kept as today's Tine behaviour until Martin answers R10-Q4 (recommendation: offer only the merge for a file-less source). The random class 'rename: model allows, Tine refuses (AlreadyExists)' is the same question with two alias owners (no single merge target).",
     "r10-ref-source-journal-risk": "R10-Q2 (out of scope for batch 15, divergence S16): the frontendNamespaces rows list the journal's alias spelling kb/sub under kb, as OG does; the model (Q9) has no page kb/sub, so kb has nothing below it. Same family as r6-refused-journal-risk and r9-own-child-alias."
   },

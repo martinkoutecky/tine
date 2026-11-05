@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "https:",
+      "path": "pages/scheme.md",
+      "preBlock": "title:: https:",
+      "title": "https:"
+    },
+    {
+      "format": "md",
+      "name": "https://a.b/c",
+      "path": "pages/url.md",
+      "preBlock": "title:: https://a.b/c",
+      "title": "https://a.b/c"
+    }
+  ],
+  "links": []
+}
