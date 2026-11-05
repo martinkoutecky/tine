@@ -5,15 +5,14 @@ import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { formulaReferenceName } from "../sheet/boardColumns";
-import { clearOnBindingInvalidated } from "../binding";
+import { registerFindSheet, sheetFindChild } from "../sheet/find";
+import { renderedSheetRows, TitleBody } from "./SheetTableBody";
+export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
-import { InlineText } from "../render/inline";
-import { AstBody } from "../render/body";
-import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
@@ -325,6 +324,11 @@ export function SheetTable(props: {
     const limit = displayLimitThrough(row, displayedRows().length, sortedRows().length, SHEET_RENDER_PAGE);
     if (limit !== null) setRenderLimit(limit);
   };
+  onCleanup(registerFindSheet(() => tableRef, (id) => {
+    const rowId = sheetFindChild(id, props.ownerId) ?? id;
+    const row = rowIndexes().byBlockId.get(rowId)?.row;
+    if (row !== undefined) ensureDisplayedThrough(row);
+  }));
   createEffect(() => {
     const sel = cellSel();
     if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
@@ -1101,47 +1105,6 @@ export function SheetTable(props: {
     </Show>
   );
 }
-
-
-
-// Lazy-mount virtualization (P2): a table row's heavy cell CONTENT (title
-// InlineText parse, value-view chips, the hover handle) is deferred until the
-// row first comes near the viewport, mirroring the block-body pattern
-// ([[tine-block-virtualization]], lazyObserve.ts). The .sheet-cell divs, their
-// data-row/col attrs, selection classes and event handlers stay mounted for
-// EVERY row so selection, keyboard nav and drag hit-testing keep working
-// off-screen. Render-once-keep: a row that has rendered once (latched by block
-// id) renders eagerly forever — no placeholder↔real churn on re-sort/remount.
-// Module-level so it survives remount and is shared across surfaces; bounded by
-// the working set of rows ever brought near the viewport.
-const renderedSheetRows = new Set<string>();
-clearOnBindingInvalidated(() => renderedSheetRows.clear());
-
-// Test seam: reset the render-once latch so a fresh mount defers again.
-export function resetSheetRowVirtualizationForTests() {
-  renderedSheetRows.clear();
-}
-
-/** The row's block as the page draws it: Markdown lists, code, quotes and tables are rendered, not shown
- *  as source (GH #551). An empty title keeps the em dash `tableRowTitle` gives it. */
-function TitleBody(props: { row: FormulaEvalRow; format: "md" | "org" }): JSX.Element {
-  const placeholder = () => {
-    const title = tableRowTitle(props.row);
-    return title.trim() === "" || title === "—" ? title : null;
-  };
-  return (
-    <Show when={placeholder() === null} fallback={<InlineText text={placeholder() ?? ""} format={props.format} />}>
-      {/* Clamped (CSS max-height) so a long block cannot make a tall row: the cell shows the first lines, whole
-          blocks as the page draws them, and the full text opens with the result. */}
-      <div class="sheet-title-body">
-        <BlockRenderBoundary raw={rowRaw(props.row)}>
-        <AstBody raw={rowRaw(props.row)} format={props.format} />
-        </BlockRenderBoundary>
-      </div>
-    </Show>
-  );
-}
-
 function TitleCell(props: {
   query: boolean;
   ownerId: string;
