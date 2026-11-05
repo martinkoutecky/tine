@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.7] - 2026-11-05
+
 ### Fixed
 
 - Enter after a completed standalone `$$…$$` formula followed by text now creates the next block (#862).
