@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Clicking a virtual journal's title opens the file created since the feed was read, including a file created externally under a different accepted date filename while editing delays the feed refresh. Before, the title could target the proposed filename and report that the physical page was no longer available (GH #863).
 - A namespace page that has no file of its own, such as `Work` for a page titled `Work/Plan` or a link `[[Work/Plan]]`, is now a page everywhere, as in Logseq: it has a row in All pages, page queries find it, and it appears or goes as soon as its first child appears or its last child goes. Before, only the namespace tree showed it, and it was missing from All pages and queries. The Namespaces view now counts it among the pages below a namespace (REG-CM-NAMESPACE-PARENTS-INVENTORY, UI-CM-NAMESPACE-PARENTS).
 - Page queries find a journal by any spelling of its date: `(page "2026-10-26")`, `[[2026-10-26]]` and Tine query `@page and name = '2026-10-26'` now find the Oct 26th, 2026 journal and its blocks, as the link `[[2026-10-26]]` opens it; before they found nothing unless written in the journal's title format (internal REG-CM-QUERY-DATE-SPELLING-FOLD).
 - Enter after a completed standalone `$$…$$` formula followed by text now creates the next block (#862).

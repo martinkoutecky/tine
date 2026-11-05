@@ -147,6 +147,22 @@ claims the same name through `title::`. Editing a title rekeys the published
 name without moving the file. New page filenames use a reversible, injective
 Windows-safe codec; existing noncanonical paths remain pinned.
 
+Virtual journal feed days have no physical owner: a feed DTO with `rev: null`
+may carry a proposed filename, which the frontend discards before working-set
+admission. Initial, reference-completion and paginated feed reads share this
+rule. Header actions and zoom breadcrumbs resolve that logical day when opened,
+so an external creation under another accepted filename is opened even while
+editing defers a feed refresh (GH #863). A successful first save supplies the
+concrete owner. File-backed feed days retain their exact path; duplicate-day,
+dirty-owner and conflict guards remain in force.
+Likewise, installing a host no-file response uses its proposed path only to
+choose the editor format, and adopts no new physical owner. An existing owner
+survives a no-file response after external deletion.
+A routed load refused by the working-set gate retries when that owner becomes
+replaceable, including a host close still in flight after leaving a feed edit.
+The retry belongs to that route and graph; leaving either cancels it. Reads and
+exact-path checks run again, and unsaved or conflicted owners remain protected.
+
 Several files claiming one name (including duplicate journal days) are an
 invalid graph state (D-20261019-ZY2, narrowed by AL1); alias equivalence is
 unchanged. `WholeGraph::resolve` and `inventory` retain the competing file ids
