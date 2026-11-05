@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseMainWindow, ensureMainWindow, isAuxiliaryWindow } from "./lib/e2e-main-window.mjs";
+import { chooseMainWindow, ensureMainWindow, isAuxiliaryWindow, waitForNewWindow } from "./lib/e2e-main-window.mjs";
 
 const APP = "http://tauri.localhost/";
 const CAPTURE = "http://tauri.localhost/capture.html";
@@ -104,6 +104,67 @@ test("enumerating an attached main restores that window even when capture is las
 test("a session exposing only capture fails at the window boundary with its URL", async () => {
   const browser = session([{ handle: "capture", url: CAPTURE }], "capture");
   await assert.rejects(ensureMainWindow(browser), /application window.*capture=http:\/\/tauri.localhost\/capture.html/);
+});
+
+function popupSession(rounds) {
+  let round = 0, active;
+  const switched = [];
+  return {
+    switched,
+    getWindowHandles: async () => Object.keys(rounds[round]),
+    switchToWindow: async handle => { active = handle; switched.push(handle); },
+    execute: async () => {
+      const outcome = rounds[round][active];
+      if (outcome instanceof Error) throw outcome;
+      return outcome;
+    },
+    waitUntil: async condition => {
+      for (round = 0; round < rounds.length; round++) if (await condition()) return;
+      throw new Error("No usable new window appeared");
+    },
+  };
+}
+
+test("a deferred popup target may disappear before the usable window appears (GH #809 x64)", async () => {
+  const browser = popupSession([
+    { main: true, capture: true, temporary: new Error("no such window: target window already closed / web view not found") },
+    { main: true, capture: true, associated: true },
+  ]);
+  const observations = [];
+  const handle = await waitForNewWindow(browser, new Set(["main", "capture"]), {
+    ready: () => browser.execute(() => document.body.textContent.includes("GH809 original page body")),
+    observe: value => observations.push(value),
+  });
+  assert.equal(handle, "associated");
+  assert.deepEqual(browser.switched, ["temporary", "associated"]);
+  assert.equal(observations[0].vanished, true);
+  assert.deepEqual(observations[1], { handle: "associated", ready: true });
+});
+
+test("a blank popup never passes by selecting main's matching page (GH #809)", async () => {
+  const browser = popupSession([
+    { main: true, capture: true, blank: false },
+    { main: true, capture: true, blank: false },
+  ]);
+  await assert.rejects(waitForNewWindow(browser, new Set(["main", "capture"]), {
+    ready: () => browser.execute(() => document.body.textContent.includes("GH809 original page body")),
+  }), /No usable new window appeared/);
+  assert.ok(browser.switched.length > 0);
+  assert.ok(browser.switched.every(handle => handle === "blank"), "never inspect the matching main or capture window");
+});
+
+test("popup selection preserves a stable handle and waits for its page", async () => {
+  const browser = popupSession([{ main: true, popup: false }, { main: true, popup: true }]);
+  assert.equal(await waitForNewWindow(browser, new Set(["main"]), {
+    ready: () => browser.execute(() => true),
+  }), "popup");
+});
+
+test("popup selection does not hide renderer or session errors as target replacement", async () => {
+  const browser = popupSession([{ main: true, popup: new Error("invalid session id") }]);
+  await assert.rejects(waitForNewWindow(browser, new Set(["main"]), {
+    ready: () => browser.execute(() => true),
+  }), /invalid session id/);
 });
 
 test("Windows smoke page journeys use the shared navigation and persisted-file doors", () => {

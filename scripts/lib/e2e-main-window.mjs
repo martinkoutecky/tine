@@ -55,3 +55,35 @@ export async function ensureMainWindow(browser, { what = "the application window
   }
   await browser.switchToWindow(target ?? current);
 }
+
+/** Select a new window only when it answers the journey's readiness check.
+ * WebView2 can expose a temporary target during window.open's native deferral;
+ * that handle disappears when the associated popup target takes its place.
+ * Re-enumerate within one bounded wait, without repeating the user action. */
+export async function waitForNewWindow(browser, before, {
+  ready,
+  observe = () => {},
+  timeout = 15_000,
+  timeoutMsg = "No usable new window appeared",
+}) {
+  let selected;
+  await browser.waitUntil(async () => {
+    for (const handle of await browser.getWindowHandles()) {
+      if (before.has(handle)) continue;
+      try {
+        await browser.switchToWindow(handle);
+        const usable = await ready();
+        observe({ handle, ready: usable });
+        if (usable) {
+          selected = handle;
+          return true;
+        }
+      } catch (error) {
+        if (!/no such window|target window already closed|web view not found/i.test(String(error))) throw error;
+        observe({ handle, vanished: true, error: String(error) });
+      }
+    }
+    return false;
+  }, { timeout, timeoutMsg });
+  return selected;
+}

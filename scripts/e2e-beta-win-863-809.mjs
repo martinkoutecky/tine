@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
-import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { ensureMainWindow, waitForNewWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { x11Tools } from "./lib/e2e-x11.mjs";
@@ -229,15 +229,20 @@ try {
       if (!item) throw new Error("Open in new window context-menu item absent");
       item.click();
     });
-    let popup;
-    await browser.waitUntil(async () => {
-      popup = (await browser.getWindowHandles()).find(handle => !before.has(handle));
-      return !!popup;
-    }, { timeout: 15_000, timeoutMsg: "No separate workspace window appeared" });
+    report.popupTargets = [];
+    const popup = await waitForNewWindow(browser, before, {
+      ready: () => browser.execute(() => !!document.body?.textContent.includes("GH809 original page body")),
+      observe: state => {
+        // Retain target transitions, including vanished temporary targets, in
+        // the capsule without flooding it with identical readiness polls.
+        if (report.popupTargets.length < 32 && JSON.stringify(report.popupTargets.at(-1)) !== JSON.stringify(state)) {
+          report.popupTargets.push(state);
+          write();
+        }
+      },
+      timeoutMsg: "No separate workspace window rendered the selected page",
+    });
     step("809-popup-handle", { main, popup });
-    await browser.switchToWindow(popup);
-    await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("GH809 original page body")),
-      { timeout: 15_000, timeoutMsg: "Popup stayed blank instead of showing the selected page" });
     step("809-popup-rendered", await browser.getTitle());
     await shot("809-popup.png");
     // Use the ordinary editor/save journey to demonstrate usable popup input.
