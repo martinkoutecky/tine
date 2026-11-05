@@ -63,7 +63,12 @@ function accept(textarea: EditorDriver, key: "Enter" | "Tab" = "Enter") {
 // the CM6 (( picker once inserted the runtime key while the target was stamped
 // with a fresh UUID, a dangling reference.
 describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)", (kind) => {
-  beforeEach(async () => { setCm6EditorEnabled(kind === "cm6"); await Promise.resolve(); });
+  beforeEach(async () => {
+    // jsdom has no layout; CM6 measures ranges (empty geometry, as setup.cm6.ts).
+    if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+    if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = () => new DOMRect();
+    setCm6EditorEnabled(kind === "cm6"); await Promise.resolve();
+  });
   afterEach(() => setCm6EditorEnabled(false));
 
   it("keeps native rows ahead of Pinyin at the rendered completion boundary and refreshes when disabled", async () => {
