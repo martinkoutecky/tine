@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
-import { advancedMatch, matchedDescription, rankedSettingMatches, SETTING_SEARCH, settingMatches, settingHighlight } from "./settingsSearch";
+import { advancedMatch, matchedDescription, rankedSettingMatches, settingMatches, settingHighlight } from "./settingsSearch";
+import { settingEntries } from "./settingsRegistry";
 import { msg, render, setActiveLocale, type Msg } from "../i18n";
 
 afterEach(() => setActiveLocale("en"));
@@ -17,7 +18,7 @@ it("highlights every case-insensitive term, merges overlaps and preserves litera
 });
 
 it("finds Pinyin and reveals Editor's advanced settings", () => {
-  expect(SETTING_SEARCH.filter(entry => settingMatches(entry, "pinyin")).map(entry => entry.tab)).toContain("editor");
+  expect(settingEntries().filter(entry => settingMatches(entry, "pinyin")).map(entry => entry.tab)).toContain("editor");
   expect(advancedMatch("editor", "pinyin")).toBe(true);
 });
 
@@ -30,14 +31,14 @@ it("matches translated and original English vocabulary after a language change",
 });
 
 const text = (value: string | Msg) => typeof value === "string" ? value : render(value);
-const labelsFor = (query: string) => rankedSettingMatches(SETTING_SEARCH, query).map(entry => text(entry.label));
+const labelsFor = (query: string) => rankedSettingMatches(settingEntries(), query).map(entry => text(entry.label));
 
 it("explains matches outside the visible label, including keyword and alias hits (GH #706)", async () => {
   await setActiveLocale("zh-CN");
-  const embed = SETTING_SEARCH.find(entry => text(entry.label) === "块嵌入面包屑")!;
+  const embed = settingEntries().find(entry => text(entry.label) === "块嵌入面包屑")!;
   expect(settingMatches(embed, "父")).toBe(true);
   expect(matchedDescription(embed, "父")).toContain("父");
-  const language = SETTING_SEARCH.find(entry => text(entry.label) === "语言")!;
+  const language = settingEntries().find(entry => text(entry.label) === "语言")!;
   expect(matchedDescription(language, "Language")).toContain("Language");
   expect(matchedDescription(language, "Chinese")).toContain("Chinese");
   expect(matchedDescription({ tab: "graph", label: "Alpha", description: "Elsewhere", keywords: "hidden zebra" }, "zebra")).toBe("hidden zebra");
@@ -91,11 +92,11 @@ it("shows the matching description under a result only when its name does not ma
   expect(matchedDescription(entry, "alpha")).toBeUndefined();
   expect(matchedDescription(entry, " ")).toBeUndefined();
   await setActiveLocale("zh-CN");
-  const graph = SETTING_SEARCH.find(entry => text(entry.label) === "图谱")!;
+  const graph = settingEntries().find(entry => text(entry.label) === "图谱")!;
   expect(matchedDescription(graph, "发")).toContain("发");
   await setActiveLocale("en");
   // Catalog markup is not shown or matched, and a long description is cut around its match.
-  const spell = SETTING_SEARCH.find(entry => text(entry.label) === "Spellcheck languages")!;
+  const spell = settingEntries().find(entry => text(entry.label) === "Spellcheck languages")!;
   expect(matchedDescription(spell, "rescan")).toMatch(/^….*Rescan\.$/);
   expect(matchedDescription(spell, "rescan")).not.toMatch(/<\/?[a-z]+>/);
   expect(matchedDescription(spell, "rescan")!.length).toBeLessThanOrEqual(122);
@@ -103,8 +104,8 @@ it("shows the matching description under a result only when its name does not ma
 });
 
 it("lists label, keyword and alias matches before description-only matches, keeping the table order (GH #706)", () => {
-  const all = SETTING_SEARCH.filter(entry => settingMatches(entry, "dev"));
-  const ranked = rankedSettingMatches(SETTING_SEARCH, "dev");
+  const all = settingEntries().filter(entry => settingMatches(entry, "dev"));
+  const ranked = rankedSettingMatches(settingEntries(), "dev");
   expect(new Set(ranked)).toEqual(new Set(all));
   expect(ranked).toHaveLength(all.length);
   const names = ranked.map(entry => text(entry.label));
@@ -115,9 +116,9 @@ it("lists label, keyword and alias matches before description-only matches, keep
   const flags = ranked.map(nameHit);
   expect(flags.indexOf(false)).toBeGreaterThan(0);
   expect(flags.slice(flags.indexOf(false)).every(flag => !flag)).toBe(true);
-  // Stable within a group: both halves keep SETTING_SEARCH order.
+  // Stable within a group: both halves keep settingEntries() order.
   for (const group of [ranked.filter(nameHit), ranked.filter(entry => !nameHit(entry))]) {
-    const positions = group.map(entry => SETTING_SEARCH.indexOf(entry));
+    const positions = group.map(entry => settingEntries().findIndex(candidate => candidate.id === entry.id));
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
   }
 });

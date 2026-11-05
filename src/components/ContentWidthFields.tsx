@@ -1,3 +1,4 @@
+import { settings } from "./settingDefinitions";
 import { t } from "../i18n";
 import { Show, type JSX } from "solid-js";
 import {
@@ -21,8 +22,8 @@ export function ContentWidthFields(): JSX.Element {
   return (
     <>
         <Field
-          label={t("content-width-fields-standard-page-width")}
-          hint={t("content-width-fields-maximum-reading-column-width-on-this-device-reset")}
+          setting={settings["content-width-fields-standard-page-width"]}
+
         >
           <div class="settings-width-control">
             <input
@@ -53,8 +54,8 @@ export function ContentWidthFields(): JSX.Element {
         </Field>
 
         <Field
-          label={t("content-width-fields-wide-page-width")}
-          hint={t("content-width-fields-wide-mode-can-fill-the-available-pane-or")}
+          setting={settings["content-width-fields-wide-page-width"]}
+
         >
           <div class="settings-width-control">
             <select

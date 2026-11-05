@@ -1,8 +1,10 @@
+import { settings } from "./settingDefinitions";
+import { settingHint } from "./settingsField";
 import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { customCssDisabled, setCustomCssDisabled } from "../customCss";
 import { ownedWhen, readOwned } from "../owned";
 import { openCssEditor, openCssInDefaultApp } from "../cssEditor";
-import { msg, t } from "../i18n";
+import { t } from "../i18n";
 import { platformKind } from "../platform";
 import { isMac } from "../nativeChrome";
 import { openDevtools } from "../ui";
@@ -27,8 +29,8 @@ export function CustomCssSettings(): JSX.Element {
   return (
     <><div class="settings-section">{t("settings-custom-css")}</div>
         <Field
-          label={t("css-edit-graph")}
-          hint={t("css-graph-hint")}
+          setting={settings["css-edit-graph"]}
+
         >
           <button class="settings-btn" onClick={() => void openCssEditor(false)}>
             {t("css-edit-graph")}
@@ -37,22 +39,22 @@ export function CustomCssSettings(): JSX.Element {
             <button class="settings-btn" onClick={() => void openCssInDefaultApp(false)}>{t("css-open-default-app")}</button>
           </Show>
         </Field>
-      <Field label={t("css-edit-global")} hint={t("css-global-hint")}>
+      <Field setting={settings["css-edit-global"]}>
         <button class="settings-btn" onClick={() => void openCssEditor(true)}>{t("css-edit-global")}</button>
         <Show when={desktop()}>
           <button class="settings-btn" onClick={() => void openCssInDefaultApp(true)}>{t("css-open-default-app")}</button>
         </Show>
       </Field>
       <Field
-        label={t("settings-search-disable-custom-css")}
-        hint={t("css-safe-hint")}
+        setting={settings["settings-search-disable-custom-css"]}
+
       >
         <Toggle on={customCssDisabled()} onClick={() => setCustomCssDisabled(!customCssDisabled())} />
       </Field>
       <Show when={desktop()}>
         <Field
-          label={t("settings-search-developer-tools")}
-          hint={<Rich message={msg("settings-inspector-hint", { platform: isMac ? "mac" : "other" })} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} />}
+          setting={settings["settings-search-developer-tools"]}
+          hint={<Rich message={settingHint(settings["settings-search-developer-tools"], { platform: isMac ? "mac" : "other" })} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} />}
         ><button class="settings-btn" onClick={() => openDevtools()}>{t("settings-open-developer-tools")}</button>
         </Field>
       </Show>

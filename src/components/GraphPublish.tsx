@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
@@ -51,16 +53,16 @@ export function GraphPublish(): JSX.Element {
     } finally { if (owner()) setBusy(false); }
   };
   return <>
-    <div class="settings-row"><span class="settings-label">{t("graph-publish-graph")}</span><div>
+    <div class="settings-row" {...settingAttributes(settings["graph-publish-graph"])}><span class="settings-label">{settingLabel(settings["graph-publish-graph"])}</span><div>
       <span class="settings-value mono">{graphMeta()?.display_root ?? graphMeta()?.root ?? "—"}</span>
       <div style={{ "margin-top": "6px" }}><button class="settings-btn" onClick={() => void switchGraph()}>{t("graph-publish-open-another-graph")}</button></div>
     </div></div>
-    <div class="settings-row"><span class="settings-label">{t("graph-publish-publish")}</span><div>
+    <div class="settings-row" {...settingAttributes(settings["graph-publish-publish"])}><span class="settings-label">{settingLabel(settings["graph-publish-publish"])}</span><div>
       <label class="settings-hint">{t("graph-publish-export-name")}<input value={name()} onInput={(event) => setName(event.currentTarget.value)} /></label>
       <label class="settings-hint"><input type="checkbox" checked={allPages()}
         onChange={(event) => setAllPages(event.currentTarget.checked)} />{t("graph-publish-include-every-page-not-marked-public-false")}</label>
       <div><button class="settings-btn" disabled={busy()} onClick={() => void publish()}>{t("graph-publish-export-html-and-read-only-app")}</button></div>
-      <div class="settings-hint">{t("graph-publish-choose-a-destination-outside-the-graph-the-export")}</div>
+      <div class="settings-hint">{settingDescription(settings["graph-publish-publish"])}</div>
       <Show when={message()}><div class="settings-hint" role="status">{message()}</div></Show>
       <Show when={desktop() && exportPath()}>
         <button class="settings-btn" onClick={() => {

@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { msg, t } from "../i18n";
 import { backend } from "../backend";
@@ -224,7 +226,7 @@ export function QuickShareSettings(): JSX.Element {
         <button type="button" class="export-btn-secondary quick-share-test-connection" disabled={!!busy()} onClick={testConnection}>{t("quick-share-connection-test")}</button>
         <Show when={connectionTest()}>{(result) => <p role="status" class="settings-hint">{t(`quick-share-connection-${result()}`)}</p>}</Show>
       </Show>
-      <div class="settings-section">{t("quick-share-settings-account")}</div>
+      <div class="settings-section" {...settingAttributes(settings["quick-share-settings-account"])}>{settingLabel(settings["quick-share-settings-account"])}</div>
       <Show when={listing()?.account} fallback={
         <Show when={connecting()} fallback={<>
           <p class="settings-hint">{t("quick-share-settings-not-connected")}</p>
@@ -241,7 +243,7 @@ export function QuickShareSettings(): JSX.Element {
         <p class="settings-hint">{t("quick-share-settings-revoke")}</p>
       </>}</Show>
 
-      <div class="settings-section">{t("quick-share-settings-shares")}</div>
+      <div class="settings-section" {...settingAttributes(settings["quick-share-settings-shares"])}>{settingLabel(settings["quick-share-settings-shares"])}</div>
       <p class="settings-hint quick-share-settings-shares-hint">{t("quick-share-settings-shares-hint")}</p>
       <Show when={listing()?.error}><div role="alert" class="query-export-refused">{listing()!.error}</div></Show>
       <Show when={listing() && !listing()!.error && listing()!.shares.length === 0}>
@@ -277,7 +279,7 @@ export function QuickShareSettings(): JSX.Element {
       </ul>
 
       <Show when={markers().length > 0}>
-        <div class="settings-section">{t("quick-share-settings-markers")}</div>
+        <div class="settings-section" {...settingAttributes(settings["quick-share-settings-markers"])}>{settingLabel(settings["quick-share-settings-markers"])}</div>
         <p class="settings-hint">{t("quick-share-settings-markers-hint")}</p>
         <ul class="quick-share-markers"><For each={markers()}>{(marker) => {
           const row = () => listing()?.shares.find((share) => share.shareId === marker.shareId);
@@ -308,10 +310,10 @@ export function QuickShareSettings(): JSX.Element {
       </Show>
 
       <Show when={listing()?.account}>
-        <div class="settings-section">{t("quick-share-settings-find")}</div>
+        <div class="settings-section" {...settingAttributes(settings["quick-share-settings-find"])}>{settingLabel(settings["quick-share-settings-find"])}</div>
         <p class="settings-hint">{t("quick-share-settings-find-hint")}</p>
         <button type="button" class="export-btn-secondary quick-share-find" disabled={!!busy()} onClick={() => void find()}>
-          {busy() === "find" ? t("quick-share-settings-finding") : t("quick-share-settings-find")}
+          {busy() === "find" ? t("quick-share-settings-finding") : settingLabel(settings["quick-share-settings-find"])}
         </button>
         <Show when={found()}>{(list) => <>
           <Show when={list().length === 0}><p class="settings-hint quick-share-found-none">{t("quick-share-settings-found-none")}</p></Show>
