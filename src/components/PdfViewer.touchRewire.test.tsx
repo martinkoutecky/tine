@@ -50,7 +50,7 @@ function documentWithOnePage() {
     getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null),
     getPageIndex: vi.fn().mockResolvedValue(0),
-    destroy: vi.fn().mockResolvedValue(undefined),
+    loadingTask: { destroy: vi.fn().mockResolvedValue(undefined) },
   };
 }
 

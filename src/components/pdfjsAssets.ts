@@ -1,4 +1,4 @@
-/** pdf.js 5 loads image decoders, fonts and colour profiles lazily. All paths
+/** pdf.js loads image decoders, fonts and colour profiles lazily. All paths
  * stay inside this application's bundle, including on Tauri's custom scheme.
  * pdf.js selects its fetching factory from the supplied URL scheme. */
 export function pdfjsAssetOptions() {
