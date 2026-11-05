@@ -243,28 +243,42 @@ pub(super) fn execute_pages(
             .find(|branch| branch.target == QueryTarget::Blocks)
             .map(|branch| &branch.predicate)?;
         graph.with_pages(|pages| {
+            let config = tine_core::query::atom::ParseConfig::from_config(graph.config());
             for (entry, doc) in pages {
                 if cancelled() {
                     break;
                 }
                 let mut ancestors = Vec::new();
-                walk_blocks(&doc.roots, &mut ancestors, &mut |block, _| {
-                    if cancelled() {
-                        return false;
-                    }
-                    let visible = block.visible_text();
-                    let lower = block.visible_folded(plan.remove_accents);
-                    if let Some(relevance) = block_relevance(plan, block_expr, visible, lower) {
-                        let key = entry.rel_path_str().to_owned();
-                        let replace = content_by_path.get(&key).is_none_or(|(best, _)| {
-                            relevance.cmp_quality(best) == Ordering::Greater
-                        });
-                        if replace {
-                            content_by_path.insert(key, (relevance, visible.to_owned()));
+                let pre: Vec<_> = doc
+                    .pre_block
+                    .as_deref()
+                    .filter(|pre| text::pre_block_may_match(plan, block_expr, pre))
+                    .map(|pre| text::pre_blocks_with_config(entry, pre, &config))
+                    .unwrap_or_default();
+                for (is_pre, roots) in [(true, pre.as_slice()), (false, doc.roots.as_slice())] {
+                    walk_blocks(roots, &mut ancestors, &mut |block, _| {
+                        if cancelled() {
+                            return false;
                         }
-                    }
-                    true
-                });
+                        let text = search_text(block, plan, graph);
+                        if is_pre && text.original.chars().all(char::is_whitespace) {
+                            return true;
+                        }
+                        if let Some(relevance) =
+                            block_relevance(plan, block_expr, &text.original, &text.folded)
+                        {
+                            let key = entry.rel_path_str().to_owned();
+                            let replace = content_by_path.get(&key).is_none_or(|(best, _)| {
+                                relevance.cmp_quality(best) == Ordering::Greater
+                            });
+                            if replace {
+                                content_by_path
+                                    .insert(key, (relevance, text.original.into_owned()));
+                            }
+                        }
+                        true
+                    });
+                }
             }
         });
         if cancelled() {

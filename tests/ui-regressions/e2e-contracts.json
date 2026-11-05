@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-search-properties.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Typing a user property value into Ctrl+K shows highlighted property evidence; Enter reveals the owning block or page header in Markdown and Org, without changing graph files.","blocking":false,"authority":"GH #870; D-20261105-SP"}],
+      "acceptableVariations": ["Snippet wrapping, highlight geometry, result timing and page layout may vary."],
+      "nonRequirements": ["No pixels, no hidden-key boundary enumeration (Rust tests cover it), no platform other than Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-scheme-consent.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A custom app link asks with its full URL and an unchecked Always open choice. Explicitly remembering opens later links of that exact scheme without prompting across a new app process. A different scheme still prompts; forgetting the scheme in Settings persists removal and restores its prompt. Native OS handoffs carry the original URLs and graph bytes stay unchanged.","blocking":false,"authority":"GH #503; D-20261103-S503"}],
       "acceptableVariations": ["Dialog geometry, wording translations, setting latency and OS handler registration may vary."],

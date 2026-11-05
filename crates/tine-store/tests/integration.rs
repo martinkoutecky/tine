@@ -1,6 +1,7 @@
 //! One integration executable; module names retain each source suite in test filters.
 
 mod host_only_writer;
+mod search_properties;
 
 // Store cost/fault probes are process-global. Every case takes this lock so
 // ordinary graph activity cannot contaminate a measurement in another suite.
