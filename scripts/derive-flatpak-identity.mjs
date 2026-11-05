@@ -62,8 +62,7 @@ export function deriveFlatpak({ root = ROOT, identity, date, version }) {
   let manifest = read(`${stableId}.yml`);
   // Replace the Flathub git source (pinned to a released tag) with a local `dir`
   // source so CI builds THIS commit. Every other source (the vendored cargo/node
-  // files, the pinned Emscripten SDK archives the PDF decoder build needs) is kept
-  // as the recipe lists it.
+  // files and any archives) is kept as the recipe lists it.
   const git = /^      - type: git\n(?:        .*\n)+/m;
   if (!manifest.includes("    sources:") || !git.test(manifest)) {
     throw new Error("manifest has no module `sources:` block with a git source to replace");

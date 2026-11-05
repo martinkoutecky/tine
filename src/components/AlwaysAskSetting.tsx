@@ -1,4 +1,4 @@
-import { t } from "../i18n";
+import { settings } from "./settingDefinitions";
 import type { JSX } from "solid-js";
 import { conflictPolicyAlwaysAsk, setConflictPolicyAlwaysAsk } from "../conflictPolicy";
 import { Field, Toggle } from "./settingsField";
@@ -8,8 +8,8 @@ import { Field, Toggle } from "./settingsField";
 export function AlwaysAskSetting(): JSX.Element {
   return (
     <Field
-      label={t("settings-prose-always-ask-before-applying-an-external-change")}
-      hint={t("settings-prose-when-a-page-you-are-not-editing-changes-on-disk")}
+      setting={settings["settings-prose-always-ask-before-applying-an-external-change"]}
+
     >
       <Toggle on={conflictPolicyAlwaysAsk()} onClick={() => setConflictPolicyAlwaysAsk(!conflictPolicyAlwaysAsk())} />
     </Field>
