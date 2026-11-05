@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription, settingHint } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
@@ -25,6 +27,7 @@ import {
 } from "../themes/manager";
 import { pushToast } from "../toasts";
 import { theme } from "../ui";
+import { communityThemeSetting, galleryThemeSetting, installedThemeSetting } from "./settingsDescriptor";
 
 // Settings → Appearance theme section: an independent Style (presentation)
 // selector and Color scheme gallery (master 670cf75bb), plus theme packages.
@@ -51,9 +54,11 @@ function ThemeGalleryCard(props: {
   thumbnail: string;
   selected: boolean;
 }): JSX.Element {
+  const descriptor = () => props.id ? galleryThemeSetting(props) : settings["themes-default"];
   return (
     <button
       class="theme-gallery-card"
+      {...settingAttributes(descriptor())}
       classList={{ selected: props.selected }}
       aria-pressed={props.selected}
       onClick={() => applyThemeColors(props.id)}
@@ -63,7 +68,7 @@ function ThemeGalleryCard(props: {
       </span>
       <span class="theme-gallery-card-body">
         <span class="theme-gallery-card-top">
-          <span class="theme-gallery-name">{props.name}</span>
+          <span class="theme-gallery-name">{settingLabel(descriptor())}</span>
           <span class="theme-gallery-badge">{props.badge}</span>
         </span>
         <span class="theme-gallery-author">{props.author}</span>
@@ -129,8 +134,8 @@ export function ThemeSettings(): JSX.Element {
 
   return (
     <><div class="settings-section">{t("themes-themes")}</div>
-      <div class="settings-row">
-        <div><div class="settings-label">{t("themes-style")}</div><div class="settings-hint">{t("themes-typography-journal-headings-and-other-presentation-choices")}</div>
+      <div class="settings-row" {...settingAttributes(settings["themes-style"])}>
+        <div><div class="settings-label">{settingLabel(settings["themes-style"])}</div><div class="settings-hint">{settingDescription(settings["themes-style"])}</div>
         </div>
         <select
           class="settings-select"
@@ -144,12 +149,12 @@ export function ThemeSettings(): JSX.Element {
         </select>
       </div>
       <Show when={installedThemes().some((installed) => !themeVersionIsRevoked(installed.key) && providesTypography(installed))}>
-        <div class="settings-row">
-          <div><div class="settings-label">{t("themes-typography")}</div><div class="settings-hint">{t("themes-fonts-and-block-line-height-from-a-theme-package")}</div>
+        <div class="settings-row" {...settingAttributes(settings["themes-typography"])}>
+          <div><div class="settings-label">{settingLabel(settings["themes-typography"])}</div><div class="settings-hint">{settingDescription(settings["themes-typography"])}</div>
           </div>
           <select
             class="settings-select"
-            aria-label={t("themes-typography")}
+            aria-label={settingLabel(settings["themes-typography"])}
             value={selectedThemeTypography()}
             onChange={(event) => applyThemeTypography(event.currentTarget.value)}
           ><option value="">{t("themes-default")}</option>
@@ -158,13 +163,13 @@ export function ThemeSettings(): JSX.Element {
             </For>
           </select>
         </div>
-      </Show><div class="settings-section">{t("themes-color-scheme")}</div>
+      </Show><div class="settings-section" {...settingAttributes(settings["themes-color-scheme"])}>{settingLabel(settings["themes-color-scheme"])}</div>
       <div class="theme-gallery-grid">
         <ThemeGalleryCard
           id=""
-          name={t("themes-default")}
+          name={settingLabel(settings["themes-default"])}
           author="Tine"
-          badge={t("themes-stock")}
+          badge={settingDescription(settings["themes-default"])}
           thumbnail="/theme-thumbnails/default.png"
           selected={selectedThemeColors() === ""}
         />
@@ -181,7 +186,7 @@ export function ThemeSettings(): JSX.Element {
           )}
         </For>
       </div>
-      <div class="settings-hint theme-gallery-hint"><Rich message={msg("themes-style-and-colors-are-independent-theme-packages")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
+      <div class="settings-hint theme-gallery-hint"><Rich message={settingHint(settings["themes-color-scheme"])} slots={{ "code": (children) => <code>{children}</code> }} /></div>
 
       <Show when={COMMUNITY_REGISTRY_ENABLED}><div class="settings-section">{t("themes-theme-packages")}</div>
       <Show when={communityThemes().length > 0}><div class="settings-hint theme-gallery-hint">{t("themes-signed-community-themes-inert-token-manifests")}</div>
@@ -192,11 +197,11 @@ export function ThemeSettings(): JSX.Element {
             const installed = () => installedThemes().some((theme) => theme.key === key());
             const revoked = () => themeVersionIsRevoked(key());
             return (
-              <div class="settings-field">
+              <div class="settings-field" {...settingAttributes(communityThemeSetting(themeEntry))}>
                 <div class="settings-field-row">
                   <div>
-                    <div class="settings-label">{themeEntry.name} <span class="settings-hint">v{version().version}</span></div>
-                    <div class="settings-hint settings-field-hint">{themeEntry.description}<br />{themeEntry.license}{" · "}{version().modes.join(" + ")}{" · "}{revoked() ? t("themes-revoked-by-the-signed-registry") : version().audit.manualApproval ? t("themes-human-reviewed") : t("themes-low-risk-automated-pass")}
+                    <div class="settings-label">{settingLabel(communityThemeSetting(themeEntry))} <span class="settings-hint">v{version().version}</span></div>
+                    <div class="settings-hint settings-field-hint">{settingDescription(communityThemeSetting(themeEntry))}<br />{themeEntry.license}{" · "}{version().modes.join(" + ")}{" · "}{revoked() ? t("themes-revoked-by-the-signed-registry") : version().audit.manualApproval ? t("themes-human-reviewed") : t("themes-low-risk-automated-pass")}
                     </div>
                   </div>
                   <div class="settings-field-control"><button class="settings-link" onClick={() => void backend().openExternal(themeEntry.source)}>{t("themes-details-screenshots")}</button>
@@ -214,8 +219,8 @@ export function ThemeSettings(): JSX.Element {
         </For>
       </Show>
       </Show>
-      <div class="settings-row">
-        <div><div class="settings-label">{t("themes-install-a-token-theme")}</div><div class="settings-hint">{t("themes-theme-packages-contain-only-whitelisted-color-tokens")}</div>
+      <div class="settings-row" {...settingAttributes(settings["themes-install-a-token-theme"])}>
+        <div><div class="settings-label">{settingLabel(settings["themes-install-a-token-theme"])}</div><div class="settings-hint">{settingDescription(settings["themes-install-a-token-theme"])}</div>
         </div>
         <div>
           <input
@@ -235,7 +240,7 @@ export function ThemeSettings(): JSX.Element {
               const previewMode = () => installed.manifest.modes[theme()] ?? installed.manifest.modes.light ?? installed.manifest.modes.dark ?? {};
               const revoked = () => themeVersionIsRevoked(installed.key);
               return (
-                <div class="settings-field installed-theme-row">
+                <div class="settings-field installed-theme-row" {...settingAttributes(installedThemeSetting(installed))}>
                   <div class="settings-field-row">
                     <div class="installed-theme-identity">
                       <span
@@ -247,7 +252,7 @@ export function ThemeSettings(): JSX.Element {
                         }}
                       >●</span>
                       <div>
-                        <div class="settings-label">{installed.manifest.name} <span class="settings-hint">v{installed.manifest.version}</span></div><div class="settings-hint">{installed.manifest.author}{" · "}{installed.manifest.license}{" · "}{Object.keys(installed.manifest.modes).join(" + ")}{revoked() ? t("themes-revoked-and-disabled") : ""}</div>
+                        <div class="settings-label">{settingLabel(installedThemeSetting(installed))} <span class="settings-hint">v{installed.manifest.version}</span></div><div class="settings-hint">{installed.manifest.author}{" · "}{installed.manifest.license}{" · "}{Object.keys(installed.manifest.modes).join(" + ")}{revoked() ? t("themes-revoked-and-disabled") : ""}</div>
                       </div>
                     </div>
                     <div class="settings-field-control">
@@ -281,7 +286,7 @@ export function ThemeSettings(): JSX.Element {
                       </button>
                     </div>
                   </div>
-                  <div class="settings-hint settings-field-hint">{installed.manifest.description}</div>
+                  <div class="settings-hint settings-field-hint">{settingDescription(installedThemeSetting(installed))}</div>
                   <For each={missingFonts(installed)}>
                     {(font) => <div class="settings-hint installed-theme-font-hint">{t("themes-font-not-installed", { font })}</div>}
                   </For>

@@ -1,3 +1,5 @@
+import { settings } from "./settingDefinitions";
+import { settingDescription } from "./settingsField";
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { t } from "../i18n";
 import { backend, type GitAutocommitStatus, type GitPolicy } from "../backend";
@@ -86,8 +88,8 @@ export function GitAutocommitSetting(): JSX.Element {
   const syncing = () => SYNCS.includes(status()?.policy ?? "off");
   const problem = () => syncing() || status()?.setup_pending ? gitSyncProblem(status()?.last?.sync, graphMeta()?.root) : null;
   const conversionProblem = () => gitLineEndingsProblem(status()?.line_endings);
-  return <Field label={t("git-settings-label")} hint={<>
-    <Show when={status()?.available !== false}>{t("git-settings-hint")}</Show>
+  return <Field setting={settings["git-settings-label"]} hint={<>
+    <Show when={status()?.available !== false}>{settingDescription(settings["git-settings-label"])}</Show>
     <Show when={status()}>{(s) => <>
       <Show when={!s().available}><div>{t("git-settings-not-available")}</div></Show>
       <Show when={s().available && (!s().repository || s().setup_pending)}>

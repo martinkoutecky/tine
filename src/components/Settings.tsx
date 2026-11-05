@@ -1,3 +1,4 @@
+import { settings } from "./settingDefinitions";
 import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
@@ -63,7 +64,7 @@ import { formatAssetName } from "../media";
 import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
-import { Field, Toggle } from "./settingsField";
+import { Field, Toggle, settingLabel, settingAttributes, settingDescription, settingHint } from "./settingsField";
 import { TraySettings } from "./TraySettings";
 import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
@@ -77,8 +78,10 @@ import { CommentNameSetting } from "./CommentNameSetting";
 import { LinkSchemeSettings } from "./LinkSchemeSettings";
 import { AssetsTab } from "./AssetsSettings";
 import { GraphFolderSetting } from "./GraphFolderSetting";
-import { msg, render, renderEnglish, t, type Msg } from "../i18n";
-import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, matchedDescription, type SettingSearchEntry } from "./settingsSearch";
+import { msg, render, t, type Msg } from "../i18n";
+import { rankedSettingMatches, settingHighlight, advancedMatch, matchedDescription } from "./settingsSearch";
+import { settingEntries } from "./settingsRegistry";
+import { mediaEditorSetting, type SettingDescriptor } from "./settingsDescriptor";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
@@ -101,7 +104,7 @@ import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { readOr } from "../resourceRead";
-import { activeWindow, listen, queryAllWindows, queryAllWindowsAll } from "../windowRealm";
+import { activeWindow, listen, queryAllWindows } from "../windowRealm";
 const TABS: { id: SettingsTabId; label: Msg }[] = [
   { id: "appearance", label: msg("settings-ui-appearance") },
   { id: "editor", label: msg("settings-ui-editor") },
@@ -124,8 +127,10 @@ export function Settings(): JSX.Element {
   // A result opens its tab with the matching Advanced section revealed, even
   // though navigation ends the search and restores the normal tab body.
   const [revealedQuery, setRevealedQuery] = createSignal("");
+  const [searchTarget, setSearchTarget] = createSignal<SettingDescriptor>();
   const searching = () => !!settingsQuery().trim() && tab() !== "shortcuts";
   let searchInput: HTMLInputElement | undefined;
+  let modalRoot: HTMLDivElement | undefined;
   const [settingsPlatform] = createResource(platformKind);
   // Unknown native platforms fail closed: do not reveal a package host whose
   // platform policy could not be established (ADR 0052; master b89a9e77f).
@@ -142,22 +147,21 @@ export function Settings(): JSX.Element {
     (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (touchPrimary() || !entry.touchOnly)), query) : [];
+    return query.trim() ? rankedSettingMatches(settingEntries().filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (touchPrimary() || !entry.touchOnly)), query) : [];
   });
   // A setting whose field mounts after an async load (Developer tools waits for
   // the platform probe) is not in the DOM when the tab opens, so the lookup is
   // retried per frame for a bounded time and then given up silently (GH #706).
   let scrollRun = 0;
   onCleanup(() => { scrollRun++; });
-  const openSearchResult = (entry: SettingSearchEntry) => {
+  const openSearchResult = (entry: SettingDescriptor) => {
+    setSearchTarget(entry);
     setRevealedQuery(settingsQuery());
     setSettingsQuery("");
     setTab(entry.tab);
     const run = ++scrollRun;
-    const labels = typeof entry.label === "string" ? [entry.label] : [render(entry.label), renderEnglish(entry.label)];
-    const findTarget = () => queryAllWindowsAll<HTMLElement>("[data-setting-label]").find((field) => labels.includes(field.dataset.settingLabel ?? ""))
-      ?? queryAllWindowsAll<HTMLElement>(".settings-label, .settings-section, .settings-row h2, .settings-row h3, .diagnostics-tab h3")
-        .find((field) => labels.includes(field.textContent?.trim() ?? ""));
+    const findTarget = () => Array.from(modalRoot?.querySelectorAll<HTMLElement>("[data-setting-id]") ?? [])
+      .find((field) => field.dataset.settingId === entry.id);
     const deadline = Date.now() + SEARCH_SCROLL_WAIT_MS;
     const attempt = (first: boolean) => {
       if (run !== scrollRun) return;
@@ -245,7 +249,7 @@ export function Settings(): JSX.Element {
   return (
     <Show when={settingsOpen()}>
       <div class="modal-overlay" classList={{ "settings-maximized": settingsMaximized() }} onClick={closeSettings}>
-        <div class="settings-modal" onClick={(e) => e.stopPropagation()}>
+        <div ref={modalRoot} class="settings-modal" onClick={(e) => e.stopPropagation()}>
           <aside class="settings-nav">
             <div class="settings-nav-title">{t("settings-ui-settings")}</div>
             <For each={availableTabs()}>
@@ -253,7 +257,7 @@ export function Settings(): JSX.Element {
                 <button
                   class="settings-nav-item"
                   classList={{ active: tab() === t.id }}
-                  onClick={() => { setRevealedQuery(""); setTab(t.id); }}
+                  onClick={() => { setSearchTarget(undefined); setRevealedQuery(""); setTab(t.id); }}
                 >
                   {render(t.label)}
                 </button>
@@ -300,7 +304,7 @@ export function Settings(): JSX.Element {
                   <Show when={matches().length} fallback={<div class="settings-search-empty">{t("settings-ui-no-matching-settings")}</div>}>
                     <For each={matches()}>
                       {(entry) => (
-                        <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
+                        <button type="button" class="settings-search-result" data-setting-target={entry.id} onClick={() => openSearchResult(entry)}>
                           <span><For each={settingHighlight(typeof entry.label === "string" ? entry.label : render(entry.label), settingsQuery())}>
                             {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
                           </For><Show when={matchedDescription(entry, settingsQuery())}>{(description) => (
@@ -342,23 +346,23 @@ export function Settings(): JSX.Element {
                 <QuickShareSettings />
               </Show>
               <Show when={tab() === "plugins" && pluginsAvailable()}>
-                <PluginsTab />
+                <div {...settingAttributes(settings["settings-ui-plugins"])}><PluginsTab target={searchTarget()} /></div>
               </Show>
               <Show when={tab() === "diagnostics"}>
                 <DiagnosticsTab />
               </Show>
               <Show when={tab() === "shortcuts"}>
-                <ShortcutsSettingsPane
+                <div {...settingAttributes(settings["settings-ui-keyboard-shortcuts"])}><ShortcutsSettingsPane
                   shortcuts={shortcuts()}
                   search={settingsQuery()}
                   recording={recording()}
                   onRecord={(id) => setRecording(recording() === id ? null : id)}
                   onUnbind={(id) => { setRecording(null); setShortcutOverride(id, "false"); }}
                   onReset={resetShortcutOverride}
-                />
+                /></div>
               </Show>
               <Show when={tab() === "about"}>
-                <AboutTab />
+                <div {...settingAttributes(settings["settings-ui-about"])}><AboutTab /></div>
               </Show>
               </Show>
               </Suspense>
@@ -376,7 +380,7 @@ export function Settings(): JSX.Element {
 // this (instead of a plain Field) so non-OG defaults are always visible and one
 // click from reverting. `ogValue` is the toggle state that matches Logseq.
 function OgField(props: {
-  label: string;
+  setting: SettingDescriptor;
   hint?: JSX.Element;
   ogNote: Msg;
   ogValue: boolean;
@@ -385,10 +389,10 @@ function OgField(props: {
 }): JSX.Element {
   const diverges = () => props.on !== props.ogValue;
   return (
-    <div class="settings-field og-field" data-setting-label={props.label} classList={{ "og-diverges": diverges() }}>
+    <div class="settings-field og-field" {...settingAttributes(props.setting)} classList={{ "og-diverges": diverges() }}>
       <div class="settings-field-row">
         <span class="settings-label">
-          {props.label}
+          {settingLabel(props.setting)}
           <Show when={diverges()}>
             <span class="og-badge" title={t("settings-ui-tine-s-default-differs-from-logseq-here")}>{t("settings-ui-differs-from-logseq")}</span>
           </Show>
@@ -397,8 +401,8 @@ function OgField(props: {
           <Toggle on={props.on} onClick={props.onToggle} />
         </div>
       </div>
-      <Show when={props.hint}>
-        <div class="settings-hint settings-field-hint">{props.hint}</div>
+      <Show when={props.hint ?? props.setting.description}>
+        <div class="settings-hint settings-field-hint">{props.hint ?? settingDescription(props.setting)}</div>
       </Show>
       <div class="og-note">
         <span class="og-logseq">{render(props.ogNote)}</span>
@@ -485,13 +489,13 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <ThemeSettings />
       <LanguageSetting />
 
-      <div class="settings-row">
-        <span class="settings-label">{t("settings-ui-mode")}</span>
+      <div class="settings-row" {...settingAttributes(settings["settings-ui-mode"])}>
+        <span class="settings-label">{settingLabel(settings["settings-ui-mode"])}</span>
         <ThemeChoice />
       </div>
 
-      <div class="settings-row">
-        <span class="settings-label">{t("settings-ui-accent-color")}</span>
+      <div class="settings-row" {...settingAttributes(settings["settings-ui-accent-color"])}>
+        <span class="settings-label">{settingLabel(settings["settings-ui-accent-color"])}</span>
         <div>
           <input
             type="color"
@@ -506,8 +510,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </div>
 
       <Field
-        label={t("settings-ui-interface-size")}
-        hint={t("settings-ui-zoom-the-whole-interface-ctrl-ctrl-ctrl-0-or")}
+        setting={settings["settings-ui-interface-size"]}
+
       >
         <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
           <button class="settings-btn" title={t("settings-ui-smaller-ctrl")} onClick={zoomOut}>−</button>
@@ -524,38 +528,38 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       {/* GH #716: a touch-first device (phone/tablet) keeps Sidebar, Search, Back and Forward in
           the top bar; this opt-in restores the GH #598 bottom row. */}
       <Show when={touchPrimary()}>
-        <Field label={render(msg("settings-mobile-navigation-label"))} hint={render(msg("settings-mobile-navigation-hint"))}>
+        <Field setting={settings["settings-mobile-navigation-label"]}>
           <Toggle on={mobileNavigationAtBottom()} onClick={() => setMobileNavigationAtBottom(!mobileNavigationAtBottom())} />
         </Field>
       </Show>
 
-      <Field label={t("settings-ui-wide-mode")} hint={t("settings-ui-drops-the-reading-width-cap")}>
+      <Field setting={settings["settings-ui-wide-mode"]}>
         <Toggle on={wideMode()} onClick={toggleWideMode} />
       </Field>
-      <Field label={t("settings-ui-document-mode")} hint={t("settings-ui-hides-bullets-and-indent-guides-for-a-cleaner-prose")}>
+      <Field setting={settings["settings-ui-document-mode"]}>
         <Toggle on={documentMode()} onClick={toggleDocumentMode} />
       </Field>
       <Field
-        label={t("settings-ui-document-mode-enter-creates-a-new-block")}
-        hint={<><Rich message={msg("settings-ui-keep-the-normal-enter-new-block-and-shift-enter")} /></>}
+        setting={settings["settings-ui-document-mode-enter-creates-a-new-block"]}
+        hint={<><Rich message={settingHint(settings["settings-ui-document-mode-enter-creates-a-new-block"])} /></>}
       >
         <Toggle
           on={docModeEnterForNewBlock()}
           onClick={() => changeDocModeEnterForNewBlock(!docModeEnterForNewBlock())}
         />
       </Field>
-      <Field label={t("settings-ui-comment-margin")} hint={t("settings-ui-shows-the-comment-threads-beside-the-page-off-hides")}>
+      <Field setting={settings["settings-ui-comment-margin"]}>
         <Toggle on={!commentMarginHidden()} onClick={toggleCommentMargin} />
       </Field>
       <Field
-        label={t("settings-ui-show-brackets")}
-        hint={<><Rich message={msg("settings-ui-show-the-around-page-references-saved-to-ui-show")} /></>}
+        setting={settings["settings-ui-show-brackets"]}
+        hint={<><Rich message={settingHint(settings["settings-ui-show-brackets"])} /></>}
       >
         <Toggle on={showBrackets()} onClick={() => changeShowBrackets(!showBrackets())} />
       </Field>
       <Field
-        label={t("settings-ui-typographic-replacements")}
-        hint={t("settings-ui-show-arrows-and-dashes-as-glyphs-en-dash-em")}
+        setting={settings["settings-ui-typographic-replacements"]}
+
       >
         <select
           class="settings-select"
@@ -571,22 +575,22 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         </select>
       </Field>
 
-      <Field label={t("settings-ui-wrap-code-lines")} hint={t("settings-ui-wrap-long-code-lines-in-every-code-block-while")}>
+      <Field setting={settings["settings-ui-wrap-code-lines"]}>
         <Toggle on={codeWrapping()} onClick={() => changeCodeWrapping(!codeWrapping())} />
       </Field>
-      <Field label={render(msg("setting-sticky-parents"))} hint={render(msg("setting-sticky-parents-hint"))}>
+      <Field setting={settings["setting-sticky-parents"]}>
         <Toggle on={stickyParents()} onClick={() => changeStickyParents(!stickyParents())} />
       </Field>
       <Field
-        label={t("settings-ui-auto-pair-brackets-quotes")}
-        hint={t("settings-ui-typing-quot-inserts-the-matching-closer-with-the-caret")}
+        setting={settings["settings-ui-auto-pair-brackets-quotes"]}
+
       >
         <Toggle on={autoPairing()} onClick={() => setAutoPairing(!autoPairing())} />
       </Field>
 
       <OgField
-        label={t("settings-ui-space-after-inserting-a-reference")}
-        hint={t("settings-ui-after-you-pick-a-page-from-or-a-block")}
+        setting={settings["settings-ui-space-after-inserting-a-reference"]}
+
         ogNote={msg("settings-og-reference-spacing")}
         ogValue={false}
         on={spaceAfterRefCompletion()}
@@ -594,23 +598,23 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       />
 
       <Field
-        label={t("settings-ui-dim-in-focus-mode")}
-        hint={t("settings-ui-auto-enable-dim-inactive-blocks-t-b-when-entering")}
+        setting={settings["settings-ui-dim-in-focus-mode"]}
+
       >
         <Toggle on={dimInFocus()} onClick={() => setDimInFocus(!dimInFocus())} />
       </Field>
 
       <Field
-        label={t("settings-ui-load-local-file-images")}
-        hint={t("settings-ui-let-raw-html-tags-in-notes-load-images-from")}
+        setting={settings["settings-ui-load-local-file-images"]}
+
       >
         <Toggle on={allowLocalFileImages()} onClick={() => setAllowLocalFileImages(!allowLocalFileImages())} />
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
       <Field
-        label={t("settings-ui-right-to-left-note-layout")}
-        hint={t("settings-ui-mirror-bullets-indentation-and-guide-lines-in-note-panes")}
+        setting={settings["settings-ui-right-to-left-note-layout"]}
+
       >
         <Toggle on={noteLayoutRtl()} onClick={() => setNoteLayoutRtl(!noteLayoutRtl())} />
       </Field>
@@ -618,8 +622,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         <CustomCssSettings />
         <ContentWidthFields />
         <Field
-          label={t("settings-ui-smooth-scrolling-experimental")}
-          hint={t("settings-ui-animate-the-journal-feed-s-scrolling-to-smooth-out")}
+          setting={settings["settings-ui-smooth-scrolling-experimental"]}
+
         >
           <Toggle on={smoothScrollEnabled()} onClick={() => setSmoothScroll(!smoothScrollEnabled())} />
         </Field>
@@ -630,16 +634,16 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           only meaningful — and only shown — on Linux/Windows. */}
       <Show when={isTauri() && !isMac}>
         <Field
-          label={t("settings-ui-system-title-bar-window-controls")}
-          hint={t("settings-ui-use-your-os-s-native-window-frame-title-bar")}
+          setting={settings["settings-ui-system-title-bar-window-controls"]}
+
         >
           <Toggle on={nativeFrameEnabled()} onClick={() => void changeNativeFrame()} />
         </Field>
       </Show>
       <Show when={isTauri() && isMac}>
         <Field
-          label={t("settings-ui-window-controls")}
-          hint={t("settings-ui-macos-draws-tine-with-native-rounded-corners-and-traffic")}
+          setting={settings["settings-ui-window-controls"]}
+
         >
           <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>{t("settings-ui-native-macos")}</span>
         </Field>
@@ -665,9 +669,9 @@ function JournalTemplateField(): JSX.Element {
   const missing = () => templatesResource.error === undefined && !templatesResource.loading && current() !== "" && !list().some((t) => t.name === current());
   return (
     <Field
-      label={t("settings-ui-new-journal-template")}
+      setting={settings["settings-ui-new-journal-template"]}
       hint={
-        <><Rich message={msg("settings-ui-template-inserted-into-a-new-day-s-journal-saved")} /></>
+        <><Rich message={settingHint(settings["settings-ui-new-journal-template"])} /></>
       }
     >
       <div class="settings-jtmpl">
@@ -744,9 +748,9 @@ function EditorTab(props: { search: string }): JSX.Element {
       <CommentNameSetting />
       <LinkSchemeSettings />
       <Field
-        label={t("settings-ui-file-format")}
+        setting={settings["settings-ui-file-format"]}
         hint={
-          <><Rich message={msg("settings-ui-format-for-new-pages-and-journals-markdown-or-org")} /></>
+          <><Rich message={settingHint(settings["settings-ui-file-format"])} /></>
         }
       >
         <div class="settings-segment">
@@ -762,26 +766,26 @@ function EditorTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
-        label={t("settings-ui-spell-checker")}
+        setting={settings["settings-ui-spell-checker"]}
         hint={
-          <><Rich message={msg("settings-ui-underline-misspelled-words-while-editing-with-right-click-suggestions")} /></>
+          <><Rich message={settingHint(settings["settings-ui-spell-checker"])} /></>
         }
       >
         <Toggle on={spellcheckEnabled()} onClick={() => setSpellcheckEnabled(!spellcheckEnabled())} />
       </Field>
 
       <Field
-        label={t("settings-ui-logical-outdenting")}
-        hint={<><Rich message={msg("settings-ui-move-an-outdented-block-after-its-parent-while-leaving")} /></>}
+        setting={settings["settings-ui-logical-outdenting"]}
+        hint={<><Rich message={settingHint(settings["settings-ui-logical-outdenting"])} /></>}
       >
         <Toggle on={logicalOutdenting()} onClick={() => changeLogicalOutdenting(!logicalOutdenting())} />
       </Field>
 
       <Show when={spellcheckEnabled()}>
         <Field
-          label={t("settings-ui-spellcheck-languages")}
+          setting={settings["settings-ui-spellcheck-languages"]}
           hint={
-            <><Rich message={msg("settings-ui-tick-the-dictionaries-to-check-several-at-once-is")} /></>
+            <><Rich message={settingHint(settings["settings-ui-spellcheck-languages"])} /></>
           }
         >
           <div class="spellcheck-dicts">
@@ -810,7 +814,7 @@ function EditorTab(props: { search: string }): JSX.Element {
       </Show>
 
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
-        <Field label={t("settings-hover-preview-delay")} hint={t("settings-hover-preview-delay-hint")}>
+        <Field setting={settings["settings-hover-preview-delay"]}>
           <input
             type="number" min="0" step="any"
             aria-label={t("settings-hover-preview-delay-seconds")}
@@ -823,13 +827,13 @@ function EditorTab(props: { search: string }): JSX.Element {
           />
         </Field>
         <Show when={cm6EditorAvailable}>
-          <Field label={t("settings-cm6-label")}>
+          <Field setting={settings["settings-cm6-label"]}>
             <Toggle on={cm6EditorEnabled()} onClick={() => setCm6EditorEnabled(!cm6EditorEnabled())} />
           </Field>
         </Show>
         <Field
-          label={t("settings-ui-link-autocomplete-default")}
-          hint={t("settings-ui-controls-enter-for-non-exact-name-and-name-completion")}
+          setting={settings["settings-ui-link-autocomplete-default"]}
+
         >
           <select
             aria-label={t("settings-ui-link-autocomplete-default")}
@@ -843,13 +847,13 @@ function EditorTab(props: { search: string }): JSX.Element {
         </Field>
 
         <Field
-          label={t("settings-ui-switch-to-an-already-open-tab-when-navigating")}
-          hint={t("settings-ui-plain-navigation-to-a-page-journal-or-exact-zoomed")}
+          setting={settings["settings-ui-switch-to-an-already-open-tab-when-navigating"]}
+
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
         </Field>
 
-        <Field label={render(msg("settings-result-destination-label"))} hint={render(msg("settings-result-destination-hint"))}>
+        <Field setting={settings["settings-result-destination-label"]}>
           <select
             aria-label={render(msg("settings-result-destination-label"))}
             value={searchResultsOpenInThisTab() ? "here" : "tab"}
@@ -860,7 +864,7 @@ function EditorTab(props: { search: string }): JSX.Element {
           </select>
         </Field>
 
-        <Field label={render(msg("settings-pinyin-label"))} hint={render(msg("settings-pinyin-description"))}>
+        <Field setting={settings["settings-pinyin-label"]}>
           <Toggle on={pinyinMatchingEnabled()} onClick={() => setPinyinMatchingEnabled(!pinyinMatchingEnabled())} />
           <button type="button" class="og-revert" onClick={resetPinyinMatchingSetting}>
             {render(msg("settings-pinyin-reset"))}
@@ -868,8 +872,8 @@ function EditorTab(props: { search: string }): JSX.Element {
         </Field>
 
         <Field
-          label={t("settings-ui-learn-ctrl-k-choices")}
-          hint={t("settings-ui-after-you-deliberately-open-the-same-result-more-than")}
+          setting={settings["settings-ui-learn-ctrl-k-choices"]}
+
         >
           <>
             <Toggle
@@ -888,8 +892,8 @@ function EditorTab(props: { search: string }): JSX.Element {
         </Field>
 
         <OgField
-        label={t("settings-ui-copy-a-parent-block-s-sub-blocks")}
-        hint={t("settings-ui-when-you-copy-cut-a-selected-block-that-has")}
+        setting={settings["settings-ui-copy-a-parent-block-s-sub-blocks"]}
+
         ogNote={msg("settings-og-copy-subtree")}
         ogValue={true}
         on={copyIncludeSubtree()}
@@ -897,8 +901,8 @@ function EditorTab(props: { search: string }): JSX.Element {
       />
 
         <OgField
-        label={t("settings-ui-strip-collapsed-when-copying")}
-        hint={t("settings-ui-a-collapsed-block-carries-a-hidden-collapsed-true-property")}
+        setting={settings["settings-ui-strip-collapsed-when-copying"]}
+
         ogNote={msg("settings-og-copy-collapsed")}
         ogValue={false}
         on={copyStripCollapsed()}
@@ -907,8 +911,8 @@ function EditorTab(props: { search: string }): JSX.Element {
       </AdvancedSection>
 
       <OgField
-        label={t("settings-ui-click-a-block-reference-to-zoom-in")}
-        hint={t("settings-ui-plain-clicking-an-inline-block-reference-on-zooms-into")}
+        setting={settings["settings-ui-click-a-block-reference-to-zoom-in"]}
+
         ogNote={msg("settings-og-reference-zoom")}
         ogValue={true}
         on={refClickZoom()}
@@ -935,9 +939,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
   return (
     <>
       <Field
-        label={t("settings-ui-journal-date-format")}
+        setting={settings["settings-ui-journal-date-format"]}
         hint={
-          <><Rich message={msg("settings-ui-how-journal-dates-are-displayed-and-how-new-date")} /></>
+          <><Rich message={settingHint(settings["settings-ui-journal-date-format"])} /></>
         }
       >
         <DateFormatSelect />
@@ -947,9 +951,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
-        label={t("settings-ui-first-day-of-week")}
+        setting={settings["settings-ui-first-day-of-week"]}
         hint={
-          <><Rich message={msg("settings-ui-starting-column-of-the-calendar-and-the-scheduled-deadline")} /></>
+          <><Rich message={settingHint(settings["settings-ui-first-day-of-week"])} /></>
         }
       >
         <select
@@ -969,26 +973,26 @@ function JournalsTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
-        label={t("settings-ui-show-carry-over-buttons")}
-        hint={t("settings-ui-show-the-carry-buttons-next-to-journal-titles-off")}
+        setting={settings["settings-ui-show-carry-over-buttons"]}
+
       >
         <Toggle on={showCarryButtons()} onClick={() => setShowCarryButtons(!showCarryButtons())} />
       </Field>
 
       <Field
-        label={t("settings-ui-carry-over-keeps-context")}
-        hint={t("settings-ui-move-whole-blocks-that-contain-an-open-task-on")}
+        setting={settings["settings-ui-carry-over-keeps-context"]}
+
       >
         <Toggle on={carryKeepsContext()} onClick={() => setCarryKeepsContext(!carryKeepsContext())} />
       </Field>
 
-      <Field label={t("settings-ui-carry-over-header")} hint={t("settings-ui-add-a-carried-over-heading-above-carried-tasks")}>
+      <Field setting={settings["settings-ui-carry-over-header"]}>
         <Toggle on={carryHeader()} onClick={() => setCarryHeader(!carryHeader())} />
       </Field>
 
       <Field
-        label={t("settings-ui-carry-last-n-days")}
-        hint={t("settings-ui-n-for-the-carry-last-n-days-button-on")}
+        setting={settings["settings-ui-carry-last-n-days"]}
+
       >
         <input
           type="number"
@@ -1001,9 +1005,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
-        label={t("settings-ui-task-workflow")}
+        setting={settings["settings-ui-task-workflow"]}
         hint={
-          <><Rich message={msg("settings-ui-which-markers-tab-cycle-through-and-what-new-tasks")} /></>
+          <><Rich message={settingHint(settings["settings-ui-task-workflow"])} /></>
         }
       >
         <div class="settings-segment">
@@ -1016,9 +1020,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
-        label={t("settings-ui-time-tracking")}
+        setting={settings["settings-ui-time-tracking"]}
         hint={
-          <><Rich message={msg("settings-ui-marker-transitions-write-og-compatible-logbook-clock-rows-saved", { choice1: graphMeta()?.logbook_with_second_support ?? true ? "yes" : "no" })} /></>
+          <><Rich message={settingHint(settings["settings-ui-time-tracking"], { choice1: graphMeta()?.logbook_with_second_support ?? true ? "yes" : "no" })} /></>
         }
       >
         <Toggle on={timetrackingEnabled()} onClick={() => changeTimetrackingEnabled(!timetrackingEnabled())} />
@@ -1028,18 +1032,18 @@ function JournalsTab(props: { search: string }): JSX.Element {
 
       <AdvancedSection tab="journals" forceOpen={advancedMatch("journals", props.search)}>
         <Field
-          label={t("settings-ui-quick-capture-enter-key")}
-          hint={t("settings-ui-in-the-quick-capture-window-on-enter-files-the")}
+          setting={settings["settings-ui-quick-capture-enter-key"]}
+
         >
           <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
         </Field>
       </AdvancedSection>
 
       <Field
-        label={t("settings-ui-agenda-window")}
+        setting={settings["settings-ui-agenda-window"]}
         hint={
           <>
-            {t("settings-ui-today-s-scheduled-deadline-list-shows-items-whose-scheduled")}
+            {settingDescription(settings["settings-ui-agenda-window"])}
             <SectionsPageNote />
           </>
         }
@@ -1162,9 +1166,9 @@ function BackupsTab(): JSX.Element {
 
   return (
     <>
-      <div class="settings-hint settings-block">{t("settings-ui-tine-snapshots-your-graph-s-markdown-to-a-local")}</div>
+      <div class="settings-hint settings-block">{settingDescription(settings["settings-available-snapshots"])}</div>
 
-      <Field label={t("settings-ui-snapshots-to-keep")} hint={t("settings-ui-oldest-snapshots-beyond-this-are-pruned")}>
+      <Field setting={settings["settings-ui-snapshots-to-keep"]}>
         <input
           type="number"
           min="1"
@@ -1177,8 +1181,8 @@ function BackupsTab(): JSX.Element {
       </Field>
       <AlwaysAskSetting />
 
-      <div class="settings-section">
-        {t("settings-available-snapshots")}
+      <div class="settings-section" {...settingAttributes(settings["settings-available-snapshots"])}>
+        {settingLabel(settings["settings-available-snapshots"])}
         <button
           class="settings-btn"
           style={{ "margin-left": "10px" }}
@@ -1271,8 +1275,8 @@ function JournalConflictsPanel(): JSX.Element {
   };
   return (
     <Show when={journalConflicts().length}>
-      <div class="settings-section" style={{ "margin-top": "18px" }}>{t("settings-ui-duplicate-journal-days")}</div>
-      <div class="settings-hint settings-block"><Rich message={msg("settings-ui-these-days-have-more-than-one-file-e-g")} /></div>
+      <div class="settings-section" style={{ "margin-top": "18px" }} {...settingAttributes(settings["settings-ui-duplicate-journal-days"])}>{settingLabel(settings["settings-ui-duplicate-journal-days"])}</div>
+      <div class="settings-hint settings-block"><Rich message={settingHint(settings["settings-ui-duplicate-journal-days"])} /></div>
       <For each={journalConflicts()}>
         {(c) => {
           const canonical = c.files.find((f) => f.canonical);
@@ -1314,10 +1318,10 @@ function ConflictOverviewPointer(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
   return (
     <Show when={pendingConflictCount()}>
-      <div class="settings-section" style={{ "margin-top": "18px" }}>{t("settings-ui-conflicts")}</div>
+      <div class="settings-section" style={{ "margin-top": "18px" }} {...settingAttributes(settings["settings-ui-conflicts"])}>{settingLabel(settings["settings-ui-conflicts"])}</div>
       <div class="settings-hint settings-block"><Rich message={msg("settings-conflicts-summary", { count: pendingConflictCount() })} /></div>
       <span class="journal-conflict-actions">
-        <button class="settings-btn" onClick={() => { openConflicts(); closeSettings(); }}>{t("settings-ui-open-conflicts")}</button>
+        <button class="settings-btn" onClick={() => { openConflicts(); closeSettings(); }}>{settingDescription(settings["settings-ui-conflicts"])}</button>
       </span>
     </Show>
   );
@@ -1347,9 +1351,9 @@ function FilesTab(props: { search: string }): JSX.Element {
     <>
       <div class="settings-section">{t("settings-ui-asset-names")}</div>
       <Field
-        label={t("settings-ui-new-asset-filename")}
+        setting={settings["settings-ui-new-asset-filename"]}
         hint={
-          <><Rich message={msg("settings-ui-how-files-are-named-when-you-paste-drag-or")} /></>
+          <><Rich message={settingHint(settings["settings-ui-new-asset-filename"])} /></>
         }
       >
         <input
@@ -1378,9 +1382,9 @@ function FilesTab(props: { search: string }): JSX.Element {
       </div>
 
       <Field
-        label={t("settings-ui-watch-for-external-edits")}
+        setting={settings["settings-ui-watch-for-external-edits"]}
         hint={
-          <><Rich message={msg("settings-ui-how-tine-notices-changes-made-outside-it-og-logseq")} slots={{ "slot1": (children) => <b>{children}</b>, "slot2": (children) => <b>{children}</b> }} /></>
+          <><Rich message={settingHint(settings["settings-ui-watch-for-external-edits"])} slots={{ "slot1": (children) => <b>{children}</b>, "slot2": (children) => <b>{children}</b> }} /></>
         }
       >
         <div class="settings-segment">
@@ -1427,11 +1431,11 @@ function MediaEditorsSection(): JSX.Element {
   };
   return (
     <>
-      <div class="settings-section">{t("settings-ui-diagram-editors")}</div>
-      <div class="settings-hint" style={{ "margin-bottom": "8px" }}><Rich message={msg("settings-ui-edit-diagram-assets-in-your-own-installed-app-a")} slots={{ "slot1": (children) => <code class="mono">{children}</code>, "slot2": (children) => <code class="mono">{children}</code> }} /></div>
+      <div class="settings-section" {...settingAttributes(settings["settings-ui-diagram-editors"])}>{settingLabel(settings["settings-ui-diagram-editors"])}</div>
+      <div class="settings-hint" style={{ "margin-bottom": "8px" }}><Rich message={settingHint(settings["settings-ui-diagram-editors"])} slots={{ "slot1": (children) => <code class="mono">{children}</code>, "slot2": (children) => <code class="mono">{children}</code> }} /></div>
       <For each={MEDIA_EDITORS}>
         {(ed) => (
-          <Field label={ed.settingLabel}>
+          <Field setting={mediaEditorSetting(ed)}>
             <div class="media-editor-row">
               <input
                 type="text"
