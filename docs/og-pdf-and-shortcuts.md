@@ -73,6 +73,13 @@ Highlights are persisted in EDN format at:
     - Example: `assets/my-book/42_5e8f9c7b-1234-5678-abcd-ef1234567890_1659920114630.png`
 
 #### Markdown Link Forms
+Tine renders an area annotation's PNG through its ordinary graph-asset image
+resolver on the highlights page, in block references, embeds and block previews.
+Like OG's `area-display`, crops keep their natural size within the available
+width and a 420px height cap; clicking navigates to the exact PDF highlight.
+Missing PNGs use the ordinary asset placeholder and can refresh on asset arrival.
+Tine retains its existing annotation chrome rather than OG's copy/maximize bar.
+
 In highlight page blocks:
 - **Markdown**: `[My PDF](../assets/my-book.pdf)` stored in `:file` property
 - **Org**: `[[../assets/my-book.pdf][My PDF]]` stored in `:file` property

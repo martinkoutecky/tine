@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-pdf-area-ref.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
+      "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],
+      "nonRequirements": ["No reporter attachments, private graph, Windows runtime certification or release acceptance. Crop generation is covered by the existing PDF journey."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-settings-descriptors.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"On a routed page, Settings search finds an installed theme by its name and description and a built-in gallery theme by name. Searching displayed setting labels in English and Chinese reveals their exact rows, including an Advanced row, without changing note bytes.","blocking":false,"authority":"GH #866; I-12; arrival L4-04"}],
       "acceptableVariations": ["Control markup, palette, exact scroll alignment and localization wording may vary while the correct row is visible."],
