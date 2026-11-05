@@ -421,6 +421,71 @@
       "r1-relative-and-url-names": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
+      "r11-alias-namespace": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r11-empty-alias-source": [
+        "frontend all pages: file pages/B.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r11-empty-alias-target": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r11-fileless-empty-alias-target": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)",
+        "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r11-leading-legacy-stem": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r11-leading-title": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-date": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-empty-target": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-journal": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-journal-target": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-namespace": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-other-owner": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-own-child": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-real": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-reference-target": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-same-key": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-same-owner": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-two-declarers": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-two-empty-targets": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-two-targets": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "r12-alias-source-unused": [
+        "frontend all pages: file pages/c.md has no row (hidden as an OG built-in page, A11)"
+      ],
       "r2-alias-chain": [
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: file pages/B.md has no row (hidden as an OG built-in page, A11)",
