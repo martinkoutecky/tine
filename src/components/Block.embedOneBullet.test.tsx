@@ -18,6 +18,8 @@ import { closeContextMenu, contextMenu } from "../ui";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
+import { useEditorKind } from "../tests/editorKind";
+import type { EditorKind } from "../tests/editorDriver";
 
 class AllNearObserver implements IntersectionObserver {
   readonly root = null;
@@ -94,7 +96,9 @@ async function editRoot(root: HTMLElement) {
 const childVisible = async (root: HTMLElement) => (await rootRow(root)).textContent?.includes("Embedded child") ?? false;
 const tick = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0)); };
 
-describe("D-20261030-EMB: the embed's one bullet stands for the host", () => {
+// UI-CM6-EMBED-ROOT-ACTS-ON-SOURCE: both editors (CM6 lacked the row host).
+describe.each<EditorKind>(["textarea", "cm6"])("D-20261030-EMB: the embed's one bullet stands for the host (%s editor)", (kind) => {
+  useEditorKind(kind);
   it("Tab and Shift+Tab on the edited root move the host, and the caret stays in the embed", async () => {
     load({ A: "{{embed ((target))}}" });
     const { root, dispose } = mount("A");
