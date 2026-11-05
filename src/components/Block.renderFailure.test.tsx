@@ -47,7 +47,7 @@ it.each([false, true])("isolates a live block throw, keeps children and siblings
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
     const editor = maybeEditorIn(root)!;
     expect(editor.value()).toBe("broken render");
-    editor.replaceText("repaired"); editor.reportInput({ bubbles: true, inputType: "insertText" });
+    editor.input("repaired");
     endEdit("blur");
     expect(doc.byId.bad.raw).toBe("repaired");
     expect(root.querySelector(".region-failure")).toBeNull();
