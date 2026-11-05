@@ -1,3 +1,4 @@
+import { settings } from "./settingDefinitions";
 import { For, Show, onMount } from "solid-js";
 import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
 import { t } from "../i18n";
@@ -5,7 +6,7 @@ import { Field } from "./settingsField";
 
 export function LinkSchemeSettings() {
   onMount(() => void loadLinkSchemeSettings());
-  return <Field label={t("links-remembered-schemes")} hint={t("links-consent-device-hint")}>
+  return <Field setting={settings["links-remembered-schemes"]}>
     <div class="link-scheme-settings">
       <For each={rememberedLinkSchemes()}>{scheme => <div>
         <code>{scheme}:</code>{" "}

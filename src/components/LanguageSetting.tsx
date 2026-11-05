@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { For, type JSX } from "solid-js";
 import { LOCALES, negotiateLocale, t } from "../i18n";
 import { setUiLanguage, systemLanguages, uiLanguagePreference } from "../i18n/preference";
@@ -8,14 +10,14 @@ import { setUiLanguage, systemLanguages, uiLanguagePreference } from "../i18n/pr
 export function LanguageSetting(): JSX.Element {
   const systemName = () => LOCALES.find((entry) => entry.tag === negotiateLocale("", systemLanguages()))?.name ?? "English";
   return (
-    // The search join key stays English (settingsSearch.ts); the label is translated.
-    <div class="settings-field" data-setting-label="Language">
-      <div class="settings-field-row">
-        <span class="settings-label">{t("settings-language-label")}</span>
-        <div class="settings-field-control">
+    // The descriptor supplies the localized label and stable navigation ID.
+    <div class="settings-field" {...settingAttributes(settings["settings-language-label"])}>
+      <div class="settings-field-row" >
+        <span class="settings-label">{settingLabel(settings["settings-language-label"])}</span>
+        <div class="settings-field-control" >
           <select
             class="settings-select"
-            aria-label={t("settings-language-label")}
+            aria-label={settingLabel(settings["settings-language-label"])}
             value={uiLanguagePreference()}
             onChange={(event) => setUiLanguage(event.currentTarget.value)}
           >
@@ -24,7 +26,7 @@ export function LanguageSetting(): JSX.Element {
           </select>
         </div>
       </div>
-      <div class="settings-hint settings-field-hint">{t("settings-language-description")}</div>
+      <div class="settings-hint settings-field-hint">{settingDescription(settings["settings-language-label"])}</div>
     </div>
   );
 }

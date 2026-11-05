@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { msg, t } from "../i18n";
 // Settings → Help & diagnostics: the last error messages of this session,
 // newest first, each copyable. In memory only (src/errorToastHistory.ts); it is
@@ -21,8 +23,8 @@ export function ErrorToastHistory(): JSX.Element {
 
   return (
     <div class="diagnostics-errors">
-      <h3>{t("error-toast-history-recent-error-messages")}</h3>
-      <p class="settings-hint">{t("error-toast-history-the-last-20-red-error-messages-of-this")}</p>
+      <h3 {...settingAttributes(settings["error-toast-history-recent-error-messages"])}>{settingLabel(settings["error-toast-history-recent-error-messages"])}</h3>
+      <p class="settings-hint">{settingDescription(settings["error-toast-history-recent-error-messages"])}</p>
       <Show when={errorToastHistory().length > 0} fallback={<p class="settings-hint">{t("error-toast-history-no-error-messages-this-session")}</p>}>
         <ul class="diagnostics-error-list">
           <For each={errorToastHistory()}>

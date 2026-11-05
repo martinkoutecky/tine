@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingHint } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
@@ -111,8 +113,8 @@ export function AssetsTab(): JSX.Element {
   };
   return (
     <>
-      <div class="settings-section">
-        {t("settings-orphaned-media")}
+      <div class="settings-section" {...settingAttributes(settings["settings-orphaned-media"])}>
+        {settingLabel(settings["settings-orphaned-media"])}
         <button class="settings-btn" style={{ "margin-left": "10px" }} disabled={busy()} onClick={() => void refresh()}>
           {busy() ? t("settings-scanning") : scanned() ? t("settings-rescan") : t("settings-scan-for-orphans")}
         </button>
@@ -128,7 +130,7 @@ export function AssetsTab(): JSX.Element {
       <Show when={protectedTrashCount() > 0}>
         <div class="settings-hint settings-block">{t("settings-trash-protected-summary", protectedTrashArgs())}</div>
       </Show>
-      <div class="settings-hint settings-block"><Rich message={msg("settings-ui-files-in-assets-that-no-block-links-to-deleting")} /></div>
+      <div class="settings-hint settings-block"><Rich message={settingHint(settings["settings-orphaned-media"])} /></div>
       <Show when={scanned()}>
         <Show
           when={list().length}

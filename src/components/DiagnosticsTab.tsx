@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { msg, t } from "../i18n";
 // Settings → Help & diagnostics: review, copy, save (desktop) or clear the
 // privacy-safe diagnostic report of this run and the previous one (GH #343,
@@ -102,13 +104,13 @@ export function DiagnosticsTab(): JSX.Element {
   };
 
   return (
-    <section class="diagnostics-tab settings-section">
-      <h2>{t("diagnostics-tab-help-diagnostics")}</h2>
-      <label class="settings-row">
+    <section class="diagnostics-tab settings-section" {...settingAttributes(settings["diagnostics-tab-rescan-graph"])}>
+      <h2 {...settingAttributes(settings["diagnostics-tab-help-diagnostics"])}>{settingLabel(settings["diagnostics-tab-help-diagnostics"])}</h2>
+      <label class="settings-row" {...settingAttributes(settings["diagnostics-refresh-everything"])}>
         <input type="checkbox" checked={refreshEverything()} onChange={event => setRefreshEverything(event.currentTarget.checked)} />
-        <span>{t("diagnostics-refresh-everything")}</span>
+        <span>{settingLabel(settings["diagnostics-refresh-everything"])}</span>
       </label>
-      <p>{t("diagnostics-tab-tine-keeps-a-small-bounded-flight-recorder-of")}</p>
+      <p>{settingDescription(settings["diagnostics-tab-help-diagnostics"])}</p>
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-it-does-not-record-graph-content-file-paths")}</p>
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-a-report-also-carries-statistics-about-your-graph")}</p>
       <div class="diagnostics-actions">
@@ -123,14 +125,14 @@ export function DiagnosticsTab(): JSX.Element {
         </Show>
         <button type="button" class="settings-btn danger" onClick={() => void clearReport()}>{t("diagnostics-tab-clear-recorded-events")}</button>
       </div>
-      <div class="diagnostics-rescan">
+      <div class="diagnostics-rescan" >
         <button class="settings-btn" type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
-          {rescanning() ? t("diagnostics-tab-rescanning") : t("diagnostics-tab-rescan-graph")}
+          {rescanning() ? t("diagnostics-tab-rescanning") : settingLabel(settings["diagnostics-tab-rescan-graph"])}
         </button>
         <span class="settings-hint" role="status">
           <Show
             when={rescanFinished()}
-            fallback={t("settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds")}
+            fallback={settingDescription(settings["diagnostics-tab-rescan-graph"])}
           >
             {(finished) => t("settings-prose-last-rescan", { time: new Date(finished()).toLocaleTimeString() })}
           </Show>

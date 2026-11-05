@@ -33,8 +33,8 @@ describe("the language setting", () => {
     await settle();
     expect(saved).toHaveBeenCalledWith("ui_language", "zh-CN");
     expect(native).toHaveBeenLastCalledWith("zh-CN");
-    // The search join key does not follow the language.
-    expect(root.querySelector("[data-setting-label]")!.getAttribute("data-setting-label")).toBe("Language");
+    // Search identity stays stable while the display label changes language.
+    expect(root.querySelector("[data-setting-id]")!.getAttribute("data-setting-id")).toBe("settings-language-label");
     dispose();
   });
 

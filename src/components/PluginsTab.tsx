@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription, settingHint } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { FailureBoundary } from "./FailureBoundary";
@@ -5,7 +7,8 @@ import { FailureBoundary } from "./FailureBoundary";
 // per-plugin settings form. Split out of Settings.tsx (2072 lines, over the og size
 // ratchet's growth line) so the busy-ownership fix below is not another edit to the
 // oversized file.
-import { For, Show, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { pluginSetting, type SettingDescriptor } from "./settingsDescriptor";
 import { pushToast } from "../toasts";
 import { platformKind } from "../platform";
 import { Toggle } from "./settingsField";
@@ -83,11 +86,11 @@ function PluginSettingsForm(props: {
             const value = () => props.plugin.settings[definition.key] ?? definition.default;
             const changed = () => value() !== definition.default;
             return (
-              <div class="settings-field" data-setting-label={definition.label}>
+              <div class="settings-field" {...settingAttributes(pluginSetting(props.plugin, definition))}>
                 <div class="settings-field-row">
                   <div>
-                    <div class="settings-label">{definition.label}</div>
-                    <div class="settings-hint settings-field-hint">{definition.description}</div>
+                    <div class="settings-label">{settingLabel(pluginSetting(props.plugin, definition))}</div>
+                    <div class="settings-hint settings-field-hint">{settingDescription(pluginSetting(props.plugin, definition))}</div>
                   </div>
                   <div class="settings-field-control plugin-setting-control">
                     <Show when={definition.type === "boolean"}>
@@ -163,17 +166,23 @@ function PluginSettingsForm(props: {
 }
 
 /** Plugin settings rendering fails locally; Retry remounts only this tab. */
-export function PluginsTab(): JSX.Element {
-  return <FailureBoundary region="Plugins"><PluginsTabContent /></FailureBoundary>;
+export function PluginsTab(props: { target?: SettingDescriptor } = {}): JSX.Element {
+  return <FailureBoundary region="Plugins"><PluginsTabContent target={props.target} /></FailureBoundary>;
 }
 
-function PluginsTabContent(): JSX.Element {
+function PluginsTabContent(props: { target?: SettingDescriptor }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   let packageInput: HTMLInputElement | undefined;
   const { busy, hold } = busySlot();
   const [view, setView] = createSignal<"browse" | "installed">("browse");
   const [selectedPluginKey, setSelectedPluginKey] = createSignal<string | null>(null);
+  createEffect(() => {
+    if (props.target?.pluginKey) {
+      setView("installed");
+      setSelectedPluginKey(props.target.pluginKey);
+    }
+  });
   const [currentPlatformResource] = createResource(platformKind);
   // `platformKind` is uncaught here; an unknown platform reads as "not yet known",
   // which is what the buttons below already render.
@@ -308,8 +317,8 @@ function PluginsTabContent(): JSX.Element {
         </div>
       <Show when={view() === "browse"}><div class="settings-section">{t("plugins-experimental-plugin-platform")}</div>
       <p class="settings-hint">{t("plugins-tine-plugins-are-capability-limited-webassembly-guests-not")}</p>
-      <div class="settings-row">
-        <div><div class="settings-label">{t("plugins-install-a-local-package")}</div><div class="settings-hint"><Rich message={msg("plugins-select-its-manifest-json-and-wasm-file-together")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
+      <div class="settings-row" {...settingAttributes(settings["plugins-install-a-local-package"])}>
+        <div><div class="settings-label">{settingLabel(settings["plugins-install-a-local-package"])}</div><div class="settings-hint"><Rich message={settingHint(settings["plugins-install-a-local-package"])} slots={{ "code": (children) => <code>{children}</code> }} /></div>
         </div>
         <div>
           <input

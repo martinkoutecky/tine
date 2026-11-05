@@ -1,5 +1,7 @@
+import { settings } from "./settingDefinitions";
+import { settingHint } from "./settingsField";
 import { createSignal, type JSX } from "solid-js";
-import { msg, t } from "../i18n";
+import { t } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { commentAuthorName, setCommentAuthorName } from "../commentIdentity";
 import { Field } from "./settingsField";
@@ -15,7 +17,7 @@ export function CommentNameSetting(): JSX.Element {
     if (value !== null) setCommentAuthorName(value);
   };
   return (
-    <Field label={t("comment-name-label")} hint={<Rich message={msg("comment-name-hint")} />}>
+    <Field setting={settings["comment-name-label"]} hint={<Rich message={settingHint(settings["comment-name-label"])} />}>
       <input
         class="settings-input"
         aria-label={t("comment-name-label")}
