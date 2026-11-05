@@ -772,6 +772,26 @@ collected under, and the window drops mail of any other. Proof
 `crates/tine-store/src/page_host/binding_tests.rs`
 `e101_every_host_instance_and_reload_draws_a_fresh_session`.
 
+**Live conflicts (GH #875).** Every successful disk observation uses the host's
+exact-byte read table: disk equal to the saved base clears the conflict while
+retaining unsaved input; disk equal to the serialized editor buffer advances
+the base and clears the conflict. Differing versions retain both the conflict
+and the editor buffer. A taken input that remains conflicted schedules one
+fresh observation, even without another watcher event; the last observation
+alone cannot authorize retirement. Failed reads keep the input and conflict
+and use the existing observation retry/error path. Comparison is over the
+save serializer's bytes (including Org), never the resolver's block similarity.
+The window's banner, page review and Conflicts overview follow the host's
+state for all panes and journal feed pages. Retirement itself writes no page;
+existing draft custody and guarded saves still complete normally. Unit cost:
+one extra page read per taken conflicted input, no extra read for ordinary
+edits, no new persisted record, 0 added bytes/files/transport bytes per edit
+for both 1-block and 60-block pages. Proof: `page_host/driver_tests.rs`
+`gh875_a_conflicted_submit_rechecks_exact_current_disk_bytes`,
+`page_host/mutation_tests.rs`
+`gh875_later_delivery_retires_only_exact_buffer_or_saved_base_matches`, and
+`scripts/e2e-beta-conflict-875.mjs`.
+
 **Window close (Q-TS5, J6).** The window sends no `page_close` for a page
 while the host owes it a save: a failed attempt (the notice), a conflict, or
 any version the host took from this window that has not published. That last
