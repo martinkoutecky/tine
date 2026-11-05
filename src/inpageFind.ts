@@ -181,7 +181,21 @@ function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<nu
       for (const entry of entries) if (entry.scopeIndex === scopeIndex) out.push(...entry.matches);
       if (scanned.has(scope.id)) continue;
       scanned.add(scope.id);
-      for (const surface of findScopeElement(scope.id)?.querySelectorAll<HTMLElement>("[data-inpage-find-surface]") ?? []) {
+      const element = findScopeElement(scope.id);
+      // GH #876: embeds and query tables display blocks outside the page's own
+      // tree. Add each displayed block the outline index did not walk, once.
+      // Sheet cells share the block identity, not a second synthetic surface.
+      const shown = new Set<string>();
+      for (const block of element?.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR) ?? []) {
+        const id = block.dataset.blockId, root = findBlockTextRoot(block);
+        if (!id || !root || root.matches(".macro-host") || index.byId.has(id) || shown.has(id)
+          || block.closest("[data-inpage-find-surface]")) continue;
+        shown.add(id);
+        findTextOccurrences(searchableTextForRoot(root), index.q, index.accents).forEach((match, ordinalInBlock) => {
+          out.push({ blockId: id, scopeId: scope.id, ordinalInBlock, ...match });
+        });
+      }
+      for (const surface of element?.querySelectorAll<HTMLElement>("[data-inpage-find-surface]") ?? []) {
         const surfaceId = surface.dataset.inpageFindSurface;
         if (!surfaceId) continue;
         findTextOccurrences(searchableTextForRoot(surface), index.q, index.accents).forEach((match, ordinalInBlock) => {
