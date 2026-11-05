@@ -143,21 +143,24 @@
       "kind": "journal",
       "linkedRefs": 0,
       "name": "Oct 26th, 2026",
-      "owner": "journals/2026_10_26.md"
+      "owner": "journals/2026_10_26.md",
+      "parent": null
     },
     {
       "key": "a",
       "kind": "page",
       "linkedRefs": 1,
       "name": "a",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "todo",
       "kind": "page",
       "linkedRefs": 1,
       "name": "todo",
-      "owner": null
+      "owner": null,
+      "parent": null
     }
   ],
   "spellings": {

@@ -103,9 +103,10 @@ describe("a page created on an Org graph edits as Org", () => {
 describe("a page with no file on an Org graph edits as Org", () => {
   it("a routed page that has no file yet, once its block is edited, takes the format of the file the host resolved", async () => {
     loadSingle(emptyPage("Ghost", "page"));
-    // Entering editing opens the page on the host; its "no file" answer names the file.
+    // Entering editing opens the page on the host; its "no file" answer
+    // supplies the proposed file's format, without claiming that file exists.
     startEditing(pageByName("Ghost")!.roots[0]!, 0);
-    await vi.waitFor(() => expect(pageByName("Ghost")!.id).toBe("pages/Ghost.org"));
+    await vi.waitFor(() => expect(pageByName("Ghost")!.format).toBe("org"));
     endEdit("blur");
     const root = pageByName("Ghost")!.roots[0]!;
     setBlockProperty(root, "id", "abc");

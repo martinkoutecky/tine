@@ -343,6 +343,19 @@ export function allPageNames(): string[] {
   return ensureInstalled().allPageNames();
 }
 
+/** Whether `name` is a namespace name, as the store answers it (Logseq's
+ *  `namespace-page?`, `refs::is_namespace_name`; model round 10, S15): it
+ *  contains `/` and its inventory entry carries no `not_namespace`. A name the
+ *  inventory does not list (none loaded yet) counts by its `/` alone. `key` is
+ *  `pageIdentityKey(name)` when the caller already has it. O(1). */
+export function isNamespaceName(name: string, key?: string): boolean {
+  if (!name.includes("/")) return false;
+  const current = held();
+  if (!current) return true;
+  const k = key ?? pageIdentityKey(name);
+  return !(current.pages.get(k) ?? current.journals.get(k))?.not_namespace;
+}
+
 const keysOfNames = new WeakMap<readonly string[], readonly string[]>();
 
 /** The page keys (`pageIdentityKey`) of an `allPageNames()` result, index for

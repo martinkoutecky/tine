@@ -254,8 +254,9 @@ pub enum InventoryScope<'a> {
     /// Referenced journal dates, including dates without a file, once per day.
     /// Uses the explicit-reference index; excludes ordinary date-page identity.
     ReferencedJournals,
-    /// Only the file-claimed names whose page key is this key or lies under
-    /// `key/` (a page and its namespace descendants): what a rename moves.
+    /// Only the file-claimed names whose page key is this key, or lies under
+    /// `key/` and is a namespace name (a page and its namespace descendants):
+    /// what a rename moves.
     FilesAtOrUnder(&'a str),
     /// The other members of this name's alias group (D-20261019-AL1), as `All` lists them.
     AliasGroup(&'a str),
@@ -283,9 +284,10 @@ impl WholeGraph {
     ///
     /// [`InventoryScope::FilesAtOrUnder`] returns only the file-claimed
     /// entries (pages and journals, `is_journal` telling them apart) whose
-    /// page key is the given key or lies under `key/`: a page and its
-    /// namespace descendants, each with the same file target and in the same
-    /// relative order as the full inventory. An alias or reference-only name
+    /// page key is the given key or lies under `key/` with a namespace name
+    /// (`refs::is_namespace_name`): a page and its namespace descendants,
+    /// each with the same file target and in the same relative order as the
+    /// full inventory. An alias or reference-only name
     /// is never a file claim (the full inventory skips both for a claimed
     /// key), so this is exactly the file-claimed subset a rename moves,
     /// without building the alias and reference-name indexes (GH #623). Cost
@@ -505,13 +507,18 @@ impl WholeGraph {
     }
 
     /// [`InventoryScope::FilesAtOrUnder`]'s entries; see [`Self::inventory`].
+    /// A name under `key/` is a descendant only when it is a namespace name
+    /// (`refs::is_namespace_name`, OG `namespace-page?`; model round 10, S15):
+    /// `./x` is no child of `.`, `https://a.b/c` none of `https:`.
     fn page_files_at_or_under(&self, key: &str) -> Vec<InventoryEntry> {
         let prefix = format!("{key}/");
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
         for page in self.list.iter() {
             let page_key = tine_core::refs::page_key(&page.name);
-            if (page_key != key && !page_key.starts_with(&prefix))
+            if (page_key != key
+                && !(page_key.starts_with(&prefix)
+                    && tine_core::refs::is_namespace_name(&page.name)))
                 || !visited.insert((page.kind == PageKind::Journal, page_key.clone()))
             {
                 continue;

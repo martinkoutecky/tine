@@ -88,6 +88,23 @@ pub(super) struct State<F: HostIo, C: Clock> {
 }
 
 impl<F: HostIo, C: Clock> State<F, C> {
+    /// GH #875: typing can make a conflicted draft equal to disk without
+    /// another watcher event. Re-read once after a taken conflicted input;
+    /// the host's exact-byte read table decides, never a stale observation
+    /// or the resolver's block diff. Existing observation retries retain
+    /// input and the conflict when the disk cannot be read.
+    fn collect(&mut self) -> Delivery {
+        let delivery = self.book.collect(&mut self.progress);
+        for (key, mail, _) in &delivery.mail {
+            if mail.answer.as_ref().is_some_and(|answer| answer.took)
+                && mail.page.as_ref().is_some_and(|page| page.conflict)
+            {
+                self.observe.entry(key.clone()).or_default();
+            }
+        }
+        delivery
+    }
+
     fn wake(&mut self) {
         self.wake_seq = self.wake_seq.wrapping_add(1);
     }
@@ -977,10 +994,7 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
                     host_stats(&state.progress.host);
                     stats = Some(Instant::now() + HOST_STATS_EVERY);
                 }
-                let delivery = {
-                    let state = &mut *state;
-                    state.book.collect(&mut state.progress)
-                };
+                let delivery = state.collect();
                 let idle =
                     !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
                 (delivery, idle)

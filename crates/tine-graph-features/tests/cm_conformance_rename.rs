@@ -21,6 +21,11 @@
 //! stored query arguments through `Rulings9.queryMap`), a plain rename with
 //! the model's rename (whose refusal now includes CM-OWN-CHILD).
 //!
+//! Round-10 bridge: a reference-only source (`refSource`) is renamed by
+//! `rename10` and merged by `refMerge`, whose `source` is null (nothing to
+//! fold; the after graph is still compared). The model's namespace test is
+//! Tine's (`urls`, `shared::model_input`), so `./x` is no child of `.`.
+//!
 //! Favorites follow rename only in the frontend (`src/favorites.ts`, Q12):
 //! the model's `favorites` answer is not compared here (a harness gap).
 //!
@@ -306,7 +311,9 @@ fn run_rename(
             if m["target"].is_null() {
                 why.push("no single target");
             }
-            if m["source"].is_null() {
+            // Round 10: a reference-only source (`refSource`) has no file,
+            // so a null `source` is no refusal reason there.
+            if m["source"].is_null() && m["refSource"] != true {
                 why.push("no single source");
             }
             if m["typedInSubtree"] == true || m["targetInSubtree"] == true {
@@ -478,12 +485,11 @@ fn run_rename(
             )
         })
         .collect();
-    let merged_into: Option<(String, String)> = is_merge.then(|| {
-        (
-            r["source"].as_str().unwrap().to_owned(),
-            r["target"].as_str().unwrap().to_owned(),
-        )
-    });
+    // A reference-only source (round 10 `refMerge`) has no file to fold.
+    let merged_into: Option<(String, String)> = is_merge
+        .then(|| r["source"].as_str())
+        .flatten()
+        .map(|src| (src.to_owned(), r["target"].as_str().unwrap().to_owned()));
     let merge_tag = if confirmed { " (confirmed merge)" } else { "" };
 
     // The after graph, through a fresh store.
@@ -615,7 +621,7 @@ fn run_rename(
             e.extend(occ.iter().map(|(k, s)| (k.clone(), key(s))));
         }
     }
-    let old_keys: BTreeSet<String> = shared::closure(old).iter().map(|s| key(s)).collect();
+    let old_keys: BTreeSet<String> = tine_core::refs::namespace_refs(old).map(key).collect();
     let new_keys = [key(new), tine_core::refs::page_key(new)];
     let label = |x: &(String, String)| {
         let under = |k: &String| x.1 == *k || x.1.starts_with(&format!("{k}/"));

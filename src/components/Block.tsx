@@ -2616,7 +2616,11 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      selectBlock(position().id, position().scope); // exit editing into block-selection mode
+      const revealed = codeView.revealRaw(raw, commit);
+      if (revealed !== null) {
+        ref.value = revealed; ref.setSelectionRange(revealed.length, revealed.length);
+        ref.focus(); autosize();
+      } else selectBlock(position().id, position().scope); // exit raw editing into block selection
     }
   };
 

@@ -247,6 +247,12 @@ export interface PageInventoryEntry {
    *  owner and a named route opens it too (`InventoryEntry::empty_alias`).
    *  Only a route to the exact file opens the empty page. Absent means false. */
   empty_alias?: boolean;
+  /** Set when the name contains `/` but is not a namespace name (Logseq's
+   *  `namespace-page?`: `./x`, `../x/y`, a URL with an origin), so the namespace
+   *  views give it no parent, no children and no node. The store's one answer,
+   *  `refs::is_namespace_name` (model round 10, S15); the views never test the
+   *  spelling themselves. Absent means false. */
+  not_namespace?: boolean;
 }
 
 /** What one publication changed in the `page_inventory` answer when no page

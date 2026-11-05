@@ -202,21 +202,24 @@
       "kind": "page",
       "linkedRefs": 2,
       "name": "a b",
-      "owner": "pages/a b.md"
+      "owner": "pages/a b.md",
+      "parent": null
     },
     {
       "key": "notes",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     },
     {
       "key": "x",
       "kind": "page",
       "linkedRefs": 2,
       "name": "x",
-      "owner": "pages/a/x.md"
+      "owner": "pages/a/x.md",
+      "parent": null
     }
   ],
   "spellings": {

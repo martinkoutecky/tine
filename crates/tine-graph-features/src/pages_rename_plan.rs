@@ -267,14 +267,17 @@ pub(super) fn holder(
 /// strictly inside `old`'s namespace and is used, i.e. some file claims it or
 /// some page (`old` itself included) declares it as an alias. A name that is
 /// only linked is not used (the model's rule; Martin's confirmation is
-/// pending as CM-R9-USED, so this is the one place to change).
+/// pending as CM-R9-USED, so this is the one place to change). Only a
+/// namespace name lies inside a namespace (`refs::is_namespace_name`, OG
+/// `namespace-page?`; model round 10, S15): `./x` is no child of `.`.
 pub(super) fn own_child_used(
     graph: &tine_store::WholeGraph,
     journal_format: &tine_core::date::JournalFormat,
     old_key: &str,
     new: &str,
 ) -> bool {
-    refs::normalize(new).starts_with(&format!("{old_key}/"))
+    refs::is_namespace_name(new)
+        && refs::normalize(new).starts_with(&format!("{old_key}/"))
         && holder(graph, journal_format, new) != Holder::Free
 }
 

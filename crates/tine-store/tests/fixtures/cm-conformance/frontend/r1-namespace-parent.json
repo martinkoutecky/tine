@@ -251,42 +251,48 @@
       "kind": "page",
       "linkedRefs": 1,
       "name": "a",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "a/b",
       "kind": "page",
       "linkedRefs": 1,
       "name": "a/b",
-      "owner": null
+      "owner": null,
+      "parent": "a"
     },
     {
       "key": "a/b/c",
       "kind": "page",
       "linkedRefs": 1,
       "name": "a/b/c",
-      "owner": null
+      "owner": null,
+      "parent": "a/b"
     },
     {
       "key": "n",
       "kind": "page",
       "linkedRefs": 0,
       "name": "n",
-      "owner": null
+      "owner": null,
+      "parent": null
     },
     {
       "key": "n/y",
       "kind": "page",
       "linkedRefs": 0,
       "name": "n/y",
-      "owner": "pages/n%2Fy.md"
+      "owner": "pages/n%2Fy.md",
+      "parent": "n"
     },
     {
       "key": "notes",
       "kind": "page",
       "linkedRefs": 0,
       "name": "Notes",
-      "owner": "pages/Notes.md"
+      "owner": "pages/Notes.md",
+      "parent": null
     }
   ],
   "spellings": {

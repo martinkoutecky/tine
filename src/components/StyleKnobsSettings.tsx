@@ -9,7 +9,8 @@ import {
   validKnobValue,
   type StyleKnob,
 } from "../styleKnobs";
-import { Toggle } from "./settingsField";
+import { Toggle, settingAttributes } from "./settingsField";
+import { knobSetting } from "./settingsDescriptor";
 
 /** Settings > Appearance > Fine-tuning (GH #610 item 3): one control per row of
  *  the style-knob table, rendered by type. No code per knob (K1): a new visual
@@ -94,7 +95,7 @@ export function StyleKnobsSettings(props: { knobs?: readonly StyleKnob[] }): JSX
           knob.type === "heading" ? (
             <div class="settings-subsection" data-knob-heading={knob.id}>{display(knob.title)}</div>
           ) : (
-            <div class="settings-field" data-setting-label={typeof knob.title === "string" ? knob.title : renderEnglish(knob.title)}>
+            <div class="settings-field" {...settingAttributes(knobSetting(knob))} data-setting-label={typeof knob.title === "string" ? knob.title : renderEnglish(knob.title)}>
               <div class="settings-field-row">
                 <span class="settings-label">{display(knob.title)}</span>
                 <div class="settings-field-control">

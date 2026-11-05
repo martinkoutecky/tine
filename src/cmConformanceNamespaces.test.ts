@@ -12,9 +12,11 @@
 // - the Namespaces view's per-row count (`indexNamespaces`);
 // - the `{{namespace X}}` macro's tree (`namespaceNode`);
 // - the "Hierarchy" section of every page (`namespaceHierarchyRows`).
-// Each view's answer is compared with the model's: a node is a model page with
-// `/` in its name or a model page below it; its parent is the longest proper
-// prefix that is a model page; a count is the number of model pages below.
+// Each view's answer is compared with the model's: a page's parent is the
+// model's own answer (`Ref10.nsParent`, which the bridge exports per page as
+// `parent`: none for `./x`, `../x/y` or a URL, model round 10, S15; the test
+// searches no string prefix); a node is a model page with a parent or a page
+// below it; a count is the number of model pages below.
 //
 // Differences are compared with the `frontendNamespaces` part of
 // `expected-differences.json`; `CM_REFRESH=1` rewrites that part.
@@ -26,7 +28,7 @@ import type { PageInventoryEntry } from "./types";
 const backendMock = vi.hoisted(() => ({ pageInventory: vi.fn(), graphBindingGeneration: vi.fn(() => 1) }));
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
-interface ModelPage { kind: "page" | "journal"; key: string; name: string }
+interface ModelPage { kind: "page" | "journal"; key: string; name: string; parent: string | null }
 interface Case {
   journalTitleFormat: string | null;
   journalFileFormat: string | null;
@@ -72,18 +74,25 @@ async function runCase(c: Case): Promise<string[]> {
   // The model's namespace structure over its page keys (pages of either kind:
   // `allPageNames` lists journals too).
   const model = new Map<string, string>(); // key -> name
-  for (const page of c.pages) if (!model.has(page.key)) model.set(page.key, page.name);
-  const below = (key: string) => [...model.keys()].filter((k) => k !== key && k.startsWith(`${key}/`));
-  const modelParent = (key: string): string | null => {
-    let best: string | null = null;
-    for (const k of model.keys()) {
-      if (k !== key && key.startsWith(`${k}/`) && (best === null || k.length > best.length)) best = k;
+  const parentOf = new Map<string, string | null>(); // key -> the model's parent key
+  for (const page of c.pages) {
+    if (model.has(page.key)) continue;
+    model.set(page.key, page.name);
+    parentOf.set(page.key, page.parent);
+  }
+  const modelParent = (key: string): string | null => parentOf.get(key) ?? null;
+  // The model pages below `key`: those whose parent chain reaches it.
+  const below = (key: string) => [...model.keys()].filter((k) => {
+    const seen = new Set<string>();
+    for (let p = modelParent(k); p !== null && !seen.has(p); p = modelParent(p)) {
+      if (p === key) return true;
+      seen.add(p);
     }
-    return best;
-  };
+    return false;
+  });
   const modelNodes = new Map<string, string | null>(); // node key -> parent key
-  for (const [key, name] of model) {
-    if (name.includes("/") || below(key).length) modelNodes.set(key, modelParent(key));
+  for (const [key] of model) {
+    if (modelParent(key) !== null || below(key).length) modelNodes.set(key, modelParent(key));
   }
 
   // The tree the sidebar and the Namespaces view show.
@@ -130,7 +139,7 @@ async function runCase(c: Case): Promise<string[]> {
     for (const row of node ? ns.namespaceRows(node.children) : []) macro.add(pageIdentityKey(row.node.full));
     if (list(macro) !== list(want)) diffs.push(`frontend {{namespace ${key}}}: model ${list(want)}, Tine ${list(macro)}`);
     const rows = ns.namespaceHierarchyRows(names, name).map((segs) => pageIdentityKey(segs.join("/")));
-    const wantRows = want.length ? want : name.includes("/") && modelParent(key) !== null ? [modelParent(key)!] : [];
+    const wantRows = want.length ? want : modelParent(key) !== null ? [modelParent(key)!] : [];
     if (list(rows) !== list(wantRows)) diffs.push(`frontend hierarchy "${key}": model ${list(wantRows)}, Tine ${list(rows)}`);
   }
   return diffs.sort();

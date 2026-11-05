@@ -1,0 +1,12 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "alias:: kb/sub\n\n- day\n",
+    "pages/p.md": "- [[kb/sub]]\n"
+  },
+  "renames": [
+    {
+      "old": "kb",
+      "new": "kc"
+    }
+  ]
+}

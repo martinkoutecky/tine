@@ -128,14 +128,16 @@
       "kind": "page",
       "linkedRefs": 2,
       "name": "25-10-2026",
-      "owner": "pages/25-10-2026.md"
+      "owner": "pages/25-10-2026.md",
+      "parent": null
     },
     {
       "key": "x",
       "kind": "page",
       "linkedRefs": 0,
       "name": "x",
-      "owner": "pages/x.md"
+      "owner": "pages/x.md",
+      "parent": null
     }
   ],
   "spellings": {

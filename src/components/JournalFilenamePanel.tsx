@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { msg, t } from "../i18n";
 import { For, Show, createEffect, createSignal, on, type JSX } from "solid-js";
 import { backend } from "../backend";
@@ -57,8 +59,8 @@ export function JournalFilenamePanel(): JSX.Element {
   };
   return (
     <Show when={pending().length}>
-      <div class="settings-section" style={{ "margin-top": "18px" }}>{t("journal-filename-panel-journal-files-named-by-title")}</div>
-      <div class="settings-hint settings-block">{t("journal-filename-panel-these-journal-files-aren-t-named-after-their")}</div>
+      <div class="settings-section" style={{ "margin-top": "18px" }} {...settingAttributes(settings["journal-filename-panel-journal-files-named-by-title"])}>{settingLabel(settings["journal-filename-panel-journal-files-named-by-title"])}</div>
+      <div class="settings-hint settings-block">{settingDescription(settings["journal-filename-panel-journal-files-named-by-title"])}</div>
       <For each={pending()}>
         {(m) => (
           <div class="settings-block">

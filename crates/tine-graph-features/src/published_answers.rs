@@ -66,7 +66,16 @@ pub(crate) fn answers(
     inventory: &Inventory,
     home: Option<&str>,
 ) -> io::Result<Value> {
-    let mut rows: Vec<PageInventoryEntryWire> = inventory.0.iter().map(entry_wire).collect();
+    // `not_namespace` is not part of the frozen v1 row (a table change writes a
+    // new `v`), so a published row never carries it.
+    let mut rows: Vec<PageInventoryEntryWire> = inventory
+        .0
+        .iter()
+        .map(|entry| PageInventoryEntryWire {
+            not_namespace: false,
+            ..entry_wire(entry)
+        })
+        .collect();
     let mut resolve = Vec::new();
     let answered: HashSet<(String, bool)> = rows
         .iter()
@@ -113,6 +122,7 @@ pub(crate) fn answers(
                 link: None,
                 namespace_parent: false,
                 empty_alias: false,
+                not_namespace: false,
             },
         );
     }
