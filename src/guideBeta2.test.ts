@@ -3,6 +3,10 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the PDF Guide explains citing an area image (GH #869)", () => {
+  for (const detail of ["clipped image", "`((block reference))`", "**Copy ref**", "Click the image to open the PDF at that highlight", "asset placeholder"]) expect(guide("pdf")).toContain(detail);
+});
+
 it("the PDF Guide teaches touchscreen pinch and one-finger scrolling", () => {
   const pdf = guide("pdf");
   expect(pdf).toContain("pinch with two fingers");
