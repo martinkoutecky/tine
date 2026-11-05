@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Advanced Logseq queries recognise `sort-by` with a `juxt` of `get` functions on priority, scheduled, deadline and content, including scheduled-else-deadline. Later keys break ties, missing values follow the supplied defaults, and content sorts by the full raw text. Single-key forms work too; an unsupported key still refuses the whole query (GH #852).
+
 - A page named like a relative path or a web address, such as `./notes/x`, `../x/y` or `https://example.com/a`, is no longer shown as a namespace: the sidebar's Namespaces tree and the Namespaces view no longer list it, and its page shows no Hierarchy section and no namespace path above the title. Renaming a page named `.` (or `https:`) no longer moves `./x` (or `https://example.com/a`) along with it, and renaming `.` onto an existing `./x` is offered as a merge instead of being refused as "its own child". Logseq treats these names the same way. Published sites keep showing such names as before (REG-CM-RENAME-RELATIVE-NAME-SUBTREE, UI-CM-NS-VIEWS-RELATIVE-URL-NAMES).
 
 - Clicking a virtual journal's title opens the file created since the feed was read, including a file created externally under a different accepted date filename while editing delays the feed refresh. Before, the title could target the proposed filename and report that the physical page was no longer available (GH #863).

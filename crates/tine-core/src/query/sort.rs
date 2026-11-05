@@ -11,8 +11,12 @@ use std::cmp::Ordering;
 /// Within one requested field every row supplies the same variant.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SortDecor {
+    /// ClojureScript nil, before any present value in an advanced transform.
+    Nil,
     Num(i64),
     Text(String),
+    /// Case-sensitive ClojureScript string order, including surrogate pairs.
+    Utf16(Vec<u16>),
 }
 
 /// Compare precomputed multi-field keys in their requested directions.
