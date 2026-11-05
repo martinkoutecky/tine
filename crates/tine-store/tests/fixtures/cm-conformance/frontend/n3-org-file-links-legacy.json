@@ -142,6 +142,37 @@
     "note": "note",
     "ten": "ten"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
   "open": {
     "Ten___Child": {
       "journal": [
@@ -347,5 +378,127 @@
         "ten"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ten___child"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "note"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ten"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ab"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ten___child"
+    ],
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "note"
+    ],
+    [
+      "page",
+      "ten"
+    ],
+    [
+      "page",
+      "ab"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ten___child"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a/b"
+      ],
+      "parent": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "note"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ten"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ab"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    }
+  ]
 }

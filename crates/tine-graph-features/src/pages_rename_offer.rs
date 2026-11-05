@@ -73,10 +73,15 @@ pub fn rename_offer(
                 journal,
             }
         }
-        RenameBlocked::AliasOf { owner, merge } => RenameOffer::AliasOf {
+        RenameBlocked::AliasOf {
+            owner,
+            merge,
+            own_page,
+        } => RenameOffer::AliasOf {
             name: entry(&owner).map_or_else(|| owner.clone(), |(name, _)| name),
             owner,
             merge,
+            own_page,
         },
         refused => RenameOffer::Refused {
             message: refused.to_string(),
@@ -106,6 +111,8 @@ pub enum RenameOffer {
         owner: String,
         name: String,
         merge: bool,
+        #[serde(rename = "ownPage")]
+        own_page: bool,
     },
     /// Refused before anything is written, with the reason to show.
     Refused {

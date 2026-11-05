@@ -117,6 +117,7 @@
         "name": "Plan"
       },
       "name": "24-10-2026",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -169,6 +170,8 @@
     "Oct 22nd, 2026": "oct 22nd, 2026",
     "Plan": "plan"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "2026-10-22": {
       "journal": [
@@ -460,5 +463,83 @@
         "plan"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "plan"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 23rd, 2026"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 22nd, 2026"
+    ],
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "plan"
+    ],
+    [
+      "journal",
+      "oct 23rd, 2026"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "plan"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "oct 23rd, 2026"
+      ],
+      "parent": null
+    }
+  ]
 }

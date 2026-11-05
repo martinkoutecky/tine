@@ -68,6 +68,8 @@
     "Notes": "notes",
     "Project Alpha": "project alpha"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     " Project Alpha ": {
       "journal": [
@@ -191,5 +193,47 @@
         "project alpha"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "project alpha"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "project alpha"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "project alpha"
+      ],
+      "parent": null
+    }
+  ]
 }

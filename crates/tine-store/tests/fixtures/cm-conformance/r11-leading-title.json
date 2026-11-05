@@ -1,0 +1,7 @@
+{
+  "files": {
+    "pages/p.md": "title:: /n/y\n\n- content\n",
+    "pages/c.md": "- [[/n/y]]\n- {{query (page \"/n/y\")}}\n"
+  },
+  "renames": [{"old": "/n", "new": "z"}]
+}

@@ -83,6 +83,7 @@
         "name": "Machine Learning"
       },
       "name": "ML",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -133,6 +134,37 @@
     "Machine Learning": "machine learning",
     "q": "q"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "ml notes/x"
+    ],
+    [
+      "page",
+      "ml notes"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "ml notes/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "ml notes"
+      ]
+    }
+  ],
   "open": {
     "ML": {
       "journal": [
@@ -297,5 +329,91 @@
         "q"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "ml notes/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "ml notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "q"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ml notes/x"
+    ],
+    [
+      "page",
+      "ml notes"
+    ],
+    [
+      "page",
+      "machine learning"
+    ],
+    [
+      "page",
+      "q"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ml notes/x"
+      ],
+      "parent": [
+        "page",
+        "ml notes"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "ml notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "machine learning"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "q"
+      ],
+      "parent": null
+    }
+  ]
 }

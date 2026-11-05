@@ -1183,6 +1183,9 @@ pub fn frontend_case(
             if e.empty_alias {
                 wire["empty_alias"] = json!(true);
             }
+            if matches!(e.target, Resolved::Alias { .. }) {
+                wire["namespace_excluded"] = json!(true);
+            }
             // As `inventory_wire::entry_wire` sets it (round 10, S15).
             if e.name.contains('/') && !tine_core::refs::is_namespace_name(&e.name) {
                 wire["not_namespace"] = json!(true);
@@ -1265,6 +1268,11 @@ pub fn frontend_case(
         .map(|e| (e.name.clone(), fold(journal, &e.name)))
         .collect();
     json!({
+        "treeNodes": ctx.model["treeNodes"],
+        "treeParent": ctx.model["treeParent"],
+        "tree": ctx.model["tree"],
+        "namespaceNodes": ctx.model["namespaceNodes"],
+        "namespaceTree": ctx.model["namespaceTree"],
         "journalTitleFormat": journal_title_format,
         "journalFileFormat": journal_file_format,
         "conflicts": ctx.conflicts,

@@ -285,6 +285,64 @@
     "x": "x",
     "x/y": "x/y"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "x/y"
+    ],
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "x"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "x/y"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "x/y"
+        ]
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  ],
   "open": {
     "%E9": {
       "journal": [
@@ -655,5 +713,225 @@
         "x/y"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "%e9"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "lead"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a.b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "bad%e9"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "café"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "links"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "trail"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "x/y"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "x/y"
+        ]
+      ],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "%e9"
+    ],
+    [
+      "page",
+      "lead"
+    ],
+    [
+      "page",
+      "a.b"
+    ],
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "bad%e9"
+    ],
+    [
+      "page",
+      "café"
+    ],
+    [
+      "page",
+      "links"
+    ],
+    [
+      "page",
+      "trail"
+    ],
+    [
+      "page",
+      "x/y"
+    ],
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "x"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "%e9"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "lead"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a.b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a/b"
+      ],
+      "parent": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "bad%e9"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "café"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "links"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "trail"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "x/y"
+      ],
+      "parent": [
+        "page",
+        "x"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "x"
+      ],
+      "parent": null
+    }
+  ]
 }

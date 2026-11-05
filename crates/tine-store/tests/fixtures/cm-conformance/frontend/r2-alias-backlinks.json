@@ -70,6 +70,7 @@
         "name": "Machine Learning"
       },
       "name": "ML",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -108,6 +109,8 @@
     "Oct 26th, 2026": "oct 26th, 2026",
     "notes": "notes"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "ML": {
       "journal": [
@@ -243,5 +246,65 @@
         "notes"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "machine learning"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "machine learning"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

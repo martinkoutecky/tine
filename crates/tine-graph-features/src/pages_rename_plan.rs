@@ -266,8 +266,7 @@ pub(super) fn holder(
 /// CM-OWN-CHILD (D-20261103-CMA) and M-Q6 (D-20261102-MC): `new` lies
 /// strictly inside `old`'s namespace and is used, i.e. some file claims it or
 /// some page (`old` itself included) declares it as an alias. A name that is
-/// only linked is not used (the model's rule; Martin's confirmation is
-/// pending as CM-R9-USED, so this is the one place to change). Only a
+/// only linked is not used (D-20261105-CM11, CM-R9-USED). Only a
 /// namespace name lies inside a namespace (`refs::is_namespace_name`, OG
 /// `namespace-page?`; model round 10, S15): `./x` is no child of `.`.
 pub(super) fn own_child_used(
@@ -302,7 +301,11 @@ pub enum RenameBlocked {
     /// The new name is only an alias of `owner` (M-Q5, D-20261102-MC5).
     /// `merge`: whether a merge into the owner is allowed (not when the
     /// owner is one of the renamed page's own namespace children, M-Q6).
-    AliasOf { owner: String, merge: bool },
+    AliasOf {
+        owner: String,
+        merge: bool,
+        own_page: bool,
+    },
     /// CM-OWN-CHILD / M-Q6: `new` is a used name inside `old`'s namespace.
     OwnChild { old: String, new: String },
     /// The destination file `file` exists and is the page `page`'s (R14).
@@ -423,22 +426,48 @@ pub(super) fn plan_rename(
         let id = ids[0].clone();
         // An alias names its owner's page, so it is taken like a file name;
         // a journal day is taken by its journal (M-Q7).
-        let (mut taken, alias_only) = match holder(&graph, &journal_format, &new_name) {
-            Holder::Free => (Vec::new(), false),
-            Holder::Files(files) => (files, false),
-            Holder::Aliases(owners) => (owners, true),
+        let destination = if refs::normalize(&new_name) != old_key {
+            graph
+                .redirecting_alias_owners(&new_name)
+                .map(Holder::Aliases)
+        } else {
+            None
         };
-        taken.retain(|claimant| *claimant != id);
+        let (mut taken, alias_only) =
+            match destination.unwrap_or_else(|| holder(&graph, &journal_format, &new_name)) {
+                Holder::Free => (Vec::new(), false),
+                Holder::Files(files) => (files, false),
+                Holder::Aliases(owners) => (owners, true),
+            };
+        if alias_only {
+            validate_target(&existing(graph.resolve(&new_name, false)), None)?;
+        }
+        if !(primary && alias_only) {
+            taken.retain(|claimant| *claimant != id);
+        }
         // M-Q5: the alias stays its owners'; the renamed page becomes the
         // real page of that name (moved below).
-        if primary && alias_only && choice == RenameChoice::OwnPage {
-            taken.clear();
+        let own_target = primary && alias_only && choice == RenameChoice::OwnPage;
+        if own_target {
+            if taken.len() != 1 {
+                return Err(error(
+                    io::ErrorKind::AlreadyExists,
+                    "the alias has no unique owner",
+                ));
+            }
+            // Answer two fills the existing empty file through the guarded
+            // merge path; without that file it is an ordinary rename.
+            taken = existing(graph.resolve(&new_name, false));
+            taken.retain(|claimant| *claimant != id);
         }
         if primary {
             if let [survivor] = taken.as_slice() {
                 let merge_allowed = !moving.contains(survivor);
                 match choice {
-                    RenameChoice::MergeInto(into) if survivor.as_str() == into => {
+                    RenameChoice::MergeInto(_) | RenameChoice::OwnPage
+                        if own_target
+                            || matches!(choice, RenameChoice::MergeInto(into) if survivor.as_str() == into) =>
+                    {
                         if !merge_allowed {
                             return Err(RenameBlocked::OwnChild {
                                 old: old.to_owned(),
@@ -457,6 +486,7 @@ pub(super) fn plan_rename(
                             RenameBlocked::AliasOf {
                                 owner: survivor.as_str().to_owned(),
                                 merge: merge_allowed,
+                                own_page: true,
                             }
                         } else if merge_allowed {
                             RenameBlocked::Taken {
@@ -536,11 +566,28 @@ pub(super) fn plan_rename(
     let mut ref_merge = false;
     let mut ref_survivor = None;
     if !primary_is_file && old != new {
-        let (taken, alias_only) = match holder(&graph, &journal_format, new) {
-            Holder::Free => (Vec::new(), false),
-            Holder::Files(files) => (files, false),
-            Holder::Aliases(owners) => (owners, true),
+        // R10-Q3 remains open: preserve the previous alias-only-source path.
+        let alias_source = matches!(graph.resolve(old, false), Resolved::Alias { .. });
+        if choice == RenameChoice::OwnPage && !alias_source {
+            return Err(error(
+                io::ErrorKind::InvalidInput,
+                "a file-less source cannot become its own page",
+            ));
+        }
+        let destination = if alias_source {
+            None
+        } else {
+            graph.redirecting_alias_owners(new).map(Holder::Aliases)
         };
+        let (taken, alias_only) =
+            match destination.unwrap_or_else(|| holder(&graph, &journal_format, new)) {
+                Holder::Free => (Vec::new(), false),
+                Holder::Files(files) => (files, false),
+                Holder::Aliases(owners) => (owners, true),
+            };
+        if alias_only {
+            validate_target(&existing(graph.resolve(new, false)), None)?;
+        }
         match (choice, taken.as_slice()) {
             (_, []) => {}
             (RenameChoice::MergeInto(into), [owner]) if owner.as_str() == into => {
@@ -548,11 +595,18 @@ pub(super) fn plan_rename(
                 ref_survivor = Some(owner.clone());
             }
             (RenameChoice::MergeInto(_), _) => {}
-            // No page of the new name would exist: the references only.
-            (RenameChoice::OwnPage, _) if alias_only => {}
+            (RenameChoice::OwnPage, _) if alias_only && alias_source => {}
             (_, [owner]) => {
-                return Err(RenameBlocked::Taken {
-                    into: owner.as_str().to_owned(),
+                return Err(if alias_only && !alias_source {
+                    RenameBlocked::AliasOf {
+                        owner: owner.as_str().to_owned(),
+                        merge: true,
+                        own_page: false,
+                    }
+                } else {
+                    RenameBlocked::Taken {
+                        into: owner.as_str().to_owned(),
+                    }
                 }
                 .error())
             }

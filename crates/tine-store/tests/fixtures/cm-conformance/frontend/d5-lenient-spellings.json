@@ -151,6 +151,8 @@
     "Oct 2nd, 2026": "oct 2nd, 2026",
     "October 22nd, 2026": "oct 22nd, 2026"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "2026-10-2": {
       "journal": [
@@ -381,5 +383,65 @@
         "oct 22nd, 2026"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 2nd, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 22nd, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 2nd, 2026"
+    ],
+    [
+      "journal",
+      "oct 22nd, 2026"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 2nd, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "oct 22nd, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

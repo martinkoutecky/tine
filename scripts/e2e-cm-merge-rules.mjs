@@ -31,6 +31,11 @@ fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced?
 const seeded = {
   "pages/Machine Learning.md": "alias:: ML\n\n- ml body\n",
   "pages/ML notes.md": "- notes body\n",
+  "pages/ML.md": "",
+  "pages/Owner Two.md": "alias:: Short Two\n\n- owner two\n",
+  "pages/Short Two.md": "",
+  "pages/Source Two.md": "- source two\n",
+  "pages/queries.md": '- {{query (page "Source Two")}}\n- [[Source Two]] [[Ghost]]\n',
   "pages/q.md": "- see [[ML notes]]\n- also [[ML]] here\n",
   "pages/Foo.md": "- foo body\n",
   "pages/Foo%2Fbar.md": "- bar body\n",
@@ -118,6 +123,25 @@ try {
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".linked-references")].some((section) => /also/.test(section.textContent ?? "") && /ML/.test(section.textContent ?? ""))),
   { timeout: 15_000, timeoutMsg: "q's [[ML]] block is missing from Machine Learning's Linked References" });
+
+  stage = "r11: merging into the owner retains the empty alias file and rewrites queries";
+  await openPageByName(browser, "Source Two");
+  await renameTitle("Short Two");
+  await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').waitForExist({ timeout: 15_000 });
+  await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').click();
+  await waitForFileText(path.join(graph, "pages/Owner Two.md"), (text) => text.includes("source two"), { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "pages/queries.md"), (text) => text.includes('(page "Owner Two")') && text.includes("[[Short Two]]"), { timeoutMs: 15_000 });
+  assert.equal(fs.readFileSync(path.join(graph, "pages/Short Two.md"), "utf8"), "");
+  assert.ok(!fs.existsSync(path.join(graph, "pages/Source Two.md")));
+
+  stage = "r11: a file-less source offers merge into the owner and Cancel";
+  await openPageByName(browser, "Ghost");
+  await renameTitle("Short Two");
+  await browser.$(".tine-rename-alias-choice").waitForExist({ timeout: 15_000 });
+  assert.deepEqual(Object.keys(Object.fromEntries(await dialogChoices())).sort(), ["cancel", "merge"]);
+  const beforeFilelessCancel = snapshot();
+  await browser.$('.tine-rename-alias-choice button[data-choice="cancel"]').click();
+  assert.deepEqual(snapshot(), beforeFilelessCancel);
 
   stage = "M-Q6: renaming Foo to its own used child Foo/bar is refused with the reason";
   const beforeRefusal = snapshot();

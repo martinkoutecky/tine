@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Renaming onto an empty file whose name is another page's alias now asks whether to merge into the owner or make the name its own page. Merging into the owner retains the empty file; making it its own page fills that file. A source with no file offers only the merge and Cancel. Alias-only names no longer appear in namespace trees, namespace counts, macros or Hierarchy; alias completion and navigation remain available. Published sites keep their existing namespace behavior (UI-CM-R11-ALIAS-DIALOG, UI-CM-R11-ALIAS-NAMESPACE).
+
 - A page named like a relative path or a web address, such as `./notes/x`, `../x/y` or `https://example.com/a`, is no longer shown as a namespace: the sidebar's Namespaces tree and the Namespaces view no longer list it, and its page shows no Hierarchy section and no namespace path above the title. Renaming a page named `.` (or `https:`) no longer moves `./x` (or `https://example.com/a`) along with it, and renaming `.` onto an existing `./x` is offered as a merge instead of being refused as "its own child". Logseq treats these names the same way. Published sites keep showing such names as before (REG-CM-RENAME-RELATIVE-NAME-SUBTREE, UI-CM-NS-VIEWS-RELATIVE-URL-NAMES).
 
 - Clicking a virtual journal's title opens the file created since the feed was read, including a file created externally under a different accepted date filename while editing delays the feed refresh. Before, the title could target the proposed filename and report that the physical page was no longer available (GH #863).

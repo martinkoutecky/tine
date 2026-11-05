@@ -86,7 +86,7 @@ it("offers a merge into a journal day reached by another date spelling", async (
 // M-Q5 (D-20261102-MC5): a name that is only an alias asks three ways, in
 // the app's own dialog: merge into the owner, make it its own page, cancel.
 it("an alias-only name asks merge / own page / cancel and sends the answer", async () => {
-  offer({ kind: "aliasOf", owner: "pages/Machine Learning.md", name: "Machine Learning", merge: true });
+  offer({ kind: "aliasOf", owner: "pages/Machine Learning.md", name: "Machine Learning", merge: true, ownPage: true });
   const confirm = vi.spyOn(backend(), "confirm");
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
   const answer = async (choice: "merge" | "own-page" | null) => {

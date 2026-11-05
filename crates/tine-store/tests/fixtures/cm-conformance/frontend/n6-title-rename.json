@@ -92,6 +92,8 @@
     "Shown Title": "shown title",
     "linker": "linker"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Custom Name": {
       "journal": [
@@ -198,5 +200,65 @@
         "linker"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "custom name"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "linker"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "shown title"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "custom name"
+    ],
+    [
+      "page",
+      "linker"
+    ],
+    [
+      "page",
+      "shown title"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "custom name"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "linker"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "shown title"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -266,6 +266,39 @@ pub enum InventoryScope<'a> {
 }
 
 impl WholeGraph {
+    /// Direct declaring owners when EMPTY-ALIAS makes this a redirecting name.
+    /// Rename uses the same content-free answer as navigation, but requires a
+    /// unique declarer before offering a merge. Indexed lookups, no file I/O.
+    pub fn redirecting_alias_owners(&self, name: &str) -> Option<Vec<PageId>> {
+        let key = tine_core::refs::page_key(name);
+        let owners = self.graph.alias_owner_paths(&key)?;
+        if owners.is_empty() {
+            return None;
+        }
+        let solid = |journal: bool, key: String| {
+            self.claimants.get(&(journal, key)).is_some_and(|claims| {
+                claims.iter().any(|claim| {
+                    claim
+                        .rel_path
+                        .as_ref()
+                        .is_none_or(|id| !file_content_free(&self.graph, id.as_str()))
+                })
+            })
+        };
+        if solid(false, key.clone())
+            || solid(true, key)
+            || self.journal_format.parse(name).is_some_and(|day| {
+                solid(
+                    true,
+                    tine_core::refs::page_key(&self.journal_format.title(day)),
+                )
+            })
+        {
+            return None;
+        }
+        Some(owners.iter().cloned().map(PageId::from).collect())
+    }
+
     /// Names and file claimants in this view. Physical twins with the same
     /// decoded spelling produce one name entry whose target contains the
     /// canonical id and the other claimants; `scan_area` lists physical files.

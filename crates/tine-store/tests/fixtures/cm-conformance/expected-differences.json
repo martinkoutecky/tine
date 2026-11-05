@@ -568,29 +568,7 @@
     }
   },
   "frontendNamespaces": {
-    "fixtures": {
-      "r10-ref-source-journal-risk": [
-        "frontend hierarchy \"kb\": model [], Tine [kb/sub]",
-        "frontend namespace tree: Tine has node \"kb\", the model does not",
-        "frontend namespace tree: Tine has node \"kb/sub\", the model does not",
-        "frontend namespaces count \"kb\": model 0, Tine 1",
-        "frontend {{namespace kb}}: model [], Tine [kb/sub]"
-      ],
-      "r6-refused-journal-risk": [
-        "frontend hierarchy \"old\": model [], Tine [old/sub]",
-        "frontend namespace tree: Tine has node \"old\", the model does not",
-        "frontend namespace tree: Tine has node \"old/sub\", the model does not",
-        "frontend namespaces count \"old\": model 0, Tine 1",
-        "frontend {{namespace old}}: model [], Tine [old/sub]"
-      ],
-      "r9-own-child-alias": [
-        "frontend hierarchy \"a\": model [], Tine [a/x]",
-        "frontend namespace tree: Tine has node \"a\", the model does not",
-        "frontend namespace tree: Tine has node \"a/x\", the model does not",
-        "frontend namespaces count \"a\": model 0, Tine 1",
-        "frontend {{namespace a}}: model [], Tine [a/x]"
-      ]
-    }
+    "fixtures": {}
   },
   "frontendRefs": {
     "fixtures": {}
@@ -730,6 +708,9 @@
         "pages/scheme.md: launch walk \"scheme\", answer Some(\"https:\")",
         "pages/url.md: launch walk \"url\", answer Some(\"https://a.b/c\")"
       ],
+      "r11-leading-title": [
+        "pages/p.md: launch walk \"p\", answer Some(\"/n/y\")"
+      ],
       "r9-case-rename-onto-taken-file": [
         "pages/n%2Fy.md: launch walk \"n/y\", answer Some(\"B\")"
       ]
@@ -752,20 +733,20 @@
     "o2-date-alias-on-twin": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "q1-duplicate-claim": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r1-title-names-page": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
-    "r10-relative-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
-    "r10-url-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r10-ref-source-alias-target": "R10-Q4 (out of scope for batch 15, divergence R15): renaming a reference-only name (kb, no file) onto an alias-only name (ML of o). The model's rename10 allows it as a plain rewrite (M-Q5 answer two, which for a file-less source creates no page); Tine refuses the plain rename and offers the M-Q5 dialog (D-20261102-MC5); the harness confirms the merge, which matches refMerge. Kept as today's Tine behaviour until Martin answers R10-Q4 (recommendation: offer only the merge for a file-less source). The random class 'rename: model allows, Tine refuses (AlreadyExists)' is the same question with two alias owners (no single merge target).",
-    "r10-ref-source-journal-risk": "R10-Q2 (out of scope for batch 15, divergence S16): the frontendNamespaces rows list the journal's alias spelling kb/sub under kb, as OG does; the model (Q9) has no page kb/sub, so kb has nothing below it. Same family as r6-refused-journal-risk and r9-own-child-alias."
+    "r10-ref-source-journal-risk": "R10-Q2 (out of scope for batch 15, divergence S16): the frontendNamespaces rows list the journal's alias spelling kb/sub under kb, as OG does; the model (Q9) has no page kb/sub, so kb has nothing below it. Same family as r6-refused-journal-risk and r9-own-child-alias.",
+    "r10-relative-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
+    "r10-url-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure."
   },
   "rename": {
     "fixtures": {
       "n6-title-rename: Custom Name -> custom": [],
       "n6-title-rename: Shown Title -> Renamed": [],
       "o1-twin-journal-day: duplicate days": [],
-      "r10-ref-source-alias-target: kb -> ML": [
-        "rename \"kb\" -> \"ML\": model allows; Tine refuses AlreadyExists, merges after confirmation (Merged)"
+      "r10-ref-source-alias-target: kb -> ML": [],
+      "r10-ref-source-journal-risk: kb -> kc": [
+        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]"
       ],
-      "r10-ref-source-journal-risk: kb -> kc": [],
       "r10-ref-source-merge: kb -> n/y": [],
       "r10-ref-source-own-child: kb -> kb/x": [],
       "r10-ref-source-parent-only: kb -> n": [],
@@ -775,6 +756,21 @@
       "r10-relative-real-pages: . -> z": [],
       "r10-url-real-pages: https: -> https://a.b/c": [],
       "r10-url-real-pages: https: -> z": [],
+      "r11-empty-alias-source: B -> ML": [
+        "aliases of pages/Machine Learning.md: Tine has (\"alias\", \"b\"), model does not (model [(\"alias\", \"ml\")], Tine [(\"alias\", \"b\"), (\"alias\", \"ml\")])",
+        "occurrences of pages/Machine Learning.md: Tine has (\"linkableValue\", \"b\"), model does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])",
+        "occurrences of pages/Machine Learning.md: model has (\"linkableValue\", \"ml\"), Tine does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])"
+      ],
+      "r11-empty-alias-source: B -> ML (own page)": [
+        "aliases of pages/Machine Learning.md: Tine has (\"alias\", \"b\"), model does not (model [(\"alias\", \"ml\")], Tine [(\"alias\", \"b\"), (\"alias\", \"ml\")])",
+        "occurrences of pages/Machine Learning.md: Tine has (\"linkableValue\", \"b\"), model does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])",
+        "occurrences of pages/Machine Learning.md: model has (\"linkableValue\", \"ml\"), Tine does not (model [(\"linkableValue\", \"ml\"), (\"linkableValue\", \"ml\")], Tine [(\"linkableValue\", \"b\"), (\"linkableValue\", \"ml\")])"
+      ],
+      "r11-empty-alias-target: ML notes -> ML": [],
+      "r11-empty-alias-target: ML notes -> ML (own page)": [],
+      "r11-fileless-empty-alias-target: B -> ML": [],
+      "r11-leading-legacy-stem: /n -> z": [],
+      "r11-leading-title: /n -> z": [],
       "r6-case-only: Foo -> foo": [],
       "r6-file-descendant: old -> new": [],
       "r6-into-namespace: x -> n/y": [],
@@ -787,6 +783,7 @@
         "occurrences of pages/p.md: model has (\"link\", \"new/child\"), Tine does not (model [(\"link\", \"new\"), (\"link\", \"new/child\")], Tine [(\"link\", \"new\"), (\"link\", \"old/child\")])"
       ],
       "r6-refused-journal-risk: old -> new": [
+        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
         "rename \"old\" -> \"new\": model refuses (journal risk) (journal risks [\"\\\"old/sub\\\"\"]), Tine performs (Renamed)"
       ],
       "r6-rewrite-set: Tasks -> Chores": [
@@ -797,6 +794,7 @@
       ],
       "r6-task-marker-page: A -> Alpha": [],
       "r9-case-rename-onto-taken-file: N/y -> n/y": [
+        "model [\"rename\", \"cancel\"], Tine [\"cancel\"]",
         "rename \"N/y\" -> \"n/y\": model allows, Tine refuses: FileTaken: cannot rename: the file pages/n%2Fy.md belongs to the page “B”; rename or merge that page first"
       ],
       "r9-merge-into-journal: meeting -> 2026-10-26": [],
@@ -1078,6 +1076,50 @@
             {
               "new": "Z",
               "old": "N/y"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] rename offers: model and Tine offer different answers": {
+        "detail": "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "",
+            "pages/2026-10-26.md": "- [#A] priority\n- [[A]] and [[N/y]]\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "and": [
+                  {
+                    "refs": "x"
+                  },
+                  {
+                    "not": {
+                      "page": {
+                        "name": "n/y"
+                      }
+                    }
+                  }
+                ]
+              },
+              "tine": "(and [[x]] (not (page \"n/y\")))"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "name": "2026-10-26"
+              },
+              "tine": "@page and name = '2026-10-26'"
+            }
+          ],
+          "renames": [
+            {
+              "new": "A",
+              "old": "2026-10-26"
             }
           ]
         }
@@ -1860,40 +1902,34 @@
           ]
         }
       },
-      "rename: model allows, Tine refuses (AlreadyExists)": {
-        "detail": "rename \"B\" -> \"2026-10-26\": model allows, Tine refuses: AlreadyExists: target page identity already exists elsewhere in the graph",
+      "rename offers: model and Tine offer different answers": {
+        "detail": "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
         "graph": {
           "files": {
-            "pages/B.md": "title:: n\n\n- #A tagged\n  - child [[A]]\n- note\n  rel:: [[B]]\n  - child [[N/y]]\n- see [[x]]\n",
-            "pages/n%2Fy.md": "alias:: 2026-10-26\n\n- note\n  rel:: [[2026-10-26]]\n- plain words\n- B mentioned\n",
-            "pages/x.md": "alias:: n/y, 2026-10-26\n\n- plain words\n- note\n  rel:: [[A]]\n  - child [[a]]\n- plain words\n"
+            "journals/2026_10_26.md": ""
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "and": [
+                "or": [
                   {
-                    "page": {
-                      "name": "N/y"
-                    }
+                    "refs": "x"
                   },
                   {
-                    "not": {
-                      "page": {
-                        "name": "N/y"
-                      }
+                    "page": {
+                      "name": "B"
                     }
                   }
                 ]
               },
-              "tine": "(and (page \"N/y\") (not (page \"N/y\")))"
+              "tine": "(or [[x]] (page \"B\"))"
             }
           ],
           "renames": [
             {
-              "new": "2026-10-26",
+              "new": "Z",
               "old": "B"
             }
           ]
@@ -2124,6 +2160,13 @@
       "r10-ref-source-unused": [],
       "r10-relative-real-pages": [],
       "r10-url-real-pages": [],
+      "r11-alias-namespace": [],
+      "r11-empty-alias-source": [],
+      "r11-empty-alias-target": [],
+      "r11-fileless-empty-alias-target": [],
+      "r11-leading-legacy-stem": [],
+      "r11-leading-title": [],
+      "r11-sparse-alias-parent": [],
       "r2-alias-backlinks": [],
       "r2-alias-chain": [],
       "r2-journal-in-alias-group": [

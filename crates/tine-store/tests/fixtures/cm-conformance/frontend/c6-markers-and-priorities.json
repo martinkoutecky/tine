@@ -369,6 +369,8 @@
     "p": "p",
     "todo": "todo"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "A": {
       "journal": [
@@ -801,5 +803,227 @@
         "todo"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "p"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "todo"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "doing"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "later"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "now"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "done"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "waiting"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "canceled"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "p"
+    ],
+    [
+      "page",
+      "todo"
+    ],
+    [
+      "page",
+      "doing"
+    ],
+    [
+      "page",
+      "later"
+    ],
+    [
+      "page",
+      "b"
+    ],
+    [
+      "page",
+      "now"
+    ],
+    [
+      "page",
+      "done"
+    ],
+    [
+      "page",
+      "c"
+    ],
+    [
+      "page",
+      "waiting"
+    ],
+    [
+      "page",
+      "canceled"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "todo"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "doing"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "later"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "now"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "done"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "waiting"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "canceled"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -237,6 +237,37 @@
     "café": "café",
     "links": "links"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
   "open": {
     "%E9": {
       "journal": [
@@ -541,5 +572,181 @@
         "links"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "%e9"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "50%25 of 100%"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ten___child"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "___lead"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "café"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "contents"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "links"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "%e9"
+    ],
+    [
+      "page",
+      "50%25 of 100%"
+    ],
+    [
+      "page",
+      "ten___child"
+    ],
+    [
+      "page",
+      "___lead"
+    ],
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "café"
+    ],
+    [
+      "page",
+      "contents"
+    ],
+    [
+      "page",
+      "links"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "%e9"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "50%25 of 100%"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ten___child"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "___lead"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a/b"
+      ],
+      "parent": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "café"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "contents"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "links"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    }
+  ]
 }

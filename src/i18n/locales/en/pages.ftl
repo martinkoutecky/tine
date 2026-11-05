@@ -57,6 +57,7 @@ pages-namespaces-count = { $pages ->
     }
 rename-alias-choice-title = “{ $to }” is another page's alias
 rename-alias-choice-body = “{ $to }” is an alias of “{ $owner }”. Merge “{ $from }” into “{ $owner }”, or make “{ $to }” a page of its own? A page of its own stays an alias of “{ $owner }” too, so links to “{ $to }” still show in the Linked References of “{ $owner }”.
+rename-alias-choice-fileless = “{ $to }” is an alias of “{ $owner }”. Merge references to “{ $from }” into “{ $owner }”? “{ $from }” has no file to make into a page of its own.
 rename-alias-choice-no-merge = Merging is not offered: “{ $owner }” is inside “{ $from }” and would move with it.
 rename-alias-choice-merge = Merge into “{ $owner }”
 rename-alias-choice-own-page = Make “{ $to }” its own page (still an alias of “{ $owner }”)
