@@ -1,5 +1,6 @@
-import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { maybeEditorIn, type EditorDriver, type EditorKind } from "../tests/editorDriver";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { setCm6EditorEnabled } from "../editor/cm6Setting";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -58,7 +59,13 @@ function accept(textarea: EditorDriver, key: "Enter" | "Tab" = "Enter") {
   textarea.keydown(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
 }
 
-describe("reference authoring", () => {
+// Both block editors share the completion contract (CM6 stage 1, D-20261025-BW):
+// the CM6 (( picker once inserted the runtime key while the target was stamped
+// with a fresh UUID, a dangling reference.
+describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)", (kind) => {
+  beforeEach(async () => { setCm6EditorEnabled(kind === "cm6"); await Promise.resolve(); });
+  afterEach(() => setCm6EditorEnabled(false));
+
   it("keeps native rows ahead of Pinyin at the rendered completion boundary and refreshes when disabled", async () => {
     const lookup = vi.spyOn(backend(), "quickSwitch").mockImplementation(async (_query, limit, _editor, enabled) => limit === 0 ? [] : [
       { ...entry("x beijing"), match_class: "substring" },

@@ -3,9 +3,10 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { backend } from "../backend";
 import { propertyCompletionSession } from "./propertyCompletionSession";
+import { acceptBlockRefPick } from "./blockRefPick";
 import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, propertyValueKeyAfterBoundary, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
-import { node, pageByName, persistBlockRefTarget, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
+import { node, pageByName, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
 import { pinyinMatchingEnabled } from "../launcherRanking";
 import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
@@ -337,18 +338,11 @@ export function cm6Completions(props: {
     }
     if (item.propertyValue !== undefined) { replaceTrigger(item.propertyValue); return; }
     if (item.blockRef) {
-      const { uuid, externalId, page, kind } = item.blockRef;
       const owner = graphOwner(current), trigger = ac(), before = text();
-      let inserted = false;
-      const intended = () => owner() && ac() === trigger && text() === before;
-      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, () => {
-        if (!intended()) return null;
-        const sourcePage = node(props.id)?.page; if (!sourcePage) return null;
-        replaceTrigger(`((${externalId}))`); inserted = true; return sourcePage;
-      }, intended).then(saved => {
-        if (!saved && owner() && (inserted || ac() === trigger))
-          pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
-      }).catch(error => { if (owner()) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error"); });
+      acceptBlockRefPick(item.blockRef, {
+        intended: () => owner() && ac() === trigger && text() === before, current: () => owner(),
+        triggerOpen: () => ac() === trigger, sourcePage: () => node(props.id)?.page, insert: (ref) => replaceTrigger(ref),
+      });
       return;
     }
     if (item.plugin) {
