@@ -1,4 +1,5 @@
-import { msg, t } from "../i18n";
+import { settings } from "./settingDefinitions";
+import { msg } from "../i18n";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
@@ -53,20 +54,20 @@ export function TraySettings(): JSX.Element {
   return (
     <Show when={status()?.supported}>
       <Field
-        label={t("settings-prose-show-tine-in-the-system-tray")}
-        hint={t("settings-prose-adds-a-tray-notification-area-macos-menu-bar-icon-click")}
+        setting={settings["settings-prose-show-tine-in-the-system-tray"]}
+
       >
         <Toggle on={show()} onClick={() => toggleShow()} />
       </Field>
       <Field
-        label={t("settings-prose-minimize-to-tray")}
-        hint={t("settings-prose-minimizing-the-main-window-hides-the-window-instead-of-leaving")}
+        setting={settings["settings-prose-minimize-to-tray"]}
+
       >
         <Toggle on={minimize()} disabled={!show()} onClick={() => toggleMinimize()} />
       </Field>
       <Field
-        label={t("settings-prose-start-minimized-to-tray")}
-        hint={t("settings-prose-launch-with-the-main-window-hidden-open-it-from-the")}
+        setting={settings["settings-prose-start-minimized-to-tray"]}
+
       >
         <Toggle on={start()} disabled={!show()} onClick={() => toggleStart()} />
       </Field>

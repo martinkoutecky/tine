@@ -72,7 +72,7 @@ async function mount(userUnit = 1, numPages = 1, secondRaster?: Promise<void>) {
   h.getDocument.mockReturnValue({ promise: Promise.resolve({
     numPages, getPage: vi.fn(async (n: number) => pages[n - 1]), getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null), getPageIndex: vi.fn().mockResolvedValue(0),
-    destroy: vi.fn().mockResolvedValue(undefined),
+    loadingTask: { destroy: vi.fn().mockResolvedValue(undefined) },
   }) });
   const host = document.createElement("div");
   document.body.appendChild(host);

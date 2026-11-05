@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BUILTIN_KEYS } from "../keybindings";
 import { KNOBS } from "../styleKnobs";
-import { SETTING_SEARCH } from "../components/settingsSearch";
+import { settings } from "../components/settingDefinitions";
 
 describe("localized interface tables (GH #107)", () => {
   it("keeps built-in shortcut prose deferred until a reactive consumer renders it", () => {
@@ -15,9 +15,9 @@ describe("localized interface tables (GH #107)", () => {
       expect(knob.title).toHaveProperty("kind", "msg");
       if (knob.description) expect(knob.description).toHaveProperty("kind", "msg");
     }
-    for (const entry of SETTING_SEARCH) {
+    for (const entry of Object.values(settings)) {
       expect(entry.label).toHaveProperty("kind", "msg");
-      expect(entry.description).toHaveProperty("kind", "msg");
+      if ("description" in entry) expect(entry.description).toHaveProperty("kind", "msg");
     }
   });
 });

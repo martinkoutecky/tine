@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { msg, t } from "../i18n";
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
@@ -36,9 +38,9 @@ export function HomePageSetting(): JSX.Element {
     }
   };
   return (
-    <div class="settings-field" data-setting-label="Home page">
-      <div class="settings-field-row">
-        <span class="settings-label">{t("home-page-setting-home-page")}</span>
+    <div class="settings-field" {...settingAttributes(settings["home-page-setting-home-page"])}>
+      <div class="settings-field-row" >
+        <span class="settings-label">{settingLabel(settings["home-page-setting-home-page"])}</span>
         <div class="settings-field-control">
           <Show when={graphMeta()?.default_home && !picking()} fallback={
             <div>
@@ -60,7 +62,7 @@ export function HomePageSetting(): JSX.Element {
           </Show>
         </div>
       </div>
-      <div class="settings-hint settings-field-hint">{t("home-page-setting-open-this-page-when-the-graph-opens-only")}</div>
+      <div class="settings-hint settings-field-hint">{settingDescription(settings["home-page-setting-home-page"])}</div>
     </div>
   );
 }
