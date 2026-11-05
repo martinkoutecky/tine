@@ -1,4 +1,5 @@
 import { revealOutlineBlock } from "./outlineViewport";
+import { revealFindSheetBlock } from "./sheet/find";
 import { batch, createMemo, createRoot, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, onBlockRawChanged, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
@@ -32,6 +33,11 @@ const FIND_HIGHLIGHT = "tine-find";
 const FIND_ACTIVE_HIGHLIGHT = "tine-find-active";
 const RENDERED_TEXT_CACHE_LIMIT = 4096;
 const HIGHLIGHT_BLOCK_CHUNK_SIZE = 40;
+const FIND_BLOCK_SELECTOR = ".ls-block[data-block-id],.sheet-cell[data-block-id]:not(.sheet-field-cell)";
+
+function findBlockTextRoot(element: HTMLElement): HTMLElement | null {
+  return element.querySelector<HTMLElement>(element.matches(".sheet-title-cell") ? ".sheet-cell-body" : ".block-content");
+}
 
 interface RenderedTextCacheEntry {
   raw: string;
@@ -267,6 +273,20 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     const element = findScopeElement(scope.id);
     if (!element || scannedSurfaces.has(scope.id)) continue;
     scannedSurfaces.add(scope.id);
+    // Embeds and query tables can display blocks outside the page's own tree.
+    // Keep the outline walk (including unmounted descendants), then add each
+    // displayed block once. Sheet cells share the block identity, not a second
+    // synthetic surface that would double the count.
+    const counted = new Set(out.slice(start).map((match) => match.blockId));
+    for (const block of element.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR)) {
+      const id = block.dataset.blockId;
+      const root = findBlockTextRoot(block);
+      if (!id || !root || root.matches(".macro-host") || counted.has(id) || block.closest("[data-inpage-find-surface]")) continue;
+      counted.add(id);
+      findTextOccurrences(searchableTextForRoot(root), q, removeAccents).forEach((match, ordinalInBlock) => {
+        out.push({ blockId: id, scopeId: scope.id, ordinalInBlock, ...match });
+      });
+    }
     for (const surface of element.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
       const surfaceId = surface.dataset.inpageFindSurface;
       if (!surfaceId) continue;
@@ -426,7 +446,7 @@ function expandAncestorsForFind(blockId: string) {
 
 function blockSelector(id: string): string {
   const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
-  return `.ls-block[data-block-id="${esc}"]`;
+  return `.ls-block[data-block-id="${esc}"],.sheet-cell[data-block-id="${esc}"]:not(.sheet-field-cell)`;
 }
 
 function paneSelector(id: string): string {
@@ -530,15 +550,21 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
     return false;
   }
   const node = docNode(match.blockId);
-  if (!node) return false;
-  renderedBlocks.add(match.blockId);
-  expandAncestorsForFind(match.blockId);
+  if (!node && !inPageFindBlockElement(match.blockId, scopeId)) return false;
+  if (node) {
+    renderedBlocks.add(match.blockId);
+    expandAncestorsForFind(match.blockId);
+  }
   for (let i = 0; i < 20; i++) {
     await animationFrame();
     if (!current()) return false;
     revealOutlineBlock(match.blockId, findScopeElement(scopeId));
+    revealFindSheetBlock(match.blockId, findScopeElement(scopeId)!);
     const el = inPageFindBlockElement(match.blockId, scopeId);
     if (el) {
+      // A sheet may scroll on both axes, while precise occurrence centering
+      // below only adjusts the vertical scroll position.
+      if (el.matches(".sheet-cell")) el.scrollIntoView({ block: "center", inline: "center" });
       if (!centerInPageFindOccurrence(el, match.ordinalInBlock)) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
@@ -569,7 +595,7 @@ function nearestVerticalScroller(el: HTMLElement): HTMLElement | null {
  * precise rect can be resolved (e.g. the block is in edit mode; jsdom) so the
  * caller falls back to the coarse block scroll. */
 function centerInPageFindOccurrence(blockEl: HTMLElement, ordinalInBlock: number): boolean {
-  const root = blockEl.querySelector(".block-content") as HTMLElement | null;
+  const root = findBlockTextRoot(blockEl);
   const query = state.query().trim();
   if (!root || !query) return false;
   const range = textRanges(root, query)[ordinalInBlock];
@@ -741,7 +767,7 @@ function visibleFindElements(selector: string): HTMLElement[] {
   });
 }
 function visibleFindBlockElements(): HTMLElement[] {
-  return visibleFindElements(".ls-block[data-block-id]").filter((el) => !!el.querySelector(".block-content"));
+  return visibleFindElements(FIND_BLOCK_SELECTOR).filter((el) => !!findBlockTextRoot(el));
 }
 function visibleFindSurfaceElements(): HTMLElement[] {
   return visibleFindElements("[data-inpage-find-surface]");
@@ -838,7 +864,7 @@ async function refreshInPageFindHighlightsChunked(
     if (!blockId) continue;
     const blockMatches = matchesByBlock.get(elementMatchKey(block, blockId));
     if (!blockMatches?.length) continue;
-    const root = block?.querySelector(".block-content") as HTMLElement | null;
+    const root = findBlockTextRoot(block);
     if (!root) continue;
     const blockRanges = textRanges(root, query);
     for (const m of blockMatches) {
