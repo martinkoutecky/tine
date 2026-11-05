@@ -18,6 +18,22 @@ fn clean_and_conflicted_pages_independently_disable_saving() {
 }
 
 #[test]
+fn gh875_later_delivery_retires_only_exact_buffer_or_saved_base_matches() {
+    for (delivered, conflicted) in [("mine", false), ("A", false), ("mine ", true)] {
+        let mut h = host();
+        open(&mut h, "a.md");
+        edit(&mut h, "a.md", "mine");
+        h.fs.external("a.md", text("theirs"), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+        assert!(h.pages["a.md"].conflict);
+        h.fs.external("a.md", text(delivered), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+        assert_eq!(h.pages["a.md"].conflict, conflicted);
+        assert_eq!(h.pages["a.md"].buf, text("mine"));
+    }
+}
+
+#[test]
 fn draft_envelopes_reject_each_invalid_header_record_and_vehicle_name() {
     fn checksum(bytes: &mut Vec<u8>) {
         bytes.truncate(bytes.len() - 32);
