@@ -19,7 +19,7 @@ it("keeps the page indicator live but publishes only on idle, and flushes the fi
   const page = { getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
     getTextContent: async () => ({ items: [] }), cleanup() {}, render: () => ({ promise: Promise.resolve(), cancel() {} }) };
   getDocument.mockReturnValue({ promise: Promise.resolve({ numPages: 5, getPage: async () => page,
-    getOutline: async () => [], destroy: async () => {} }) });
+    getOutline: async () => [], loadingTask: { destroy: async () => {} } }) });
   const owner = activatePdfOwnership("/test/scroll-idle"), onViewState = vi.fn();
   const writes = vi.spyOn(backend(), "writeHighlights");
   const host = document.createElement("div"); document.body.append(host);
@@ -58,7 +58,7 @@ it("does not flush a retiring view's pending position into a newly selected PDF"
   vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
   const page = { getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
     getTextContent: async () => ({ items: [] }), cleanup() {}, render: () => ({ promise: Promise.resolve(), cancel() {} }) };
-  getDocument.mockReturnValue({ promise: Promise.resolve({ numPages: 5, getPage: async () => page, getOutline: async () => [], destroy: async () => {} }) });
+  getDocument.mockReturnValue({ promise: Promise.resolve({ numPages: 5, getPage: async () => page, getOutline: async () => [], loadingTask: { destroy: async () => {} } }) });
   const owner = activatePdfOwnership("/test/view-idle"), onViewState = vi.fn();
   const [route, setRoute] = createSignal(makePdfRoute("first.pdf", "First"));
   const host = document.createElement("div"); document.body.append(host);

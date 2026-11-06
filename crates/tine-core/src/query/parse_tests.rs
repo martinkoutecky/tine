@@ -492,10 +492,8 @@ fn gh690_next_lowers_one_direct_journal_reference() {
     }
 }
 
-/// REG-OG-C5-Q-RESULT-TRANSFORM (Martin 2026-10-11): only OG's exact NOW
-/// priority sort is recognised. A transform that changes the result set, its
-/// order otherwise, or the missing-priority default still refuses the query
-/// whole; no transform declared means no sort.
+/// The default NOW priority sort remains supported as the recognised subset
+/// grows (GH #852). Code outside that subset still refuses the whole query.
 #[test]
 fn only_ogs_priority_sort_transform_runs() {
     let vector = r#"[:find (pull ?h [*]) :where [?h :block/marker "TODO"]]"#;
@@ -521,10 +519,7 @@ fn only_ogs_priority_sort_transform_runs() {
     for transform in [
         r#"(fn [result] (take 1 (sort-by (fn [h] (get h :block/priority "Z")) result)))"#,
         r#"(fn [result] (reverse (sort-by (fn [h] (get h :block/priority "Z")) result)))"#,
-        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "A")) result))"#,
-        r#"(fn [result] (sort-by (fn [h] (get h :block/priority)) result))"#,
         r#"(fn [result] (sort-by (fn [h] (get h :block/scheduled "Z")) result))"#,
-        r#"(fn [result] (sort-by (fn [result] (get result :block/priority "Z")) result))"#,
         r#"(fn [result] (sort-by (fn [h] (get h :block/priority "Z")) other))"#,
         r#"(fn [result] (filter (fn [h] (get h :block/priority "Z")) result))"#,
         r#"#(sort-by (fn [h] (get h :block/priority "Z")) %)"#,
