@@ -38,7 +38,7 @@ describe("PDF annotation loading ownership (GH #557)", () => {
       numPages: 1,
       getPage: vi.fn().mockResolvedValue({ getViewport: () => ({ width: 612, height: 792 }) }),
       getOutline: vi.fn().mockResolvedValue([]),
-      destroy: vi.fn().mockResolvedValue(undefined),
+      loadingTask: { destroy: vi.fn().mockResolvedValue(undefined) },
     }) }));
   });
   afterEach(() => {
@@ -171,7 +171,7 @@ describe("PDF annotation loading ownership (GH #557)", () => {
       numPages: 1,
       getPage: vi.fn().mockResolvedValue({ getViewport: () => ({ width: 612, height: 792 }) }),
       getOutline: vi.fn().mockResolvedValue([]),
-      destroy: proxyDestroy,
+      loadingTask: { destroy: proxyDestroy },
     }) });
     const view = mount();
     try {

@@ -9,6 +9,22 @@ use tine_core::model::{PageEntry, PageKind};
 use tine_core::query::sort::{lexical_property_sort_text, SortDecor};
 use tine_core::query::statistics::StatisticsFold;
 
+/// Preserve OG's pulled attribute types for an advanced result transform.
+pub(super) fn advanced_sort_row(
+    block: Option<&DocBlock>,
+) -> tine_core::query::advanced_sort::AdvancedSortRow<'_> {
+    tine_core::query::advanced_sort::AdvancedSortRow {
+        priority: block.and_then(DocBlock::priority),
+        scheduled: block
+            .and_then(|b| b.projection().scheduled())
+            .and_then(super::eval::planning_day),
+        deadline: block
+            .and_then(|b| b.projection().deadline())
+            .and_then(super::eval::planning_day),
+        content: block.map(DocBlock::raw),
+    }
+}
+
 /// The recency axis (Unix seconds): a journal by the day it represents, any
 /// other page by the mtime captured with the page table; oldest when unknown.
 pub(super) fn recency(

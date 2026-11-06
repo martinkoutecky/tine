@@ -110,6 +110,9 @@ return {
   },
   build: {
     target: "esnext",
+    // pdf.js 6 ships nested CSS without transpiling it. Keep glyph positioning
+    // and selection styles usable on Tine's iOS 15.4 / macOS 12.3 WebViews.
+    cssTarget: "safari15.4",
     outDir,
     emptyOutDir: true,
     // Keep even small KaTeX fonts as hashed files: g1's font-src is self-only.

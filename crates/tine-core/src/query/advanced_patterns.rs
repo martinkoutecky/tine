@@ -610,56 +610,11 @@ pub(crate) fn advanced_pred(
     advanced_pred_inner(query_src, current_page, &LoweringDay::new(today), false)
 }
 
-/// The sort a declared `:result-transform` performs, when it is exactly OG's
-/// shipped default NOW query transform (Martin 2026-10-11):
-/// `(fn [r] (sort-by (fn [h] (get h :block/priority "Z")) r))`, with any
-/// parameter names. That is an ascending, stable sort on priority with a
-/// missing one as "Z", which the executor's `priority` sort is; the result set
-/// is unchanged, so running it is not a partial answer (the 10/03 rule). Read
-/// with the EDN owner, never by text. Any other transform: `None`, and the
-/// query refuses whole. No transform declared: `None`. O(source bytes).
+/// Display fields for an entirely recognised order-only result transform.
+/// The executor uses the same recogniser's OG value decorations (GH #852).
+/// Unknown transforms still refuse the whole query, without a partial sort.
 pub(crate) fn advanced_result_sort(src: &str) -> Option<Vec<(Field, SortDir)>> {
-    use crate::query_edn::{Form, Kind};
-    let value = crate::query_edn::option_value(src, ":result-transform")?;
-    let form = crate::query_edn::read(value)?;
-    let text = |form: &Form| &value[form.span.clone()];
-    let atom = |form: &Form, want: Option<&str>| {
-        form.kind == Kind::Atom && want.is_none_or(|want| text(form) == want)
-    };
-    // `(fn [param] body)` with exactly one symbol parameter: (param, body).
-    let lambda = |form: &'_ Form| -> Option<(String, Form)> {
-        let [head, params, body] = &form.children[..] else {
-            return None;
-        };
-        let [param] = &params.children[..] else {
-            return None;
-        };
-        let symbol = atom(param, None) && !text(param).starts_with(':');
-        (form.kind == Kind::List && atom(head, Some("fn")) && params.kind == Kind::Vector && symbol)
-            .then(|| (text(param).to_owned(), body.clone()))
-    };
-    let (result, body) = lambda(&form)?;
-    let [sort_by, key, over] = &body.children[..] else {
-        return None;
-    };
-    if body.kind != Kind::List
-        || !atom(sort_by, Some("sort-by"))
-        || !atom(over, Some(result.as_str()))
-    {
-        return None;
-    }
-    let (row, get) = lambda(key)?;
-    let [get_fn, of, attr, default] = &get.children[..] else {
-        return None;
-    };
-    let exact = get.kind == Kind::List
-        && atom(get_fn, Some("get"))
-        && atom(of, Some(row.as_str()))
-        && atom(attr, Some(":block/priority"))
-        && default.kind == Kind::String
-        && text(default) == "\"Z\""
-        && row != result;
-    exact.then(|| vec![(Field::new("priority"), SortDir::Asc)])
+    super::advanced_sort::advanced_result_sort(src).map(|sort| sort.view_sort())
 }
 
 /// Suggest the translated row filter only when the sole refusal is a result

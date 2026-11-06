@@ -1109,6 +1109,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   if (selected.text !== HIGHLIGHT_TEXT || selected.page !== 1 || !Number.isFinite(selected.zoom) || selected.rects.length !== 1) {
     throw new Error(`native pointer selection was not the exact deterministic line: ${JSON.stringify(selected)}`);
   }
+  await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-text-selection.png"));
   const beforeTextIds = fs.existsSync(ORG_SIDECAR) ? ednIds(fs.readFileSync(ORG_SIDECAR, "utf8")) : [];
   await nativeClickIndexed(".pdf-color-swatch", 4, "pdf-text-highlight-purple");
   await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5_000 });
@@ -1121,6 +1122,7 @@ async function proveNativeUploadsThemesAndHighlights() {
       && written.includes(':properties {:color "purple"}')
       && fs.readFileSync(ORG_HLS_PAGE, "utf8").includes(`:id: ${textHighlightId}`);
   }, { timeout: 15_000, timeoutMsg: "native purple text selection did not persist a matching sidecar and hls annotation" });
+  await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-text-highlight.png"));
   const textSidecar = fs.readFileSync(ORG_SIDECAR, "utf8");
   const textHls = fs.readFileSync(ORG_HLS_PAGE, "utf8");
   const textEntry = ednHighlightEntry(textSidecar, textHighlightId, "purple");
