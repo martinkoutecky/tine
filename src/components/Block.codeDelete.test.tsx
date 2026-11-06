@@ -19,7 +19,7 @@ function mountCode(raw: string, format: "md" | "org" = "md", children = false) {
     { id: "code", raw, collapsed: false, children: children ? [{ id: "child", raw: "keep me", collapsed: false, children: [] }] : [] },
     { id: "after", raw: "next", collapsed: false, children: [] },
   ] });
-  startEditing("code", 0);
+  startEditing("code", raw.indexOf("\n") + 1);
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <><For each={pageByName("Code deletion")?.roots ?? []}>{id => <Block id={id}/>}</For><ContextMenu/></>, root);
   const ta = maybeEditorIn(root)!;
@@ -61,7 +61,7 @@ describe("existing deletion paths inside code blocks (GH #488)", () => {
   it("Backspace clears the wrapper of the last empty block so the page stays editable", () => {
     loadSingle({ name: "Last code", title: "Last code", kind: "page", pre_block: null,
       blocks: [{ id: "last", raw: "```\n```", collapsed: false, children: [] }] });
-    startEditing("last", 0);
+    startEditing("last", "```\n".length);
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <Block id="last"/>, root);
     try {

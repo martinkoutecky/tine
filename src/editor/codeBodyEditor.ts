@@ -2,14 +2,14 @@
  * enters a parser-owned body on collapsed native selection; boundary motion returns to raw
  * coordinates without committing. O(block text), no writes or syntax recognition.
  * Prefix/suffix stay frozen during body edits, including paste of fence-like text.
- * Whole-code wrappers retain their existing selection and navigation behavior.
+ * Code clicks select a body; block navigation retains the editable raw wrapper.
  * `shown` projects the visible buffer; `join` splices the body into original raw
  * `source`, preserving hidden metadata too (source defaults to the visible raw).
  * `enter` takes a visible-source UTF-16 range and selects a body only if it contains the range.
  * `syncSelection` maps a collapsed native raw selection into that body.
  * `leaveOnKey` consumes boundary arrows/Backspace and restores raw coordinates.
- * `selection` supplies visible-source mixed-block coordinates to history (whole-code keeps
- * its existing body coordinates). No operation here commits or persists text. */
+ * `selection` supplies visible-source coordinates to history in either view.
+ * No operation here commits or persists text. */
 import { createMemo, createSignal, type Accessor } from "solid-js";
 import { codeFences } from "./fences";
 import { codeBodyJoin, codeBodyProjection, type CodeBodyProjection } from "./codeFence";
@@ -34,7 +34,7 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
       if (!p.close.startsWith("\n") && !p.close.startsWith("\r\n") && body.endsWith(separator)) body = body.slice(0, -separator.length);
       return { ...p, body };
     }
-    return codeBodyProjection(text, format());
+    return null;
   });
   const mixed = () => shown() !== null && codeBodyProjection(visibleRaw(), format()) === null;
   const enter = (caret: number, end = caret) => {
@@ -43,7 +43,9 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     setRegion(p && end <= p.open.length + p.body.length ? capture(p) : null);
   };
   const syncSelection = (ta: HTMLTextAreaElement) => {
-    if (shown() || ta.selectionStart !== ta.selectionEnd) return;
+    // Whole-block raw editing stays raw as the caret moves through its source,
+    // like OG's block editor. Mixed regions retain their inline edit behavior.
+    if (shown() || codeBodyProjection(visibleRaw(), format()) || ta.selectionStart !== ta.selectionEnd) return;
     const caret = ta.selectionStart;
     enter(caret);
     const p = shown();
@@ -54,16 +56,21 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
   };
   const leaveOnKey = (e: KeyboardEvent, ta: HTMLTextAreaElement) => {
     const p = shown();
-    if (!p || !mixed() || e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (!p || e.ctrlKey || e.metaKey || e.altKey) return false;
+    // Preserve the existing empty-card deletion door (GH #488).
+    if (e.key === "Backspace" && ta.value === "" && !mixed()) return false;
     const start = ta.selectionStart, end = ta.selectionEnd;
     const before = (e.key === "ArrowLeft" || e.key === "Backspace") && start === 0
       || e.key === "ArrowUp" && !ta.value.slice(0, start).includes("\n");
     const after = e.key === "ArrowRight" && end === ta.value.length
       || e.key === "ArrowDown" && !ta.value.slice(end).includes("\n");
-    if ((!before && !after) || (!e.shiftKey && start !== end)) return false;
+    const escape = e.key === "Escape";
+    if ((!before && !after && !escape) || (!escape && !e.shiftKey && start !== end)) return false;
     e.preventDefault();
     const anchor = p.open.length + (before ? end : start);
-    const caret = before ? p.open.length - 1 : p.open.length + p.body.length + 1;
+    // OG code.cljs render!: Esc saves the code editor and edit-block! opens
+    // the raw block at :max. Boundary arrows also expose the adjacent fence.
+    const caret = escape ? visibleRaw().length : before ? p.open.length - 1 : p.open.length + p.body.length + 1;
     setRegion(null);
     ta.value = visibleRaw();
     ta.setSelectionRange(e.shiftKey ? Math.min(anchor, caret) : caret,
@@ -79,7 +86,7 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
       return codeBodyJoin(captured.source, body);
     },
     selection: (ta: HTMLTextAreaElement) => {
-      const offset = mixed() ? shown()!.open.length : 0;
+      const offset = shown()?.open.length ?? 0;
       return { start: ta.selectionStart + offset, end: ta.selectionEnd + offset };
     },
   };

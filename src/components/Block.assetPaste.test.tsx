@@ -135,7 +135,7 @@ describe("GH #813 web URI paste", () => {
 
   it.each(["code", "sheet"])("keeps multiple URI-only web URLs literal in a %s editor", async (surface) => {
     loadSingle(page("URI", [blk("uri", surface === "code" ? "```text\nkeep\n```" : "keep")]));
-    startEditing("uri", 0);
+    startEditing("uri", surface === "code" ? "```text\n".length : 0);
     const native = vi.spyOn(backend(), "clipboardFiles");
     const { root, dispose } = mount(() => <SheetCellContext.Provider value={surface === "sheet" ? { gridId: "grid", row: 0, col: 0 } : null}><Block id="uri" /></SheetCellContext.Provider>);
     try {

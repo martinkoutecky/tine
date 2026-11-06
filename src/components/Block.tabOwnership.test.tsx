@@ -70,6 +70,32 @@ function openCompletion(textarea: EditorDriver) {
 }
 
 describe("outline Tab ownership (GH #157)", () => {
+  it.each([false, true])("keeps code-body selection when Tab changes nesting (outdent=%s)", async outdent => {
+    const raw = "```js\nhello world\n```";
+    const current = block("current", raw);
+    const previous = block("previous", "parent");
+    if (outdent) previous.children = [current];
+    loadSingle(page("Tabs", outdent ? [previous] : [previous, current]));
+    disposeKeys = installKeybindings();
+    startEditing("current", "```js\n".length);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Tabs")?.roots ?? []}>{id => <Block id={id} />}</For>
+    ));
+    try {
+      const editor = activeEditor(root);
+      expect(editor.value()).toBe("hello world");
+      editor.select(2, 8, "backward");
+      keydown(editor, "Tab", { shiftKey: outdent });
+      await vi.waitFor(() => {
+        const next = activeEditor(root);
+        expect(next.value()).toBe("hello world");
+        expect([next.selection()[0], next.selection()[1], next.direction()]).toEqual([2, 8, "backward"]);
+        expect(doc.byId.current.parent).toBe(outdent ? null : "previous");
+        expect(doc.byId.current.raw).toBe(raw);
+      });
+    } finally { dispose(); }
+  });
+
   it.each([
     [0, 0, "none"],
     [6, 6, "none"],
@@ -106,8 +132,10 @@ describe("outline Tab ownership (GH #157)", () => {
   it.each([
     ["hello world", "hello world", false],
     ["hello world", "hello world", true],
-    ["```js\nhello world\n```", "hello world", false],
-    ["```js\nhello world\n```", "hello world", true],
+    // An unmapped block click enters raw source (GH #879); direct code clicks
+    // are mapped into payload coordinates in Block.codeCardClick.test.tsx.
+    ["```js\nhello world\n```", "```js\nhello world\n```", false],
+    ["```js\nhello world\n```", "```js\nhello world\n```", true],
     ["hello 🌍\nsecond line", "hello 🌍\nsecond line", false],
     ["hello world\nid:: current", "hello world", false],
   ] as const)("keeps a clicked editor's selection for %s (visible=%s, outdent=%s)", async (raw, visible, outdent) => {

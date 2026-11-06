@@ -16,7 +16,7 @@ import { Editor } from "./Block";
 // blocks keep ordinary editing presentation.
 //
 // GH #412/#413 follow-up (the Martin-authorized body-only code editor
-// contract): a COMPLETE whole-block wrapper's editor shows only the payload
+// contract): entering INSIDE a complete wrapper shows only the payload
 // between the wrapper lines and preserves the wrapper bytes on commit. The
 // earlier "raw text, fences editable" assertion below is intentionally
 // replaced by that contract; the card presentation (mono, no-wrap) is not.
@@ -27,7 +27,7 @@ describe("code-fence editor presentation", () => {
   it("presents the editor of a code-only fenced block as the same code card", () => {
     loadSingle(page("Code", [blk("c1", "```js\nconst x = 1;\nconsole.log(x);\n```")]));
     const id = pageByName("Code")!.roots[0];
-    startEditing(id, 0);
+    startEditing(id, "```js\n".length);
     const { root, dispose } = mount(() => (
       <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
@@ -82,7 +82,7 @@ describe("code-fence editor presentation", () => {
   it("org #+BEGIN_SRC blocks get the same code-card editing", () => {
     loadSingle({ ...page("OrgCode", [blk("c4", "#+BEGIN_SRC python\nx = 1\n#+END_SRC")]), format: "org" } as PageDto);
     const id = pageByName("OrgCode")!.roots[0];
-    startEditing(id, 0);
+    startEditing(id, "#+BEGIN_SRC python\n".length);
     const { root, dispose } = mount(() => (
       <For each={pageByName("OrgCode")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
@@ -101,7 +101,7 @@ describe("code-fence editor presentation", () => {
     const fenced = "```js\nconst x = 1;\n```";
     loadSingle(page("Live", [blk("c5", fenced)]));
     const id = pageByName("Live")!.roots[0];
-    startEditing(id, 0);
+    startEditing(id, "```js\n".length);
     const { root, dispose } = mount(() => (
       <For each={pageByName("Live")?.roots ?? []}>{(bid) => <Editor id={bid} />}</For>
     ));
