@@ -14,6 +14,24 @@
       "nonRequirements": ["No private graph, Windows/macOS runtime certification, #868 missing-block diagnosis, or release acceptance."],
       "stability":"burn-in"
     },
+    "scripts/e2e-beta-conflict-875.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"An external write during page editing preserves differing unsaved text and shows a conflict. A later identical sync delivery, or editing the draft back to the disk bytes, retires the banner and review automatically. Org, a journal in the feed, and the same page in main, split pane and sidebar retain their text through retirement.","blocking":false,"authority":"GH #875; UI-GH875-IDENTICAL-LIVE-CONFLICT"}],
+      "acceptableVariations": ["Save latency, watcher delivery and page geometry may vary."],
+      "nonRequirements": ["No private graph, diagnostics download, exact pixels or macOS/device certification."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-beta-win-863-809.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Toolbar Journals > today's existing journal title opens the file on its own route without changing bytes. ONLY=863-created, 863-created-blur and 863-created-unreferenced also create the file by typing into the virtual feed day; ONLY=863-external and 863-external-alternate create it externally while the editor is active and the watcher defers refresh; 863-external-alternate-blur then leaves the editor; 863-custom uses a matching custom filename format. Each title must open the file that now exists without writing another file. Ctrl+K > search page > right-click result > Open in new window renders that page in a usable window, saves an edit there, and leaves main responsive with the edit visible.","blocking":false,"authority":"GH #863; GH #809 comment 2; UI-GH863-JOURNAL-PHYSICAL-OPEN; UI-GH809-SEARCH-NEW-WINDOW"}],
+      "acceptableVariations": ["Window geometry, native decoration, timing and date may vary. The contextmenu event is dispatched to the visible result row; platform drivers supply keyboard and editor input."],
+      "nonRequirements": ["No private graph, Windows certification from a Linux result, exact pixels, fixed timing performance or release burn-in. The #863 lifecycle reproduction establishes a shared virtual-target defect; the affected Windows graph and #809's root cause remain unverified."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-beta-editor-862-865.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On routed pages Enter after closed standalone math creates a writable next block, and Escape from Markdown or Org code reveals editable raw source that saves durably.","blocking":false,"authority":"GH #862, GH #865"}],
+      "acceptableVariations": ["Editor geometry and save latency may vary."],
+      "nonRequirements": ["No exact pixels, Windows certification, private graph or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-git-clone-init.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Settings makes a non-git graph a repository with ignore rules and its first commit, preserving page bytes, then signs in and publishes it to an empty local HTTPS remote with upstream set. Cloning from the authenticated fixture uses that same device token store and opens the default branch with upstream ready. Both leave automatic commits and sync off.","blocking":false,"authority":"D-20261031-GCL; UI-GIT-INIT-GRAPH; UI-GIT-CLONE-GRAPH"}],
       "acceptableVariations": ["Folder-picker chrome, dialog geometry, commit IDs and transfer latency may vary. The native folder picker alone returns the fixture parent; git commands, TLS and token storage remain real."],
@@ -24,6 +42,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"A block render throw exposes editable raw text in its place, leaves healthy blocks live, permits a durable repair, and keeps page navigation away and back working.","blocking":false,"authority":"GH #741 F1; UI-GH741-BLOCK-RENDER-ISOLATION; OG block-content catch-error"}],
       "acceptableVariations": ["Error wording, block geometry, render timing and file-save latency may vary."],
       "nonRequirements": ["No private graph, exact pixels, timing benchmarks, native enumeration of page-boundary reset already covered in component tests, platform certification or release burn-in."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-conflict-review-scroll.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a long page scrolled down with a save conflict (unsaved input, file changed on disk), Review on the changed-on-disk banner brings the page's conflict review on screen (unrolled from its docked bar or scrolled to); from another page it opens the page with the review on screen. Review resolves nothing and writes nothing.","blocking":false,"authority":"UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER; GH #858"}],
+      "acceptableVariations": ["Page geometry, latency, the attempt that wins the save race, and whether the review shows docked or scrolled may vary."],
+      "nonRequirements": ["No private graph or app data, exact pixels, other-platform certification or manager burn-in."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh800-save-then-copy.mjs": {
@@ -197,10 +221,17 @@
       "nonRequirements":["Exact pixels, timing, display scaling, and certification on the reporter's Windows 10/WebView2 153 device."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh849-idle.mjs": {
+      "contracts":[{"class":"core-operation","userOutcome":"On a page with Linked References from more source pages than the working set holds, nothing moves or changes while the reader does nothing, and switching to another tab and back shows the same first row (GH #849, #848).","blocking":false}],
+      "acceptableVariations":["How rows look, exact heights and how long the first settling takes; the first row may land a few pixels away."],
+      "nonRequirements":["The reporters' graphs, a slow reference read (the browser proof scripts/shot-gh848-tab-scroll.mjs covers it), the right sidebar and split panes."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh810-embed-scroll.mjs": {
-      "contracts":[{"class":"core-operation","userOutcome":"On a long page with several expanded block embeds, scrolling down and back up with the wheel does not move the blocks in view: no visible block jumps by a large amount when an outline window holding an embed scrolls back into view (GH #810).","blocking":true}],
+      "contracts":[{"class":"core-operation","userOutcome":"On a long page, scrolling past expanded embeds or query results and upward through unseen windows keeps the reading position. The collapsed-embed variant also preserves it. Remounted query/reference groups retain measured geometry, and pane scrollers admit lazy content before visibility (GH #810).","blocking":true}],
       "acceptableVariations":["Small settling shifts of a few pixels while rows are first measured and the exact frame timing may vary; the jump measured is a visible block moving by 40 px or more between consecutive frames."],
-      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 (Chromium scroll anchoring); estimates for outline windows or embeds never seen before."],
+      "nonRequirements":["Exact pixels, how embeds look, the reporter's graph, and certification on Windows/WebView2 or real mobile devices."],
+      "variants":["GH810_FRESH_UP=1 GH810_MULTILINE=1 GH810_CHILDREN=40: jump to the bottom without measuring intermediate windows, then scroll upward; compare viewport displacement after subtracting explicitly applied scroll inputs (8px tolerance).","GH810_FRESH_UP=1 GH810_COLLAPSED=1: same unseen-window journey with collapsed embeds.","GH810_GEOMETRY=1 (dev server only): native remount geometry of reference/query rows and complete query shells, plus implicit/explicit root admission 500px before visibility in main/split/sidebar-shaped scrollers at narrow and desktop widths.","GH810_SURFACE=query: query result groups in the long outline instead of embeds."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
@@ -248,6 +279,8 @@
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
+        { "class": "core-operation", "userOutcome": "Six parallel tine add commands to one page all land while the real app owns the graph, with the page open in its window and with it closed (#842).", "blocking": true, "authority": "docs/contracts/cli-output.md Writes; GH #842" },
+        { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit keeps the block's properties the new text does not name, whether tine serve or the real app owns the graph (#840).", "blocking": true, "authority": "docs/contracts/cli-output.md block.edit; D-20261101-CLIE" },
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
         { "class": "core-operation", "userOutcome": "A CLI edit to a page open in the real app appears in its window without navigation and reaches the guarded page file.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
         { "class": "exact-safety-interoperability", "userOutcome": "Opening the app while tine serve owns the graph transfers ownership to the app and preserves and displays the edits already accepted by serve.", "blocking": true, "authority": "Tine CLI v0 Spec §3" }
@@ -431,7 +464,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-share-dialog.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"The topbar share button is disabled with no page open and shares the open page. Share opens with This page chosen, reviews exactly that page, and exporting to a folder writes an export folder holding that page and no other, then creates the Exports page (marked tine/exports and public:: false, with an overview block) and lists the definition with its export folder, in Markdown and Org graphs, without changing config.edn.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"The topbar share button is disabled with no page open and shares the open page. Share opens with This page chosen, reviews exactly that page, and exporting to a folder writes an export folder holding that page and no other, then creates the Exports page (marked tine.exports and public:: false, with an overview block) and lists the definition with its export folder, in Markdown and Org graphs, without changing config.edn.","blocking":true}],
       "acceptableVariations":["Dialog layout, focus, review wording and save or watcher latency may vary while the exported page set and the persisted Exports page content remain correct."],
       "nonRequirements":["Exact pixels, the Link destination and neighbour selection (not built yet) or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -640,13 +673,13 @@
       "stability": "burn-in"
     },
     "scripts/e2e-margin-comment.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page in a window too narrow for the margin column, with a name set in Settings > Editor > Your name, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked. Comment is the rightmost speech-bubble toolbar icon with its shortcut. The thread has an expanding local reply draft; Escape and Cancel on an empty draft leave both page bytes and mtime unchanged, Enter submits an ordinary child, and Delete shares the first content line with the quote or reply text and author, without overlap or an empty action row.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "In a graph under git where no name is set, the first comment asks for a name once (the dialog says the name is a Tine setting on this device used in all graphs, and nothing is written until it is answered); the name given there is saved to the device settings, shown in Settings > Editor > Your name, and later comments do not ask again. On a routed named page in a window too narrow for the margin column, with that name set, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying tine.quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked. Comment is the rightmost speech-bubble toolbar icon with its shortcut. The thread has an expanding local reply draft; Escape and Cancel on an empty draft leave both page bytes and mtime unchanged, Enter submits an ordinary child, and Delete shares the first content line with the quote or reply text and author, without overlap or an empty action row.", "blocking": true }],
       "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
     },
     "scripts/e2e-margin-column.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps quote::) under the unchanged commented block. Pressing t then m hides every comment thread (column, markers, marked words, cards) without changing the page file, the hidden state survives a reload, and t then m shows the threads again.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps tine.quote::) under the unchanged commented block. Pressing t then m hides every comment thread (column, markers, marked words, cards) without changing the page file, the hidden state survives a reload, and t then m shows the threads again.", "blocking": true }],
       "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width, card styling and the exact pixel offset of the thread beside its passage (within 2 px of the passage's top)."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved bullets, only their nesting.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
@@ -697,7 +730,7 @@
       "stability": "stable"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

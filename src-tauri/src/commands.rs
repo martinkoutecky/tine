@@ -1,3 +1,4 @@
+use crate::capture_asset::{import_asset_blocking, save_asset_blocking};
 #[cfg(desktop)]
 use crate::debug::diag_private;
 #[cfg(desktop)]
@@ -22,7 +23,7 @@ use discovery::{
     PageInventoryWire, PageModifiedWire, ResolvedWire,
 };
 
-fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
+pub(crate) fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
 }
 fn feature_pdf_error(error: std::io::Error) -> String {
@@ -1098,7 +1099,7 @@ pub(crate) async fn capture_quick_switch(
 #[cfg(test)]
 mod capture_quick_switch_tests {
     use super::*;
-    use crate::state::{slot_for_bound_window, GraphRegistry, GraphSlot};
+    use crate::state::{capture_asset_slot, slot_for_bound_window, GraphRegistry, GraphSlot};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::{Mutex, RwLock};
@@ -1191,6 +1192,56 @@ mod capture_quick_switch_tests {
         assert_eq!(
             capture_quick_switch_for(&state, "main", Some(generation), "Selected", 8).unwrap_err(),
             "capture quick switch is only available to quick capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    // GH #835: pasting an image into Quick Capture failed with "no graph loaded
+    // for window capture": the asset commands resolve the window's own graph slot,
+    // and the capture window has none. Its narrow import resolves the graph the
+    // show was bound to instead.
+    #[test]
+    fn capture_asset_import_lands_in_the_selected_capture_graph_only() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        let slot = capture_asset_slot(&state, "capture", Some(generation)).unwrap();
+        use base64::Engine;
+        let png = base64::engine::general_purpose::STANDARD.encode(b"\x89PNG fixture bytes");
+        let stored = save_asset_blocking(&slot, "pasted.png", &png).unwrap();
+        assert!(base.join("selected").join("assets").join(&stored).is_file());
+        assert!(!base.join("other").join("assets").exists());
+        let source = base.join("clipboard-source.png");
+        std::fs::write(&source, b"\x89PNG file on the clipboard").unwrap();
+        let imported =
+            import_asset_blocking(&slot, source.to_str().unwrap(), Some("copied.png")).unwrap();
+        assert!(base
+            .join("selected")
+            .join("assets")
+            .join(&imported)
+            .is_file());
+        assert!(!base.join("other").join("assets").exists());
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn capture_asset_import_refuses_non_capture_callers_and_stale_generations() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_asset_slot(&state, "main", Some(generation))
+                .err()
+                .unwrap(),
+            "capture asset import is only available to quick capture"
+        );
+        assert_eq!(
+            capture_asset_slot(&state, "capture", Some(generation + 1))
+                .err()
+                .unwrap(),
+            "stale-graph-binding"
+        );
+        assert_eq!(
+            capture_asset_slot(&state, "capture", None).err().unwrap(),
+            "missing-graph-binding"
         );
         std::fs::remove_dir_all(base).unwrap();
     }
@@ -1435,17 +1486,7 @@ pub(crate) async fn import_asset(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    crate::state::off_ui(move || {
-        crate::device_io::import_asset_from_path(&slot.store, &path, name.as_deref()).map_err(
-            |error| match error {
-                crate::device_io::DeviceAssetImportError::Name(message) => message,
-                crate::device_io::DeviceAssetImportError::Io(error) => {
-                    feature_asset_error(error, &slot)
-                }
-            },
-        )
-    })
-    .await
+    crate::state::off_ui(move || import_asset_blocking(&slot, &path, name.as_deref())).await
 }
 
 /// Import a bounded Android photo or voice memo by native cache-file capability.
@@ -2294,12 +2335,7 @@ pub(crate) async fn save_asset(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    crate::state::off_ui(move || {
-        let bytes = decode_asset_b64(&bytes_b64)?;
-        tine_graph_features::assets::save_asset(&slot.store, &name, &bytes)
-            .map_err(|error| feature_asset_error(error, &slot))
-    })
-    .await
+    crate::state::off_ui(move || save_asset_blocking(&slot, &name, &bytes_b64)).await
 }
 
 mod read_highlights_worker;

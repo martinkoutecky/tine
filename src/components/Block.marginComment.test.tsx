@@ -69,7 +69,7 @@ afterEach(() => {
 describe("Ctrl/Cmd+R creates a margin comment", () => {
   it.each(["p", "ancestor"])("keeps the margin thread inline and replyable when zoomed into %s", async (zoomRoot) => {
     loadSingle(page([block("ancestor", "Parent", [block("p", "Discuss these words", [
-      block("c", "My view\nquote:: words", [block("r", "Earlier reply")]),
+      block("c", "My view\ntine.quote:: words", [block("r", "Earlier reply")]),
     ])])]));
     paneRouter("main").replaceActiveRoute({ kind: "page", name: PAGE, pageKind: "page", block: zoomRoot });
     const root = document.createElement("div");
@@ -98,7 +98,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
 
   it("identifies each response separately from its quote and body, including your own nested replies (GH #110)", () => {
-    const { root, dispose } = mount([block("p", "words", [block("c", "My view\nquote:: words", [block("r", "Evidence\nauthor:: Ada", [block("own", "Agreed")])])])]);
+    const { root, dispose } = mount([block("p", "words", [block("c", "My view\ntine.quote:: words", [block("r", "Evidence\ntine.author:: Ada", [block("own", "Agreed")])])])]);
     try {
       const card = root.querySelector('[data-block-id="c"]')!;
       expect(card.querySelector(":scope > .comment-quote")?.textContent).toBe("words");
@@ -114,8 +114,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
   it.each(["md", "org"] as const)("keeps ordinary %s author and quote-suffix properties in the edit buffer", (format) => {
     const raw = format === "md"
-      ? "The obstacle is the way.\nauthor:: Marcus Aurelius\nquote-suffix:: after"
-      : "The obstacle is the way.\n:PROPERTIES:\n:author: Marcus Aurelius\n:quote-suffix: after\n:END:";
+      ? "The obstacle is the way.\ntine.author:: Marcus Aurelius\ntine.quote-suffix:: after"
+      : "The obstacle is the way.\n:PROPERTIES:\n:tine.author: Marcus Aurelius\n:tine.quote-suffix: after\n:END:";
     const { root, dispose } = mount([block("p", "Literature", [block("ordinary", raw)])], "ordinary", format);
     try {
       expect(editor(root).value()).toBe(raw);
@@ -123,7 +123,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
 
   it.each(["md", "org"] as const)("lets handwritten %s quote metadata finish before hiding it on the next edit session", (format) => {
-    const metadata = format === "md" ? "\nquote:: selected words" : "\n:PROPERTIES:\n:quote: selected words\n:END:";
+    const metadata = format === "md" ? "\ntine.quote:: selected words" : "\n:PROPERTIES:\n:tine.quote: selected words\n:END:";
     const { root, dispose } = mount([block("p", "selected words", [block("c", "My view")])], "c", format);
     try {
       const ta = editor(root);
@@ -151,7 +151,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(button!.closest(".sel-toolbar")!.querySelector(":scope > button:last-of-type")).toBe(button);
       button!.click();
       const id = docNode("p")!.children[1];
-      expect(docNode(id)!.raw).toContain("quote:: these words");
+      expect(docNode(id)!.raw).toContain("tine.quote:: these words");
       expect(editingId()).toBe(id);
       expect(docNode("p")!.children).toEqual(["existing", id]); // ADR 0075 file order
       expect([...root.querySelectorAll('[data-block-id="p"] .ls-block')].map(el => el.getAttribute("data-block-id"))).toEqual([id, "existing"]);
@@ -160,8 +160,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
 
   it.each(["md", "org"] as const)("hides %s comment metadata when editing and preserves every hidden line when typing", (format) => {
     const hidden = format === "md"
-      ? "quote:: these words  \nquote-prefix:: Discuss\nquote-suffix:: here\nauthor:: claude\ncollapsed:: false"
-      : ":PROPERTIES:\n:quote: these words  \n:quote-prefix: Discuss\n:quote-suffix: here\n:author: claude\n:collapsed: false\n:END:";
+      ? "tine.quote:: these words  \ntine.quote-prefix:: Discuss\ntine.quote-suffix:: here\ntine.author:: claude\ncollapsed:: false"
+      : ":PROPERTIES:\n:tine.quote: these words  \n:tine.quote-prefix: Discuss\n:tine.quote-suffix: here\n:tine.author: claude\n:collapsed: false\n:END:";
     const { root, dispose } = mount([block("p", "Discuss these words here", [block("c", `My view\n${hidden}`)])], "c", format);
     try {
       const ta = editor(root);
@@ -174,7 +174,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
 
   it("offers Reply without a selection and Delete removes a subtree as one undo step", () => {
-    const { root, dispose } = mount([block("p", "Discuss these words", [block("c", "My view\nquote:: words", [block("r", "Evidence", [block("nested", "More")])])])]);
+    const { root, dispose } = mount([block("p", "Discuss these words", [block("c", "My view\ntine.quote:: words", [block("r", "Evidence", [block("nested", "More")])])])]);
     try {
       const row = () => root.querySelector('[data-block-id="c"]')!;
       const draft = row().querySelector<HTMLTextAreaElement>(":scope > .comment-composer textarea");
@@ -202,7 +202,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
 
   it.each(["md", "org"] as const)("Ctrl+R in a %s reply draft quotes its selection without reloading or losing its body", format => {
-    const quote = format === "md" ? "quote:: words" : ":PROPERTIES:\n:quote: words\n:END:";
+    const quote = format === "md" ? "tine.quote:: words" : ":PROPERTIES:\n:tine.quote: words\n:END:";
     const { root, dispose } = mount([block("p", "words", [block("c", `My view\n${quote}`, [], format)])], undefined, format);
     try {
       const draft = root.querySelector<HTMLTextAreaElement>(".comment-composer textarea")!;
@@ -216,7 +216,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       const reply = docNode(docNode("c")!.children[0])!;
       expect(reply.raw).toBe("This deserves thought");
       const child = docNode(reply.children[0])!;
-      expect(blockRegions(child.raw, format).properties.find(p => p.key === "quote")?.value).toBe("deserves");
+      expect(blockRegions(child.raw, format).properties.find(p => p.key === "tine.quote")?.value).toBe("deserves");
       expect(editingId()).toBe(child.id);
       endEdit("page-navigation");
       undo();
@@ -225,21 +225,21 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
   });
 
   it("quoted replies stay inside their thread with a single quoted passage and readable body", () => {
-    const { root, dispose } = mount([block("p", "words", [block("c", "Discuss this claim\nquote:: words", [block("r", "My view\nquote:: this claim", [block("n", "Evidence")])])])], "r");
+    const { root, dispose } = mount([block("p", "words", [block("c", "Discuss this claim\ntine.quote:: words", [block("r", "My view\ntine.quote:: this claim", [block("n", "Evidence")])])])], "r");
     try {
       const ta = editor(root);
       ta.select(0, 2);
       ctrlR(ta);
       const id = docNode("r")!.children.at(-1)!;
       expect(docNode(id)!.parent).toBe("r");
-      expect(docNode(id)!.raw).toContain("quote:: My");
+      expect(docNode(id)!.raw).toContain("tine.quote:: My");
       expect(root.querySelectorAll(".comment-card")).toHaveLength(1);
       expect(root.querySelector('[data-block-id="r"] > .comment-quote .comment-quote-text')?.textContent).toBe("this claim");
       expect(root.querySelector('[data-block-id="r"] > .block-main')?.textContent).toContain("My view");
     } finally { dispose(); }
   });
 
-  it("appends a child after the existing children with quote:: and puts the caret in its empty body", async () => {
+  it("appends a child after the existing children with tine.quote:: and puts the caret in its empty body", async () => {
     const { root, dispose } = mount([
       block("p", "An agent wrote a phrase worth disputing here.", [block("old", "an earlier child")]),
     ], "p");
@@ -254,7 +254,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(children).toHaveLength(2);
       expect(children[0]).toBe("old");
       const comment = children[1];
-      expect(docNode(comment)!.raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.");
+      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
       expect(docNode("p")!.raw).toBe("An agent wrote a phrase worth disputing here.");
       expect(editingId()).toBe(comment);
       await Promise.resolve();
@@ -275,7 +275,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       ta.select(second, second + 7);
       ctrlR(ta);
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\nquote:: the cat\nquote-prefix:: the cat sat; then\nquote-suffix:: ran");
+      expect(docNode(comment)!.raw).toBe("\ntine.quote:: the cat\ntine.quote-prefix:: the cat sat; then\ntine.quote-suffix:: ran");
     } finally {
       dispose();
     }
@@ -297,7 +297,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     }
   });
 
-  it("with no selection comments on the whole block (an empty quote::)", () => {
+  it("with no selection comments on the whole block (an empty tine.quote::)", () => {
     const { root, dispose } = mount([block("p", "Whole-block remark target")], "p");
     try {
       const ta = editor(root);
@@ -305,7 +305,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       const event = ctrlR(ta);
       expect(event.defaultPrevented).toBe(true);
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\nquote:: ");
+      expect(docNode(comment)!.raw).toBe("\ntine.quote:: ");
       expect(editingId()).toBe(comment);
     } finally {
       dispose();
@@ -323,7 +323,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       endEdit("page-navigation"); // opening the palette blurs the editor
       commentOnPaletteSelection();
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\nquote:: a phrase\nquote-prefix:: Palette path for");
+      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for");
     } finally {
       dispose();
     }
@@ -353,12 +353,12 @@ describe("comment rendering", () => {
 
   function renderedFixture() {
     return mount([
-      block("agent", `${AGENT_TEXT}\nauthor:: claude`, [
-        block("c1", "I doubt this.\nquote:: converges because", [
-          block("r1", "It does, see the lemma.\nauthor:: claude", [block("r2", "Fair enough.")]),
+      block("agent", `${AGENT_TEXT}\ntine.author:: claude`, [
+        block("c1", "I doubt this.\ntine.quote:: converges because", [
+          block("r1", "It does, see the lemma.\ntine.author:: claude", [block("r2", "Fair enough.")]),
         ]),
-        block("c2", "Which one?\nquote:: the step size shrinks\nquote-prefix:: the step size shrinks, and\nquote-suffix:: geometrically."),
-        block("c3", "Was rewritten.\nquote:: a sentence that is gone"),
+        block("c2", "Which one?\ntine.quote:: the step size shrinks\ntine.quote-prefix:: the step size shrinks, and\ntine.quote-suffix:: geometrically."),
+        block("c3", "Was rewritten.\ntine.quote:: a sentence that is gone"),
         block("plain", "An ordinary child with status:: open"),
       ]),
     ]);
@@ -375,9 +375,9 @@ describe("comment rendering", () => {
       expect(c1.querySelector(":scope > .comment-quote .comment-quote-text")?.textContent).toBe("converges because");
       expect(ownChip(c1)).toBe("you");
       const keys = [...root.querySelectorAll(".block-property-key")].map((k) => k.textContent);
-      expect(keys).not.toContain("quote");
-      expect(keys).not.toContain("quote-prefix");
-      expect(keys).not.toContain("author");
+      expect(keys).not.toContain("tine.quote");
+      expect(keys).not.toContain("tine.quote-prefix");
+      expect(keys).not.toContain("tine.author");
     } finally {
       dispose();
     }
@@ -414,10 +414,10 @@ describe("comment rendering", () => {
     const { root, dispose } = renderedFixture();
     try {
       const marks = () => [...row(root, "agent").querySelectorAll(":scope > .block-main .comment-quote-anchor")].map((m) => m.textContent);
-      setRaw("c1", "I doubt this.\nquote:: geometrically");
+      setRaw("c1", "I doubt this.\ntine.quote:: geometrically");
       await Promise.resolve();
       expect(marks()).toEqual(["the step size shrinks", "geometrically"]);
-      setRaw("agent", "Rewritten without the phrases.\nauthor:: claude");
+      setRaw("agent", "Rewritten without the phrases.\ntine.author:: claude");
       await Promise.resolve();
       expect(marks()).toEqual([]);
       expect(row(root, "c1").querySelector(":scope > .comment-quote")!.classList.contains("stale")).toBe(true);
@@ -450,11 +450,36 @@ describe("comment rendering", () => {
     }
   });
 
-  it("leaves a top-level quote:: block alone: it is not a comment", () => {
-    const { root, dispose } = mount([block("top", "Top\nquote:: not a comment")]);
+  it("leaves a top-level tine.quote:: block alone: it is not a comment", () => {
+    const { root, dispose } = mount([block("top", "Top\ntine.quote:: not a comment")]);
     try {
       expect(row(root, "top").querySelector(".comment-quote")).toBeNull();
-      expect([...root.querySelectorAll(".block-property-key")].map((k) => k.textContent)).toContain("quote");
+      expect(row(root, "top").classList.contains("comment-card")).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  // Discussion #825 (D-20261102-PNS): before the rename, a user's own `quote::`
+  // on a child bullet rendered as a margin-comment card, and any `author::` row
+  // was replaced by an author chip. The bare keys are the user's again.
+  it("a user's own quote:: and author:: on book notes stay ordinary property rows", () => {
+    const { root, dispose } = mount([
+      block("book", "Meditations\nauthor:: Marcus Aurelius", [
+        block("note", "Favourite line\nquote:: The obstacle is the way.\nauthor:: Marcus Aurelius"),
+      ]),
+    ]);
+    try {
+      for (const id of ["book", "note"]) {
+        const el = row(root, id);
+        expect(el.classList.contains("comment-card"), id).toBe(false);
+        expect(el.classList.contains("authored"), id).toBe(false);
+        expect(el.querySelector(":scope > .comment-quote, :scope > .comment-header .author-chip, :scope > .block-main .author-chip"), id).toBeNull();
+      }
+      const keys = (id: string) => [...row(root, id).querySelectorAll(":scope > .block-main .block-property-key")].map((k) => k.textContent);
+      expect(keys("book")).toContain("author");
+      expect(keys("note")).toEqual(expect.arrayContaining(["quote", "author"]));
+      expect(row(root, "book").querySelector(":scope > .block-main .comment-quote-anchor")).toBeNull();
     } finally {
       dispose();
     }

@@ -591,6 +591,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
+  // GH #835: the capture window has no graph slot of its own, so its pasted/uploaded files go to the
+  // narrow capture asset commands (the graph its show was bound to), never the graph-window commands.
   const sheetCell = useContext(SheetCellContext);
   // Which surface (main pane / a specific sidebar item) this editor lives in —
   // drives edit-focus arbitration when the same block renders in several surfaces.
@@ -1222,7 +1224,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       // Data before reference: a crash may leave an orphan asset, but can never
       // persist a note that points at bytes which existed only in WebView memory.
-      const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
+      const result = await writeOwned(owner, trackAssetWrite(cap ? backend().captureSaveAsset(candidate, bytes, token.binding.backendGeneration) : backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
       if (result.kind === "stale") { reportStaleAsset(); return; }
       stored = result.value;
     } catch (error) { pushToast(msg("editor-block-couldn-t-save-to-assets", { detail: String(error) }), "error"); return; }
@@ -1314,7 +1316,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         skipped += native.skipped;
         for (const file of native.files) {
           try {
-            const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
+            const result = await writeOwned(owner, trackAssetWrite(cap ? backend().captureImportAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration) : backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
           } catch (error) {
             pushToast(msg("editor-block-couldn-t-import-pasted-file", { detail: String(error) }), "error");
@@ -1379,7 +1381,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
               continue;
             }
             const candidate = assetFileName(file.name || undefined);
-            const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
+            const result = await writeOwned(owner, trackAssetWrite(cap ? backend().captureSaveAsset(candidate, bytes, editorToken.binding.backendGeneration) : backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; const saved = result.value;
             stored.push({ stored: saved, label: file.name || undefined });
             try {
@@ -1516,7 +1518,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
+      const saved = await writeOwned(owner, trackAssetWrite(cap ? backend().captureImportAsset(path, assetFileName(orig), editorToken.binding.backendGeneration) : backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
       if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
     } catch (error) {
       pushToast(msg("editor-block-couldn-t-import-asset", { detail: String(error) }), "error");
@@ -2986,7 +2988,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      selectBlock(position().id, position().scope); // exit editing into block-selection mode
+      if (codeShown()) {
+        commit(raw);
+        codeView.revealRaw(ref);
+        autosize();
+      } else selectBlock(position().id, position().scope); // exit raw editing into block selection
     }
   };
 

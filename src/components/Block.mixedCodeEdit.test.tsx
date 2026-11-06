@@ -41,6 +41,18 @@ it("body paste preserves every outside byte (paired native outline reparse, I-2)
     expect(node("mixed")!.raw).toBe(raw); expect(ta.value()).toBe("one\ntwo");
   } finally { dispose(); }
 });
+it("Escape reveals all mixed source and native selection keeps it raw (GH #865)", () => {
+  const { ta, dispose } = mount();
+  try {
+    key(ta, "Escape");
+    expect(ta.value()).toBe(raw);
+    expect(ta.selection()).toEqual([raw.length, raw.length]);
+    ta.select(prefix.length + 1, prefix.length + 1);
+    ta.reportSelection(new Event("select", { bubbles: true }));
+    expect(ta.value()).toBe(raw);
+    expect(node("mixed")!.raw).toBe(raw);
+  } finally { dispose(); }
+});
 it("Backspace at the body start returns to raw without deleting prose or a wrapper", () => {
   const { ta, dispose } = mount();
   try {

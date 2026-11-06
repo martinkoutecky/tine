@@ -20,7 +20,7 @@ import { msg, t, type Msg } from "../i18n";
 // through `resolve_sync_conflict` / `resolve_vcs_marker_conflict`: one tine-store
 // transaction guarded by the diff's `base_rev`, which stages the replaced bytes
 // (the copy, or the marker file) in the recoverable trash in the same commit.
-import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned } from "../owned";
@@ -41,8 +41,8 @@ import {
   visibleDiffRows,
 } from "./DiffRows";
 import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from "../types";
-import { listen, newIntersectionObserver, newResizeObserver } from "../windowRealm";
-import { pageConflictToResolve } from "../liveConflicts";
+import { listen, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
+import { claimConflictReview, conflictReviewRequest, pageConflictToResolve } from "../liveConflicts";
 import { conflictForPage } from "../conflictQueue";
 
 function errorDetail(error: unknown): string {
@@ -104,6 +104,9 @@ async function readDiff(c: ConflictObject, alive: () => boolean): Promise<DiffRe
     return { diff: null, error: errorDetail(e) };
   }
 }
+
+/** How long a banner's Review waits for its page's resolver to mount. */
+const REVIEW_REQUEST_FRESH_MS = 10_000;
 
 /** The conflict panel of one page: the conflict `pageConflictToResolve` names
  *  (the page's own save conflict before a queued artifact, GH #800), one
@@ -196,6 +199,22 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       inlineSlot.appendChild(panel);
       inlineSlot.style.minHeight = "";
     }
+  });
+
+  // GH #858: the banner's Review brings this panel into view: the docked bar
+  // unrolls its sheet (the reading position stays), otherwise the panel
+  // scrolls to the top of the pane. A request is answered once, and only
+  // while fresh, so a later visit to the page does not jump.
+  createEffect(() => {
+    const request = conflictReviewRequest();
+    if (!request || request.path !== conflict().page_path) return;
+    if (Date.now() - request.at > REVIEW_REQUEST_FRESH_MS || !claimConflictReview(request)) return;
+    if (untrack(docked)) {
+      setExpanded(true);
+      return;
+    }
+    const panel = root;
+    if (panel) windowOf(panel).requestAnimationFrame(() => panel.scrollIntoView({ block: "start" }));
   });
 
   // A live conflict re-reviews when a newer refused save observed another disk

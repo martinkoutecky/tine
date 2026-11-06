@@ -494,7 +494,7 @@ mod journal_guide_tests {
         let text = include_str!("templates/journals-tasks-scheduling.md");
         for required in [
             "**Customize today's sections…**",
-            "`tine/journal-sections:: true`",
+            "`tine.journal-sections:: true`",
             "in outline order",
             "Delete the page, or set the marker to `false`, to go back to `config.edn`",
             "Tine never writes to `config.edn`",
@@ -958,8 +958,8 @@ mod rename_guide_tests {
             "Tine keeps the token in a private file on this device",
             "needs the graph folder to be the repository's top folder",
             "On Android and iOS git works as on a computer",
-            "When you switch to another app, Tine saves your pages and commits them, at most once per interval",
-            "it never starts bringing in changes while in the background",
+            "When you switch to another app, Tine saves your pages and commits pending edits immediately, without waiting for the interval",
+            "It never starts bringing in changes while in the background",
             "When you come back to Tine, **Commit and sync automatically** syncs at once",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
@@ -1030,7 +1030,8 @@ mod rename_guide_tests {
             "**Settings > Editor > Your name**",
             "**quoted text changed**",
             "**Reply…**",
-            "`author:: <your name>`",
+            "`tine.author:: <your name>`",
+            "the first comment or reply you write without a name asks for one once",
             "**Ctrl/Cmd+Z** restores them together",
             "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
             "zooming into a commented bullet also shows them there",
@@ -1461,8 +1462,8 @@ mod rename_guide_tests {
             "a page marked `public:: false` and the Exports page are never shared",
             "**Include the query text** is off",
             "`published-queries/<folder>/`",
-            "`export:: <folder>`",
-            "marked `tine/exports:: true` and `public:: false`",
+            "`tine.export:: <folder>`",
+            "marked `tine.exports:: true` and `public:: false`",
             "Exports 2",
             "Share pages with a link",
             "The key is in the link, after `#`",
@@ -2200,10 +2201,26 @@ mod og_20d_guide_tests {
         let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
         for concepts in [
             vec!["handle", "fingerprint", "id::", "stale"],
-            vec!["author::", "agent", "--author", "tine_author"],
+            vec!["tine.author::", "agent", "--author", "tine_author"],
+            // #840: an edit keeps properties; removal has its own verb.
+            vec!["tine edit", "properties stay", "tine prop remove"],
             vec!["app open", "typed", "saved first", "window", "stale"],
             vec!["--journal", "creating", "standard input"],
             vec!["broken", "references", "delete"],
+            vec![
+                "tine delete",
+                "refuses",
+                "--yes",
+                "--force",
+                "nothing changed",
+            ],
+            vec![
+                "removed text",
+                "children",
+                "properties",
+                "65,536",
+                "truncated",
+            ],
             vec!["exits 6", "nothing changed", "exits 8"],
         ] {
             assert!(

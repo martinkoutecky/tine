@@ -34,6 +34,9 @@ mod proof;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;
 
+#[path = "owner_tests/parallel_write_tests.rs"]
+mod parallel_writes;
+
 #[cfg(desktop)]
 #[path = "owner_tests/git_run_tests.rs"]
 mod git_run;
@@ -1398,14 +1401,14 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         for block in [&added[0], &added[0].children[0], &added[1]] {
             assert_eq!(
                 tine_core::block_regions::parse(&block.raw, false)
-                    .property("author")
+                    .property("tine.author")
                     .map(|p| p.value.as_str()),
                 Some("Ada")
             );
         }
         let anchor = &doc.blocks[if placement == "before" { 3 } else { 1 }];
         let regions = tine_core::block_regions::parse(&anchor.raw, false);
-        assert!(regions.property("author").is_none());
+        assert!(regions.property("tine.author").is_none());
         assert_eq!(
             regions.id.is_some(),
             placement != "page",
@@ -1421,20 +1424,19 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         )
         .unwrap();
         let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
-        // An ordinary block's author is editor text, as on OG; replacing that
-        // buffer removes it. A comment's hidden author is covered separately.
-        assert_eq!(bytes.matches("author::").count(), 2);
-        assert!(!bytes.contains("author:: agent"));
+        // The edit keeps the block's author and adds none (#840).
+        assert_eq!(bytes.matches("tine.author::").count(), 3);
+        assert!(!bytes.contains("tine.author:: agent"));
     }
 }
 
 #[test]
-fn block_edit_preserves_comment_metadata_but_replaces_ordinary_author_text() {
+fn block_edit_preserves_comment_metadata_and_ordinary_author() {
     for (content, expected) in [
-        ("ordinary\nauthor:: Ada", "edited"),
+        ("ordinary\ntine.author:: Ada", "edited\ntine.author:: Ada"),
         (
-            "comment\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
-            "edited\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
+            "comment\ntine.quote:: one\ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada",
+            "edited\ntine.quote:: one\ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada",
         ),
     ] {
         let graph = Graph::new();
@@ -1456,6 +1458,213 @@ fn block_edit_preserves_comment_metadata_but_replaces_ordinary_author_text() {
     }
 }
 
+/// One block's raw text after `block.edit` on a one-block page. `extra` merges
+/// into the verb's arguments.
+fn gh840_edit(org: bool, raw: &str, text: &str, extra: Value) -> Result<String, ErrorBody> {
+    let graph = Graph::new();
+    let (rel, file) = if org {
+        ("pages/p.org", format!("* {raw}\n"))
+    } else {
+        ("pages/p.md", format!("- {}\n", raw.replace('\n', "\n  ")))
+    };
+    std::fs::write(graph.root.join(rel), file).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "p"})).unwrap();
+    let mut args = json!({"handle": format!("p/{}", block_handle(&read, 0)), "text": text});
+    for (key, value) in extra.as_object().unwrap() {
+        args[key] = value.clone();
+    }
+    verb(&slot, "block.edit", args)?;
+    Ok(graph.store.page(&PageId::from(rel)).unwrap().doc.blocks[0]
+        .raw
+        .clone())
+}
+
+fn gh840_values(raw: &str, org: bool, key: &str) -> Vec<String> {
+    tine_core::block_regions::parse(raw, org)
+        .properties
+        .iter()
+        .filter(|p| p.primary && p.key.eq_ignore_ascii_case(key))
+        .map(|p| p.value.clone())
+        .collect()
+}
+
+#[test]
+fn gh840_block_edit_keeps_properties_not_named_in_the_text() {
+    // The reporter's three shapes. Intentional difference from OG and from the
+    // app's editor buffer: OG has no command line (D-20261101-CLIE).
+    for (raw, text, expected) in [
+        (
+            "plain block\ntine.author:: claude",
+            "x",
+            "x\ntine.author:: claude",
+        ),
+        (
+            "with status\nstatus:: done\ntine.author:: claude",
+            "x",
+            "x\nstatus:: done\ntine.author:: claude",
+        ),
+        (
+            "comment\ntine.quote:: words\ntine.author:: claude",
+            "x",
+            "x\ntine.quote:: words\ntine.author:: claude",
+        ),
+        // Bytes of a kept row stay exact, including trailing space.
+        (
+            "a\nsrc:: https://x.test/1  ",
+            "x",
+            "x\nsrc:: https://x.test/1  ",
+        ),
+        // A named key replaces its row and leaves the others, in any spelling.
+        (
+            "a\nstatus:: done\ntine.author:: claude",
+            "x\nstatus:: doing",
+            "x\nstatus:: doing\ntine.author:: claude",
+        ),
+        (
+            "a\nstatus:: done\ntine.author:: claude",
+            "x\nSTATUS:: doing",
+            "x\nSTATUS:: doing\ntine.author:: claude",
+        ),
+        // A new key joins the one group OG reads.
+        (
+            "a\nsrc:: one",
+            "x\nbody\nowner:: Ada",
+            "x\nbody\nowner:: Ada\nsrc:: one",
+        ),
+        // Multi-line bodies keep one group too.
+        ("a\nsrc:: one\nbody", "x\ny", "x\nsrc:: one\ny"),
+        ("a\nsrc:: one", "", "\nsrc:: one"),
+    ] {
+        let edited = gh840_edit(false, raw, text, json!({})).unwrap();
+        assert_eq!(edited, expected, "{raw:?} <- {text:?}");
+        assert!(
+            tine_core::block_regions::parse(&edited, false)
+                .property_regions
+                .len()
+                <= 1,
+            "{edited:?}"
+        );
+    }
+    let org = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:status: done\n:tine.author: claude\n:END:\nbody",
+        "x",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&org, true, "status"), ["done"], "{org}");
+    assert_eq!(gh840_values(&org, true, "tine.author"), ["claude"], "{org}");
+    assert!(org.starts_with('x') && !org.contains("body"), "{org}");
+    let named = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:status: done\n:tine.author: claude\n:END:",
+        "x\n:PROPERTIES:\n:STATUS: doing\n:END:",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&named, true, "status"), ["doing"], "{named}");
+    assert_eq!(
+        gh840_values(&named, true, "tine.author"),
+        ["claude"],
+        "{named}"
+    );
+}
+
+#[test]
+fn gh840_read_then_edit_keeps_one_copy_and_fences_stay_text() {
+    for raw in [
+        format!("a\nid:: {UUID}\nstatus:: done\ntine.author:: claude"),
+        "a\nstatus:: done\nbody\ntine.author:: claude".to_string(),
+    ] {
+        // The raw text a read returns, sent back unchanged or changed only in
+        // its title, gains no second copy of anything.
+        for text in [raw.clone(), raw.replacen('a', "b", 1)] {
+            let edited = gh840_edit(false, &raw, &text, json!({})).unwrap();
+            for key in ["status", "tine.author"] {
+                assert_eq!(gh840_values(&edited, false, key).len(), 1, "{edited:?}");
+            }
+            assert_eq!(edited.matches("id::").count(), raw.matches("id::").count());
+        }
+    }
+    let org = "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:";
+    let edited = gh840_edit(true, org, org, json!({})).unwrap();
+    assert_eq!(edited, org);
+    // A fenced lookalike is text: it names nothing, so the row stays.
+    let fenced = "x\n```\nstatus:: example\n```";
+    let edited = gh840_edit(false, "a\nstatus:: done", fenced, json!({})).unwrap();
+    assert_eq!(
+        gh840_values(&edited, false, "status"),
+        ["done"],
+        "{edited:?}"
+    );
+    assert!(edited.contains("```\nstatus:: example\n```"), "{edited:?}");
+    // History stays as well, with visible rows around it.
+    let drawer = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+    let edited = gh840_edit(
+        false,
+        &format!("a\nstatus:: done\n{drawer}"),
+        "x",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(
+        gh840_values(&edited, false, "status"),
+        ["done"],
+        "{edited:?}"
+    );
+    assert!(edited.contains(drawer), "{edited:?}");
+}
+
+#[test]
+fn gh840_explicit_author_replaces_and_empty_refuses() {
+    let name = json!({"author_property": "codex"});
+    for (raw, text, expected) in [
+        ("a", "x", "x\ntine.author:: codex"),
+        ("a\ntine.author:: claude", "x", "x\ntine.author:: codex"),
+        ("a\nTine.Author:: claude", "x", "x\nTine.Author:: codex"),
+        (
+            "a\ntine.author:: claude",
+            "x\ntine.author:: typed",
+            "x\ntine.author:: codex",
+        ),
+        (
+            "a\ntine.quote:: words\ntine.author:: claude",
+            "x",
+            "x\ntine.quote:: words\ntine.author:: codex",
+        ),
+    ] {
+        assert_eq!(
+            gh840_edit(false, raw, text, name.clone()).unwrap(),
+            expected
+        );
+    }
+    let org = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:tine.author: claude\n:END:",
+        "x",
+        name,
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&org, true, "tine.author"), ["codex"], "{org}");
+    // The `author` every write carries (TINE_AUTHOR) names commits, not the block.
+    let edited = gh840_edit(false, "a\ntine.author:: Ada", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(edited, "x\ntine.author:: Ada");
+    let plain = gh840_edit(false, "a", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(plain, "x");
+    for bad in ["", "  ", "two\nlines"] {
+        let error = gh840_edit(
+            false,
+            "a\ntine.author:: Ada",
+            "x",
+            json!({"author_property": bad}),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "refused", "{bad:?}");
+    }
+}
+
 #[test]
 fn add_creates_page_and_journal_through_create_new_and_bounds_handles() {
     let graph = Graph::new();
@@ -1470,7 +1679,7 @@ fn add_creates_page_and_journal_through_create_new_and_bounds_handles() {
         assert_eq!(reply["page"], path);
         let text = std::fs::read_to_string(graph.root.join(path)).unwrap();
         assert!(
-            text.contains("- plain first block\n  author:: agent"),
+            text.contains("- plain first block\n  tine.author:: agent"),
             "{text}"
         );
         // Existing pages append rather than overwrite.
@@ -1575,7 +1784,7 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
         text.contains("** root") && text.contains("*** child"),
         "{text}"
     );
-    assert_eq!(text.matches(":author: Ada").count(), 2, "{text}");
+    assert_eq!(text.matches(":tine.author: Ada").count(), 2, "{text}");
     assert!(text.contains(":id:"), "{text}");
     let doc = graph
         .store
@@ -1583,7 +1792,7 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
         .unwrap()
         .doc;
     assert!(tine_core::block_regions::parse(&doc.blocks[0].raw, true)
-        .property("author")
+        .property("tine.author")
         .is_none());
 }
 
@@ -1619,8 +1828,8 @@ fn add_resolves_author_environment_and_explicit_override() {
     )
     .unwrap();
     let text = std::fs::read_to_string(graph.root.join("pages/env.md")).unwrap();
-    assert!(text.contains("author:: Environment Author"), "{text}");
-    assert!(text.contains("author:: Ada"), "{text}");
+    assert!(text.contains("tine.author:: Environment Author"), "{text}");
+    assert!(text.contains("tine.author:: Ada"), "{text}");
 }
 
 #[test]
@@ -1770,6 +1979,183 @@ fn move_carries_the_subtree_and_refuses_a_cycle() {
 }
 
 #[test]
+fn cli_delete_requires_confirmation_and_returns_removed_text() {
+    use super::terminal::{error_json, error_text, exit_code, render};
+    for org in [false, true] {
+        let graph = Graph::new();
+        let (rel, removed, survivor) = if org {
+            (
+                "pages/proof.org",
+                format!("* one\n:PROPERTIES:\n:id: {UUID}\n:END:\n** child\n*** grandchild\n"),
+                "* two\n",
+            )
+        } else {
+            (
+                "pages/a.md",
+                format!("- one\n  id:: {UUID}\n\t- child\n\t\t- grandchild\n"),
+                "- two\n",
+            )
+        };
+        // Keep a.md present but unrelated when the UUID lives on the Org page.
+        std::fs::write(graph.root.join("pages/a.md"), "- unrelated\n").unwrap();
+        let before = format!("{removed}{survivor}");
+        std::fs::write(graph.root.join(rel), &before).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let other_before = std::fs::read(graph.root.join("pages/b.md")).unwrap();
+        let err = verb(&slot, "block.delete", json!({"handle": UUID})).unwrap_err();
+        assert_eq!(err.code, "refused");
+        assert_eq!(exit_code(&err.code), 6);
+        let json: Value = serde_json::from_str(&error_json(&err)).unwrap();
+        assert_eq!(json["error"]["detail"]["admitted"], false);
+        assert_eq!(json["error"]["detail"]["reason"], "confirmation");
+        assert_eq!(json["error"]["detail"]["broken_refs"], 1);
+        let text = error_text(&err);
+        for expected in ["1", "--yes", "--force", "nothing changed"] {
+            assert!(text.contains(expected), "{text}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        assert_eq!(
+            std::fs::read(graph.root.join("pages/b.md")).unwrap(),
+            other_before
+        );
+        let stale = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": UUID, "yes": true, "rev": "old"}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            stale.code, "stale",
+            "confirmation must retain the revision guard"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        let deleted = verb(&slot, "block.delete", json!({"handle": UUID, "yes": true})).unwrap();
+        assert_eq!(deleted["broken_refs"], 1);
+        assert_eq!(deleted["removed_text"], removed);
+        assert_eq!(deleted["removed_text_omitted_bytes"], 0);
+        assert_eq!(deleted["format"], if org { "org" } else { "md" });
+        let mut text = String::new();
+        render(&deleted, &mut text);
+        assert!(text.contains(&removed), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            survivor
+        );
+        // No confirmation needed for an unreferenced block; its reply carries text too.
+        // Address through the current page handle rather than the removed UUID.
+        let name = deleted["name"].as_str().unwrap();
+        let read = verb(&slot, "page.show", json!({"name": name})).unwrap();
+        let handle = block_handle(&read, 0);
+        let last = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": format!("{name}/{handle}")}),
+        )
+        .unwrap();
+        assert_eq!(last["removed_text"], survivor);
+    }
+}
+
+#[test]
+fn cli_delete_checks_incoming_references_to_children() {
+    for org in [false, true] {
+        let graph = Graph::new();
+        let (rel, removed, survivor) = if org {
+            (
+                "pages/proof.org",
+                format!("* parent\n** child\n:PROPERTIES:\n:id: {UUID}\n:END:\n"),
+                "* keep\n",
+            )
+        } else {
+            (
+                "pages/proof.md",
+                format!("- parent\n\t- child\n\t  id:: {UUID}\n"),
+                "- keep\n",
+            )
+        };
+        std::fs::write(graph.root.join("pages/a.md"), "- unrelated\n").unwrap();
+        let before = format!("{removed}{survivor}");
+        std::fs::write(graph.root.join(rel), &before).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let page = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let handle = format!("proof/{}", block_handle(&page, 0));
+        let err = verb(&slot, "block.delete", json!({"handle": handle})).unwrap_err();
+        assert_eq!(err.detail.unwrap()["broken_refs"], 1);
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        let deleted = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": handle, "yes": true}),
+        )
+        .unwrap();
+        assert_eq!(deleted["removed_text"], removed);
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            survivor
+        );
+    }
+}
+
+#[test]
+fn cli_delete_internal_references_need_no_confirmation() {
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/b.md"), "- unrelated\n").unwrap();
+    let removed = format!("- one\n  id:: {UUID}\n\t- back (({UUID}))\n");
+    std::fs::write(graph.root.join("pages/a.md"), &removed).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let deleted = verb(&slot, "block.delete", json!({"handle": UUID})).unwrap();
+    assert_eq!(deleted["broken_refs"], 0);
+    assert_eq!(deleted["removed_text"], removed);
+    assert!(std::fs::read_to_string(graph.root.join("pages/a.md"))
+        .unwrap()
+        .trim()
+        .is_empty());
+}
+
+#[test]
+fn cli_delete_bounds_removed_text_at_a_utf8_boundary() {
+    let graph = Graph::new();
+    let removed = format!("- {}\n", "界".repeat(22_000));
+    std::fs::write(graph.root.join("pages/a.md"), &removed).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({"handle": format!("a/{}", block_handle(&read, 0))}),
+    )
+    .unwrap();
+    let text = deleted["removed_text"].as_str().unwrap();
+    assert!(text.len() <= 65_536);
+    assert!(text.len() + '界'.len_utf8() > 65_536);
+    assert!(removed.starts_with(text));
+    assert_eq!(
+        deleted["removed_text_omitted_bytes"],
+        removed.len() - text.len()
+    );
+    let mut output = String::new();
+    super::terminal::render(&deleted, &mut output);
+    assert!(
+        output.contains("truncated at 65536 UTF-8 bytes"),
+        "{output}"
+    );
+    assert!(output.contains(&(removed.len() - text.len()).to_string()));
+}
+
+#[test]
 fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
     let graph = Graph::new();
     let slot = graph.slot();
@@ -1790,7 +2176,7 @@ fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
     let deleted = verb(
         &slot,
         "block.delete",
-        json!({ "handle": format!("a/{one}") }),
+        json!({ "handle": format!("a/{one}"), "yes": true }),
     )
     .unwrap();
     assert_eq!(

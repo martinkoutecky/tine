@@ -199,8 +199,11 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   const filters = createMemo<FilterMap>(() => Object.fromEntries(
     Object.entries(rawFilters()).map(([name, state]) => [navigationName(name), state])
   ));
+  // Working-set membership changes may invalidate the page lookup, but only a
+  // changed filter value should rebuild the visible groups.
+  const filterProperty = createMemo(() => props.unlinked ? null : readPageProperty(props.name, "filters"));
   createEffect(() => {
-    const property = props.unlinked ? null : readPageProperty(props.name, "filters");
+    const property = filterProperty();
     setFilters(property === null ? loadFilters(savedFilterKey()) : parseReferenceFilters(property) ?? {});
   });
   const persistFilters = (f: FilterMap) => {
@@ -558,6 +561,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                     data-inpage-find-surface={`linked:${props.name}:${group().kind}:${group().page}`}
                   >
                     <LiveRefGroup
+                      heightKey={`page-refs:${props.name}`}
                       page={group().page}
                       kind={group().kind}
                       blocks={group().blocks}

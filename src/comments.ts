@@ -1,7 +1,9 @@
 // Margin dialogue, slice 1 (vision 2026-10 §3.7): a comment is an ordinary child
-// block that carries `quote::` (the text it is about). Its own children are its
-// thread. Agents attribute what they write with `author::`; a block without it is
-// the graph owner's. Everything here is derived from the block's properties at
+// block that carries `tine.quote::` (the text it is about). Its own children are its
+// thread. Agents attribute what they write with `tine.author::`; a block without it is
+// the graph owner's. The keys are `tine.*` so a user's own `quote::` / `author::`
+// (book notes) is never mistaken for one (D-20261102-PNS, Discussion #825; the
+// Beta-only bare keys have no reader on purpose). Everything here is derived from the block's properties at
 // render time: nothing is persisted beyond the ordinary outline, and no offset is
 // ever stored (the quote is re-anchored against the parent's text on each render).
 //
@@ -13,10 +15,10 @@ import { propertyKeyNorm } from "./propertyKey";
 import type { Format } from "./render/ast";
 import { comment_quote } from "./render/wasm/lsdoc_wasm.js";
 
-export const COMMENT_QUOTE_KEY = "quote";
-export const COMMENT_QUOTE_PREFIX_KEY = "quote-prefix";
-export const COMMENT_QUOTE_SUFFIX_KEY = "quote-suffix";
-export const AUTHOR_KEY = "author";
+export const COMMENT_QUOTE_KEY = "tine.quote";
+export const COMMENT_QUOTE_PREFIX_KEY = "tine.quote-prefix";
+export const COMMENT_QUOTE_SUFFIX_KEY = "tine.quote-suffix";
+export const AUTHOR_KEY = "tine.author";
 /** W3C TextQuoteSelector context length (Hypothes.is uses 32 as well). */
 export const QUOTE_CONTEXT_MAX = 32;
 
@@ -189,7 +191,7 @@ function propertyValue(properties: readonly (readonly [string, string])[], key: 
   return null;
 }
 
-/** The selector a block's properties carry, or null when it has no `quote::`. */
+/** The selector a block's properties carry, or null when it has no `tine.quote::`. */
 export function quoteSelectorOf(properties: readonly (readonly [string, string])[]): QuoteSelector | null {
   const quote = comment_quote(JSON.stringify(properties));
   if (quote == null) return null;
@@ -200,12 +202,12 @@ export function quoteSelectorOf(properties: readonly (readonly [string, string])
   };
 }
 
-/** The block's `author::`, or null for the graph owner (absent or empty). */
+/** The block's `tine.author::`, or null for the graph owner (absent or empty). */
 export function authorOf(properties: readonly (readonly [string, string])[]): string | null {
   return propertyValue(properties, AUTHOR_KEY) || null;
 }
 
-/** A block is a comment iff it has a `quote::` property and a parent block. */
+/** A block is a comment iff it has a `tine.quote::` property and a parent block. */
 export function isCommentBlock(properties: readonly (readonly [string, string])[], hasParentBlock: boolean): boolean {
   return hasParentBlock && quoteSelectorOf(properties) !== null;
 }
@@ -219,7 +221,7 @@ export function isCommentPresentationKey(key: string, comment: boolean): boolean
 
 /** Raw text of a new, empty-bodied comment: an empty first line (the caret's
  * line) followed by the selector's properties and, when the user has set a
- * name (commentIdentity.ts), `author::`, through the parser's one property
+ * name (commentIdentity.ts), `tine.author::`, through the parser's one property
  * writer for either format. */
 export function commentRaw(selector: QuoteSelector, format: Format, author: string = ""): string {
   let raw = editBlock("\n", format, { kind: "property", key: COMMENT_QUOTE_KEY, value: selector.quote });
@@ -230,7 +232,7 @@ export function commentRaw(selector: QuoteSelector, format: Format, author: stri
 }
 
 /** Raw text of a new, empty reply written by the user: an empty first line (the
- * caret's line) and the user's `author::`. Only called with a name set. */
+ * caret's line) and the user's `tine.author::`. Only called with a name set. */
 export function replyRaw(format: Format, author: string): string {
   return editBlock("\n", format, { kind: "property", key: AUTHOR_KEY, value: author });
 }

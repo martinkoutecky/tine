@@ -17,6 +17,7 @@ vi.mock("../document", async (importOriginal) => ({
   isConflicted: () => false,
 }));
 import { PageConflictResolution } from "./ConflictResolution";
+import { requestConflictReview } from "../liveConflicts";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
@@ -136,5 +137,43 @@ describe("the conflict dock (master 61ea6600c)", () => {
     expect(host.querySelector(".page-conflict-dock")).toBeNull();
     expect(host.querySelector('.page-conflict-slot [data-row-id="1"] .sync-merge-seg.active')!.getAttribute("data-decision")).toBe("theirs");
     dispose();
+  });
+
+  // GH #858: Review on the changed-on-disk banner, with the page already open
+  // and scrolled down, did nothing. It now brings this resolver into view.
+  it("Review on the banner unrolls the docked panel where the reader is", async () => {
+    const { host, dispose, io } = await mounted();
+    io.fire(false, -40);
+    await settle();
+    expect(bar(host)!.getAttribute("aria-expanded")).toBe("false");
+    requestConflictReview("pages/Other.md");
+    await settle();
+    expect(bar(host)!.getAttribute("aria-expanded")).toBe("false");
+    requestConflictReview(markers.page_path);
+    await settle();
+    expect(bar(host)!.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".page-conflict-sheet .page-conflict")).not.toBeNull();
+    dispose();
+  });
+
+  it("Review on the banner scrolls an undocked panel into view, once", async () => {
+    const scrolled = vi.fn();
+    const proto = HTMLElement.prototype as unknown as { scrollIntoView?: (arg?: unknown) => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = function (this: HTMLElement, arg?: unknown) { if (this.classList.contains("page-conflict")) scrolled(arg); };
+    try {
+      const { dispose, io } = await mounted();
+      io.fire(false, 900);
+      await settle();
+      requestConflictReview(markers.page_path);
+      await vi.waitFor(() => expect(scrolled).toHaveBeenCalledWith({ block: "start" }));
+      // A resolver mounted later (another visit to the page) does not jump.
+      dispose();
+      scrolled.mockClear();
+      const again = await mounted();
+      await settle(); await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(scrolled).not.toHaveBeenCalled();
+      again.dispose();
+    } finally { proto.scrollIntoView = original; }
   });
 });

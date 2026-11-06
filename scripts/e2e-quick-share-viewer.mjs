@@ -23,7 +23,7 @@ fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced?
 // work in the viewer with the original secret prefix intact.
 fs.writeFileSync(path.join(graph, "pages/Project.md"), "- Native share sentinel\n- [[Notes ü]]\n- {{tine-query @page and (name = 'Project' or name = 'Notes ü')}}\n");
 fs.writeFileSync(path.join(graph, "pages/Notes ü.md"), "- Native linked page sentinel\n- {{tine-query @page and (name = 'Project' or name = 'Notes ü')}}\n");
-fs.writeFileSync(path.join(graph, "pages/Exports.md"), "tine/exports:: true\npublic:: false\n\n- {{query (or (property export) (property tine.share))}}\n");
+fs.writeFileSync(path.join(graph, "pages/Exports.md"), "tine.exports:: true\npublic:: false\n\n- {{query (or (property tine.export) (property tine.share))}}\n");
 const gist = "1234567890abcdef1234567890abcdef";
 let envelope, creates = 0, deletes = 0, updates = 0;
 const hosted = new Map();

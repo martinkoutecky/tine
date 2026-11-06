@@ -290,6 +290,12 @@ export interface MessageArgs {
   "comment-name-hint": {};
   "comment-name-label": {};
   "comment-name-placeholder": {};
+  "comment-name-prompt-body": {};
+  "comment-name-prompt-dismiss": {};
+  "comment-name-prompt-graph-changed": {};
+  "comment-name-prompt-save": {};
+  "comment-name-prompt-scope": {};
+  "comment-name-prompt-title": {};
   "comment-on-whole-block": {};
   "comment-quote-changed": {};
   "comment-reply": {};
@@ -2935,6 +2941,12 @@ export interface MessageArgs {
   "sheet-type-text": {};
   "sheet-undo": {};
   "shell-boot-opening": {};
+  "shell-cli-delete-broken-count": {};
+  "shell-cli-delete-confirm-help": {};
+  "shell-cli-delete-confirmation": {};
+  "shell-cli-delete-help": {};
+  "shell-cli-delete-removed": {};
+  "shell-cli-delete-truncated": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
   "shell-tray-quit": {};

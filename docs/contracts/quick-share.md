@@ -268,9 +268,9 @@ none (shares are made on request).
 
 ### Re-share in place
 
-The page marked `tine/exports:: true` offers **Update all** beside its title,
+The page marked `tine.exports:: true` offers **Update all** beside its title,
 including after renaming and in other panes. It finds definitions with the
-ordinary `(or (property export) (property tine.share))` query and parses their query macros with lsdoc.
+ordinary `(or (property tine.export) (property tine.share))` query and parses their query macros with lsdoc.
 Each distinct hosted share with a device-local key uses `quickSharePrepare`
 with its existing record id. Pending definitions, missing keys, duplicate
 destinations, ambiguous queries and preparation failures are listed as skipped
@@ -407,7 +407,7 @@ new write path):
   switch cancels it, and the marker stays for Settings → Check in that graph.
   The graph binding is rechecked before every edit and after every await, so it
   never edits a replacement graph.
-- The Exports page's overview query `(or (property export) (property
+- The Exports page's overview query `(or (property tine.export) (property
   tine.share))` lists them, pending markers included; Settings → Sharing keeps
   the account, Find shares on GitHub and this device's keys (Copy link, Check,
   Delete, Forget).

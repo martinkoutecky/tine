@@ -2,16 +2,16 @@
 
 An export definition is an ordinary query block (`{{query …}}` or
 `{{tine-query …}}`) that carries a destination property on the block:
-`export:: <folder>` or `tine.share:: <login>/<gist_id>`. It can live on any
+`tine.export:: <folder>` or `tine.share:: <login>/<gist_id>`. It can live on any
 page. `tine_core::export_definition` is the one answer to "is this block a
 definition" (`is_definition`, `DESTINATION_KEYS`); the OG-readable query
 listing every definition is `definitions_query()`,
-`(or (property export) (property tine.share))`.
+`(or (property tine.export) (property tine.share))`.
 
 ## The exports page
 
-A page whose page properties carry `tine/exports:: true` (Org
-`#+tine/exports: true`) is the exports page: Tine creates it on first use with
+A page whose page properties carry `tine.exports:: true` (Org
+`#+tine.exports: true`) is the exports page: Tine creates it on first use with
 `public:: false` too, so OG Logseq's publishing skips it, and finds it by the
 marker, so a rename keeps it working. It holds the definitions the share dialog
 writes and an overview query, `definitions_query()`.

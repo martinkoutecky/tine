@@ -2,18 +2,21 @@
 .el .ds Aq '
 .TH tine-delete 1  "delete " 
 .SH NAME
-tine\-delete \- Delete a block with its children; prints how many references to it the deletion leaves broken
+tine\-delete \- Delete a block with its children; refuses broken references without \-\-yes and prints the removed text (up to 65,536 UTF\-8 bytes, with omitted byte count)
 .SH SYNOPSIS
-\fBtine delete\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> 
+\fBtine delete\fR [\fB\-\-yes\fR] [\fB\-\-debug\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> 
 .SH DESCRIPTION
-Delete a block with its children; prints how many references to it the deletion leaves broken
+Delete a block with its children; refuses broken references without \-\-yes and prints the removed text (up to 65,536 UTF\-8 bytes, with omitted byte count)
 .SH OPTIONS
 .TP
-\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
-The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+\fB\-\-yes\fR
+Confirm deletion even when it breaks incoming block references
 .TP
 \fB\-\-debug\fR
 Enable diagnostic logging for the desktop app
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
 .TP
 \fB\-\-json\fR
 Print the typed result (schema tine.cli/1) as JSON
@@ -28,7 +31,7 @@ May also be specified with the \fBTINE_RUN\fR environment variable.
 .RE
 .TP
 \fB\-\-author\fR \fI<AUTHOR>\fR
-Author on created blocks and on the run\*(Aqs commits (default: agent)
+Author on created blocks and on the run\*(Aqs commits (default: agent). With `edit`, the flag (not the variable) also sets the block\*(Aqs tine.author::
 .RS
 May also be specified with the \fBTINE_AUTHOR\fR environment variable. 
 .RE

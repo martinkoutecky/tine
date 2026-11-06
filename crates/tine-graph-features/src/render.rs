@@ -2138,7 +2138,7 @@ impl PageSelection {
 pub enum LeftOut {
     /// `public:: false`: privacy settings apply on every export run (vision §4.3).
     Private,
-    /// The exports page (`tine/exports:: true`) holds export definitions and is
+    /// The exports page (`tine.exports:: true`) holds export definitions and is
     /// never exported, even when a query selects it.
     ExportsPage,
 }
@@ -2153,8 +2153,9 @@ pub fn export_left_out(page: &CorpusPage) -> Option<LeftOut> {
     }
 }
 
-/// The exports page's marker, `tine/exports:: true` (Org `#+tine/exports:
-/// true`), read from the parser's page properties like `public`.
+/// The exports page's marker, `tine.exports:: true` (Org `#+tine.exports:
+/// true`; the stable `tine/exports` spelling through the one alias table),
+/// read from the parser's page properties like `public`.
 pub(crate) fn page_is_exports_page(page: &CorpusPage) -> bool {
     let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
     let Some(pre) = page.document.pre_block.as_deref() else {
@@ -2162,7 +2163,8 @@ pub(crate) fn page_is_exports_page(page: &CorpusPage) -> bool {
     };
     let regions = tine_core::block_regions::parse_document(pre, org);
     let found = regions.page_properties().any(|property| {
-        doc::property_key_norm(&property.key) == "tine/exports" && property.value == "true"
+        tine_core::tine_keys::canonical_key(&property.key) == tine_core::tine_keys::EXPORTS_MARKER
+            && property.value == "true"
     });
     found
 }
