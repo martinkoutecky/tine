@@ -1060,6 +1060,57 @@ struct PullKills {
     max_resume_cycles: usize,
 }
 
+/// Preserve the inputs to the resume/autocommit decision. A divergent commit
+/// can contain only U blobs, so listing just bytes outside H/U misses the
+/// partial tree that was committed, index-only changes and file-mode changes.
+fn pull_kill_state(repo: &Repository, h: Oid, u: Oid) -> Vec<String> {
+    let mut state = vec![format!(
+        "HEAD={} H={h} U={u} upstream={:?}",
+        head(repo),
+        repo.refname_to_id("refs/remotes/origin/main")
+    )];
+    let tree_entry = |commit: Oid, path: &str| {
+        repo.find_commit(commit)
+            .and_then(|commit| commit.tree())
+            .and_then(|tree| tree.get_path(Path::new(path)))
+            .ok()
+            .map(|entry| (entry.id(), entry.filemode()))
+    };
+    let mut index = repo.index().unwrap();
+    index.read(true).unwrap();
+    let mut options = git2::StatusOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false)
+        .exclude_submodules(true)
+        .renames_head_to_index(false)
+        .renames_index_to_workdir(false);
+    match repo.statuses(Some(&mut options)) {
+        Err(error) => state.push(format!("status error: {error}")),
+        Ok(statuses) => {
+            for entry in statuses.iter() {
+                let path = String::from_utf8_lossy(entry.path_bytes());
+                if tine_temp(&path) || tine_own(path.as_bytes()) {
+                    continue;
+                }
+                let full = repo.workdir().unwrap().join(path.as_ref());
+                let disk = Oid::hash_file(git2::ObjectType::Blob, &full);
+                let metadata =
+                    fs::symlink_metadata(&full).map(|m| (m.len(), m.modified(), m.permissions()));
+                state.push(format!(
+                    "{path:?} status={:?} H={:?} U={:?} index={:?} disk={disk:?} metadata={metadata:?}",
+                    entry.status(),
+                    tree_entry(h, &path),
+                    tree_entry(u, &path),
+                    index.get_path(Path::new(path.as_ref()), 0).map(|e| (e.id, e.mode)),
+                ));
+            }
+        }
+    }
+    state
+}
+
 /// The OS ends the app in the middle of a pull: during the fetch, between
 /// the page host's publications, during the non-page writes, around the
 /// index and the ref (s3.7 P1/P2 with a real process cut, not a test hook).
@@ -1233,14 +1284,26 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
         drop(index);
 
         // The next launch resumes and lands exactly U.
+        let killed_state = pull_kill_state(&repo, h, u);
         let slot = restarted(&phone.root, &phone.app_data);
         let mut codes = Vec::new();
+        let mut resume_decisions = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(60);
         while head(&repo) != u && Instant::now() < deadline {
             if !codes.is_empty() {
                 std::thread::sleep(Duration::from_millis(200));
             }
+            super::super::git_pull::test_hook::record_resume();
             codes.push(cycle(&slot, &credentials()));
+            resume_decisions.push(super::super::git_pull::test_hook::take_resume_notes());
+            // Any other code already violates the assertion below. Stop at
+            // the first unexpected response to preserve that transition.
+            if !matches!(
+                codes.last().unwrap().code,
+                "pulled" | "up-to-date" | "pull-held-unsaved" | "pull-held-changed"
+            ) {
+                break;
+            }
         }
         kills.max_resume_cycles = kills.max_resume_cycles.max(codes.len());
         kills.held_resumes += u32::from(codes.len() > 1);
@@ -1260,10 +1323,15 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
                 for delta in diff.deltas() {
                     let path = delta.new_file().path().or(delta.old_file().path());
                     let path = path.unwrap().to_string_lossy().into_owned();
-                    let new = Some(delta.new_file().id()).filter(|id| !id.is_zero());
-                    if new != blob_at(&phone.bare, u, &path) {
-                        odd.push(format!("committed {path} {new:?}"));
-                    }
+                    odd.push(format!(
+                        "committed {path} {:?}: {:?}/{:?} -> {:?}/{:?}; U={:?}",
+                        delta.status(),
+                        delta.old_file().id(),
+                        delta.old_file().mode(),
+                        delta.new_file().id(),
+                        delta.new_file().mode(),
+                        blob_at(&phone.bare, u, &path),
+                    ));
                 }
             }
             for (path, _) in &changes {
@@ -1274,7 +1342,12 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
                     odd.push(format!("disk {path} {:?}", text.lines().next()));
                 }
             }
-            panic!("{what}: resumed {codes:?}; neither H nor U: {odd:?}");
+            let failed_state = pull_kill_state(&repo, h, u);
+            panic!(
+                "{what}: resumed {codes:?}; changes from H: {odd:#?}; \
+                 killed state: {killed_state:#?}; P3 decisions: {resume_decisions:#?}; \
+                 failed state: {failed_state:#?}"
+            );
         }
         // A pull killed inside a page-host operation leaves that operation's
         // durable custody in app data. The restarted host finishes it first;
@@ -1285,7 +1358,8 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
                 c.code,
                 "pulled" | "up-to-date" | "pull-held-unsaved" | "pull-held-changed"
             )),
-            "{what}: resumed {codes:?}"
+            "{what}: resumed {codes:?}; killed state: {killed_state:#?}; \
+             P3 decisions: {resume_decisions:#?}"
         );
         let index = Repository::open(&phone.root).unwrap().index().unwrap();
         for (path, _) in &changes {
