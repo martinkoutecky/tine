@@ -2941,6 +2941,12 @@ export interface MessageArgs {
   "sheet-type-text": {};
   "sheet-undo": {};
   "shell-boot-opening": {};
+  "shell-cli-delete-broken-count": {};
+  "shell-cli-delete-confirm-help": {};
+  "shell-cli-delete-confirmation": {};
+  "shell-cli-delete-help": {};
+  "shell-cli-delete-removed": {};
+  "shell-cli-delete-truncated": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
   "shell-tray-quit": {};
