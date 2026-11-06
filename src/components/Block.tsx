@@ -1018,9 +1018,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
       if (result.kind === "stale") return;
       setAcBlockState("ready");
+      // Like OG `get-matched-blocks`, exclude the edited block and up to 99
+      // parents so picking a search hit cannot create a reference cycle.
+      const excluded = new Set([props.id]);
+      let parent = docNode(props.id)?.parent ?? null;
+      while (parent !== null && excluded.size <= 99 && !excluded.has(parent)) {
+        excluded.add(parent);
+        parent = docNode(parent)?.parent ?? null;
+      }
       const items: AcItem[] = [];
       for (const g of result.value) {
         for (const b of g.blocks) {
+          if (excluded.has(b.id)) continue;
           items.push({
             label: blockFirstLine(b.raw, pageByName(g.page)?.format === "org" ? "org" : "md") || g.page,
             sub: g.page,
