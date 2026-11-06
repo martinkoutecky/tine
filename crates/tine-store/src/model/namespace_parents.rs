@@ -23,8 +23,9 @@
 //! one key, so the whole-graph answer and the one-key answer agree whatever
 //! order they visit the seeds in.
 //!
-//! Nothing here is stored: the whole answer is one pass over the claims and
-//! the resident referenced-name table; the one-key answer reads only the
+//! `fileless_names::DaySupport` maintains these seeds transiently for full
+//! inventory and typed day deltas. This module also folds supplied inputs for
+//! baseline-aware completion and fresh test oracles. The ordinary one-key answer reads only the
 //! names whose key starts with that key (a parent's key is always a prefix of
 //! its child's key: the fold trims, lowercases per character and strips a
 //! boundary slash, none of which crosses the `/` a prefix ends at).
@@ -51,7 +52,7 @@ fn keep_least<'a>(slot: &mut Option<&'a str>, spelling: &'a str) {
 impl ReadSnapshot {
     /// Whether the file at `path` (absolute, as the real-name table keys it)
     /// supplies its name's prefixes: a parsed page whose content is not blank.
-    fn file_supplies_parents(&self, path: &std::path::Path) -> bool {
+    pub(super) fn file_supplies_parents(&self, path: &std::path::Path) -> bool {
         let Some(entry) = self.list.get_path(path) else {
             return false;
         };
@@ -70,6 +71,7 @@ impl ReadSnapshot {
     /// Every namespace seed key of this generation with its spelling (see the
     /// module doc). O(F + R) for F file claims and R referenced names, plus a
     /// key fold per prefix of a name that contains `/`.
+    #[cfg(test)]
     pub(crate) fn namespace_seeds<'a>(
         &'a self,
         table: &'a ReferencedNameTable,
@@ -84,7 +86,7 @@ impl ReadSnapshot {
         )
     }
 
-    /// [`Self::namespace_seeds`] over any list of file claims `(path, page
+    /// Namespace seeds over any list of file claims `(path, page
     /// name)` and referenced names in place of the generation's own: `[[`
     /// completion already holds the page list (the same claims) and its
     /// referenced names are the table's after the editing block's reference
@@ -148,7 +150,7 @@ impl ReadSnapshot {
             .collect()
     }
 
-    /// [`Self::namespace_seeds`]' spelling for one key, or `None` when it is
+    /// The least seed spelling for one key, or `None` when it is
     /// no seed: reads only the claims and referenced names whose key starts
     /// with `key`. O(log V + those names).
     pub(crate) fn namespace_seed<'a>(

@@ -17,6 +17,7 @@ mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
 pub(crate) mod asset_ref_index;
+pub(crate) mod fileless_names;
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) mod index_oracle;
 #[cfg(test)]
@@ -578,6 +579,7 @@ pub(crate) struct ReadSnapshot {
     /// `referenced_name_index` on first use and patched per generation
     /// (`referenced_names.rs`). In memory only.
     referenced_name_table: std::sync::OnceLock<referenced_names::ReferencedNameTable>,
+    day_support: std::sync::OnceLock<fileless_names::DaySupport>,
     real_page_names: Arc<crate::query::RealPageNames>,
     /// The alias relation: edge index, owner paths and alias list in one
     /// persistent value. Built on first use by one walk; a later generation
@@ -995,6 +997,7 @@ impl ReadSnapshot {
             referenced_name_index,
             asset_refs,
             referenced_name_table,
+            day_support: std::sync::OnceLock::new(),
             real_page_names,
             alias_relation: std::sync::OnceLock::new(),
             link_graph: std::sync::OnceLock::new(),
@@ -1014,6 +1017,11 @@ impl ReadSnapshot {
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        if let Some(support) =
+            old.and_then(|old| fileless_names::DaySupport::carry(old, &snapshot, changed_paths))
+        {
+            let _ = snapshot.day_support.set(support);
+        }
         snapshot.transliteration_names = snapshot.build_name_keys(old, changed_paths);
         let icons = page_icons::IconIndex::capture(
             old.and_then(|old| {

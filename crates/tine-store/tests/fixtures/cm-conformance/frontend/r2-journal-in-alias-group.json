@@ -81,20 +81,6 @@
     {
       "day": null,
       "is_journal": false,
-      "key": "2026-10-26",
-      "link": {
-        "kind": "journal",
-        "name": "Oct 26th, 2026"
-      },
-      "name": "2026-10-26",
-      "target": {
-        "id": "pages/2026-10-26.md",
-        "kind": "absent"
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
       "key": "launch",
       "name": "Launch",
       "target": {
@@ -129,7 +115,6 @@
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-26": "oct 26th, 2026",
     "Launch": "launch",
     "Oct 26th, 2026": "oct 26th, 2026",
     "n": "n"

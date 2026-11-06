@@ -15,16 +15,12 @@
         }
       },
       {
-        "day": null,
-        "is_journal": false,
+        "day": 20261025,
+        "is_journal": true,
         "key": "oct 25th, 2026",
-        "link": {
-          "kind": "journal",
-          "name": "Oct 25th, 2026"
-        },
         "name": "Oct 25th, 2026",
         "target": {
-          "id": "pages/Oct 25th, 2026.md",
+          "id": "journals/25-10-2026.md",
           "kind": "absent"
         }
       },

@@ -487,7 +487,10 @@ const CLASH: &[(&str, &str)] = &[
     ("pages/Alpha.md", "alias:: Shared\n\n- alpha body\n"),
     ("pages/Beta.md", "alias:: Shared\n\n- beta body\n"),
     ("pages/Gamma.md", "alias:: G\n\n- gamma body\n"),
-    ("pages/Links.md", "- [[Shared]] [[G]] [[Nowhere]]\n"),
+    (
+        "pages/Links.md",
+        "- [[Shared]] [[G]] [[Nowhere]] [[2026-10-26]]\n",
+    ),
 ];
 
 fn clash_request(name: &str) -> QueryExportRequest {
@@ -522,6 +525,7 @@ fn a_synthetic_home_never_shadows_an_answered_name() {
         ("Shared", "Shared (export)"),
         ("g", "g (export)"),
         ("Links", "Links (export)"),
+        ("2026-10-26", "2026-10-26 (export)"),
     ] {
         // Static query export: the home is renamed; the alias row stays the
         // build graph's answer.
@@ -535,6 +539,15 @@ fn a_synthetic_home_never_shadows_an_answered_name() {
                 serde_json::json!({ "kind": "alias", "owners": ["pages/Alpha.md", "pages/Beta.md"] })
             }
             "g" => serde_json::json!({ "kind": "alias", "owners": ["pages/Gamma.md"] }),
+            "2026-10-26" => {
+                assert_eq!(
+                    shadowed["link"],
+                    serde_json::json!({
+                        "kind": "journal", "name": "Oct 26th, 2026"
+                    })
+                );
+                serde_json::json!({ "kind": "absent", "id": "pages/2026-10-26.md" })
+            }
             _ => serde_json::json!({ "kind": "existing", "id": "pages/Links.md", "others": [] }),
         };
         assert_eq!(shadowed["target"], expected, "{name}: {shadowed}");

@@ -129,8 +129,14 @@ build graph (closure, below). The same field is written by the static export
 - `inventory`: `WholeGraph::inventory(All)` of the build graph, each row in the
   app's `page_inventory` wire shape (`key`, `name`, `is_journal`, `day`,
   `target`, and `link`, `namespace_parent`, `empty_alias` when they apply), in
-  its order. A multi-page share adds its synthetic home page as an `existing`
-  row with id `""`.
+  its order. For each linked spelling whose key no entity row lists, the v1
+  writer also keeps the base writer's spelling row: an ordinary row with
+  `resolve(spelling, page)` as `target` and the shared link answer as `link`
+  when it differs. Frozen v1 readers look up that spelling key, so removing
+  the row would make its links absent. These rows may appear alongside the
+  day's journal entity in published All Pages; this compatibility lasts
+  until `answers` v2. Rows stay sorted by key and name. A multi-page share
+  adds its synthetic home page as an `existing` row with id `""`.
 - `resolve`: `WholeGraph::resolve(name, kind)` for a listed name asked as the
   kind its row does not answer (a date spelling asked as a journal, a journal
   title asked as a page), only where the answer is a file or an alias.

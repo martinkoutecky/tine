@@ -43,16 +43,12 @@
         }
       },
       {
-        "day": null,
-        "is_journal": false,
+        "day": 20261023,
+        "is_journal": true,
         "key": "23.10.2026",
-        "link": {
-          "kind": "journal",
-          "name": "23.10.2026"
-        },
         "name": "23.10.2026",
         "target": {
-          "id": "pages/23%2E10%2E2026.md",
+          "id": "journals/2026_10_23.md",
           "kind": "absent"
         }
       },

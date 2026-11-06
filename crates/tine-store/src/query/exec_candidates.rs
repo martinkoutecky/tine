@@ -106,24 +106,14 @@ impl<'a> Candidates<'a> {
                 .map(|names| names.iter().map(String::as_str).collect());
             let empty = Arc::new(Document::default());
             graph
-                .reference_only_page_names()
+                .reference_only_pages()
                 .into_iter()
-                .filter(|name| {
+                .filter(|answer| {
                     wanted
                         .as_ref()
-                        .is_none_or(|wanted| wanted.contains(refs::page_key(name).as_str()))
+                        .is_none_or(|wanted| wanted.contains(refs::page_key(&answer.name).as_str()))
                 })
-                .map(|name| {
-                    // The row `inventory(All)` lists for it: a page, no day.
-                    let entry = PageEntry {
-                        name: name.to_owned(),
-                        kind: PageKind::Page,
-                        date_key: None,
-                        rel_path: None,
-                        path: std::path::PathBuf::new(),
-                    };
-                    (entry, Arc::clone(&empty))
-                })
+                .map(|answer| (answer.page_entry(), Arc::clone(&empty)))
                 .collect()
         } else {
             Vec::new()

@@ -80,6 +80,11 @@ fn assert_fresh(root: &Path, store: Arc<Store>, what: &str, restart: bool) -> Ar
     let (patched, fresh) = table_rows(&store);
     let patched = patched.unwrap_or_else(|| panic!("{what}: the table was dropped, not patched"));
     assert_eq!(patched, fresh, "patched table after {what}");
+    store
+        .whole_graph()
+        .unwrap()
+        .graph
+        .assert_day_support_fresh();
     let live = inventory(&store);
     let walk: BTreeMap<String, String> = store
         .whole_graph()
@@ -259,6 +264,160 @@ fn set_block(raw: &str) -> impl FnOnce(&mut tine_core::model::PageDto) + '_ {
     move |doc| doc.blocks[0].raw = raw.to_owned()
 }
 
+/// S7/O3: unwritten days are journals in the store itself, once per day.
+#[test]
+fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        ("logseq/config.edn", "{:journal/page-title-format \"X yyyy_dd_MM\" :journal/file-name-format \"dd.MM.yyyy\"}\n"),
+        ("pages/Notes.md", "- [[22.10.2026]] [[Oct 22nd, 2026]] [[2026-10-22]] [[Ordinary]]\n"),
+        ("pages/Child.md", "title:: 23.10.2026/child\n\n- child\n"),
+        ("pages/Real.md", "title:: 24.10.2026\n\n- real ordinary date page\n"),
+        ("pages/Owner.md", "alias:: 25.10.2026\n\n- owner\n"),
+    ]);
+    let check = |store: &Store, title: &str, parent: bool| {
+        let view = store.whole_graph().unwrap();
+        let inventory = view.inventory(InventoryScope::All);
+        let rows: Vec<_> = inventory
+            .0
+            .iter()
+            .filter(|entry| entry.name == title)
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one store entity for {title}: {:?}",
+            inventory.0
+        );
+        assert!(rows[0].is_journal, "{title} is a journal");
+        assert!(rows[0].day.is_some());
+        assert_eq!(rows[0].namespace_parent, parent);
+        assert!(matches!(rows[0].target, crate::Resolved::Absent { .. }));
+        assert!(rows[0].link.is_none(), "the journal opens itself");
+        // Exercise both narrowed and whole-universe page candidates, and
+        // their actual journal/day facts rather than just a displayed name.
+        for source in [
+            format!("@page and name = '{title}'"),
+            "@page and journal = true and not (name = 'Ordinary')".to_owned(),
+        ] {
+            let (query, settings) = tine_core::query::parse_query_text(
+                &source,
+                tine_core::query::QueryDialect::Tql,
+                tine_core::date::JournalDate::today(),
+            );
+            let answer = view
+                .query_ir(
+                    crate::IrRequest::Run {
+                        query: &query,
+                        view: &settings,
+                        context: &Default::default(),
+                    },
+                    &crate::Cancel::default(),
+                )
+                .unwrap()
+                .unwrap();
+            let crate::IrAnswer::Result(result) = answer else {
+                panic!("page result")
+            };
+            let tine_core::query::ir::QueryRows::Page { pages } = result.rows else {
+                panic!("page rows")
+            };
+            let page = pages
+                .iter()
+                .find(|page| page.name == title)
+                .expect("query lists the day");
+            assert_eq!(page.kind, tine_core::model::PageKind::Journal);
+            assert_eq!(page.journal_day, rows[0].day.map(|day| day.0));
+            assert!(page.path.is_empty());
+        }
+    };
+    check(&store, "X 2026_22_10", false);
+    check(&store, "X 2026_23_10", true);
+    let view = store.whole_graph().unwrap();
+    let rows = view.inventory(InventoryScope::All);
+    assert!(!rows.0.iter().any(|entry| [
+        "22.10.2026",
+        "2026-10-22",
+        "Oct 22nd, 2026",
+        "23.10.2026"
+    ]
+    .contains(&entry.name.as_str())));
+    assert!(rows.0.iter().any(|entry| entry.name == "24.10.2026"
+        && !entry.is_journal
+        && matches!(entry.target, crate::Resolved::Existing { .. })));
+    assert!(rows
+        .0
+        .iter()
+        .any(|entry| entry.name == "Ordinary" && !entry.is_journal));
+    assert!(rows
+        .0
+        .iter()
+        .any(|entry| entry.name == "25.10.2026"
+            && matches!(entry.target, crate::Resolved::Alias { .. })));
+    drop(view);
+    assert_patch(&store, "pages/Notes.md", "[[2026-10-22]] [[Ordinary]]");
+    check(&store, "X 2026_22_10", false);
+    assert_patch(&store, "pages/Notes.md", "[[Ordinary]]");
+    assert!(!store
+        .whole_graph()
+        .unwrap()
+        .inventory(InventoryScope::All)
+        .0
+        .iter()
+        .any(|entry| entry.name == "X 2026_22_10"));
+    assert_patch(&store, "pages/Notes.md", "[[22.10.2026]]");
+    check(&store, "X 2026_22_10", false);
+    // An unedited page keeps a second spelling alive after the edit removes
+    // its last spelling. The delta and a freshly built relation must agree.
+    assert_patch(&store, "pages/Child.md", "[[Oct 22nd, 2026]]");
+    assert_patch(&store, "pages/Notes.md", "[[Ordinary]]");
+    check(&store, "X 2026_22_10", false);
+    store
+        .whole_graph()
+        .unwrap()
+        .graph
+        .assert_day_support_fresh();
+    assert_patch(&store, "pages/Notes.md", "[[22.10.2026]]");
+    assert_patch(&store, "pages/Notes.md", "[[22.10.2026]] [[23.10.2026]]");
+    check(&store, "X 2026_23_10", false);
+    assert_patch(&store, "pages/Notes.md", "[[22.10.2026]]");
+    check(&store, "X 2026_23_10", true);
+    // A journal's file claim flips the existing entity, and deleting it
+    // restores the reference-only journal. These publications refetch by
+    // the established file-claim contract, never leave a second entity.
+    let journal = PageId::from("journals/22.10.2026.md");
+    let dto = store.page(&PageId::from("pages/Notes.md")).unwrap().doc;
+    let sub = store.subscribe();
+    let mut tx = store.page_plan(Some(EditKind::CreatePage));
+    tx.save_page(&[EditKind::CreatePage], &journal, SaveBase::CreateNew, &dto);
+    apply_plan(&store, tx);
+    assert!(
+        std::iter::from_fn(|| sub.try_recv().unwrap()).any(|change| {
+            serde_json::to_value(&change).unwrap()["inventoryChanged"] == true
+                && change.inventory_delta().is_none()
+        })
+    );
+    let view = store.whole_graph().unwrap();
+    let rows = view.inventory(InventoryScope::All);
+    let day: Vec<_> = rows
+        .0
+        .iter()
+        .filter(|entry| entry.day == Some(crate::Day(20261022)))
+        .collect();
+    assert_eq!(day.len(), 1);
+    assert!(matches!(day[0].target, crate::Resolved::Existing { .. }));
+    drop(view);
+    let mut tx = store.page_plan(Some(EditKind::DeletePage));
+    tx.trash(
+        &journal.file(),
+        store.page(&journal).unwrap().rev,
+        crate::TrashIf::Any,
+    );
+    apply_plan(&store, tx);
+    check(&store, "X 2026_22_10", false);
+    store.close();
+}
+
 /// Every save keeps the window's patched inventory equal to a fresh read, and
 /// signals exactly when the inventory changed (the old code signalled every
 /// change of the saved page's own name set, and always as a refetch).
@@ -275,6 +434,7 @@ fn assert_patch(store: &Arc<Store>, id: &str, raw: &str) -> usize {
     // The new generation inherited the table by patch (no rebuild), and the
     // patch equals a fresh build.
     let view = store.whole_graph().unwrap();
+    view.graph.assert_day_support_fresh();
     let patched = view
         .graph
         .referenced_name_table_built()

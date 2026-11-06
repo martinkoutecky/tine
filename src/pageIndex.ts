@@ -255,8 +255,8 @@ function ensureInstalled() {
       return names;
     });
     // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
-    // the backend's absent entries that open themselves (no `link`: not a
-    // date spelling of a day, not an alias), less what OG's `get-all-pages`
+    // the backend's absent entries that open themselves (no `link`), with
+    // their supplied kind and day, less what OG's `get-all-pages`
     // drops (built-in pages, UUID names, drawings) by the Rust answer
     // (`hidden_from_all_pages`; CM step 2 batches 5 and 8). A patch that
     // leaves this list equal leaves All pages alone. O(entries).
@@ -265,11 +265,11 @@ function ensureInstalled() {
       if (!current) return [];
       const rows: PageEntry[] = [];
       for (const entry of current.entries) {
-        if (entry.target.kind !== "absent" || entry.link || entry.is_journal || hidden_from_all_pages(entry.name)) continue;
-        rows.push({ name: entry.name, kind: "page", date_key: null, path: "" });
+        if (entry.target.kind !== "absent" || entry.link || hidden_from_all_pages(entry.name)) continue;
+        rows.push({ name: entry.name, kind: entry.is_journal ? "journal" : "page", date_key: entry.day, path: "" });
       }
       return rows;
-    }, [], { equals: (a, b) => a.length === b.length && a.every((row, at) => row.name === b[at].name) });
+    }, [], { equals: (a, b) => a.length === b.length && a.every((row, at) => row.name === b[at].name && row.kind === b[at].kind && row.date_key === b[at].date_key) });
     return { allPages, allPageNames, referenceOnlyPages };
   });
   return installed;

@@ -1,0 +1,15 @@
+{
+  "config": {
+    "journalTitleFormat": "yyyy_dd_MM",
+    "journalFileFormat": "dd.MM.yyyy"
+  },
+  "files": {
+    "pages/Notes.md": "- [[22.10.2026]] [[Oct 22nd, 2026]] [[2026-10-22]]\n- [[23.10.2026/child]]\n- [[Ordinary]]\n",
+    "pages/Owner.md": "alias:: 2026_22_10\n\n- a day in an alias group\n"
+  },
+  "queries": [
+    {"anchor": "page", "q": {"name": "23.10.2026"}},
+    {"anchor": "page", "q": {"not": {"name": "Ordinary"}}},
+    {"anchor": "block", "q": {"refs": "2026_22_10"}}
+  ]
+}

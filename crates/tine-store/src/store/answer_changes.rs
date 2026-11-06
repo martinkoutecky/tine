@@ -63,6 +63,14 @@ impl Snapshot {
             })
         };
         let mut keys: BTreeSet<String> = BTreeSet::new();
+        let mut days = BTreeMap::new();
+        let remember_day = |days: &mut BTreeMap<String, JournalDate>, name: &str| {
+            let answer =
+                crate::model::fileless_names::FilelessName::new(&self.journal_format, name);
+            if let Some(day) = answer.day {
+                days.insert(tine_core::refs::page_key(&answer.name), day);
+            }
+        };
         let mut targets = HashSet::new();
         for path in paths {
             let page = |snapshot: &Self| {
@@ -138,6 +146,13 @@ impl Snapshot {
                     claimed_content_free(old, key) || claimed_content_free(self, key);
                 keys.insert(key.clone());
             }
+            for doc in [before.as_deref(), after.as_deref()].into_iter().flatten() {
+                for name in crate::query::document_aliases(doc) {
+                    if keys.contains(&tine_core::refs::page_key(&name)) {
+                        remember_day(&mut days, &name);
+                    }
+                }
+            }
             // A page that moved slot can change which page spells a key.
             let moved = old.graph.pages.positions.get(path) != self.graph.pages.positions.get(path);
             // A changed name also changes its namespace parents' entries
@@ -151,36 +166,47 @@ impl Snapshot {
                 })
             {
                 keys.insert(key.clone());
+                remember_day(&mut days, name);
                 if name.contains('/') {
-                    keys.extend(
-                        crate::model::namespace_parents::parent_prefixes(name).map(|(_, key)| key),
-                    );
+                    for (prefix, key) in crate::model::namespace_parents::parent_prefixes(name) {
+                        keys.insert(key);
+                        remember_day(&mut days, prefix);
+                    }
                 }
             }
         }
+        // A raw date spelling supports its canonical day entity. Include
+        // that key even when this edit removed its last raw spelling.
+        // Keep the typed day from the original spelling: configured literal
+        // tokens can be case-sensitive, so a lowercased key is not a date input.
+        keys.extend(days.keys().cloned());
         own_names_changed |= !keys.is_empty();
-        // The delta reads only what both generations already hold: the name
-        // table and the alias relation (`name_entry` asks the relation for a
-        // key's owners). `[[` completion builds the table without the
-        // relation; building the relation here would walk every page inside
-        // the publication, so a generation without it refetches instead.
+        // The delta reads only resident inputs. Completion can build the
+        // name table without day support: ordinary edits still get deltas,
+        // while a date edit refetches rather than building support by a
+        // graph walk inside publication. Alias owners must also be resident.
         fn resident(
             snapshot: &Snapshot,
+            needs_days: bool,
         ) -> Option<&crate::model::referenced_names::ReferencedNameTable> {
-            snapshot
-                .graph
-                .referenced_name_table_built()
-                .filter(|_| snapshot.graph.alias_list_built())
+            snapshot.graph.referenced_name_table_built().filter(|_| {
+                snapshot.graph.alias_list_built()
+                    && (!needs_days || snapshot.graph.day_support_built())
+            })
         }
         let (inventory, delta) = if full || empty_alias_moved {
             (true, None)
         } else if !own_names_changed {
             (false, None)
-        } else if let (Some(before), Some(after)) = (resident(old), resident(self)) {
+        } else if let (Some(before), Some(after)) = (
+            resident(old, !days.is_empty()),
+            resident(self, !days.is_empty()),
+        ) {
             let mut delta = InventoryDelta::default();
             for key in keys {
-                let now = self.name_entry(after, &key);
-                if old.name_entry(before, &key) != now {
+                let day = days.get(&key).copied();
+                let now = self.name_entry(after, &key, day);
+                if old.name_entry(before, &key, day) != now {
                     delta.keys.push(key);
                     delta.entries.0.extend(now);
                 }

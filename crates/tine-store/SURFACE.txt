@@ -357,6 +357,8 @@ field restore::RestoreFailed.done
 ## WholeGraph: Names (ceiling: 25)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
+# Batch 19: PublishedV1Spellings(All) uses this same inventory question for
+# frozen v1 lookup rows missing from entity All; no new operation or classifier.
 enum store::InventoryScope
 enum store::Resolved
 field store::InventoryEntry.name
