@@ -200,8 +200,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   );
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
+  // Page lookup observes the working-set index. Stop another page loading from
+  // invalidating this group's breadcrumbs and rows when its source is unchanged.
+  const sourcePage = createMemo(() => pageByName(props.page));
   const liveNode = (id: string) => {
-    const page = pageByName(props.page);
+    const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;
     const dto = dtoById(id);
     if (!dto) {
@@ -250,7 +253,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   // the edit happens in place, live, exactly as on the source page.
   const headerBlockId = (): string | null => {
     if (!ready()) return null;
-    const page = pageByName(props.page);
+    const page = sourcePage();
     const first = page && page.kind === props.kind ? docNode(page.roots[0] ?? "") : undefined;
     return first?.originatedFromPageHeader && editingId() === first.id ? first.id : null;
   };
@@ -260,7 +263,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   // arrives (including an emptied header, whose transient node is removed).
   const readOnlyRow = (b: BlockDto): BlockDto => {
     if (!b.page_property || !ready()) return b;
-    const page = pageByName(props.page);
+    const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return b;
     const first = docNode(page.roots[0] ?? "");
     return { ...b, raw: first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "" };
@@ -572,11 +575,17 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <For each={groupedIds()}>
           {(id) => {
-            const crumb = () => {
+            const crumb = createMemo<Crumb[]>((previous) => {
+              if (!props.showBreadcrumb) return [];
               const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));
               const tail = all.slice(-3);
-              return all.length > 3 ? [{ label: "…" }, ...tail] : tail;
-            };
+              const next = all.length > 3 ? [{ label: "…" }, ...tail] : tail;
+              // Identity resolution also observes other working-set loads.
+              // Keep unchanged crumbs keyed so their inline bodies stay mounted.
+              return previous && previous.length === next.length
+                && previous.every((item, i) => item.id === next[i].id && item.label === next[i].label)
+                ? previous : next;
+            });
             return (
               <>
                 <Show when={props.showBreadcrumb && crumb().length > 0 && startsParentGroup(id)}>
