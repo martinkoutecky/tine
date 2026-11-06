@@ -754,20 +754,21 @@ function __tine_raw_page_identity_key(name) {
 }
 
 /**
- * The prose of a Markdown page preamble after its page header, as UTF-8 byte
+ * The prose of a page preamble after its page header, as UTF-8 byte
  * offsets `[start, end]`, or `null` (I-12: the one answerer,
- * `page_preamble::page_preamble_content`, which the store's reference answer
+ * `page_properties::preamble_content_range`, which the store's reference answer
  * reads too).
  * @param {string} raw
+ * @param {boolean} is_org
  * @returns {string}
  */
-function __tine_raw_page_preamble_content_json(raw) {
+function __tine_raw_page_preamble_content_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.page_preamble_content_json(ptr0, len0);
+        const ret = wasm.page_preamble_content_json(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);

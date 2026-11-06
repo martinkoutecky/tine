@@ -7,6 +7,7 @@ import { blockRegions } from "../render/parse";
 import { formatForPage, node, pageByName, pageInstanceGeneration, pageRoots, type Node as ReadonlyNode } from "../document";
 import { resultTicket, resultsActionable, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 import { bindingCurrent, captureBinding } from "../binding";
+import { splitPagePreamble } from "../editor/properties";
 
 export interface ResultRow { id: string; page: string; kind?: PageKind; path?: string; dto?: BlockDto; detached?: boolean }
 const mounted = new WeakMap<BlockDto, { source: ReadonlyNode; instance: number | null }>();
@@ -148,4 +149,10 @@ export function samePagePropertyResult(hit: BlockDto, header: string | null, for
     .filter(property => property.primary).map(property => [property.key.toLowerCase(), property.value]);
   const selected = properties(hit.raw);
   return selected.length > 0 && JSON.stringify(selected) === JSON.stringify(properties(header));
+}
+
+/** Synthetic pre-block rows have no outline locator; validate their source part. */
+export function samePreBlockResult(hit: BlockDto, preBlock: string | null, format: Format): boolean {
+  return hit.page_preamble ? splitPagePreamble(preBlock, format).content === hit.raw
+    : samePagePropertyResult(hit, preBlock, format);
 }

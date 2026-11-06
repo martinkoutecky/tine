@@ -96,7 +96,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// namespace parts (`___lead` is "lead", `%E9` is "%E9"), so the persisted
 /// claimants, `name_by_path` and name-derived indexes change for unchanged
 /// graph files. The serialized layout stays unchanged; older ones rebuild.
-pub(crate) const FORMAT: u32 = 25;
+/// 26 (CM step 2 batch 20): query facts retain the header AND prose pre-blocks
+/// instead of only the optional header. Block queries now return matching
+/// preambles, so both old query indexes and memoized answers must rebuild.
+pub(crate) const FORMAT: u32 = 26;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

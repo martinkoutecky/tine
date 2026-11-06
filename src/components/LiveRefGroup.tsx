@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -31,8 +31,12 @@ import { inPageFindOpen } from "../inpageFind";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 import { trackRetirementPin } from "../retirementPins";
-import { selectedIds } from "../document";
 import { BlockList } from "./BlockList";
+import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
+import { splitPagePreamble } from "../editor/properties";
+import { resultsTicketActionable } from "../queryResultsEpoch";
+import { t } from "../i18n";
+import { retainResultDraft } from "../queryResultDrafts";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -329,8 +333,26 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const evidenceById = createMemo<Map<string, ReferenceBlockEvidence>>((previous) =>
     keepUnchanged(previous, (props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
+  const [promotedPreamble, setPromotedPreamble] = createSignal<{ id: string; node: ReturnType<typeof docNode>; instance: number | null } | null>(null);
+  const promotedPreambleId = () => {
+    const promoted = promotedPreamble();
+    return promoted && docNode(promoted.id) === promoted.node && promoted.instance === pageInstanceGeneration(props.page) ? promoted.id : null;
+  };
+  let releasePreambleDraft: (() => void) | undefined;
+  const releasePreamble = () => { releasePreambleDraft?.(); releasePreambleDraft = undefined; };
+  onCleanup(releasePreamble);
+  createEffect(() => {
+    const id = promotedPreambleId();
+    if (!id || editingId() !== id) releasePreamble();
+  });
   const queryReady = createMemo(() => props.surface !== "query"
-    || props.blocks.every(block => block.page_property ? resultsTicketCurrent(resultTicket(block)) : !!liveNode(block.id)));
+    // Promotion changes the answer epoch, including a matching peer header's
+    // ticket. Its stale DTO must not hide the editor whose exact live source
+    // this group still owns. Other rows still resolve through liveNode.
+    || (!!promotedPreambleId() && props.blocks.some(block => block.page_preamble))
+    || props.blocks.every(block => block.page_property || block.page_preamble
+      ? (block.page_preamble && !!promotedPreambleId()) || resultsTicketCurrent(resultTicket(block))
+      : !!liveNode(block.id)));
   // OG groups a page's matches by `:block/parent` and renders ONE breadcrumb per
   // parent group (block.cljs custom-query-results: `(group-by :block/parent ..)` +
   // `breadcrumb-with-container`), with the page's own top-level blocks first.
@@ -349,7 +371,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     const first = page && page.kind === props.kind ? docNode(page.roots[0] ?? "") : undefined;
     return first?.originatedFromPageHeader && editingId() === first.id ? first.id : null;
   };
-  const liveIdOf = (b: BlockDto): string => (b.page_property && headerBlockId()) || b.id;
+  const liveIdOf = (b: BlockDto): string => (b.page_property && headerBlockId()) || (b.page_preamble && promotedPreambleId()) || b.id;
   // GH #753: the materialized header survives editing. Return to the DTO
   // renderer on exit, using current header text until the backlink refresh
   // arrives (including an emptied header, whose transient node is removed).
@@ -392,6 +414,38 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       if (id) startEditing(id, docNode(id).raw.length, null, surface);
       else openPageProps(target.page, x, y);
     } finally { setPending(n => n - 1); }
+  };
+  const editPreamble = async (hit: BlockDto): Promise<void> => {
+    // Pinned while the source page loads, as editPageProperties: a windowed
+    // group must not unmount between the click and its editor (GH #886).
+    const owner = graphOwner(() => alive);
+    const setPending = props.occurrence.pendingEdits[1];
+    setPending(n => n + 1);
+    try {
+      if (!(await loadSourcePage({ page: props.page, pageKind: props.kind, path: props.path }, t("query-calm-results-changed", { count: 1 }))) || !owner()) return;
+      promoteLoadedPreamble(hit);
+    } finally { setPending(n => n - 1); }
+  };
+  const promoteLoadedPreamble = (hit: BlockDto): void => {
+    const page = pageByName(props.page);
+    if (!page || (props.surface === "query" && !resultsTicketActionable(resultTicket(hit)))
+      || splitPagePreamble(page.preBlock, page.format).content !== hit.raw) {
+      if (props.surface === "query") noticeChangedResults(1);
+      return;
+    }
+    // The answer still names the synthetic row while its editor owns a newly
+    // promoted block. Hold that row across publication/epoch changes, just as
+    // a result's open property draft does, until this source editor finishes.
+    batch(() => {
+      releasePreamble();
+      releasePreambleDraft = retainResultDraft(hit.id);
+      try {
+        const id = promotePagePreamble(props.page);
+        if (!id) { releasePreamble(); return; }
+        setPromotedPreamble({ id, node: docNode(id), instance: pageInstanceGeneration(props.page) });
+        startEditing(id, docNode(id).raw.length, null, surface);
+      } catch (error) { releasePreamble(); throw error; }
+    });
   };
   const grouping = createMemo(() => {
     const ids = props.blocks.map(liveIdOf);
@@ -741,6 +795,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                           : <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
                               readOnly={!d().page_property && !liveNode(id)}
                               queryResult={props.surface === "query"}
+                              onEditPreamble={d().page_preamble ? () => { void editPreamble(d()); } : undefined}
                               onEditPageProperties={(event) => { void editPageProperties(event); }} />}
                     </Show>
                   }

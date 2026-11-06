@@ -174,13 +174,13 @@ pub fn hidden_from_all_pages(name: &str) -> bool {
     og_built_in::hidden_from_all_pages(name)
 }
 
-/// The prose of a Markdown page preamble after its page header, as UTF-8 byte
+/// The prose of a page preamble after its page header, as UTF-8 byte
 /// offsets `[start, end]`, or `null` (I-12: the one answerer,
-/// `page_preamble::page_preamble_content`, which the store's reference answer
+/// `page_properties::preamble_content_range`, which the store's reference answer
 /// reads too).
 #[wasm_bindgen]
-pub fn page_preamble_content_json(raw: &str) -> String {
-    serde_json::to_string(&tine_outline::page_preamble::page_preamble_content(raw).map(|r| [r.0, r.1])).unwrap()
+pub fn page_preamble_content_json(raw: &str, is_org: bool) -> String {
+    serde_json::to_string(&tine_outline::page_preamble::preamble_content_range(raw, is_org).map(|r| [r.0, r.1])).unwrap()
 }
 
 /// Whether a block property key is hidden from rendered chips (I-12: the one

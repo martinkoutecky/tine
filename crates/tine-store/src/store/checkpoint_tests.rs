@@ -309,6 +309,56 @@ fn old_file_name_decoder_checkpoints_are_rebuilt() {
 }
 
 #[test]
+fn format25_preamble_query_checkpoints_rebuild_once_then_load() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/A.md"),
+        "Prose [[One]]\n\n- ordinary\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    let written = open_cp(root.path(), &cp);
+    let rows = |store: &Store| {
+        let crate::QueryResult::Simple(groups) = store
+            .whole_graph()
+            .unwrap()
+            .query("[[One]]", crate::QueryDialect::Simple)
+            .unwrap()
+        else {
+            panic!("simple rows")
+        };
+        groups
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .filter(|b| b.page_preamble)
+            .count()
+    };
+    assert_eq!(rows(&written), 1);
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    // The envelope rejects the old format before attempting its body decode.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&25_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let rebuilt = open_cp(root.path(), &cp);
+    assert_eq!(rows(&rebuilt), 1);
+    assert_eq!(load_outcome(&rebuilt), "format");
+    assert!(parse_passes(&rebuilt) > 0);
+    assert!(matches!(
+        rebuilt.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    rebuilt.close();
+    let loaded = open_cp(root.path(), &cp);
+    assert_eq!(rows(&loaded), 1);
+    assert_eq!(load_outcome(&loaded), "loaded");
+    loaded.close();
+}
+
+#[test]
 fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(
@@ -1194,7 +1244,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (25, GOLDEN),
+        (26, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

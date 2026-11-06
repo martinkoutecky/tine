@@ -213,14 +213,18 @@ pub fn file_json(
     };
     let parsed = parse_file(rel, text);
     let mut blocks = Vec::new();
+    let mut pre_block_kinds = Vec::new();
     if let Some(pre) = &parsed.pre_block {
-        let header = tine_core::page_properties::property_projection_with_config(
-            pre,
-            org,
-            &Default::default(),
-        );
-        blocks.push(block_json(pre, 1, &header, config));
+        use tine_core::page_properties::{pre_block_projections, PreBlockKind};
+        for (kind, block) in pre_block_projections(pre, org) {
+            pre_block_kinds.push(match kind {
+                PreBlockKind::Properties => "properties",
+                PreBlockKind::Preamble => "preamble",
+            });
+            blocks.push(block_json(block.raw(), 1, &block, config));
+        }
     }
+    let pre_block = !blocks.is_empty();
     walk(&parsed.roots, 1, &mut blocks, config);
     json!({
         "path": rel,
@@ -230,7 +234,8 @@ pub fn file_json(
         "stem": stem,
         "title": page_title_from_preamble(text, format),
         "aliases": aliases(&parsed),
-        "preBlock": parsed.pre_block.is_some(),
+        "preBlock": pre_block,
+        "preBlockKinds": pre_block_kinds,
         "blocks": blocks,
     })
 }
@@ -796,6 +801,9 @@ pub struct FileInfo {
     pub name: String,
     pub aliases: Vec<String>,
     pub pre: bool,
+    /// Harness-only roles of the initial positions; the bridge ignores this
+    /// metadata and evaluates every supplied block normally.
+    pub pre_block_kinds: Vec<String>,
     /// Per block: level and occurrences (kind, spelling).
     pub blocks: Vec<(usize, Vec<(String, String)>)>,
 }
@@ -866,6 +874,7 @@ impl<'a> Ctx<'a> {
                     name,
                     aliases: strings(&f["aliases"]),
                     pre: f["preBlock"].as_bool().unwrap_or(false),
+                    pre_block_kinds: strings(&f["preBlockKinds"]),
                     blocks,
                 },
             );
@@ -1053,8 +1062,9 @@ impl<'a> Ctx<'a> {
 }
 
 /// Tine runtime block ids of every parsed file, as (path, outline index):
-/// the header pre-block is index 0 (its result row id is
-/// `page-property:{kind:?}:{key}`), then the outline in pre-order.
+/// the header and prose pre-blocks precede the outline in pre-order, exactly
+/// as in `file_json`. Their synthetic identities are the existing reference
+/// rows' identities; prose-only pages have no phantom header position.
 fn tine_block_ids(view: &WholeGraph) -> BTreeMap<String, BlockId> {
     fn walk(blocks: &[DocBlock], path: &str, i: &mut usize, out: &mut BTreeMap<String, BlockId>) {
         for b in blocks {
@@ -1067,14 +1077,17 @@ fn tine_block_ids(view: &WholeGraph) -> BTreeMap<String, BlockId> {
     for page in view.corpus(None).pages {
         let path = page.id.to_string();
         let mut i = 0;
-        if page.document.pre_block.is_some() {
-            out.entry(format!(
-                "page-property:{:?}:{}",
-                page.kind,
-                page_key(&page.name)
-            ))
-            .or_insert((path.clone(), 0));
-            i = 1;
+        if let Some(pre) = &page.document.pre_block {
+            use tine_core::page_properties::{pre_block_projections, PreBlockKind};
+            for (kind, _) in pre_block_projections(pre, file_format(&path) == Format::Org) {
+                let prefix = match kind {
+                    PreBlockKind::Properties => "page-property",
+                    PreBlockKind::Preamble => "page-preamble",
+                };
+                out.entry(format!("{prefix}:{:?}:{}", page.kind, page_key(&page.name)))
+                    .or_insert((path.clone(), i));
+                i += 1;
+            }
         }
         walk(&page.document.roots, &path, &mut i, &mut out);
     }
@@ -1806,6 +1819,12 @@ pub fn compare_queries(ctx: &Ctx, queries: &[QuerySpec]) -> Vec<Diff> {
             let mut feats = Vec::new();
             if f.pre && b.1 == 0 {
                 feats.push("pre-block".to_owned());
+            }
+            if f.pre_block_kinds
+                .get(b.1)
+                .is_some_and(|kind| kind == "preamble")
+            {
+                feats.push("preamble".to_owned());
             }
             if ctx.page_of_path.get(&b.0).is_none() {
                 feats.push("non-owner file".to_owned());

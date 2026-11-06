@@ -1,0 +1,34 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Markdown",
+      "path": "pages/Markdown.md",
+      "preBlock": "Prose [[Target]]",
+      "title": null
+    },
+    {
+      "format": "org",
+      "name": "Mixed Org",
+      "path": "pages/Mixed Org.org",
+      "preBlock": "#+RELATED: [[Target]]\n\nProse [[Target]]",
+      "title": null
+    },
+    {
+      "format": "md",
+      "name": "Mixed",
+      "path": "pages/Mixed.md",
+      "preBlock": "related:: [[Target]]\n\nProse [[Target]]",
+      "title": null
+    },
+    {
+      "format": "org",
+      "name": "Org",
+      "path": "pages/Org.org",
+      "preBlock": "Prose [[Target]]",
+      "title": null
+    }
+  ],
+  "links": []
+}

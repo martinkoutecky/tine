@@ -755,7 +755,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return "main";
     },
     captureReceipt: createMockCaptureReceipts(),
-    async bindCaptureGraph() {},
+    async bindCaptureGraph() {
+      const result = await this.loadGraph("");
+      if (result.kind === "focused_existing") throw new Error("mock graph unavailable");
+      return result.meta;
+    },
     async forgetKnownGraph() {},
     async revealKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {

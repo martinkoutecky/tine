@@ -505,12 +505,12 @@ impl Plan {
         facts: &PageFacts,
         out: &mut Vec<Hit<'a>>,
     ) {
-        if let Some(block) = facts
-            .page_property_block()
-            .filter(|_| self.page_property_rows)
-        {
+        for (ordinal, block) in facts.pre_blocks().iter().enumerate() {
+            if !self.page_property_rows && !block.uuid.starts_with("page-preamble:") {
+                continue;
+            }
             if eval::eval_block(&self.filter, block, &PathRefCounts::new(), ctx) {
-                out.push(Hit::PageProperty);
+                out.push(Hit::PreBlock(ordinal));
             }
         }
         struct Roots<'a, 'o, 'c, 'data> {
@@ -627,12 +627,10 @@ fn empty_tag_targets() -> &'static HashSet<String> {
     EMPTY.get_or_init(HashSet::new)
 }
 
-/// One block row of a page: a block of its document, or the page's header
-/// property block, which lives in the page's facts (`PageFacts::
-/// page_property_block`) rather than in `Document::roots`.
+/// One block row of a page: an outline block or an indexed pre-block.
 #[derive(Clone, Copy)]
 enum Hit<'a> {
-    PageProperty,
+    PreBlock(usize),
     Block(&'a DocBlock),
 }
 
@@ -644,9 +642,7 @@ impl<'a> Hit<'a> {
     {
         match self {
             Hit::Block(block) => block,
-            Hit::PageProperty => facts
-                .page_property_block()
-                .expect("a PageProperty hit comes from facts that carry the block"),
+            Hit::PreBlock(ordinal) => &facts.pre_blocks()[*ordinal],
         }
     }
 }
@@ -655,9 +651,13 @@ impl<'a> Hit<'a> {
 /// synthetic row (`BlockDto::page_property`), exactly as in backlinks.
 fn row_dto(facts: &PageFacts, block: &DocBlock) -> BlockDto {
     let mut dto = result_dto(block);
-    dto.page_property = facts
-        .page_property_block()
-        .is_some_and(|header| std::ptr::eq(header, block));
+    if facts
+        .pre_blocks()
+        .iter()
+        .any(|pre| std::ptr::eq(pre, block))
+    {
+        super::mark_pre_block_dto(&mut dto, block);
+    }
     dto
 }
 

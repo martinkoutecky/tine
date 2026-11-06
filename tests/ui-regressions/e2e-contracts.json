@@ -500,7 +500,10 @@
       "stability":"burn-in"
     },
     "scripts/e2e-calm-query.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename (one click on the title puts the caret in the field) and edit inline (also from the Edit button beside the details menu, with Done at the editor's trailing end) while real Rust answers update; folding a query block's bullet hides its results and saves the fold, and the query's own arrow is that same fold (either control shows and changes it); copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
+      "contracts": [
+        {"class":"stateful-ux","userOutcome":"Markdown and Org preamble prose appears in block-query List results; its source opens, clicking the prose promotes and edits through ordinary guarded saves while keeping the peer header, and refreshed results use the promoted identity across restart.","blocking":true,"authority":"UI-CM-PREAMBLE-QUERY-ROWS; CM step 2 batch 20"},
+        {"class":"stateful-ux","userOutcome":"Query controls rename (one click on the title puts the caret in the field) and edit inline (also from the Edit button beside the details menu, with Done at the editor's trailing end) while real Rust answers update; folding a query block's bullet hides its results and saves the fold, and the query's own arrow is that same fold (either control shows and changes it); copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}
+      ],
       "acceptableVariations":["Menu placement, styling, result order and save latency may vary while controls are reachable and semantic outcomes remain correct."],
       "nonRequirements":["Exact pixels, incidental DOM structure, or native certification outside Linux WebKitGTK.","Creating groups by dropping onto a condition or merging All pages, Search and Query."],
       "stability":"burn-in"
@@ -971,7 +974,7 @@
       "stability": "stable"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

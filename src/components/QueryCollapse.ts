@@ -10,7 +10,7 @@ import type { BlockDto, RefGroup } from "../types";
  * This does not hydrate pages just to choose a menu label. */
 export function queryResultsHaveCollapsed(groups: RefGroup[]): boolean {
   for (const group of groups) for (const block of group.blocks) {
-    if (block.page_property) continue;
+    if (block.page_property || block.page_preamble) continue;
     const source = resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }, "mount");
     if (source) {
       const pending = [source.id];
@@ -62,7 +62,7 @@ export async function collapseQueryResults(groups: RefGroup[], collapsed: boolea
     const selected = new Set<string>();
     let changed = 0;
     for (const group of groups) {
-      for (const block of group.blocks.filter(block => !block.page_property)) {
+      for (const block of group.blocks.filter(block => !block.page_property && !block.page_preamble)) {
         const source = resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path });
         if (!source) changed++;
         else selected.add(source.id);

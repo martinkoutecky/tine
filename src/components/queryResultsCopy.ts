@@ -1,5 +1,5 @@
 import { exportNodesFor, formatForPage, pageByName } from "../document";
-import { noticeChangedResults, samePagePropertyResult, resolveResultRow } from "./queryResultIdentity";
+import { noticeChangedResults, samePreBlockResult, resolveResultRow } from "./queryResultIdentity";
 import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
@@ -39,10 +39,10 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         const ids: string[] = [];
         const propertyRoots: BlockDto[] = [];
         for (const block of group.blocks) {
-          validators.push(() => block.page_property ? resultsTicketActionable(resultTicket(block))
+          validators.push(() => block.page_property || block.page_preamble ? resultsTicketActionable(resultTicket(block)) && samePreBlockResult(block, loaded!.preBlock, format)
             : !!resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }));
-          if (block.page_property) {
-            if (resultsTicketActionable(resultTicket(block)) && samePagePropertyResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
+          if (block.page_property || block.page_preamble) {
+            if (resultsTicketActionable(resultTicket(block)) && samePreBlockResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
             else changed++;
             continue;
           }
@@ -61,10 +61,10 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         format = sourceFormat;
         const roots: BlockDto[] = [];
         for (const block of group.blocks) {
-          validators.push(() => block.page_property ? resultsTicketActionable(resultTicket(block))
+          validators.push(() => block.page_property || block.page_preamble ? resultsTicketActionable(resultTicket(block)) && samePreBlockResult(block, dto.pre_block, sourceFormat)
             : !!resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }, "action", dto));
-          if (block.page_property) {
-            if (resultsTicketActionable(resultTicket(block)) && samePagePropertyResult(block, dto.pre_block, sourceFormat)) roots.push(block);
+          if (block.page_property || block.page_preamble) {
+            if (resultsTicketActionable(resultTicket(block)) && samePreBlockResult(block, dto.pre_block, sourceFormat)) roots.push(block);
             else changed++;
             continue;
           }

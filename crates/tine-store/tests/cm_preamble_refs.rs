@@ -115,3 +115,115 @@ fn prose_before_the_first_block_is_a_referencing_block() {
     check(&store, "warm");
     store.close();
 }
+
+/// Production query execution, including memo/index carry and checkpoint reload.
+#[test]
+fn preamble_query_rows_survive_reload_and_follow_edits_and_promotion() {
+    use crate::{Depth, OpenOptions, QueryDialect, QueryResult, WatchMode};
+    let _integration_guard = crate::test_transactions::integration_lock();
+    for (ext, header, outline, promoted) in [
+        (
+            "md",
+            "related:: [[Target]]\n",
+            "- ordinary\n",
+            "- Promoted [[Target]]\n- ordinary\n",
+        ),
+        (
+            "org",
+            "#+RELATED: [[Target]]\n",
+            "* ordinary\n",
+            "* Promoted [[Target]]\n* ordinary\n",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        let path = dir.path().join(format!("pages/Source.{ext}"));
+        std::fs::write(&path, format!("{header}\nProse [[Target]]\n\n{outline}")).unwrap();
+        let cp = dir.path().join("launch.bin");
+        let open = || {
+            Store::open(
+                dir.path(),
+                OpenOptions {
+                    watch: WatchMode::Poll,
+                    launch_checkpoint: Some(cp.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0
+        };
+        let rows = |store: &Store, source: &str, dialect| {
+            let result = store.whole_graph().unwrap().query(source, dialect).unwrap();
+            let groups = match result {
+                QueryResult::Simple(groups) => (*groups).clone(),
+                QueryResult::Advanced(result) => result.groups,
+            };
+            groups
+                .into_iter()
+                .flat_map(|g| g.blocks)
+                .collect::<Vec<_>>()
+        };
+        let check = |store: &Store| {
+            for (q, dialect) in [
+                ("[[Target]]", QueryDialect::Simple),
+                ("(page-ref Target)", QueryDialect::Simple),
+                (
+                    "[:find (pull ?b [*]) :where (page-ref ?b \"target\")]",
+                    QueryDialect::Advanced,
+                ),
+                (
+                    "[:find (pull ?b [*]) :where [?p :block/name \"target\"] [?b :block/refs ?p]]",
+                    QueryDialect::Advanced,
+                ),
+            ] {
+                let hits = rows(store, q, dialect);
+                assert_eq!(hits.len(), 2, "{ext}: {q}: {hits:?}");
+                assert!(hits[0].page_property);
+                assert!(preamble(&hits[1]));
+                assert_eq!(hits[1].raw, "Prose [[Target]]");
+            }
+            // The preamble and header are peers, never ancestors of the outline.
+            assert!(rows(store, "[[Target]]", QueryDialect::Simple)
+                .iter()
+                .all(|b| b.raw != "ordinary"));
+            assert_eq!(
+                rows(store, "(not [[Unrelated]])", QueryDialect::Simple).len(),
+                3
+            );
+        };
+        let store = open();
+        check(&store);
+        store.write_checkpoint_now();
+        store.close();
+        let store = open();
+        check(&store); // loaded facts and already memoized answers
+        for (text, expected, is_preamble) in [
+            (
+                format!("Changed [[Target]]\n\n{outline}"),
+                Some("Changed [[Target]]"),
+                true,
+            ),
+            (outline.to_owned(), None, false),
+            (
+                format!("Added [[Target]]\n\n{outline}"),
+                Some("Added [[Target]]"),
+                true,
+            ),
+            (promoted.to_owned(), Some("Promoted [[Target]]"), false),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            store.refresh(Depth::Stamps).unwrap();
+            let hits = rows(&store, "[[Target]]", QueryDialect::Simple);
+            assert_eq!(
+                hits.len(),
+                usize::from(expected.is_some()),
+                "{ext}: {hits:?}"
+            );
+            if let Some(hit) = hits.first() {
+                assert_eq!(Some(hit.raw.as_str()), expected, "{ext}: {hit:?}");
+                assert_eq!(preamble(hit), is_preamble, "{ext}: {hit:?}");
+            }
+        }
+        store.close();
+    }
+}
