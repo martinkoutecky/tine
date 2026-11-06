@@ -14,17 +14,22 @@ import { LiveRefGroup } from "./LiveRefGroup";
 // (jsdom has no layout; the rect is stubbed, the real geometry is scripts/e2e-gh810-embed-scroll.mjs.)
 
 beforeAll(initParser);
+const sizes = new Map<Element, () => void>();
+const deliverSizes = () => { for (const report of sizes.values()) report(); };
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class {
     constructor(private callback: ResizeObserverCallback) {}
     observe(target: Element) {
-      queueMicrotask(() => this.callback([{ target, borderBoxSize: [{ blockSize: target.getBoundingClientRect().height }] } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver));
+      const report = () => this.callback([{ target, borderBoxSize: [{ blockSize: target.getBoundingClientRect().height }] } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
+      sizes.set(target, report);
+      queueMicrotask(report);
     }
-    unobserve() {}
+    unobserve(target: Element) { sizes.delete(target); }
     disconnect() {}
   });
 });
 afterEach(() => {
+  sizes.clear();
   resetNearObserverForTests();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -73,6 +78,7 @@ describe("a live ref group reserves the height it had when it last unmounted (GH
     expect(io.observed.has(first)).toBe(true);
     io.near(first);
     await expect.poll(() => root.textContent).toContain("embedded root");
+    deliverSizes();
     expect(first.style.minHeight).toBe("");
     dispose();
 
@@ -122,6 +128,8 @@ describe("a live ref group reserves the height it had when it last unmounted (GH
     let dispose = query();
     io.near(root.querySelector<HTMLElement>(".live-ref-group")!);
     await expect.poll(() => root.textContent).toContain("embedded root");
+    // The native observer reports the new box after asynchronous admission.
+    deliverSizes();
     dispose();
     dispose = query();
     try {

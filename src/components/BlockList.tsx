@@ -17,9 +17,12 @@ import { editingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { Block, CollapseSurfaceContext, SurfaceContext } from "./Block";
-import { elementFromPointIn, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
+import { elementFromPointIn, newResizeObserver, windowOf } from "../windowRealm";
 import { createOutlineWindowGeometry, createOutlineWindowModel } from "./outlineWindowModel";
-import { batchViewportChanges, preserveAboveViewport, cachedScrollContainer } from "../scrollContainer";
+import { preserveAboveViewport } from "../scrollContainer";
+import { observeViewportWindow } from "../viewportWindow";
+import { trackRetirementPin } from "../retirementPins";
+import { inPageFindOpen } from "../inpageFind";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -91,8 +94,8 @@ export function stablePartition(ids: readonly string[], sizes: readonly number[]
   return out;
 }
 
-export function BlockList(props: { ids: readonly string[] }): JSX.Element {
-  return <For {...blockListProps(() => props.ids)} />;
+export function BlockList(props: { ids: readonly string[]; render?: (id: string) => JSX.Element }): JSX.Element {
+  return <For {...blockListProps(() => props.ids, props.render)} />;
 }
 
 /** The same renderer as BlockList, as Solid For props for recursive callers.
@@ -100,7 +103,7 @@ export function BlockList(props: { ids: readonly string[] }): JSX.Element {
  * depth. The getter stays reactive; this module owns grouping and rendering.
  * Pass these props intact; destructuring each takes a snapshot. Same costs
  * and lifetime as BlockList, no document mutation. */
-export function blockListProps(idsOf: () => readonly string[]): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
+export function blockListProps(idsOf: () => readonly string[], render = (id: string): JSX.Element => <Block id={id} />): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
   onCleanup(listenForOutlinePrint());
   const collapseSurface = useContext(CollapseSurfaceContext);
   const [groups, setGroups] = createSignal<readonly WindowGroup[]>([]);
@@ -158,27 +161,15 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
   return {
     get each() { return entries(); },
     children: (entry: OutlineEntry): JSX.Element => typeof entry === "string"
-      ? <Block id={entry} /> : <WindowedList groups={entry.groups} />,
+      ? render(entry) : <WindowedList groups={entry.groups} render={render} />,
   };
 }
 
-function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
+function WindowedList(props: { groups: readonly WindowGroup[]; render: (id: string) => JSX.Element }): JSX.Element {
   let container!: HTMLDivElement;
   const [width, setWidth] = createSignal(900);
   const [font, setFont] = createSignal("16px sans-serif");
-  const callbacks = new WeakMap<Element, (entry: IntersectionObserverEntry) => void>();
-  // Created after insertion from the list's own realm and vertical scroller.
-  let observer: IntersectionObserver | null | undefined;
-  onCleanup(() => observer?.disconnect());
-  const observe = (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => {
-    if (observer === undefined) {
-      observer = newIntersectionObserver(host, (entries) => batchViewportChanges(() => {
-        for (const entry of entries) callbacks.get(entry.target)?.(entry);
-      }), { root: cachedScrollContainer(host), rootMargin: "600px 0px" });
-    }
-    callbacks.set(host, callback); observer?.observe(host);
-    return () => { observer?.unobserve(host); callbacks.delete(host); };
-  };
+  const observe = (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => observeViewportWindow(host, callback);
   onMount(() => {
     const update = () => batch(() => { setWidth(container.clientWidth || 900); setFont(getComputedStyle(container).font || "16px sans-serif"); });
     update();
@@ -187,11 +178,11 @@ function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
     onCleanup(() => resize?.disconnect());
   });
   return <div ref={container} class="outline-list"><For each={props.groups}>{(group, index) =>
-    <BlockWindow ids={group.ids} first={index() === 0} width={width()} font={font()} observe={observe} />
+    <BlockWindow ids={group.ids} first={index() === 0} width={width()} font={font()} observe={observe} render={props.render} />
   }</For></div>;
 }
 
-function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => () => void }): JSX.Element {
+function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => () => void; render: (id: string) => JSX.Element }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
   const folds = () => {
@@ -203,13 +194,21 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
   const [near, setNear] = createSignal(props.first || typeof IntersectionObserver === "undefined");
   const [forced, setForced] = createSignal(false);
   const [height, setHeight] = createSignal(0);
+  const [interaction, setInteraction] = createSignal(false);
   const model = createOutlineWindowModel(props.ids, folds);
   const geometry = createOutlineWindowGeometry(model, () => props.width, () => props.font);
   const active = () => {
     const id = editingId();
     return !!id && model().members.has(id);
   };
-  const mounted = () => near() || forced() || active() || printingOutline();
+  const mounted = () => near() || forced() || active() || interaction() || printingOutline()
+    || (height() > 0 && inPageFindOpen());
+  createEffect(() => {
+    if (!host || !mounted()) return;
+    const pin = trackRetirementPin(host);
+    createEffect(() => setInteraction(pin.pinned()));
+    onCleanup(() => { pin.stop(); setInteraction(false); });
+  });
   const remember = (measuredHeight?: number, measuredWidth?: number) => {
     if (!host?.isConnected || !untrack(mounted)) return;
     const h = measuredHeight ?? host.getBoundingClientRect().height;
@@ -281,9 +280,9 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
   });
   return <div ref={host} class="outline-window" data-outline-window>
     <Show when={mounted()} fallback={
-      <div aria-hidden="true" style={{ height: `${height() || geometry().estimate()}px` }} />
+      <div aria-hidden="true" style={{ height: `${height() || geometry().estimate() || props.ids().length * 30}px` }} />
     }>
-      <For each={props.ids()}>{(id) => <Block id={id} />}</For>
+      <For each={props.ids()}>{props.render}</For>
     </Show>
   </div>;
 }

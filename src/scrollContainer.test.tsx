@@ -1,11 +1,29 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { batchViewportChanges, cachedScrollContainer, preserveAboveViewport, scrollContainer } from "./scrollContainer";
+import { batchViewportChanges, cachedScrollContainer, preserveAboveViewport, scrollContainer, trackViewportAnchor } from "./scrollContainer";
 import { observeNear, resetNearObserverForTests } from "./lazyObserve";
 import { createSignal, createRoot } from "solid-js";
 import { render } from "solid-js/web";
 import { reservedGroupHeight } from "./reservedGroupHeight";
 
 afterEach(() => { resetNearObserverForTests(); vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.innerHTML = ""; });
+
+it("anchors a surviving reference through filtering and resize without undoing a scrollbar jump", () => {
+  let mutate!: () => void, resize!: () => void;
+  vi.stubGlobal("MutationObserver", class { constructor(callback: () => void) { mutate = callback; } observe() {} disconnect() {} });
+  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
+  const root = document.createElement("div"), group = document.createElement("div");
+  root.style.overflowY = "auto"; group.className = "reference-group"; root.append(group); document.body.append(root);
+  let position = 100;
+  vi.spyOn(root, "getBoundingClientRect").mockReturnValue({ top: 0, left: 0, width: 900 } as DOMRect);
+  vi.spyOn(group, "getBoundingClientRect").mockImplementation(() => ({ top: position - root.scrollTop }) as DOMRect);
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => group });
+  const stop = trackViewportAnchor(group), stopOther = trackViewportAnchor(group);
+  try {
+    position += 80; mutate(); expect(root.scrollTop).toBe(80);
+    root.scrollTop = 500; position += 20; mutate(); expect(root.scrollTop).toBe(500);
+    position += 50; resize(); expect(root.scrollTop).toBe(550);
+  } finally { stop(); stopOther(); Reflect.deleteProperty(document, "elementFromPoint"); }
+});
 
 it("admits 50 below-view IO entries with zero rect reads, including the expanded root margin", () => {
   let deliver!: IntersectionObserverCallback;

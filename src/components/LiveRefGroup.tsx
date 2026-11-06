@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -23,9 +23,16 @@ import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
-import { reservedGroupHeight } from "../reservedGroupHeight";
+import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
+import { observeViewportWindow } from "../viewportWindow";
+import { inPageFindOpen } from "../inpageFind";
+import { printingOutline, registerOutlineWindow } from "../outlineViewport";
+import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
+import { trackRetirementPin } from "../retirementPins";
+import { selectedIds } from "../document";
+import { BlockList } from "./BlockList";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -102,42 +109,120 @@ interface LiveRefGroupProps {
 // offscreen group (I-25). Reference owners supply heightKey; queries also retain
 // their outer shell's height. The bounded, graph-scoped cache checks pane width.
 
+interface LocalCollapseRow { v: boolean; epoch: number; bulk?: boolean }
+interface RefOccurrence {
+  surface: string;
+  initialCollapsed: Map<string, boolean>;
+  localCollapsed: Signal<Record<string, LocalCollapseRow>>;
+  contextRoots: Signal<Record<string, string>>;
+  excerptFull: Signal<Record<string, boolean>>;
+  pendingEdits: Signal<number>;
+  geometry: Map<string, { width: number; height: number }>;
+}
+
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
+  const [inWindow, setInWindow] = createSignal(untrack(() => props.eager === true));
+  const [visible, setVisible] = createSignal(false);
+  const [forced, setForced] = createSignal(false);
+  const [interaction, setInteraction] = createSignal(false);
+  const [visited, setVisited] = createSignal(untrack(() => props.eager === true));
   let el: HTMLDivElement | undefined;
   // Kept current while alive: a cleanup must not read props, whose getters may
   // already answer for an unmounted embed.
   const ownerSurface = useContext(SurfaceContext);
+  // Only reference surfaces retire. Queries, embeds and previews keep their
+  // existing owners; this state also stays stable across reference retirement.
+  const occurrence: RefOccurrence = {
+    surface: props.surfaceKey ?? (props.surface === "embed" && props.hostBlockId
+      ? `embed:${ownerSurface}\u0000${props.hostBlockId}` : `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId()),
+    initialCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
+    excerptFull: createSignal({}), pendingEdits: createSignal(0), geometry: new Map(),
+  };
+  let alive = true;
+  const [hasViewport, setHasViewport] = createSignal(false);
+  onCleanup(() => { alive = false; });
+  const windowed = () => props.surface === "ref" && !props.eager;
+  const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
+    || selectedIds().some(id => docNode(id)?.page === props.page);
+  const wanted = () => inWindow() || forced() || (visited() && inPageFindOpen()) || (near() && (pinned() || printingOutline()));
+  const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {
     const owner = props.heightKey ?? props.hostBlockId;
     return owner === undefined ? undefined : JSON.stringify([
       ownerSurface, props.surface, owner, props.kind, props.path ?? props.page,
       props.embedId, props.blocks.length, !!props.excerpt,
     ]);
-  }, () => el, near);
+  }, () => el, near, windowed());
+  createEffect(() => { if (near()) setVisited(true); });
+  createEffect(() => {
+    if (!windowed() || !hasViewport()) return;
+    if (!wanted()) { setNear(false); return; }
+    if (near()) return;
+    let current = true;
+    void queueReferenceCommit(() => {
+      if (el) preserveAboveViewport(el, () => setNear(true), undefined, true);
+    }, () => current && alive && wanted(), priority);
+    onCleanup(() => { current = false; });
+  });
+  createEffect(() => {
+    if (!near() || !el || !windowed()) return;
+    const pin = trackRetirementPin(el);
+    createEffect(() => setInteraction(pin.pinned()));
+    onCleanup(() => { pin.stop(); setInteraction(false); });
+  });
   onMount(() => {
-    if (!el || near()) return;
+    if (!el) return;
     const node = el;
+    if (windowed() && typeof node.ownerDocument.defaultView?.IntersectionObserver === "function") {
+      setHasViewport(true);
+      onCleanup(observeViewportWindow(node, (entry, margin) => {
+        preserveAboveViewport(node, () => {
+          if (!entry.isIntersecting && untrack(near) && entry.boundingClientRect) reserved.remember(entry.boundingClientRect.height, entry.boundingClientRect.width);
+          setInWindow(entry.isIntersecting);
+          if (entry.isIntersecting) setForced(false);
+        }, undefined, false, entry, margin);
+      }, "viewport"));
+      onCleanup(observeViewportWindow(node, entry => {
+        setVisible(entry.isIntersecting);
+        if (entry.isIntersecting) setInWindow(true);
+      }, 0));
+      return;
+    }
+    if (near()) return;
     observeNear(node, entry => preserveAboveViewport(node, () => setNear(true), undefined, false, entry, 1200));
     onCleanup(() => unobserveNear(node));
   });
+  createEffect(() => {
+    if (!el || !windowed() || !visited()) return;
+    onCleanup(registerOutlineWindow(props.blocks.map(block => block.id), el, () => {
+      if (!untrack(inWindow)) setForced(true);
+      setNear(true);
+    }));
+  });
+  const estimate = () => Math.max(1, props.blocks.reduce((lines, block) => lines + (block.page_property ? block.raw.split("\n").length : 1), 0)) * 1.9;
 
   return (
     <div ref={el} class="live-ref-group"
-      style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}>
-      <Show when={near()}><MountedRefGroup {...props} geometryHost={() => el} /></Show>
+      style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${estimate()}em` } : undefined}>
+      <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
+      <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
+        readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
+        sourcePinned={() => windowed() && (pinned() || forced() || inPageFindOpen())}
+        schedule={windowed() && hasViewport()} /></Show>
+      </ReservedGroupGeometryContext.Provider>
     </div>
   );
 }
 
-// Offscreen groups own only their spacer and observation. Their row maps,
-// resources and local disclosure state are created together on first approach.
-// The mounted child keeps the existing render-once lifecycle and keyed rows.
-function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLElement | undefined }): JSX.Element {
+// The shell retains occurrence choices and geometry. Row maps, resources and
+// rendering belong to each disposable child; unchanged rows stay keyed while
+// that child is mounted.
+function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined;
+  readCurrent: () => boolean; priority: () => number; sourcePinned: () => boolean; schedule: boolean }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   // The host block's own outline and surface, read before this group provides its own.
   const hostScope = useContext(OutlineScopeContext);
-  const hostSurface = useContext(SurfaceContext);
   const readScope = {};
   let alive = true;
   onCleanup(() => { alive = false; });
@@ -149,7 +234,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   // no loads left to do, however many source pages it references.
   const [nearView, setNearView] = createSignal(true);
   const [acquire, setAcquire] = createSignal(0);
-  onCleanup(pinPageNearViewport(() => nearView() ? props.page : null));
+  onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned() ? props.page : null));
   onMount(() => {
     const host = props.geometryHost();
     if (host) onCleanup(trackNear(host, setNearView));
@@ -162,15 +247,19 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   const [readyResource] = createResource(
     () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
     async (source) => {
+      const scheduled = props.schedule;
+      const priority = props.priority;
       const [p, k, savedPath] = JSON.parse(source) as [string, PageKind, string | null];
       const path = savedPath ?? undefined;
       const occupied = pageByName(p);
       if (occupied) return occupied.kind === k && (!path || occupied.id === path);
       const epoch = graphEpoch();
       const root = graphMeta()?.root ?? "";
-      const owner = latestOwner(readScope, "page", graphOwner(() => alive &&
+      const owner = latestOwner(readScope, "page", graphOwner(() => alive && props.readCurrent() &&
         graphEpoch() === epoch && (graphMeta()?.root ?? "") === root));
-      const result = await readOwned(owner, path ? backend().getPageByPath(path) : backend().getPage(p, k));
+      const read = () => readOwned(owner, path ? backend().getPageByPath(path) : backend().getPage(p, k));
+      const result = scheduled ? await queueReferenceRead(read, owner, priority) : await read();
+      if (!result || !owner()) return false;
       if (result.kind === "stale") return false;
       const dto = result.value;
       // The component may have unmounted while this read was in flight. Never
@@ -182,7 +271,9 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
       const after = pageByName(p);
       if (after) return after.kind === k && (!path || after.id === path);
       if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
-      if (ensurePageLoaded(dto)) return false; // declined: stay on the DTO path
+      const admit = () => owner() && !ensurePageLoaded(dto);
+      const admitted = scheduled ? await queueReferenceCommit(admit, owner, priority) : admit();
+      if (!admitted || !owner()) return false; // declined: stay on the DTO path
       const loaded = pageByName(p);
       return loaded?.kind === k && (!path || loaded.id === path);
     },
@@ -276,10 +367,16 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   const editPageProperties = async (event: MouseEvent): Promise<void> => {
     const x = event.clientX;
     const y = event.clientY;
-    if (!(await loadSourcePage({ page: props.page, pageKind: props.kind, path: props.path }, "Its properties were not opened."))) return;
-    const id = beginPageHeaderEdit(props.page);
-    if (id) startEditing(id, docNode(id).raw.length, null, surface);
-    else openPageProps(props.page, x, y);
+    const target = { page: props.page, pageKind: props.kind, path: props.path };
+    const owner = graphOwner(() => alive);
+    const setPending = props.occurrence.pendingEdits[1];
+    setPending(n => n + 1);
+    try {
+      if (!(await loadSourcePage(target, "Its properties were not opened.")) || !owner()) return;
+      const id = beginPageHeaderEdit(target.page);
+      if (id) startEditing(id, docNode(id).raw.length, null, surface);
+      else openPageProps(target.page, x, y);
+    } finally { setPending(n => n - 1); }
   };
   const grouping = createMemo(() => {
     const ids = props.blocks.map(liveIdOf);
@@ -303,9 +400,10 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   });
   // A breadcrumb changes only its parent group's root. This presentation state
   // belongs to this mounted occurrence, never to the source page or session.
-  const [contextRoots, setContextRoots] = createSignal<Record<string, string>>({});
+  const [contextRoots, setContextRoots] = props.occurrence.contextRoots;
   const contextRootIds = createMemo(() => new Set(Object.values(contextRoots())));
   createEffect(() => {
+    if (!ready()) return;
     const keys = new Set(grouping().ids.map(parentKey));
     untrack(() => setContextRoots((roots) => {
       const entries = Object.entries(roots).filter(([key]) => keys.has(key));
@@ -359,17 +457,15 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
   // An embed's key names its host in the host's surface, so a caret kept on the
   // embed root survives the host moving (Tab, D-20261030-EMB) and remounting it.
-  const surface = props.surfaceKey ?? (props.surface === "embed" && props.hostBlockId
-    ? `embed:${hostSurface}\u0000${props.hostBlockId}` : `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId());
+  const surface = props.occurrence.surface;
   const resultRootIds = createMemo(() => new Set(groupedIds()));
-  const initialCollapsed = new Map<string, boolean>();
+  const initialCollapsed = props.occurrence.initialCollapsed;
   // Local fold rows. The embedded ROOT has a durable occurrence-owned override on
   // its macro host (GH #360); nested rows remain local presentation state whose
   // `epoch` remembers the source collapse generation at fold time, so a later
   // source write reclaims authority. Ref/query surfaces keep their pre-existing
   // local-copy semantics and ignore `epoch`.
-  interface LocalCollapseRow { v: boolean; epoch: number; bulk?: boolean }
-  const [localCollapsed, setLocalCollapsed] = createSignal<Record<string, LocalCollapseRow>>({});
+  const [localCollapsed, setLocalCollapsed] = props.occurrence.localCollapsed;
   const isEmbed = () => props.surface === "embed";
   const embedRootOverride = (id: string): boolean | null => {
     if (!isEmbed() || id !== props.embedId || !props.hostBlockId) return null;
@@ -521,7 +617,6 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
       });
     });
   });
-  onCleanup(() => initialCollapsed.clear());
   return (
         <BulletOpenContext.Provider value={props.surface === "preview" ? props.onOpenBlock ?? null : null}>
         <CollapseSurfaceContext.Provider value={props.surface === "preview" ? null : collapseSurface}>
@@ -575,8 +670,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
           navOnly: true,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
-        <For each={groupedIds()}>
-          {(id) => {
+        <BlockList ids={groupedIds()} render={(id) => {
             const crumb = createMemo<Crumb[]>((previous) => {
               if (!props.showBreadcrumb) return [];
               const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));
@@ -623,7 +717,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
                   fallback={
                     <Show when={dtoById(id)}>
                       {(d) => props.excerpt
-                        ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} />
+                        ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} fullState={props.occurrence.excerptFull} />
                         : props.surface === "preview"
                           // Until the source page is loaded the preview shows its
                           // capped copy; edits only ever reach the live block.
@@ -655,8 +749,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
                 </Show>
               </>
             );
-          }}
-        </For>
+          }} />
         </LinkDepthContext.Provider>
         </OutlineScopeContext.Provider>
         </EmbedNavExitContext.Provider>

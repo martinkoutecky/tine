@@ -6,6 +6,7 @@ import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import type { BlockDto, PageRead, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
+import { queueReferenceRead } from "../referenceAdmission";
 
 afterEach(() => {
   resetNearObserverForTests();
@@ -46,10 +47,12 @@ it.each([null, 'filters:: {"Hub" true}'])("loading one source page leaves every 
   document.body.append(root);
   const dispose = render(() => <LinkedReferences name="Hub" />, root);
   try {
-    await vi.waitFor(() => expect(pending.size).toBe(groups.length));
+    await vi.waitFor(() => expect(pending.size).toBe(2));
+    await vi.waitFor(() => expect(root.querySelectorAll(".ref-block")).toHaveLength(groups.length));
     await new Promise(resolve => setTimeout(resolve, 0));
     const elements = [...root.querySelectorAll<HTMLElement>(".reference-group")];
     for (const group of groups.slice(0, 3)) {
+      await vi.waitFor(() => expect(pending.has(group.page)).toBe(true));
       const touched = new Set<string>();
       const observer = new MutationObserver(records => {
         for (const record of records) {
@@ -70,5 +73,10 @@ it.each([null, 'filters:: {"Hub" true}'])("loading one source page leaves every 
     // Value stability must still let a real source edit update its breadcrumb.
     setRaw("parent-Source 0", "Changed parent");
     await vi.waitFor(() => expect(elements[0].querySelector(".ref-breadcrumb")?.textContent).toContain("Changed parent"));
-  } finally { dispose(); }
+  } finally {
+    dispose();
+    for (const [name, resolve] of pending) resolve(page(name, []));
+    // Mock native reads must settle too: the shared two-read bound spans views.
+    await queueReferenceRead(async () => true, () => true, () => 0);
+  }
 });

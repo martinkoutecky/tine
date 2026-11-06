@@ -61,3 +61,36 @@ at their observing layers. Linux measurements do not certify Windows timing.
 Unit cost: no persisted record, file, edit kind or transport change; delta is
 0 bytes and 0 files per edit on both 1-block and 60-block pages. The only cache
 is bounded, disposable in-memory geometry.
+
+## 2026-11-06 amendment: disposable reference groups (GH #886)
+
+### Prior decisions
+
+- Follow D-20261106-W886: measured reference retirement and bounded admission;
+  Find suspends retirement rather than narrowing the active search surface.
+- Follow ADR 0013: occurrence identity and edit ownership outlive the child.
+- Follow ADR 0041: logical roots and folds govern navigation before DOM reveal.
+- Extend this ADR's measured shell windows; supersede ADR 0008's render-once
+  lifetime for reference groups, as already done for large page outlines.
+
+The base release retains every visited reference group. Three walks of the
+property-heavy fixture mount all 200/400/800 groups, with aggregate process-tree
+PSS peaks of 2,653/4,860/8,305 MiB on Linux. Membership and the document working
+set alone therefore do not bound the renderer's lifetime.
+
+Reference owners retain lightweight occurrence state and measured boxes while
+disposing their expensive children. The ordinary outline windows share their
+scroller observers and anchor transactions with reference windows; existing
+resize-delivered measured geometry also serves property chunks. A shared queue
+admits visible work ahead of overscan, permits two native reads, yields between
+frontend admissions, and checks ownership again before admitting an answer.
+No detached component cache or second source-text cache is introduced.
+
+Find restores visited groups and pins them while open. This preserves the old
+visited-content scope and makes Find an explicit exception to the normal
+retention bound. Editing, selection and drag pins likewise take precedence.
+See the [reference rendering contract](../contracts/reference-rendering.md).
+
+The implementation remains subject to the fixed responsiveness and memory
+budgets in `RECEIPT-ref-windowing-886.md`; Linux evidence does not certify
+Windows WebView2 or macOS. There is no persisted-format or edit-unit cost change.

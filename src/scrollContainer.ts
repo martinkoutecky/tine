@@ -1,4 +1,4 @@
-import { elementFromPointIn, windowOf } from "./windowRealm";
+import { elementFromPointIn, newResizeObserver, windowOf } from "./windowRealm";
 import { batch } from "solid-js";
 
 /** Resolve on mount, after insertion, in the element's own realm. Using the
@@ -38,6 +38,63 @@ export function cachedScrollContainer(el: Element): Element | null {
 type Restore = () => void;
 let transaction: Map<Element, Restore> | undefined;
 const deferredRestores = new WeakMap<Element, Restore>();
+const anchoredRoots = new WeakMap<Element, { retain: (section: HTMLElement) => () => void }>();
+
+/** Keep a visible reference occurrence anchored through asynchronous filtering
+ * and width reflow. One observer/anchor per scroller, shared by sections. Scroll
+ * intent invalidates the old snapshot, so late layout cannot undo a user jump.
+ * This supplements the before/after transactions used for window hydration. */
+export function trackViewportAnchor(host: HTMLElement): () => void {
+  const root = cachedScrollContainer(host);
+  if (!root) return () => {};
+  const existing = anchoredRoots.get(root);
+  if (existing) return existing.retain(host);
+  const realm = windowOf(root) as Window & typeof globalThis;
+  let owners = 0;
+  let anchor: { group: Element; element: Element; block?: string; key?: string; top: number; scroll: number } | undefined;
+  const capture = () => {
+    const view = root.getBoundingClientRect();
+    const hit = elementFromPointIn(root, view.left + view.width * .35, view.top + 2);
+    const group = hit?.closest(".reference-group");
+    if (!group || !root.contains(group)) { anchor = undefined; return; }
+    const element = hit?.closest(".page-property-reference-row, [data-block-id], .reference-excerpt-row") ?? group;
+    anchor = { group, element, top: element.getBoundingClientRect().top - view.top, scroll: root.scrollTop,
+      block: element.getAttribute("data-block-id") ?? undefined,
+      key: element.matches(".page-property-reference-row") ? element.querySelector(".prop-key")?.textContent ?? undefined : undefined };
+  };
+  const restore = () => {
+    if (anchor && anchor.scroll === root.scrollTop && anchor.group.isConnected) {
+      let element: Element | null = anchor.element.isConnected ? anchor.element : null;
+      if (!element && anchor.block) element = anchor.group.querySelector(`[data-block-id="${realm.CSS.escape(anchor.block)}"]`);
+      if (!element && anchor.key) element = [...anchor.group.querySelectorAll(".page-property-reference-row")]
+        .find(row => row.querySelector(".prop-key")?.textContent === anchor!.key) ?? null;
+      if (element) {
+        const displacement = element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.top;
+        if (Math.abs(displacement) > .5) root.scrollTop += displacement;
+      }
+    }
+    capture();
+  };
+  // Only the reference sections' own subtrees: typing in the page outline above
+  // must not force a layout read per keystroke. Shifts from content above a
+  // section are handled by preserveAboveViewport and the root's ResizeObserver.
+  const mutation = new realm.MutationObserver(restore);
+  const resize = newResizeObserver(root, restore);
+  resize?.observe(root);
+  root.addEventListener("scroll", capture, { passive: true });
+  capture();
+  const shared = { retain: (section: HTMLElement) => {
+    owners++;
+    mutation.observe(section, { childList: true, subtree: true, characterData: true });
+    return () => {
+      if (--owners) return;
+      mutation.disconnect(); resize?.disconnect(); root.removeEventListener("scroll", capture);
+      anchoredRoots.delete(root);
+    };
+  } };
+  anchoredRoots.set(root, shared);
+  return shared.retain(host);
+}
 
 /** Solid defers DOM writes until every entry has supplied its before geometry.
  * Only one anchor per root is needed, then one restore after the DOM commit. */

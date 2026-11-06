@@ -6,6 +6,7 @@ import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import type { BlockDto, PageRead, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
+import { queueReferenceRead } from "../referenceAdmission";
 
 afterEach(() => {
   resetNearObserverForTests();
@@ -47,7 +48,8 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
   // also observes unrelated source loads. The visible name still stays Hub.
   const dispose = render(() => <LinkedReferences name={routed ? pageByName("Hub")!.name : "Hub"} />, root);
   try {
-    await vi.waitFor(() => expect(pending.size).toBe(groups.length));
+    await vi.waitFor(() => expect(pending.size).toBe(2));
+    await vi.waitFor(() => expect(root.querySelectorAll(".ref-block")).toHaveLength(groups.length));
     await new Promise(resolve => setTimeout(resolve, 0));
     const elements = [...root.querySelectorAll<HTMLElement>(".reference-group")];
     const lastDisclosure = elements.at(-1)!.querySelector<HTMLButtonElement>(".reference-group-disclosure")!;
@@ -58,6 +60,7 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
     // Keep filters/headers absent; load top-level rows, then a nested row last:
     // the real components exercise section invalidation without requiring that fix.
     for (const group of groups.slice(0, 3)) {
+      await vi.waitFor(() => expect(pending.has(group.page)).toBe(true));
       const touched = new Set<string>();
       const observer = new MutationObserver(records => {
         for (const record of records) {
@@ -89,5 +92,9 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
     expect(elements[2].querySelector(".ref-breadcrumb")?.textContent).toContain("Parent");
     setRaw("parent-Source 2", "Changed parent");
     await vi.waitFor(() => expect(elements[2].querySelector(".ref-breadcrumb")?.textContent).toContain("Changed parent"));
-  } finally { dispose(); }
+  } finally {
+    dispose();
+    for (const [name, resolve] of pending) resolve(page(name, []));
+    await queueReferenceRead(async () => true, () => true, () => 0);
+  }
 });

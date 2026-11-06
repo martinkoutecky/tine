@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, createMemo, createEffect, mergeProps, on, onCleanup, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, mergeProps, on, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -30,6 +30,7 @@ import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilter
 import { referenceKey, referenceRevision, registerUnlinkedReader } from "../referenceKeys";
 import { createCollapsedRevision } from "../collapsedRevision";
 import { StaleReferenceCount } from "./StaleReferenceCount";
+import { trackViewportAnchor } from "../scrollContainer";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -416,7 +417,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
       <Show when={exportChooserOpen()}>
         <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
-      <div class={`${section}-references`}>
+      <div ref={el => onMount(() => onCleanup(trackViewportAnchor(el)))} class={`${section}-references`}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
           {heading()} <Show when={!props.unlinked || groups() !== undefined}><span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span></Show>

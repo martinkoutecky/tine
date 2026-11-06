@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX, type Signal } from "solid-js";
 import { openInNewTab, openPageAtBlock } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -129,9 +129,10 @@ export function ReferenceExcerptBlocks(props: {
   page: string;
   kind: PageKind;
   path?: string;
+  fullState?: Signal<Record<string, boolean>>;
 }): JSX.Element {
   const evidenceById = createMemo(() => new Map(props.evidence.map((item) => [item.block_id, item])));
-  const [full, setFull] = createSignal<Record<string, boolean>>({});
+  const [full, setFull] = props.fullState ?? createSignal<Record<string, boolean>>({});
   return (
     <For each={props.blocks}>
       {(block) => {

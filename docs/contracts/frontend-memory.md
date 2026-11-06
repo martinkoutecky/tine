@@ -31,6 +31,11 @@ storage write changes.
 
 ## Journal feed days (L10-03, development only)
 
+See also the [reference rendering contract](reference-rendering.md) for the
+disposable content lifetime of Linked and Unlinked References. Their membership,
+occurrence choices and measured geometry outlive expensive mounted children;
+they retain no detached components or second source-text cache.
+
 The feed keeps day names and measured-height placeholders, rather than retaining
 every appended document. Once more than 12 days are loaded, measured offscreen
 days retire their nodes, facet owners and undo snapshots. Near-viewport days,

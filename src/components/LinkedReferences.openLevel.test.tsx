@@ -59,7 +59,8 @@ async function mountReferences(level: number | undefined) {
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render(() => <LinkedReferences name="Target" />, root);
-  for (let i = 0; i < 8; i++) await tick();
+  await expect.poll(() => ["a-hit", "b-hit"].every(id =>
+    root.querySelector(`.ls-block:not(.ref-block)[data-block-id="${id}"] > .block-main`))).toBe(true);
   return { root, dispose };
 }
 const shownIds = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>("[data-block-id]")].map((el) => el.dataset.blockId!);

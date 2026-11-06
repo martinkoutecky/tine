@@ -36,9 +36,11 @@ describe("GH #849: linked references over more pages than the working set holds"
   const mount = async (count: number) => {
     const callbacks = new Set<(element: Element, near: boolean) => void>();
     const near = new Map<Element, boolean>();
+    const observerCounts = new Map<Element, number>();
     let isNear = (_: Element) => true;
     vi.stubGlobal("IntersectionObserver", class {
       observe(target: Element) {
+        if (!this.targets.has(target)) observerCounts.set(target, (observerCounts.get(target) ?? 0) + 1);
         this.targets.add(target);
         near.set(target, isNear(target));
         queueMicrotask(() => { if (near.has(target)) this.deliver(target, isNear(target)); });
@@ -54,8 +56,15 @@ describe("GH #849: linked references over more pages than the working set holds"
         this.observed.add(target);
         this.callback([{ target, isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
       }
-      unobserve(target: Element) { near.delete(target); this.observed.delete(target); this.targets.delete(target); }
-      disconnect() { for (const target of this.targets) near.delete(target); this.targets.clear(); this.observed.clear(); }
+      unobserve(target: Element) {
+        if (this.targets.delete(target)) {
+          const count = (observerCounts.get(target) ?? 1) - 1;
+          if (count) observerCounts.set(target, count);
+          else { observerCounts.delete(target); near.delete(target); }
+        }
+        this.observed.delete(target);
+      }
+      disconnect() { for (const target of [...this.targets]) this.unobserve(target); this.observed.clear(); }
     });
     const groups: RefGroup[] = Array.from({ length: count }, (_, i) => ({ page: name(i), kind: "page", blocks: [row(i)] } as unknown as RefGroup));
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
@@ -74,6 +83,7 @@ describe("GH #849: linked references over more pages than the working set holds"
     const { read, root, dispose } = await mount(90);
     try {
       await expect.poll(() => root.querySelectorAll(".live-ref-group").length).toBe(90);
+      await expect.poll(() => Array.from({ length: 90 }, (_, i) => pageByName(name(i))).every(Boolean), { timeout: 10_000 }).toBe(true);
       const reads = await settle(() => read.mock.calls.length);
       expect(reads, "more source pages near the view than the working set holds must not evict each other").toBe(90);
       for (let i = 0; i < 90; i++) expect(pageByName(name(i))?.name).toBe(name(i));
@@ -84,6 +94,7 @@ describe("GH #849: linked references over more pages than the working set holds"
     const { read, root, dispose, setNear } = await mount(90);
     try {
       await expect.poll(() => root.querySelectorAll(".live-ref-group").length).toBe(90);
+      await expect.poll(() => Array.from({ length: 90 }, (_, i) => pageByName(name(i))).every(Boolean), { timeout: 10_000 }).toBe(true);
       await settle(() => read.mock.calls.length);
       setNear((i) => i >= 80);
       // Nothing is released until a load needs room: moving away does no work.

@@ -31,6 +31,7 @@ import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { visibleBody } from "../render/block";
+import { MeasuredContentWindow } from "./MeasuredContentWindow";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -120,6 +121,20 @@ function RefBlock(props: {
   const properties = createMemo(() =>
     props.block.page_property ? visiblePageProperties(pageProperties(props.block.raw, format())) : []
   );
+  const propertyChunks = createMemo(() => {
+    const rows = properties();
+    if (rows.length <= 80) return [rows];
+    return Array.from({ length: Math.ceil(rows.length / 16) }, (_, i) => rows.slice(i * 16, (i + 1) * 16));
+  });
+  const propertyRows = (rows: readonly [string, string][]) => <For each={rows}>
+    {([key, value], i) => <>
+      <Show when={i() > 0}><br /></Show>
+      <span class="page-property-reference-row">
+        <span class="prop-key"><PropertyKey name={key} /></span>{": "}
+        <span class="prop-value"><PagePropertyValue propertyKey={key} value={value} format={format()} /></span>
+      </span>
+    </>}
+  </For>;
   const [localFold, setLocalFold] = createSignal<boolean>();
   const hasKids = () => props.block.children.length > 0;
   const refTarget = () => ({
@@ -282,21 +297,11 @@ function RefBlock(props: {
                 </Show>
               }
             >
-              <For each={properties()}>
-                {([key, value], i) => (
-                  <>
-                    <Show when={i() > 0}>
-                      <br />
-                    </Show>
-                    <span class="page-property-reference-row">
-                      <span class="prop-key"><PropertyKey name={key} /></span>{": "}
-                      <span class="prop-value">
-                        <PagePropertyValue propertyKey={key} value={value} format={format()} />
-                      </span>
-                    </span>
-                  </>
-                )}
-              </For>
+              <For each={propertyChunks()}>{(rows, index) =>
+                <Show when={properties().length > 80} fallback={propertyRows(rows)}>
+                  <MeasuredContentWindow heightKey={`properties:${props.block.id}:${index()}`} estimate={rows.length * 30}>{propertyRows(rows)}</MeasuredContentWindow>
+                </Show>
+              }</For>
             </Show>
             <Show when={!props.block.page_property}>
               <PropertyRows entries={renderedProperties(props.block.raw, format())} format={format()} blockId={props.block.id} />

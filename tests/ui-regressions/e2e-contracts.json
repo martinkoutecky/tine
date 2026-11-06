@@ -228,7 +228,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-measure-886.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"Scrolling an expanded property-heavy Linked References section reaches the end and settles after viewport and large jumps; measurements compare 200 and 400 source pages on named release binaries.","blocking":false,"authority":"GH #886 measurement brief"}],
+      "contracts": [{"class":"core-operation","userOutcome":"Three walks of expanded property-heavy Linked References, large jumps, real scrollbar dragging, wheel and PageDown settle on named release binaries at 200, 400 and 800 sources; record visible readiness, frame gaps, mounted groups and independent process-tree PSS.","blocking":false,"authority":"GH #886; D-20261106-W886"}],
       "acceptableVariations": ["Host load, rendering latency, mutation counts and frame gaps vary; unsupported long-task APIs are reported explicitly."],
       "nonRequirements": ["Exact pixels or DOM structure; constant total-page cost; Windows certification from Linux measurements; release acceptance."],
       "stability":"burn-in"
