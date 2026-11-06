@@ -173,6 +173,12 @@
       "nonRequirements": ["Exact pixels or tab IDs; native certification outside Linux WebKitGTK; crash recovery or second-window lifecycle."],
       "stability":"burn-in"
     },
+    "scripts/e2e-measure-886.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Scrolling an expanded property-heavy Linked References section reaches the end and settles after viewport and large jumps; measurements compare 200 and 400 source pages on named release binaries.","blocking":false,"authority":"GH #886 measurement brief"}],
+      "acceptableVariations": ["Host load, rendering latency, mutation counts and frame gaps vary; unsupported long-task APIs are reported explicitly."],
+      "nonRequirements": ["Exact pixels or DOM structure; constant total-page cost; Windows certification from Linux measurements; release acceptance."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-ref-body-bench.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A large linked-reference panel settles with its nested rows present and native typing remains focused while the panel is visible.","blocking":false,"authority":"M-19 Wave 4 measure-first; provisional GH #746 stall budget 100 ms/s"}],
       "acceptableVariations": ["Expansion latency, frame timing and memory vary with the host; compare repeated baseline and prototype samples."],
