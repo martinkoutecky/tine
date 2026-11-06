@@ -293,6 +293,7 @@ export type LoadGraphResult =
 
 export interface CaptureGraphBindingResult {
   binding_generation: number;
+  meta: GraphMeta;
 }
 
 export interface GraphAccessInspection {

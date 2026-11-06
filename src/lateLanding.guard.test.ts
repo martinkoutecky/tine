@@ -182,6 +182,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
 const OWNER_PARAM_HELPERS = new Set([
   "src/App.tsx#installMobileExternalLinkHandler",
   "src/carry.ts#ensureLoaded",
+  "src/capture.tsx#Capture.refreshCaptureConfig", // both callers pass their latestOwner show/submit token
   "src/components/ExportModal.tsx#warmMacro",
   "src/components/ExportModal.tsx#warmQueryMacros",
   "src/document/workingSet.ts#admitPageFile",
