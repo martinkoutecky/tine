@@ -215,6 +215,8 @@
     "linker": "linker",
     "stem-name": "stem-name"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Caps Title": {
       "journal": [
@@ -457,5 +459,137 @@
         "stem-name"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 27th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "caps title"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "linker"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "org title"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "shown title"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "stem-name"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "release day"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 27th, 2026"
+    ],
+    [
+      "page",
+      "caps title"
+    ],
+    [
+      "page",
+      "linker"
+    ],
+    [
+      "page",
+      "org title"
+    ],
+    [
+      "page",
+      "shown title"
+    ],
+    [
+      "page",
+      "stem-name"
+    ],
+    [
+      "page",
+      "release day"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 27th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "caps title"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "linker"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "org title"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "shown title"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "stem-name"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "release day"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -7,8 +7,9 @@
 //! **Classes.** A *reference* (link, tag, embed, nested-link name, Org labelled
 //! link, Org headline tag, linkable property member, property key) is
 //! rewritten; task markers and priorities are references that are never
-//! rewritten (D-20261019-M2(4)), and so are bare `alias::`/`aliases::` members
-//! (R5, declared). A *rewrite target* is not a reference but names a page: a
+//! rewritten (D-20261019-M2(4)). Bare `alias::`/`aliases::` members follow
+//! too (D-20261105-CM13, a deliberate OG difference). A *rewrite target*
+//! is not a reference but names a page: a
 //! query's page-name arguments (`[[x]]`, `#x`, `(page x)`, `(page-ref x)`,
 //! `(namespace x)`, `(page-tags …)` and a TQL page-name literal; D-20261031-CMQ),
 //! a `[[x]]` in the argument of any other macro but `embed` (cloze, renderer,
@@ -33,6 +34,7 @@
 //! a second one for a block holding `{{` or an Org `[[file:`, plus one query
 //! parse per query macro; O(page bytes). Pure.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -79,15 +81,25 @@ impl<'a> Renames<'a> {
         }
     }
 
-    fn page(&self, name: &str) -> Option<&'a str> {
-        self.pages.get(&page_key(name)).map(String::as_str)
+    fn page(&self, name: &str) -> Option<Cow<'a, str>> {
+        if let Some(to) = self.pages.get(&page_key(name)) {
+            return Some(Cow::Borrowed(to));
+        }
+        // The typed-name map also covers unclaimed namespace members, e.g.
+        // alias:: old/sub. Use the shared namespace predicate and original
+        // byte suffix, including when folding changes the prefix's length.
+        crate::refs::namespace_refs(name)
+            .filter(|prefix| prefix.len() < name.len())
+            .filter_map(|prefix| self.pages.get(&page_key(prefix)).map(|to| (prefix, to)))
+            .last()
+            .map(|(prefix, to)| Cow::Owned(format!("{to}{}", &name[prefix.len()..])))
     }
 
     /// The new name of a query's page-name argument.
-    fn query_page(&self, name: &str) -> Option<&'a str> {
+    fn query_page(&self, name: &str) -> Option<Cow<'a, str>> {
         self.queries
             .and_then(|queries| queries.get(&page_key(name)))
-            .map(String::as_str)
+            .map(|to| Cow::Borrowed(to.as_str()))
             .or_else(|| self.page(name))
     }
 }
@@ -321,17 +333,8 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                 }
             }
             "implicit_linkable_property" => {
-                let alias = projection.regions.properties.iter().any(|p| {
-                    p.value_range.0 <= range.start
-                        && range.end <= p.value_range.1
-                        && (p.key.eq_ignore_ascii_case("alias")
-                            || p.key.eq_ignore_ascii_case("aliases"))
-                });
-                // R5 (declared): a bare alias member stays, as in OG.
-                if !alias {
-                    if let Some(to) = renames.page(&reference.name) {
-                        edits.push((range, member_spelling(to)));
-                    }
+                if let Some(to) = renames.page(&reference.name) {
+                    edits.push((range, member_spelling(&to)));
                 }
             }
             "explicit_tag" => {
@@ -339,10 +342,10 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     continue;
                 };
                 if node.starts_with('#') {
-                    edits.push((range, tag_for(to)));
-                } else if headline_tag_ok(to) {
+                    edits.push((range, tag_for(&to)));
+                } else if headline_tag_ok(&to) {
                     // An Org headline tag `:name:`: the range is the name.
-                    edits.push((range, to.to_owned()));
+                    edits.push((range, to.into_owned()));
                 }
             }
             "explicit_link" => link_edits(raw, range, &reference.name, renames, &mut edits),
@@ -396,7 +399,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
 fn nested_edits(node: &str, at: usize, renames: &Renames<'_>, edits: &mut Vec<Edit>) {
     for inner in crate::block_regions::nested_reference_ranges(node) {
         if let Some(to) = renames.page(&node[inner.clone()]) {
-            edits.push((at + inner.start..at + inner.end, to.into()));
+            edits.push((at + inner.start..at + inner.end, to.into_owned()));
         }
     }
 }
@@ -415,10 +418,10 @@ fn link_edits(
     };
     let node = &raw[range.clone()];
     let mut push = |inner: Range<usize>| {
-        if renames.page(&node[inner.clone()]) == Some(to) {
+        if renames.page(&node[inner.clone()]).as_deref() == Some(to.as_ref()) {
             edits.push((
                 range.start + inner.start..range.start + inner.end,
-                to.to_owned(),
+                to.to_string(),
             ));
         }
     };
@@ -484,8 +487,8 @@ fn query_edits(
             };
             let token = &form[range.clone()];
             let spelled = match family {
-                FormFamily::Tql => crate::query::print::sql_string(to),
-                FormFamily::Edn => og_token_spelling(token, to),
+                FormFamily::Tql => crate::query::print::sql_string(&to),
+                FormFamily::Edn => og_token_spelling(token, &to),
             };
             local.push((form_start + range.start..form_start + range.end, spelled));
         }
@@ -578,6 +581,6 @@ fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
     let start = "file:".len() + slash;
     Some((
         start..start + stem_len,
-        crate::model::encode_page_name(to, renames.file_name_format),
+        crate::model::encode_page_name(&to, renames.file_name_format),
     ))
 }

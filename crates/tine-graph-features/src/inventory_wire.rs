@@ -66,6 +66,10 @@ pub struct PageInventoryEntryWire {
     /// it and test no spelling themselves.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub not_namespace: bool,
+    /// R10-Q2: this spelling is only an alias, outside the page universe.
+    /// Keep it in completion/navigation, omit it from every namespace view.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub namespace_excluded: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -89,6 +93,7 @@ pub fn entry_wire(entry: &InventoryEntry) -> PageInventoryEntryWire {
         namespace_parent: entry.namespace_parent,
         empty_alias: entry.empty_alias,
         not_namespace: entry.name.contains('/') && !tine_core::refs::is_namespace_name(&entry.name),
+        namespace_excluded: matches!(entry.target, Resolved::Alias { .. }),
     }
 }
 

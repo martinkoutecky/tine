@@ -553,6 +553,32 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it("offers name-only rename for an unloaded alias link without inventing file actions", async () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "Alias Source", "page", false);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(document.querySelector('[data-page-action-id="rename-page"]')).not.toBeNull();
+    expect(document.querySelector('[data-page-action-id="delete-page"]')).toBeNull();
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
+    expect(document.querySelector<HTMLInputElement>('.ctx-rename-name')?.value).toBe("Alias Source");
+    dispose();
+  });
+
+  it("keeps unloaded Guide names and stale pinned paths out of name-only rename", async () => {
+    load();
+    for (const target of [
+      { name: "Tine-guide/Guide", pageKind: "page" as const },
+      { name: "Missing", pageKind: "page" as const, path: "pages/Missing.md" },
+    ]) {
+      const dispose = mount(() => <ContextMenu />);
+      openPageContextMenu(10, 10, target, false);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      expect(document.querySelector('[data-page-action-id="rename-page"]')).toBeNull();
+      dispose();
+    }
+  });
+
   it("uses two Escape rungs for inline rename before restoring the ellipsis", async () => {
     load();
     const trigger = document.createElement("button");

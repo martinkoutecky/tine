@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { msg, t } from "../i18n";
 // Settings → Help & diagnostics → "Verify synchronized graph": fingerprint the
 // exact bytes of this device's Markdown and Org files and compare them with the
@@ -124,8 +126,8 @@ export function GraphVerification(): JSX.Element {
 
   return (
     <div class="diagnostics-verification">
-      <h3>{t("graph-verification-verify-synchronized-graph")}</h3>
-      <p>{t("graph-verification-compare-the-exact-markdown-and-org-file-bytes")}</p>
+      <h3 {...settingAttributes(settings["graph-verification-verify-synchronized-graph"])}>{settingLabel(settings["graph-verification-verify-synchronized-graph"])}</h3>
+      <p>{settingDescription(settings["graph-verification-verify-synchronized-graph"])}</p>
       <div class="diagnostics-actions">
         <button type="button" class="settings-btn settings-btn-primary" disabled={operation() !== null} onClick={() => void create()}>
           {operation() ? t("graph-verification-verifying") : t("graph-verification-create-graph-verification-report")}

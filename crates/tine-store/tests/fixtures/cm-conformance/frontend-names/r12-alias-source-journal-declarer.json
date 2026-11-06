@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "control",
+      "path": "pages/control.md",
+      "preBlock": "title:: control",
+      "title": "control"
+    }
+  ],
+  "links": []
+}

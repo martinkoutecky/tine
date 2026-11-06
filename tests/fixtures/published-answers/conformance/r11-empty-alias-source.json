@@ -1,0 +1,153 @@
+{
+  "aliases": [
+    [
+      "ML",
+      "Machine Learning"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "ML"
+        ],
+        "name": "B",
+        "pages": [
+          "Machine Learning"
+        ]
+      },
+      {
+        "aliases": [
+          "ML"
+        ],
+        "name": "Machine Learning",
+        "pages": [
+          "B"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "empty_alias": true,
+        "is_journal": false,
+        "key": "b",
+        "link": {
+          "kind": "page",
+          "name": "Machine Learning"
+        },
+        "name": "B",
+        "target": {
+          "id": "pages/B.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "c",
+        "target": {
+          "id": "pages/c.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "machine learning",
+        "name": "Machine Learning",
+        "target": {
+          "id": "pages/Machine Learning.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml",
+        "link": {
+          "kind": "page",
+          "name": "Machine Learning"
+        },
+        "name": "ML",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Machine Learning.md"
+          ]
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "B",
+      "path": "pages/B.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "B",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "B",
+      "path": "pages/B.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "B"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Machine Learning"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "c"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

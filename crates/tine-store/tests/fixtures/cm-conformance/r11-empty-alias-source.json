@@ -1,0 +1,8 @@
+{
+  "files": {
+    "pages/B.md": "",
+    "pages/Machine Learning.md": "alias:: ML, B\n\n- owner\n",
+    "pages/c.md": "- [[B]] [[ML]]\n"
+  },
+  "renames": [{"old": "B", "new": "ML"}]
+}

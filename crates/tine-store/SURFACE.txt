@@ -354,7 +354,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 24)
+## WholeGraph: Names (ceiling: 25)
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
@@ -386,6 +386,13 @@ field store::LinkTarget.name
 field store::LinkTarget.is_journal
 # test-oracle: the conformance harnesses (tine-store, and tine-graph-features sharing them) ask the link answer for names the inventory does not list; production reads InventoryEntry.link.
 fn store::WholeGraph::link_target
+# CM step 2 batch 16 (CM-R9-EMPTYDIALOG, D-20261105-CM11): the rename planner
+# needs the declaring owner FILES of a name that EMPTY-ALIAS redirects, to offer
+# the M-Q5 dialog. `inventory` answers names, not declaring files (a File-scope
+# round trip through `resolve` picks the canonical spelling twin, not the
+# declarer), and `resolve` keeps the empty file as an empty-alias name's target
+# because navigation and the empty file's own page depend on it. 24 -> 25.
+fn store::WholeGraph::redirecting_alias_owners
 fn store::WholeGraph::complete_page_names
 # GH #623: the rename planner asks for the page files under one key through
 # `InventoryScope` instead of a sibling method (rule 3).

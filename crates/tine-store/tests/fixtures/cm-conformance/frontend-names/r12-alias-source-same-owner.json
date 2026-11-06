@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md",
+      "preBlock": "alias:: ML, AI",
+      "title": null
+    }
+  ],
+  "links": []
+}

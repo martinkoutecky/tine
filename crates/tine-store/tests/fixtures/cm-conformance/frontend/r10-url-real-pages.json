@@ -93,6 +93,8 @@
     "https:": "https:",
     "https://a.b/c": "https://a.b/c"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "cc": {
       "journal": [
@@ -199,5 +201,65 @@
         "https://a.b/c"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "cc"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "https:"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "https://a.b/c"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "cc"
+    ],
+    [
+      "page",
+      "https:"
+    ],
+    [
+      "page",
+      "https://a.b/c"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "cc"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "https:"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "https://a.b/c"
+      ],
+      "parent": null
+    }
+  ]
 }

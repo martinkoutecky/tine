@@ -356,6 +356,14 @@ export function isNamespaceName(name: string, key?: string): boolean {
   return !(current.pages.get(k) ?? current.journals.get(k))?.not_namespace;
 }
 
+/** The store's page-universe answer for namespace views. Alias completion
+ *  and navigation continue to read the full inventory. O(1). */
+export function isNamespacePage(name: string, key?: string): boolean {
+  const current = held();
+  const k = key ?? pageIdentityKey(name);
+  return !(current?.pages.get(k) ?? current?.journals.get(k))?.namespace_excluded;
+}
+
 const keysOfNames = new WeakMap<readonly string[], readonly string[]>();
 
 /** The page keys (`pageIdentityKey`) of an `allPageNames()` result, index for

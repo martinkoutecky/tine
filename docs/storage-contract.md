@@ -147,6 +147,22 @@ claims the same name through `title::`. Editing a title rekeys the published
 name without moving the file. New page filenames use a reversible, injective
 Windows-safe codec; existing noncanonical paths remain pinned.
 
+Virtual journal feed days have no physical owner: a feed DTO with `rev: null`
+may carry a proposed filename, which the frontend discards before working-set
+admission. Initial, reference-completion and paginated feed reads share this
+rule. Header actions and zoom breadcrumbs resolve that logical day when opened,
+so an external creation under another accepted filename is opened even while
+editing defers a feed refresh (GH #863). A successful first save supplies the
+concrete owner. File-backed feed days retain their exact path; duplicate-day,
+dirty-owner and conflict guards remain in force.
+Likewise, installing a host no-file response uses its proposed path only to
+choose the editor format, and adopts no new physical owner. An existing owner
+survives a no-file response after external deletion.
+A routed load refused by the working-set gate retries when that owner becomes
+replaceable, including a host close still in flight after leaving a feed edit.
+The retry belongs to that route and graph; leaving either cancels it. Reads and
+exact-path checks run again, and unsaved or conflicted owners remain protected.
+
 Several files claiming one name (including duplicate journal days) are an
 invalid graph state (D-20261019-ZY2, narrowed by AL1); alias equivalence is
 unchanged. `WholeGraph::resolve` and `inventory` retain the competing file ids
@@ -863,6 +879,17 @@ flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
 
 Every page rename is planned as a `HostOp`, including one moved page.
+Renames and confirmed merges rewrite bare `alias::` / `aliases::` members
+(Org `#+alias:` / `#+aliases:` too) through the same reference scanner and
+guarded save as links (D-20261105-CM13, deliberate OG difference). The
+explicit-reference index includes declaring files even without another link.
+Namespace members follow the typed-name substitution; stored page-name query
+arguments naming a merged source use the selected survivor's own name.
+Renaming an alias-only name rewrites every declarer without choosing a source
+owner, moving its contents, or creating a file for the alias (CM12). It has
+no OwnPage answer. A redirecting empty alias target selects its unique
+declaring owner through the shared CM11 selector and retains the empty file.
+Same-key alias respelling is a rename. Ambiguous target owners still refuse.
 Single-page selection refuses unsaved input only where the rewrite changes
 it, and includes held referrers absent from the index. Admission checks that
 selection's held buffers, versions, saved status, spellings and membership.
@@ -949,6 +976,26 @@ binding or host instance never applies. Mail carries the session it was
 collected under, and the window drops mail of any other. Proof
 `crates/tine-store/src/page_host/binding_tests.rs`
 `e101_every_host_instance_and_reload_draws_a_fresh_session`.
+
+**Live conflicts (GH #875).** Every successful disk observation uses the host's
+exact-byte read table: disk equal to the saved base clears the conflict while
+retaining unsaved input; disk equal to the serialized editor buffer advances
+the base and clears the conflict. Differing versions retain both the conflict
+and the editor buffer. A taken input that remains conflicted schedules one
+fresh observation, even without another watcher event; the last observation
+alone cannot authorize retirement. Failed reads keep the input and conflict
+and use the existing observation retry/error path. Comparison is over the
+save serializer's bytes (including Org), never the resolver's block similarity.
+The window's banner, page review and Conflicts overview follow the host's
+state for all panes and journal feed pages. Retirement itself writes no page;
+existing draft custody and guarded saves still complete normally. Unit cost:
+one extra page read per taken conflicted input, no extra read for ordinary
+edits, no new persisted record, 0 added bytes/files/transport bytes per edit
+for both 1-block and 60-block pages. Proof: `page_host/driver_tests.rs`
+`gh875_a_conflicted_submit_rechecks_exact_current_disk_bytes`,
+`page_host/mutation_tests.rs`
+`gh875_later_delivery_retires_only_exact_buffer_or_saved_base_matches`, and
+`scripts/e2e-beta-conflict-875.mjs`.
 
 **Window close (Q-TS5, J6).** The window sends no `page_close` for a page
 while the host owes it a save: a failed attempt (the notice), a conflict, or
@@ -1680,6 +1727,29 @@ snapshot's `answers` v1 rows never carry it (v1 is frozen,
 `docs/contracts/quick-share.md`). Rename asks the same test: the moved subtree
 (`InventoryScope::FilesAtOrUnder`) and the own-child guard take only namespace
 names under the old name, so renaming `.` leaves `./x` alone.
+
+R10-Q2 (D-20261105-CM11, model round 11) excludes alias-only spellings from
+the namespace page universe. The live inventory keeps these names for alias
+completion and navigation, with `namespace_excluded: true` from the Rust wire
+answer. File-backed alias pages and reference-only pages remain nodes. All
+namespace views and counts read this answer; TypeScript does not decide
+whether an alias is a page. An edge goes only to an existing immediate
+nonempty parent; an alias-only intermediate supplies no edge across it (r11
+C12). The global tree omits isolated pages. Both live namespace flags are
+omitted from the frozen published `answers` v1 rows. No checkpoint field or
+FORMAT changes.
+
+The rename offer applies the same EMPTY-ALIAS content-free predicate as
+navigation. A redirecting alias target, even with an empty file, asks to merge
+into its unique declaring owner or make the typed name its own page. The
+first answer retains the empty target file; the second fills it using the
+existing guarded merge path. Both retain the declaring alias, map children
+and links to the typed name, and map stored queries to the chosen survivor's
+name. Rust's `RenameOffer::AliasOf` carries separate `merge` and `ownPage`
+permissions. A reference-only source has no OwnPage permission and its API
+submission is refused; an empty alias file source retains both choices.
+Cancel writes nothing. Alias-only source renaming remains unchanged pending
+R10-Q3. All writes still pass through the host's guarded save/merge path.
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

@@ -6,6 +6,7 @@
 pub(crate) fn shell_literal(locale: &str, id: &str) -> Option<&'static str> {
     match (locale, id) {
         ("en", "shell-boot-opening") => Some("Opening Tine…"),
+        ("en", "shell-edit-paste-match-style") => Some("Paste and Match Style"),
         ("en", "shell-tray-capture") => Some("Quick Capture"),
         ("en", "shell-tray-open") => Some("Open Tine"),
         ("en", "shell-tray-quit") => Some("Quit"),
@@ -14,6 +15,7 @@ pub(crate) fn shell_literal(locale: &str, id: &str) -> Option<&'static str> {
         ("fa", "shell-tray-open") => Some("باز کردن Tine"),
         ("fa", "shell-tray-quit") => Some("خروج"),
         ("zh-CN", "shell-boot-opening") => Some("正在打开 Tine…"),
+        ("zh-CN", "shell-edit-paste-match-style") => Some("粘贴并匹配样式"),
         ("zh-CN", "shell-tray-capture") => Some("快速记录"),
         ("zh-CN", "shell-tray-open") => Some("打开 Tine"),
         ("zh-CN", "shell-tray-quit") => Some("退出"),

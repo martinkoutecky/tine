@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes } from "./settingsField";
+import { settings } from "./settingDefinitions";
 import { Show, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphMeta } from "../graphSession";
@@ -21,9 +23,9 @@ export function GraphFolderSetting(): JSX.Element {
   };
   return (
     <Show when={graphMeta()?.root}>{(root) =>
-      <div class="settings-field" data-setting-label="Graph folder">
-        <div class="settings-field-row">
-          <span class="settings-label">{t("settings-graph-folder-label")}</span>
+      <div class="settings-field" {...settingAttributes(settings["settings-graph-folder-label"])}>
+        <div class="settings-field-row" >
+          <span class="settings-label">{settingLabel(settings["settings-graph-folder-label"])}</span>
           <div class="settings-field-control">
             <span class="settings-value" data-graph-folder-value>{root()}</span>
             <Show when={canRevealInFileManager()}>

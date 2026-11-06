@@ -165,10 +165,6 @@ jobs:
             build-essential curl wget file libssl-dev libxdo-dev \
             webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston zsync faketime
 
-      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
-        with:
-          version: 4.0.20
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -684,10 +680,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-
-      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
-        with:
-          version: 4.0.20
 
       - uses: actions/setup-node@v4
         if: steps.sign.outputs.enabled == 'true'

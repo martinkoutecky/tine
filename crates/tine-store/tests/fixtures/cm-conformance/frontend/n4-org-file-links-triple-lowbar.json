@@ -125,6 +125,37 @@
     "note": "note",
     "ten": "ten"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "ten/child"
+    ],
+    [
+      "page",
+      "ten"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ten/child"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "ten/child"
+        ]
+      ],
+      "page": [
+        "page",
+        "ten"
+      ]
+    }
+  ],
   "open": {
     "Ten": {
       "journal": [
@@ -322,5 +353,109 @@
         "ten"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ten/child"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a.b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "note"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "ten/child"
+        ]
+      ],
+      "page": [
+        "page",
+        "ten"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ab"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ten/child"
+    ],
+    [
+      "page",
+      "a.b"
+    ],
+    [
+      "page",
+      "note"
+    ],
+    [
+      "page",
+      "ten"
+    ],
+    [
+      "page",
+      "ab"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ten/child"
+      ],
+      "parent": [
+        "page",
+        "ten"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "a.b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "note"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ten"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ab"
+      ],
+      "parent": null
+    }
+  ]
 }

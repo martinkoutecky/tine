@@ -99,6 +99,37 @@
     "old/child": "old/child",
     "p": "p"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "old"
+    ],
+    [
+      "page",
+      "old/child"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [
+        [
+          "page",
+          "old/child"
+        ]
+      ],
+      "page": [
+        "page",
+        "old"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "old/child"
+      ]
+    }
+  ],
   "open": {
     "old": {
       "journal": [
@@ -205,5 +236,73 @@
         "p"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [
+        [
+          "page",
+          "old/child"
+        ]
+      ],
+      "page": [
+        "page",
+        "old"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "p"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "old/child"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "old"
+    ],
+    [
+      "page",
+      "p"
+    ],
+    [
+      "page",
+      "old/child"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "old"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "old/child"
+      ],
+      "parent": [
+        "page",
+        "old"
+      ]
+    }
+  ]
 }

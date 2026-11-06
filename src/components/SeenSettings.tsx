@@ -1,3 +1,4 @@
+import { settings } from "./settingDefinitions";
 import { Show, onMount, type JSX } from "solid-js";
 import { t } from "../i18n";
 import { ensureSeenAvailability, forgetSeenStateNow, markGraphSeenNow, seenAvailable } from "../seen/seenState";
@@ -8,7 +9,7 @@ import { Field } from "./settingsField";
 export function SeenSettings(): JSX.Element {
   onMount(() => void ensureSeenAvailability());
   return <Show when={seenAvailable() === true}>
-    <Field label={t("seen-settings-label")} hint={t("seen-settings-hint")}>
+    <Field setting={settings["seen-settings-label"]}>
       <button type="button" class="settings-btn" data-seen-mark-graph onClick={() => void markGraphSeenNow()}>
         {t("seen-settings-mark-graph")}
       </button>

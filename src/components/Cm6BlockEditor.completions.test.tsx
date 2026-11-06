@@ -7,7 +7,7 @@ import { blockRegions, initParser } from "../render/parse";
 import { node, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { setDoc } from "../document/model";
-import { startEditing, endEdit } from "../editorController";
+import { startEditing, endEdit, editingId } from "../editorController";
 import { editorIn } from "../tests/editorDriver";
 import { focusedEditorCommandBridge } from "../editorCommandBridge";
 import { closeDatePicker, datePicker } from "../ui";
@@ -72,6 +72,26 @@ it("accepts a fence language on the opener and maps the caret into its body", as
   expect(editor.value()).toBe("");
   expect(editor.selection()).toEqual([0, 0]);
   expect(document.querySelector(".autocomplete")).toBeNull();
+});
+it("closes completion and the language picker before code Escape reveals source (GH #865)", async () => {
+  const editor = mount();
+  editor.input("/code");
+  await vi.waitFor(() => expect(labels()).toContain("Code block"));
+  editor.keydown({ key: "Escape" });
+  expect(document.querySelector(".autocomplete")).toBeNull();
+  expect(editingId()).toBe("completion");
+  editor.input("/code");
+  await pick("Code block");
+  await vi.waitFor(() => expect(labels()).toContain("Python"));
+  editor.keydown({ key: "Escape" });
+  expect(document.querySelector(".autocomplete")).toBeNull();
+  expect(editingId()).toBe("completion");
+  expect(editor.value()).toBe("");
+  editor.keydown({ key: "Escape" });
+  expect(editor.value()).toBe("```\n\n```");
+  expect(editingId()).toBe("completion");
+  editor.keydown({ key: "Escape" });
+  expect(editingId()).toBeNull();
 });
 it.each(["js", "calc"])("keeps the own-numbered trigger literal inside a %s body", lang => {
   const editor = mount("```" + lang + "\n\n```");

@@ -1,0 +1,294 @@
+{
+  "backlinks": {
+    "old": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:owner",
+            "raw": "alias:: old/sub",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "owner"
+      }
+    ],
+    "old/sub/child": [],
+    "owner": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/owner.md",
+        0
+      ],
+      [
+        "pages/old%2Fsub%2Fchild.md",
+        0
+      ]
+    ],
+    [
+      [
+        "old",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old",
+      "name": "old",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/old.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old/sub",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
+      "name": "old/sub",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/owner.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "old/sub/child",
+      "name": "old/sub/child",
+      "target": {
+        "id": "pages/old%2Fsub%2Fchild.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "owner",
+      "name": "owner",
+      "target": {
+        "id": "pages/owner.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "old": "old",
+    "old/sub": "old/sub",
+    "old/sub/child": "old/sub/child",
+    "owner": "owner"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "old": {
+      "journal": [
+        "journal",
+        "old"
+      ],
+      "page": [
+        "page",
+        "old"
+      ]
+    },
+    "old/sub": {
+      "journal": [
+        "journal",
+        "old/sub"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "old/sub/child": {
+      "journal": [
+        "journal",
+        "old/sub/child"
+      ],
+      "page": [
+        "page",
+        "old/sub/child"
+      ]
+    },
+    "owner": {
+      "journal": [
+        "journal",
+        "owner"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "owner": {
+    "old": {
+      "journal": null,
+      "page": null
+    },
+    "old/sub": {
+      "journal": null,
+      "page": "pages/owner.md"
+    },
+    "old/sub/child": {
+      "journal": null,
+      "page": "pages/old%2Fsub%2Fchild.md"
+    },
+    "owner": {
+      "journal": null,
+      "page": "pages/owner.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "old",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "old",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "old/sub/child",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "old/sub/child",
+      "owner": "pages/old%2Fsub%2Fchild.md",
+      "parent": null
+    },
+    {
+      "key": "owner",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "owner",
+      "owner": "pages/owner.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "old": {
+      "backend": [
+        "page",
+        "old"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "old"
+      ]
+    },
+    "old/sub": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "old/sub/child": {
+      "backend": [
+        "page",
+        "old/sub/child"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "old/sub/child"
+      ]
+    },
+    "owner": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "old/sub/child"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "old"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "old/sub/child"
+    ],
+    [
+      "page",
+      "owner"
+    ],
+    [
+      "page",
+      "old"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "old/sub/child"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "owner"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "old"
+      ],
+      "parent": null
+    }
+  ]
+}

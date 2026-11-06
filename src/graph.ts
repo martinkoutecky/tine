@@ -511,7 +511,7 @@ export async function renameOrMergePage(
       break;
     }
     case "aliasOf": {
-      const answer = await chooseAliasRename(from, to, offer.name, offer.merge);
+      const answer = await chooseAliasRename(from, to, offer.name, offer.merge, offer.ownPage);
       if (!answer || !owner()) return "cancelled";
       if (answer === "merge") into = offer.owner;
       else ownPage = true;

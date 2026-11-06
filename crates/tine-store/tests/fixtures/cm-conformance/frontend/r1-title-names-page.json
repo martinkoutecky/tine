@@ -92,6 +92,8 @@
     "Real Name": "real name",
     "file-name": "file-name"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Notes": {
       "journal": [
@@ -223,5 +225,65 @@
         "real name"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "real name"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "file-name"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "real name"
+    ],
+    [
+      "page",
+      "file-name"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "real name"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "file-name"
+      ],
+      "parent": null
+    }
+  ]
 }

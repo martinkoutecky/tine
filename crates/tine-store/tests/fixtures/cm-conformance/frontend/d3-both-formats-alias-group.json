@@ -193,6 +193,8 @@
     "Oct 22nd, 2026": "2026_22_10",
     "n": "n"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "2026_10_11": {
       "journal": [
@@ -398,5 +400,83 @@
         "n"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "2026_22_10"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "launch"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "n"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "2026_10_11"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "2026_22_10"
+    ],
+    [
+      "page",
+      "launch"
+    ],
+    [
+      "page",
+      "n"
+    ],
+    [
+      "journal",
+      "2026_10_11"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "2026_22_10"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "launch"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "n"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "2026_10_11"
+      ],
+      "parent": null
+    }
+  ]
 }

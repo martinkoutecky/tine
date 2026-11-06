@@ -1,0 +1,374 @@
+{
+  "backlinks": {
+    "AI": [],
+    "ML/x": [],
+    "Machine Learning": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "ae662bfb-75eb-8c4b-83f3-f68a957ff590",
+            "raw": "child [[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "ML/x"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML]] [[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "c": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/AI.md",
+        0
+      ],
+      [
+        "pages/ML%2Fx.md",
+        0
+      ],
+      [
+        "pages/Machine Learning.md",
+        2
+      ],
+      [
+        "pages/c.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ai",
+      "name": "AI",
+      "target": {
+        "id": "pages/AI.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "c",
+      "target": {
+        "id": "pages/c.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "machine learning",
+      "name": "Machine Learning",
+      "target": {
+        "id": "pages/Machine Learning.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
+      "name": "ML",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Machine Learning.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml/x",
+      "name": "ML/x",
+      "target": {
+        "id": "pages/ML%2Fx.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "AI": "ai",
+    "ML": "ml",
+    "ML/x": "ml/x",
+    "Machine Learning": "machine learning",
+    "c": "c"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "AI": {
+      "journal": [
+        "journal",
+        "ai"
+      ],
+      "page": [
+        "page",
+        "ai"
+      ]
+    },
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "ML/x": {
+      "journal": [
+        "journal",
+        "ml/x"
+      ],
+      "page": [
+        "page",
+        "ml/x"
+      ]
+    },
+    "Machine Learning": {
+      "journal": [
+        "journal",
+        "machine learning"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "c": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "owner": {
+    "AI": {
+      "journal": null,
+      "page": "pages/AI.md"
+    },
+    "ML": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "ML/x": {
+      "journal": null,
+      "page": "pages/ML%2Fx.md"
+    },
+    "Machine Learning": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "c": {
+      "journal": null,
+      "page": "pages/c.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "ai",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "AI",
+      "owner": "pages/AI.md",
+      "parent": null
+    },
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "c",
+      "owner": "pages/c.md",
+      "parent": null
+    },
+    {
+      "key": "machine learning",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "Machine Learning",
+      "owner": "pages/Machine Learning.md",
+      "parent": null
+    },
+    {
+      "key": "ml/x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "ML/x",
+      "owner": "pages/ML%2Fx.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "AI": {
+      "backend": [
+        "page",
+        "ai"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ai"
+      ]
+    },
+    "ML": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "ML/x": {
+      "backend": [
+        "page",
+        "ml/x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml/x"
+      ]
+    },
+    "Machine Learning": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "c": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ai"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml/x"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ai"
+    ],
+    [
+      "page",
+      "ml/x"
+    ],
+    [
+      "page",
+      "machine learning"
+    ],
+    [
+      "page",
+      "c"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ai"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ml/x"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "machine learning"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    }
+  ]
+}

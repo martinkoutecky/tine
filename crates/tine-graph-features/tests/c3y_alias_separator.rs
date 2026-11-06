@@ -67,11 +67,10 @@ fn y4_merge_unites_full_width_separated_aliases_without_duplicates() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// OG `rename-update-refs!` rewrites a referrer's content only through
-/// `replace-old-page!` (literal `[[Old]]`, `#Old`, an `Old::` key), so a bare
-/// `alias::` member naming the renamed page stays; a bracketed one follows.
+/// CM13 deliberately differs from OG's bare-alias serialization: both bare
+/// and bracketed members follow, keeping the original full-width separator.
 #[test]
-fn y4_rename_keeps_a_bare_alias_member_and_rewrites_a_bracketed_one() {
+fn y4_rename_rewrites_bare_and_bracketed_alias_members() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[
         ("pages/Old.md", "- old body\n"),
@@ -84,7 +83,7 @@ fn y4_rename_keeps_a_bare_alias_member_and_rewrites_a_bracketed_one() {
     .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Other.md")).unwrap(),
-        "- other\n  alias:: Old，[[New]]\n"
+        "- other\n  alias:: New，[[New]]\n"
     );
     assert_eq!(
         fs::read_to_string(root.join("pages/Ref.md")).unwrap(),

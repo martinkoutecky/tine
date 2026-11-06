@@ -347,6 +347,161 @@ fn ogs_now_transform_orders_by_priority_with_missing_last() {
 }
 
 #[test]
+fn gh852_reporter_juxt_sorts_run_through_the_rendered_query_path() {
+    use tine_core::query::ir::{ExecutionContext, QueryRows};
+    use tine_core::query::registry::Registry;
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    let _integration_guard = crate::integration_lock();
+    let graph = open(
+        "gh852",
+        &[(
+            "pages/Tasks.md",
+            concat!(
+                "- TODO [#B] beta\n",
+                "- TODO [#A] z scheduled\n  SCHEDULED: <2026-11-07 Sat>\n",
+                "- TODO [#A] a deadline\n  DEADLINE: <2026-11-06 Fri>\n",
+                "- TODO [#A] c missing\n",
+                "- TODO [#A] b both\n  SCHEDULED: <2026-11-07 Sat>\n  DEADLINE: <2026-11-01 Sun>\n",
+                "- TODO no priority\n",
+            ),
+        )],
+    );
+    let first = r#"(fn [result] (sort-by (juxt (fn [h] (get h :block/priority "Z")) (fn [h] (get h :block/content))) result))"#;
+    let second = r#"(fn [result] (sort-by (juxt (fn [h] (get h :block/priority "Z"))
+                            (fn [h] (get h :block/scheduled (get h :block/deadline)))
+                            (fn [h] (get h :block/content))) result))"#;
+    for (transform, expected) in [
+        (
+            first,
+            vec![
+                "TODO [#A] a deadline",
+                "TODO [#A] b both",
+                "TODO [#A] c missing",
+                "TODO [#A] z scheduled",
+                "TODO [#B] beta",
+                "TODO no priority",
+            ],
+        ),
+        (
+            second,
+            vec![
+                "TODO [#A] c missing",
+                "TODO [#A] a deadline",
+                "TODO [#A] b both",
+                "TODO [#A] z scheduled",
+                "TODO [#B] beta",
+                "TODO no priority",
+            ],
+        ),
+    ] {
+        let src = format!(
+            r#"{{:query [:find (pull ?h [*]) :where [?h :block/marker "TODO"]] :result-transform {transform}}}"#
+        );
+        // The parsed query + view boundary is the one used by query_run in a rendered macro.
+        let parsed = parse_query_pair(&src, QueryTextDialect::MacroQuery, &[], Registry::none());
+        let (query, view) = (parsed.query, parsed.view);
+        let tine_store::IrAnswer::Result(result) = graph
+            .graph
+            .query_ir(
+                tine_store::IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &ExecutionContext::none(),
+                },
+                &tine_store::Cancel::default(),
+            )
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("query result")
+        };
+        assert!(result.report.supported, "{:?}", result.report);
+        let QueryRows::Block { groups } = result.rows else {
+            panic!("block rows")
+        };
+        let actual: Vec<_> = groups
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .map(|b| b.raw.lines().next().unwrap())
+            .collect();
+        assert_eq!(actual, expected);
+
+        // The legacy advanced bridge must produce the same order.
+        let QueryResult::Advanced(result) =
+            graph.graph.query(&src, QueryDialect::Advanced).unwrap()
+        else {
+            panic!("advanced")
+        };
+        assert!(result.supported, "{:?}", result.ignored);
+        assert_eq!(
+            result
+                .groups
+                .iter()
+                .flat_map(|g| &g.blocks)
+                .map(|b| b.raw.lines().next().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    let unsupported = first.replace(":block/content", ":block/unknown");
+    let src = format!(
+        r#"{{:query [:find (pull ?h [*]) :where [?h :block/marker "TODO"]] :result-transform {unsupported}}}"#
+    );
+    let QueryResult::Advanced(result) = graph.graph.query(&src, QueryDialect::Advanced).unwrap()
+    else {
+        panic!("advanced")
+    };
+    assert!(!result.supported);
+    assert!(
+        result.groups.is_empty(),
+        "no results with only the first sort key understood"
+    );
+    assert_eq!(result.ignored, ["result-transform"]);
+}
+
+#[test]
+fn gh852_content_sort_reads_properties_case_and_utf16_through_the_store() {
+    let _integration_guard = crate::integration_lock();
+    let graph = open(
+        "gh852-content",
+        &[(
+            "pages/Text.md",
+            concat!(
+                "- TODO same\n  prop:: z\n",
+                "- TODO same\n  prop:: a\n",
+                "- TODO \u{e000}\n",
+                "- TODO 😀\n",
+                "- TODO a\n",
+                "- TODO Z\n",
+            ),
+        )],
+    );
+    let QueryResult::Advanced(result) = graph.graph.query(
+        r#"{:query [:find (pull ?h [*]) :where [?h :block/marker "TODO"]] :result-transform (fn [r] (sort-by (fn [h] (get h :block/content)) r))}"#,
+        QueryDialect::Advanced,
+    ).unwrap() else { panic!("advanced") };
+    assert!(result.supported, "{:?}", result.ignored);
+    let raws: Vec<_> = result
+        .groups
+        .iter()
+        .flat_map(|g| &g.blocks)
+        .map(|b| b.raw.trim_end())
+        .collect();
+    assert_eq!(
+        raws,
+        [
+            "TODO Z",
+            "TODO a",
+            "TODO same\nprop:: a",
+            "TODO same\nprop:: z",
+            "TODO 😀",
+            "TODO \u{e000}"
+        ]
+    );
+}
+
+#[test]
 fn gh690_stock_next_uses_direct_refs_and_one_exclusive_date_range() {
     let _integration_guard = crate::integration_lock();
     let today = tine_core::date::JournalDate::today();

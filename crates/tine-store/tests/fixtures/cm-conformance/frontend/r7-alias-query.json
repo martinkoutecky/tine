@@ -59,6 +59,7 @@
         "name": "Machine Learning"
       },
       "name": "ML",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -85,6 +86,8 @@
     "Machine Learning": "machine learning",
     "notes": "notes"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "ML": {
       "journal": [
@@ -183,5 +186,47 @@
         "notes"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "machine learning"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "machine learning"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

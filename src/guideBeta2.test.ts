@@ -3,6 +3,10 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the PDF Guide explains citing an area image (GH #869)", () => {
+  for (const detail of ["clipped image", "`((block reference))`", "**Copy ref**", "Click the image to open the PDF at that highlight", "asset placeholder"]) expect(guide("pdf")).toContain(detail);
+});
+
 it("the PDF Guide teaches touchscreen pinch and one-finger scrolling", () => {
   const pdf = guide("pdf");
   expect(pdf).toContain("pinch with two fingers");
@@ -31,6 +35,7 @@ it("the Guide keeps census controls and workspace creation discoverable", () => 
 
 it("the Guide explains Settings search results, navigation and clearing", () => {
   const settings = guide("where-things-are");
+  for (const detail of ["**theme names and descriptions**", "**plugin settings**", "Choosing a plugin setting opens that plugin's form", "English terms of two or more characters"]) expect(settings).toContain(detail);
   for (const detail of ["only matching settings", "matching words highlighted", "Choose a result", "including Advanced settings", "Clear the search", "filters commands and keys within that tab", "matching description, keyword, alias or English name"]) expect(settings).toContain(detail);
 });
 

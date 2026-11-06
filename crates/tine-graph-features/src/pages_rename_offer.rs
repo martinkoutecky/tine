@@ -73,10 +73,15 @@ pub fn rename_offer(
                 journal,
             }
         }
-        RenameBlocked::AliasOf { owner, merge } => RenameOffer::AliasOf {
+        RenameBlocked::AliasOf {
+            owner,
+            merge,
+            own_page,
+        } => RenameOffer::AliasOf {
             name: entry(&owner).map_or_else(|| owner.clone(), |(name, _)| name),
             owner,
             merge,
+            own_page,
         },
         refused => RenameOffer::Refused {
             message: refused.to_string(),
@@ -101,11 +106,15 @@ pub enum RenameOffer {
     },
     /// M-Q5 (D-20261102-MC5): the name is only an alias of `owner` (its
     /// file; `name` its own name). Ask: merge into it (when `merge`), make
-    /// the name its own page (still an alias of the owner), or cancel.
+    /// the name its own page (when `own_page`, still an alias of the owner),
+    /// or cancel. Sources without files, including alias-only names, cannot
+    /// become their own page (CM11/CM12).
     AliasOf {
         owner: String,
         name: String,
         merge: bool,
+        #[serde(rename = "ownPage")]
+        own_page: bool,
     },
     /// Refused before anything is written, with the reason to show.
     Refused {

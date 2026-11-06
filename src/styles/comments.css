@@ -102,8 +102,10 @@
 
 /* "Not yours": a block an agent wrote keeps a quiet mark at its content edge. */
 .ls-block.authored > .block-main > .block-content-wrapper {
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
-  padding-inline-start: 6px;
+  box-shadow: -2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+  /* Authorship is decoration, not an extra outline level. In particular this
+     wrapper can hold a whole embedded outline or query, not just prose. Keep
+     the line in the gutter so it cannot paint over the first character. */
 }
 
 /* Slice 2b: replies nest without the outline's full indent and without bullets

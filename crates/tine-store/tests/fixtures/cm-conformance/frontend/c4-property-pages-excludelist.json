@@ -61,6 +61,8 @@
     "a": "a",
     "public-key": "public-key"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "a": {
       "journal": [
@@ -134,5 +136,47 @@
         "public-key"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "public-key"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "public-key"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "public-key"
+      ],
+      "parent": null
+    }
+  ]
 }

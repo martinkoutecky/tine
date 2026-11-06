@@ -41,6 +41,7 @@
         "name": "Oct 26th, 2026"
       },
       "name": "launch day",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -78,6 +79,8 @@
     "Oct 26th, 2026": "oct 26th, 2026",
     "launch day": "launch day"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Notes": {
       "journal": [
@@ -180,5 +183,47 @@
         "oct 26th, 2026"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -10,7 +10,9 @@
  * `leaveOnKey` consumes boundary arrows/Backspace and restores raw coordinates.
  * `leaveRange` supplies that same transition to editors with state-owned selections.
  * `selection` supplies visible-source mixed-block coordinates to history (whole-code keeps
- * its existing body coordinates). No operation here commits or persists text. */
+ * its existing body coordinates). `revealRaw` alone calls the editor's guarded
+ * commit before disabling projection and returning visible source, or null if
+ * no code view is showing. Editors own display and caret placement. */
 import { createMemo, createSignal, type Accessor } from "solid-js";
 import { codeFences } from "./fences";
 import { codeBodyJoin, codeBodyProjection, type CodeBodyProjection } from "./codeFence";
@@ -23,8 +25,9 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     return sourceProjection ? { visible: p, source: sourceProjection } : null;
   };
   const [region, setRegion] = createSignal<ReturnType<typeof capture>>(null);
+  const [rawMode, setRawMode] = createSignal(false);
   const shown = createMemo(() => {
-    if (!enabled()) return null;
+    if (!enabled() || rawMode()) return null;
     const text = visibleRaw(), pair = region(), p = pair?.visible;
     const original = source();
     if (p && pair && original.startsWith(pair.source.open) && original.endsWith(pair.source.close) && text.startsWith(p.open) && text.endsWith(p.close) && text.length >= p.open.length + p.close.length) {
@@ -39,7 +42,7 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
   });
   const mixed = () => shown() !== null && codeBodyProjection(visibleRaw(), format()) === null;
   const enter = (caret: number, end = caret) => {
-    if (!enabled()) return;
+    if (!enabled() || rawMode()) return;
     const p = codeBodyProjection(visibleRaw(), format(), caret);
     setRegion(p && end <= p.open.length + p.body.length ? capture(p) : null);
   };
@@ -75,6 +78,16 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     return true;
   };
   return { shown, mixed, enter, syncSelection, leaveOnKey, leaveRange,
+    // OG extensions/code.cljs render!: Esc saves the code editor and calls
+    // edit-block! with :max. Stay raw for this editing session so native
+    // selection cannot immediately hide the delimiters again (GH #865).
+    revealRaw: (body: string, commit: (text: string) => void) => {
+      if (!shown()) return null;
+      commit(body);
+      setRawMode(true);
+      setRegion(null);
+      return visibleRaw();
+    },
     join: (body: string) => {
       const p = shown();
       const captured = p && (region() ?? capture(p));

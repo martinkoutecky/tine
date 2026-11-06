@@ -27,7 +27,7 @@ function Choice(props: { request: AliasRenameRequest }) {
   onMount(() => {
     onCleanup(registerTransientLayer({ id: "tine-rename-alias-choice", root: () => root,
       dismiss: () => { request.finish(null); return true; } }));
-    root.querySelector<HTMLButtonElement>('button[data-choice="own-page"]')?.focus();
+    root.querySelector<HTMLButtonElement>(request.ownPage ? 'button[data-choice="own-page"]' : 'button[data-choice="merge"]')?.focus();
   });
   return (
     <div class="modal-overlay tine-rename-alias-overlay" onKeyDown={(event) => {
@@ -41,7 +41,7 @@ function Choice(props: { request: AliasRenameRequest }) {
     }}>
       <section ref={root} class="tine-rename-alias-choice" role="dialog" aria-modal="true" aria-label={t("rename-alias-choice-title", { to: request.to })}>
         <h2>{t("rename-alias-choice-title", { to: request.to })}</h2>
-        <p>{t("rename-alias-choice-body", { to: request.to, owner: request.owner, from: request.from })}</p>
+        <p>{t(request.ownPage ? "rename-alias-choice-body" : "rename-alias-choice-fileless", { to: request.to, owner: request.owner, from: request.from })}</p>
         <Show when={!request.merge}>
           <p>{t("rename-alias-choice-no-merge", { owner: request.owner, from: request.from })}</p>
         </Show>
@@ -52,7 +52,7 @@ function Choice(props: { request: AliasRenameRequest }) {
             <button type="button" data-choice="merge" onClick={() => answer("merge")}>{t("rename-alias-choice-merge", { owner: request.owner })}</button>
           </Show>}
           cancel={<button type="button" data-choice="cancel" onClick={() => request.finish(null)}>{t("confirm-cancel")}</button>}
-          primary={<button type="button" data-choice="own-page" onClick={() => answer("own-page")}>{t("rename-alias-choice-own-page", { to: request.to, owner: request.owner })}</button>}
+          primary={<Show when={request.ownPage}><button type="button" data-choice="own-page" onClick={() => answer("own-page")}>{t("rename-alias-choice-own-page", { to: request.to, owner: request.owner })}</button></Show>}
         />
       </section>
     </div>

@@ -75,6 +75,8 @@ pub(crate) async fn set_ui_locale(locale: String, app: tauri::AppHandle) -> Resu
         #[cfg(desktop)]
         if changed.get() {
             crate::tray::relabel(&store, &locale);
+            #[cfg(target_os = "macos")]
+            crate::paste_menu::relabel(&store, &locale);
         }
         Ok(())
     })
@@ -107,6 +109,14 @@ mod tests {
         assert_eq!(shell_text("xx-unknown", "shell-tray-quit"), "Quit");
         assert_ne!(shell_text("zh-CN", "shell-tray-quit"), "Quit");
         assert_eq!(shell_text("en", "shell-no-such-id"), "shell-no-such-id");
+    }
+
+    #[test]
+    fn paste_and_match_style_is_localized_and_falls_back() {
+        let id = "shell-edit-paste-match-style";
+        assert_eq!(shell_text("en", id), "Paste and Match Style");
+        assert_ne!(shell_text("zh-CN", id), shell_text("en", id));
+        assert_eq!(shell_text("unknown", id), shell_text("en", id));
     }
 
     #[test]
