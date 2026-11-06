@@ -7,6 +7,28 @@ import type { BlockDto } from "./types";
 export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) => BlockDto): [string, BlockDto[]][] {
   return [
     [
+      // GH #883: equal author names, with absent, one- and two-digit counts.
+      "Author alignment regression", [
+        b("Author alignment group\nid:: 88300000-0000-4000-8000-000000000001", [
+          b("Unreferenced passage.\nauthor:: Ada\nid:: 88300000-0000-4000-8000-000000000002"),
+          b("Referenced passage with enough ordinary words to wrap in a narrow pane and keep both metadata pills on its first line.\nauthor:: Ada\nid:: 88300000-0000-4000-8000-000000000003"),
+          b("DONE A passage referenced twelve times.\nauthor:: Ada\nid:: 88300000-0000-4000-8000-000000000004"),
+        ]),
+      ],
+    ],
+    [
+      "Author alignment referrers", [
+        b("One reference ((88300000-0000-4000-8000-000000000003))"),
+        ...Array.from({ length: 12 }, (_, i) => b(`Reference ${i + 1} ((88300000-0000-4000-8000-000000000004))`)),
+      ],
+    ],
+    [
+      "Author alignment embeds", [
+        b("{{embed ((88300000-0000-4000-8000-000000000001))}}"),
+        b("{{embed [[Author alignment regression]]}}"),
+      ],
+    ],
+    [
       // GH #110: the first comment on a block with a long existing subtree.
       "Margin creation regression", [
         ...Array.from({ length: 12 }, (_, i) => b(`Opening paragraph ${i + 1}.`)),
