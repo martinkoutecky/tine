@@ -541,6 +541,12 @@ try {
   // the graph window, then prove capture adopts it without an app restart.
   await browser.switchToWindow(restartedMain);
   await openPageByName(browser, "Home");
+  // The cold restart above follows this journey's own kill, so the isolated
+  // state directory correctly reports an unclean shutdown in a sticky toast
+  // over the Settings controls. Dismiss only that one (as e2e-calm-query does).
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast").forEach(toast => {
+    if (toast.textContent?.includes("did not close cleanly")) toast.querySelector(".toast-close")?.click();
+  }));
   await browser.$('button[title^="Settings"]').click();
   await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Journals']").click();
   await browser.$("//button[normalize-space(.)='TODO / DOING']").click();
