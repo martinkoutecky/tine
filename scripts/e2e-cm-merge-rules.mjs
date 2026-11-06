@@ -118,7 +118,9 @@ try {
   await renameTitle("ML");
   await browser.$('.tine-rename-alias-choice button[data-choice="own-page"]').waitForExist({ timeout: 15_000, timeoutMsg: "the M-Q5 dialog never reappeared" });
   await browser.$('.tine-rename-alias-choice button[data-choice="own-page"]').click();
-  await waitForFileText(path.join(graph, "pages/ML.md"), (text) => text === "- notes body\n", { timeoutMs: 15_000 });
+  // Batch 16 seeds an empty ML.md, so this answer fills that file through the
+  // merge path, whose serializer keeps the survivor's end-of-file newlines (none).
+  await waitForFileText(path.join(graph, "pages/ML.md"), (text) => text === "- notes body", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/q.md"), (text) => text === "- see [[ML]]\n- also [[ML]] here\n", { timeoutMs: 15_000 });
   assert.ok(!fs.existsSync(path.join(graph, "pages/ML notes.md")), "ML notes.md moved");
   assert.equal(fs.readFileSync(path.join(graph, "pages/Machine Learning.md"), "utf8"), seeded["pages/Machine Learning.md"], "the owner keeps alias:: ML");

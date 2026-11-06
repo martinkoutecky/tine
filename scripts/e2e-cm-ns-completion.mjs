@@ -149,8 +149,9 @@ try {
   await browser.$("textarea.block-editor").waitForExist({ timeout: 5_000 });
   await complete("[[old/s", (names) => names.includes("old/sub"));
   await browser.keys("Escape");
-  await openPageByName(browser, "old/sub");
-  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Owner", { timeout: 15_000 });
+  // The Quick Switcher lists an alias under its owner's row (the helper's
+  // `query` option): searching old/sub must open Owner.
+  await openPageByName(browser, "Owner", { query: "old/sub" });
   await openPageByName(browser, "old");
   assert.equal(await browser.$(".page-hierarchy").isExisting(), false, "alias-only child supplies no Hierarchy row");
 
