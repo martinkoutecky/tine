@@ -216,18 +216,28 @@ fn pending_upstream(repo: &Repo) -> Option<(Oid, Oid)> {
 /// too (REG-SB1-GIT-RESUME-STATUS-ERROR).
 pub(super) fn defers_autocommit(repo: &Repo) -> bool {
     if !repo.prefix.as_os_str().is_empty() {
+        #[cfg(test)]
+        test_hook::resume_note(format_args!("not deferred: graph prefix {:?}", repo.prefix));
         return false;
     }
     let Some((head, up)) = pending_upstream(repo) else {
+        #[cfg(test)]
+        test_hook::resume_note(format_args!("not deferred: no pending upstream"));
         return false;
     };
     let Some(key) = work_tree_key(repo) else {
+        #[cfg(test)]
+        test_hook::resume_note(format_args!(
+            "not deferred: work-tree canonicalization failed"
+        ));
         return false;
     };
     let (Ok(h_tree), Ok(u_tree)) = (
         repo.repo.find_commit(head).and_then(|c| c.tree()),
         repo.repo.find_commit(up).and_then(|c| c.tree()),
     ) else {
+        #[cfg(test)]
+        test_hook::resume_note(format_args!("not deferred: cannot read H={head} or U={up}"));
         return false;
     };
     let applied = applied_paths(&key, head, up);
@@ -250,11 +260,18 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
     // cannot rule the pull out, and committing then would record the
     // half-applied tree as a local change: defer, the next one asks again.
     let Ok(statuses) = scanned else {
+        #[cfg(test)]
+        test_hook::resume_note(format_args!("deferred: status scan failed"));
         return true;
     };
     let mut differs = false;
     for entry in statuses.iter() {
         let Ok(path) = std::str::from_utf8(entry.path_bytes()) else {
+            #[cfg(test)]
+            test_hook::resume_note(format_args!(
+                "not deferred: non-UTF-8 path {:?}",
+                entry.path_bytes()
+            ));
             return false;
         };
         // Tine's own folders (the graph trash a pulled deletion fills) are
@@ -277,20 +294,43 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
         let on_disk = match hash_on_disk(&key.join(path)) {
             Ok(blob) => blob,
             // A folder or link where a file was is a local change.
-            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => return false,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+                #[cfg(test)]
+                test_hook::resume_note(format_args!(
+                    "not deferred: {path:?} is not a regular file: {e}"
+                ));
+                return false;
+            }
             // A read that fails (a page save replacing the file, a sharing
             // violation) cannot rule the pull out either: defer, as for a
             // failed scan (REG-SB1-GIT-RESUME-HASH-ERROR).
-            Err(_) => return true,
+            Err(_error) => {
+                #[cfg(test)]
+                test_hook::resume_note(format_args!("deferred: hash of {path:?} failed: {_error}"));
+                return true;
+            }
         };
         if on_disk != at_u {
+            #[cfg(test)]
+            test_hook::resume_note(format_args!(
+                "not deferred: {path:?} status={:?} disk={on_disk:?} H={:?} U={at_u:?}; H={head} U={up}",
+                entry.status(), blob_at(&h_tree, path),
+            ));
             return false;
         }
         // A path `U` does not change differs from `H` only by a local edit.
         if at_u == blob_at(&h_tree, path) {
+            #[cfg(test)]
+            test_hook::resume_note(format_args!(
+                "not deferred: {path:?} differs in status but H=U={at_u:?}"
+            ));
             return false;
         }
     }
+    #[cfg(test)]
+    test_hook::resume_note(format_args!(
+        "deferred={differs}: completed status scan H={head} U={up}"
+    ));
     differs
 }
 
@@ -1282,6 +1322,25 @@ pub(crate) mod test_hook {
         static FOLDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         static STATUS_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         static HASH_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static RESUME_NOTES: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Capture the actual P3 decisions without an extra status scan racing
+    /// host recovery before the cycle under investigation.
+    pub(crate) fn record_resume() {
+        RESUME_NOTES.with(|notes| *notes.borrow_mut() = Some(Vec::new()));
+    }
+
+    pub(crate) fn take_resume_notes() -> Vec<String> {
+        RESUME_NOTES.with(|notes| notes.borrow_mut().take().unwrap_or_default())
+    }
+
+    pub(super) fn resume_note(message: std::fmt::Arguments<'_>) {
+        RESUME_NOTES.with(|notes| {
+            if let Some(notes) = notes.borrow_mut().as_mut() {
+                notes.push(message.to_string());
+            }
+        });
     }
 
     /// Answer the next host operations: `Some((apply_first, result))`
@@ -1305,6 +1364,7 @@ pub(crate) mod test_hook {
         FOLDING.with(|f| f.set(false));
         STATUS_FAILS.with(|f| f.set(false));
         HASH_FAILS.with(|f| f.set(false));
+        RESUME_NOTES.with(|notes| *notes.borrow_mut() = None);
     }
 
     /// Fail the next resume test's status scan, as a page save replacing a
