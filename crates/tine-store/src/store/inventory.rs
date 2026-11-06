@@ -266,6 +266,10 @@ pub enum InventoryScope<'a> {
     File(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
+    /// Frozen published `answers` v1 lookup rows for referenced spelling keys
+    /// absent from this `All` inventory. These retain the old ordinary-row
+    /// shape; their `link` uses the shared link answer. Not a live entity list.
+    PublishedV1Spellings(&'a Inventory),
     /// Referenced journal dates, including dates without a file, once per day.
     /// Uses the explicit-reference index; excludes ordinary date-page identity.
     ReferencedJournals,
@@ -386,6 +390,38 @@ impl WholeGraph {
                     .collect(),
             )),
             InventoryScope::All => self.full_inventory(),
+            InventoryScope::PublishedV1Spellings(inventory) => {
+                let listed: HashSet<_> = inventory
+                    .0
+                    .iter()
+                    .map(|entry| tine_core::refs::page_key(&entry.name))
+                    .collect();
+                Arc::new(Inventory(
+                    self.graph
+                        .referenced_name_table()
+                        .iter()
+                        .filter(|(key, _)| !listed.contains(*key))
+                        .map(|(_, referrers)| {
+                            let name = referrers.spelling.clone();
+                            with_link(
+                                &self.claimants,
+                                &self.graph,
+                                &self.journal_format,
+                                InventoryEntry {
+                                    target: self.resolve(&name, false),
+                                    name,
+                                    is_journal: false,
+                                    day: None,
+                                    link: None,
+                                    namespace_parent: false,
+                                    empty_alias: false,
+                                },
+                                None,
+                            )
+                        })
+                        .collect(),
+                ))
+            }
             InventoryScope::ReferencedJournals => {
                 let mut entries: Vec<_> = self
                     .referenced_journal_days()

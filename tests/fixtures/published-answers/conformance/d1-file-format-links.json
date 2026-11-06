@@ -97,6 +97,16 @@
         }
       },
       {
+        "day": 20261023,
+        "is_journal": true,
+        "key": "oct 23rd, 2026",
+        "name": "Oct 23rd, 2026",
+        "target": {
+          "id": "journals/23-10-2026.md",
+          "kind": "absent"
+        }
+      },
+      {
         "day": null,
         "is_journal": false,
         "key": "plan",

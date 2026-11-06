@@ -386,7 +386,9 @@ pub fn prepare(
                 // Threat: malformed input, a share name colliding with a
                 // shared name. Recovery: the user names the share otherwise.
                 let inventory = private_graph.inventory(tine_store::InventoryScope::All);
-                if crate::published_answers::home_name_taken(&inventory, &title) {
+                let spellings = private_graph
+                    .inventory(tine_store::InventoryScope::PublishedV1Spellings(&inventory));
+                if crate::published_answers::home_name_taken(&inventory, &spellings, &title) {
                     return Err(refusal(format!(
                         "a shared page or alias is already called \"{title}\"; give the share another name"
                     )));

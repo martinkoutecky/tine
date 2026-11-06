@@ -52,6 +52,16 @@
           "kind": "existing",
           "others": []
         }
+      },
+      {
+        "day": 20261027,
+        "is_journal": true,
+        "key": "oct 27th, 2026",
+        "name": "Oct 27th, 2026",
+        "target": {
+          "id": "journals/2026_10_27.md",
+          "kind": "absent"
+        }
       }
     ],
     "journals": {

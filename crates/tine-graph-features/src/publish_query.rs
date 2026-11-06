@@ -1069,7 +1069,11 @@ pub fn publish_query_with_sheets_in(
             // answers (a page, journal or alias, single- or multi-owner):
             // rename it, as before, against the complete inventory.
             let inventory = build.inventory(tine_store::InventoryScope::All);
-            let taken = |name: &str| crate::published_answers::home_name_taken(&inventory, name);
+            let spellings =
+                build.inventory(tine_store::InventoryScope::PublishedV1Spellings(&inventory));
+            let taken = |name: &str| {
+                crate::published_answers::home_name_taken(&inventory, &spellings, name)
+            };
             let mut home = request.name.trim().to_owned();
             if taken(&home) {
                 home.push_str(" (export)");

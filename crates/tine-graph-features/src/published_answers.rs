@@ -11,7 +11,8 @@
 //! ignores the whole field and reads the snapshot as it did before `answers`.
 //!
 //! Tables (each row in the live app's wire shape, `inventory_wire.rs`):
-//! - `inventory`: `WholeGraph::inventory(All)` rows, plus the synthetic home
+//! - `inventory`: `WholeGraph::inventory(All)` rows, plus frozen v1 lookup
+//!   rows for linked spelling keys it does not list, and the synthetic home
 //!   page of a multi-page publication (path `""`), which no graph holds.
 //! - `resolve`: `WholeGraph::resolve(name, kind)` for a listed name and the
 //!   kind its row does not answer (a date spelling asked as a journal, a
@@ -31,7 +32,7 @@ use std::io;
 use tine_core::model::GraphMeta;
 use tine_core::refs::page_key;
 use tine_core::Corpus;
-use tine_store::{Inventory, Resolved, WholeGraph};
+use tine_store::{Inventory, InventoryScope, Resolved, WholeGraph};
 
 /// The `answers.v` this writer emits.
 pub(crate) const ANSWERS_VERSION: u32 = 1;
@@ -40,11 +41,12 @@ pub(crate) const ANSWERS_VERSION: u32 = 1;
 /// graph answers: a page or journal file, an alias (single- or multi-owner),
 /// or a listed spelling whose link opens something. Such a home would replace
 /// that row, so links and permalinks to the name would open the home list
-/// instead of the page the build graph opens. Only reference-only names (and
-/// namespace parents) answer nothing and may be taken. Cost O(rows).
-pub(crate) fn home_name_taken(inventory: &Inventory, name: &str) -> bool {
+/// instead of the page the build graph opens. `spellings` holds the missing
+/// v1 lookup rows, which a home must not shadow either. Only reference-only
+/// names (and namespace parents) without a link may be taken. Cost O(rows).
+pub(crate) fn home_name_taken(inventory: &Inventory, spellings: &Inventory, name: &str) -> bool {
     let key = page_key(name);
-    inventory.0.iter().any(|entry| {
+    inventory.0.iter().chain(&spellings.0).any(|entry| {
         (!matches!(entry.target, Resolved::Absent { .. }) || entry.link.is_some())
             && page_key(&entry.name) == key
     })
@@ -53,8 +55,9 @@ pub(crate) fn home_name_taken(inventory: &Inventory, name: &str) -> bool {
 /// The `answers` value for a snapshot of `corpus` over its build graph
 /// `graph` (whose metadata is `meta` and whose `inventory(All)` is
 /// `inventory`). `home` is the synthetic home page's name, when the
-/// publication has one. Cost O(rows + exported pages × alias group), two
-/// O(1) `resolve` calls per row; no I/O.
+/// publication has one. Cost O(rows log rows + referenced names + exported
+/// pages × alias group), indexed resolve/link lookups per spelling row;
+/// no I/O. Here rows includes the missing v1 spelling rows.
 ///
 /// Refuses a `home` that [`home_name_taken`] (the writers rename or refuse
 /// such a home first; threat: malformed input, a publication name that
@@ -68,15 +71,22 @@ pub(crate) fn answers(
 ) -> io::Result<Value> {
     // `not_namespace` is not part of the frozen v1 row (a table change writes a
     // new `v`), so a published row never carries it.
+    // v1 readers look up the raw spelling key, even when All now lists only
+    // its day's entity. Preserve the base writer's missing spelling rows,
+    // including their ordinary target and the shared answer for their link.
+    // This compatibility shape retires with answers v2, not in live All.
+    let spellings = graph.inventory(InventoryScope::PublishedV1Spellings(inventory));
     let mut rows: Vec<PageInventoryEntryWire> = inventory
         .0
         .iter()
+        .chain(&spellings.0)
         .map(|entry| PageInventoryEntryWire {
             not_namespace: false,
             namespace_excluded: false,
             ..entry_wire(entry)
         })
         .collect();
+    rows.sort_by(|a, b| (&a.key, &a.name).cmp(&(&b.key, &b.name)));
     let mut resolve = Vec::new();
     let answered: HashSet<(String, bool)> = rows
         .iter()
@@ -100,7 +110,7 @@ pub(crate) fn answers(
     if let Some(home) = home {
         // The synthetic home page is a file of this publication only. It
         // replaces a reference-only row of its name and nothing else.
-        if home_name_taken(inventory, home) {
+        if home_name_taken(inventory, &spellings, home) {
             return Err(crate::publish_query::refusal(
                 "the publication's home page is named like an exported page or alias; give it another name",
             ));
