@@ -70,6 +70,21 @@ a 2,000-block page loaded and the edited Block mounted, 200 typed characters pro
 in prose and code, with zero additional cold parses from typing itself. This probe does not mount the
 complete virtualized Page.
 
+The classic block editor keeps code wrappers editable (GH #879). Block entry outside a
+code payload, including sibling merge and arrow navigation, opens raw source.
+Entering a payload opens its reversible body view; Escape, boundary arrows or
+Backspace at its start return to raw source without rewriting the block. Empty
+code payloads retain the existing Backspace deletion gesture. Raw whole-block
+editing stays raw as the caret moves through the payload. Both modes use
+visible-source caret coordinates for history and the existing guarded save path.
+Markdown and Org, desktop and touch layouts share this boundary; calculator
+blocks retain their specialized editor. OG reference: `og-1.0.0` at
+`680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content-or-editor`,
+`move-to-prev-block` and `extensions/code.cljs` `render!` (Escape).
+The experimental CodeMirror editor retains its existing standalone body-first
+entry policy in this merge. Escape reveals its source; the other standalone
+source-entry paths remain a follow-up.
+
 Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
 Retained outside this door, pending native doors: the Org drawer extents used when a page-property

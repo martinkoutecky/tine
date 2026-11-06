@@ -69,10 +69,9 @@ function RenderedContent(props: {
   headingLevel: () => number | null;
   macro: () => ReturnType<typeof detectMacro>;
   owner?: string;
-  // The reference-count badge. It is a RIGHT FLOAT and must be the FIRST child of
-  // `.block-content`: a float attaches to the line box current where the browser
-  // reaches it, so emitting it last parked it on a wrapped block's LAST line
-  // (GH #454).
+  // Leading right floats (author, then optional reference count). Keep them
+  // before the body: a float attaches to the current line box, so emitting it
+  // after the text parked the badge on a wrapped block's LAST line (GH #454).
   refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
   // A host that owns the click (a sheet cell: select on press, edit on double-click or

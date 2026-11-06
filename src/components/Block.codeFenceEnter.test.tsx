@@ -122,7 +122,7 @@ describe("Double Enter exits a trailing code or calculator block", () => {
     const original = "```js\nconst x = 1\n\n```";
     loadSingle(page("Code exit", [blk("code-exit", original)]));
     const id = pageByName("Code exit")!.roots[0];
-    startEditing(id, 0);
+    startEditing(id, "```js\n".length);
     const { root, dispose } = mount(() => (
       <For each={pageByName("Code exit")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
