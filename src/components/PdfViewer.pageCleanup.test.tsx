@@ -37,7 +37,7 @@ function setup() {
     cleanup: vi.fn(() => true),
   }));
   const doc = { numPages: pages.length, getPage: vi.fn(async (n: number) => pages[n - 1]),
-    getOutline: vi.fn().mockResolvedValue([]), destroy: vi.fn().mockResolvedValue(undefined) };
+    getOutline: vi.fn().mockResolvedValue([]), loadingTask: { destroy: vi.fn().mockResolvedValue(undefined) } };
   getDocument.mockReturnValue({ promise: Promise.resolve(doc) });
   const owner = activatePdfOwnership("/test/pdf-cleanup");
   function mount() {

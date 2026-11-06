@@ -822,6 +822,15 @@ pub(crate) fn execute_cancellable(
         .iter()
         .map(|(_, dir)| *dir == SortDir::Asc)
         .collect();
+    // Keep authored transform semantics separate from Display's normal text
+    // folding and missing-last sentinels. A Display sort override still wins.
+    let transform_sort = match &query.source {
+        tine_core::query::ir::Source::Advanced { original, .. } => {
+            tine_core::query::advanced_sort::advanced_result_sort(original)
+                .filter(|sort| sort.view_sort() == view.sort)
+        }
+        _ => None,
+    };
     let sample = view.sample.map(|n| n as usize);
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
     let mut stopped = false;
@@ -879,15 +888,19 @@ pub(crate) fn execute_cancellable(
                         .enumerate()
                         .map(|(base, (at, block))| {
                             let entry = groups[at].0;
-                            let keys = view
-                                .sort
-                                .iter()
-                                .map(|(field, _)| {
-                                    block_sort_decor(field.as_str(), entry, block, || {
-                                        *page_recency[at].get_or_insert_with(|| recency_of(entry))
+                            let keys = if let Some(sort) = &transform_sort {
+                                sort.decorate(&order::advanced_sort_row(Some(block)))
+                            } else {
+                                view.sort
+                                    .iter()
+                                    .map(|(field, _)| {
+                                        block_sort_decor(field.as_str(), entry, block, || {
+                                            *page_recency[at]
+                                                .get_or_insert_with(|| recency_of(entry))
+                                        })
                                     })
-                                })
-                                .collect();
+                                    .collect()
+                            };
                             (keys, base, (at, block))
                         })
                         .collect();
@@ -989,18 +1002,21 @@ pub(crate) fn execute_cancellable(
                             .enumerate()
                             .map(|(base, (entry, facts))| {
                                 let page_recency = recency_of(entry);
-                                let keys = view
-                                    .sort
-                                    .iter()
-                                    .map(|(field, _)| {
-                                        page_sort_decor(
-                                            field.as_str(),
-                                            entry,
-                                            facts.properties(),
-                                            page_recency,
-                                        )
-                                    })
-                                    .collect();
+                                let keys = if let Some(sort) = &transform_sort {
+                                    sort.decorate(&order::advanced_sort_row(None))
+                                } else {
+                                    view.sort
+                                        .iter()
+                                        .map(|(field, _)| {
+                                            page_sort_decor(
+                                                field.as_str(),
+                                                entry,
+                                                facts.properties(),
+                                                page_recency,
+                                            )
+                                        })
+                                        .collect()
+                                };
                                 (keys, base, (entry, facts))
                             })
                             .collect();

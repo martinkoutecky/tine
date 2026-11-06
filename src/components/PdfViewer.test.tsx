@@ -131,7 +131,7 @@ function documentWithPages(pages: ReturnType<typeof page>[]) {
     getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null),
     getPageIndex: vi.fn().mockResolvedValue(0),
-    destroy: vi.fn().mockResolvedValue(undefined),
+    loadingTask: { destroy: vi.fn().mockResolvedValue(undefined) },
   };
 }
 
@@ -298,7 +298,7 @@ describe("PdfViewer resource safety", () => {
     const pdf = {
       numPages: 5001,
       getPage: vi.fn(),
-      destroy: vi.fn().mockResolvedValue(undefined),
+      loadingTask: { destroy: vi.fn().mockResolvedValue(undefined) },
     };
     getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
 
@@ -311,7 +311,7 @@ describe("PdfViewer resource safety", () => {
       expect(host.querySelector(".pdf-load-error")?.textContent).toContain("at most 5000 pages");
       expect(host.querySelector(".pdf-page")).toBeNull();
       expect(pdf.getPage).not.toHaveBeenCalled();
-      expect(pdf.destroy).toHaveBeenCalledOnce();
+      expect(pdf.loadingTask.destroy).toHaveBeenCalledOnce();
     } finally {
       dispose();
     }
@@ -1190,13 +1190,13 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(getDocumentMock).toHaveBeenCalledTimes(1);
       setShowB(false);
       await flush();
-      expect(doc.destroy).not.toHaveBeenCalled(); // view A still reads it
+      expect(doc.loadingTask.destroy).not.toHaveBeenCalled(); // view A still reads it
       expect(sharedPdfDocumentCount()).toBe(1);
     } finally {
       disposeA();
       disposeB();
     }
-    expect(doc.destroy).toHaveBeenCalledTimes(1);
+    expect(doc.loadingTask.destroy).toHaveBeenCalledTimes(1);
     expect(sharedPdfDocumentCount()).toBe(0);
   });
 
@@ -1531,7 +1531,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       setTarget({ filename: "shared.pdf", label: "Graph B shared PDF", owner: ownerB });
       await flush();
 
-      expect(first.destroy).toHaveBeenCalledOnce();
+      expect(first.loadingTask.destroy).toHaveBeenCalledOnce();
       expect(host.querySelector(".pdf-viewer")).not.toBe(viewerA);
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("shared.pdf");
       await vi.advanceTimersByTimeAsync(4_000);
@@ -1769,7 +1769,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await flush();
 
       expect(openPdf.mock.calls.map(([filename]) => filename)).toEqual(["a.pdf", "b.pdf"]);
-      expect(first.destroy).toHaveBeenCalledOnce();
+      expect(first.loadingTask.destroy).toHaveBeenCalledOnce();
       expect(host.querySelectorAll(".pdf-viewer")).toHaveLength(1);
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("b.pdf");
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
@@ -1787,7 +1787,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     const current = documentWithPages([page(612, 792)]);
     let resolveStale!: (document: typeof stale) => void;
     const staleLoad = new Promise<typeof stale>((resolve) => { resolveStale = resolve; });
-    const destroyLoadingTask = vi.fn(async () => { await staleLoad; await stale.destroy(); });
+    const destroyLoadingTask = vi.fn(async () => { await staleLoad; await stale.loadingTask.destroy(); });
     getDocumentMock
       .mockReturnValueOnce({ promise: staleLoad, destroy: destroyLoadingTask })
       .mockReturnValueOnce({ promise: Promise.resolve(current) });
@@ -1804,8 +1804,8 @@ describe("PdfViewer OG state and reference behavior", () => {
       resolveStale(stale);
       await flush();
 
-      expect(stale.destroy).toHaveBeenCalledOnce();
-      expect(current.destroy).not.toHaveBeenCalled();
+      expect(stale.loadingTask.destroy).toHaveBeenCalledOnce();
+      expect(current.loadingTask.destroy).not.toHaveBeenCalled();
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("b.pdf");
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
     } finally {
@@ -2026,7 +2026,7 @@ describe("PdfViewer OG state and reference behavior", () => {
 
       expect(openPdf).toHaveBeenCalledOnce();
       expect(host.querySelector(".pdf-viewer")).toBe(viewer);
-      expect(pdf.destroy).not.toHaveBeenCalled();
+      expect(pdf.loadingTask.destroy).not.toHaveBeenCalled();
       expect(viewer?.getAttribute("data-pdf-highlight-target")).toBe(secondId);
       expect(viewer?.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id")).toBe(secondId);
     } finally {
@@ -2577,7 +2577,7 @@ describe("PdfViewer released-OG themes and outline", () => {
       await flush();
       expect(view.host.querySelector(".pdf-outline-panel")).toBeNull();
       expect(view.host.querySelector(".pdf-viewer")).not.toBeNull();
-      expect(pdf.destroy).not.toHaveBeenCalled();
+      expect(pdf.loadingTask.destroy).not.toHaveBeenCalled();
     } finally {
       view.dispose();
     }
