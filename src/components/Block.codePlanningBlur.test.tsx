@@ -34,7 +34,7 @@ function mountPage(raw: string, format: "md" | "org"): { blockId: string; textar
   const block: BlockDto = { id: `cp-${seq}`, raw, collapsed: false, children: [] };
   const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
   loadSingle(page);
-  startEditing(block.id, 0);
+  startEditing(block.id, raw.indexOf("\n") + 1);
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render((): JSX.Element => <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);

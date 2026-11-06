@@ -13,7 +13,7 @@ afterEach(() => { closeDatePicker(); endEdit("page-navigation"); resetStore(); s
 function mount(raw: string, large = false) {
   const blocks=[{id:"target",raw,collapsed:false,children:[]},...Array.from({length:large ? 1999 : 0},(_,i)=>({id:`b${i}`,raw:`prose ${i}`,collapsed:false,children:[]}))];
   loadSingle({name:"RegionUI",title:"RegionUI",kind:"page",format:"md",pre_block:null,blocks});
-  startEditing("target",0);
+  startEditing("target",raw.indexOf("\n") + 1);
   const root=document.createElement("div"); document.body.append(root);
   const dispose=render(()=><Block id="target" />,root);
   const ta=editorIn(root);

@@ -12,7 +12,7 @@ import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 
 // GH #412/#413 body-only code editor contract: while the whole visible block
-// is ONE complete code wrapper (markdown fence or org #+BEGIN_SRC/EXAMPLE,
+// is entered INSIDE one complete code wrapper (markdown fence or org #+BEGIN_SRC/EXAMPLE,
 // ```calc excluded, mixed/incomplete excluded), the block editor shows ONLY
 // the payload between the wrapper lines, and commits re-attach the exact raw
 // wrapper bytes. Consequences pinned here:
@@ -50,7 +50,8 @@ function mountPage(raw: string, format: "md" | "org" = "md") {
   const block: BlockDto = { id: `code-${seq}`, raw, collapsed: false, children: [] };
   const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
   loadSingle(page);
-  startEditing(block.id, 0);
+  // A code click lands after the opener; block entry at zero edits source (#879).
+  startEditing(block.id, raw.indexOf("\n") + 1);
   const mounted = mount(() => (
     <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
@@ -167,7 +168,7 @@ describe("body-only code editor (GH #412/#413)", () => {
     const holder: BlockDto = { id: "code-holder", raw: "```\necho hello\n```", collapsed: false, children: [child] };
     const name = `CodeSel${seq}`;
     loadSingle({ name, kind: "page", title: name, pre_block: null, blocks: [holder] });
-    startEditing("code-holder", 0);
+    startEditing("code-holder", "```\n".length);
     const m = mount(() => <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
       const ta = maybeEditorIn(m.root) as EditorDriver;

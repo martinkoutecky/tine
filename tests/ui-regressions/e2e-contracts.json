@@ -603,6 +603,7 @@
     },
     "scripts/e2e-editor-context.mjs": {
       "contracts": [
+        {"class":"stateful-ux","userOutcome":"Backspace from an empty sibling into standalone code exposes its fences; changing the language and appending prose reaches the page file in desktop and mobile layouts (GH #879).","blocking":false,"authority":"GH #879; UI-GH879-CODE-SOURCE"},
         {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},
         {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true},
         {"class":"stateful-ux","userOutcome":"Pinned ancestors show rendered text (bold, links) rather than raw markup, and each pinned bullet sits over its block's own bullet (GH #643).","blocking":true}
