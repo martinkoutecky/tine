@@ -8,6 +8,12 @@ limits and error tokens are unchanged. `nativeReadWorkers.guard.test.ts`
 ratchets synchronous command additions; the Rust `off_ui_slow_read` test proves
 the shared dispatcher yields while a read waits (L7s4-03).
 
+Quick Capture has no general graph slot. Shared editor imports, scratch edits
+and rendered page links must not start block-reference count reads (including
+the warm-cache probe) or page-inventory reads there. Page/tag completion uses
+the dedicated bounded capture query. `capture.graphReaders.test.tsx` exercises
+the capture entry point with native-equivalent refusals for general reads.
+
 User macro substitution is charged before constructing the substituted string.
 The DOM renderer and Copy/Export rendered-text walker use the same expansion
 budget owner: depth 12, 1000 expansions and 256 KiB of expanded string units

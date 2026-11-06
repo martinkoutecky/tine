@@ -21,7 +21,7 @@ let seq = 0;
 function mount(raw: string, format: "md" | "org" = "md") {
   const name = `Literal ${++seq}`;
   loadSingle({ name, title: name, kind: "page", format, pre_block: null, blocks: [{ id: "b", raw, collapsed: false, children: [] }] });
-  startEditing("b", 0);
+  startEditing("b", raw.startsWith("```") ? raw.indexOf("\n") + 1 : 0);
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
   return { ta: editorIn(root), dispose };
