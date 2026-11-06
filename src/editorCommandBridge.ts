@@ -23,6 +23,8 @@ export interface FocusedEditorCommandBridge {
   blur(): void;
   /** The editor's text and its non-collapsed selection, or null. */
   textSelection?(): { text: string; start: number; end: number } | null;
+  /** Live text and caret only while this occurrence has native focus. */
+  textCaret?(): { text: string; caret: number } | null;
   /** Replace a mounted editor's buffer, only inside the requesting surface. */
   replaceText?(text: string, container: HTMLElement): boolean;
 }

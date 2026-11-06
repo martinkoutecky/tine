@@ -12,10 +12,7 @@ installBlockEditorLifecycle();
 function typePrefix(editor: EditorDriver, text: string) {
   editor.focus();
   for (const ch of text) {
-    const value = editor.value() + ch;
-    editor.replaceText(value);
-    editor.select(value.length, value.length);
-    editor.reportInput({ bubbles: true, inputType: "insertText", data: ch });
+    editor.type(ch);
   }
 }
 
