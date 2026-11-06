@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 // PDF5-SCROLL: pdf.js 5 gives every glyph span a CSS transform, an identity one
 // for spans it never stretched or rotated. WebKit keeps each transformed span as
@@ -8,8 +8,21 @@ import { readFileSync } from "node:fs";
 // whenever the minimum-font scale is identity; stretched and rotated spans, and
 // every span under a larger minimum font size, keep pdf.js's transform.
 
-const css = ["node_modules/pdfjs-dist/web/pdf_viewer.css", "src/styles/pdf-workspace.css"]
-  .map((path) => readFileSync(path, "utf8")).join("\n");
+// Exercise the shipped CSS: pdf.js 6 leaves its selectors nested. Resolve the
+// real build target outside jsdom (esbuild requires Node's typed-array realm).
+const css = execFileSync(process.execPath, ["--input-type=module", "-e", `
+  import { transformSync } from "esbuild";
+  import { resolveConfig } from "vite";
+  import fs from "node:fs";
+  const config = await resolveConfig({ logLevel: "silent" }, "build");
+  const source = ["node_modules/pdfjs-dist/web/pdf_viewer.css", "src/styles/pdf-workspace.css"]
+    .map(path => fs.readFileSync(path, "utf8")).join("\\n");
+  process.stdout.write(transformSync(source, {
+    loader: "css", target: config.build.cssTarget,
+  }).code);
+`], {
+  encoding: "utf8",
+});
 
 function layer(unitFont: boolean) {
   const style = document.createElement("style");
@@ -29,7 +42,7 @@ function layer(unitFont: boolean) {
   return { transform, dispose: () => { page.remove(); style.remove(); } };
 }
 
-describe("pdf.js 5 text layer transforms", () => {
+describe("pdf.js text layer transforms", () => {
   let dispose = () => {};
   afterEach(() => dispose());
 

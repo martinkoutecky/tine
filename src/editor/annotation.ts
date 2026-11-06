@@ -25,19 +25,19 @@ function annotationProperty(properties: [string, string][]): [string, string] | 
  *  the block isn't an annotation. */
 export function annotationInfo(
   properties: [string, string][]
-): { color: string; hlPage: number } | null {
+): { color: string; hlPage: number; areaStamp?: string } | null {
   if (!annotationProperty(properties)) return null;
   const color = properties.find(([k]) => k === "hl-color")?.[1] ?? "yellow";
   const parsedPage = Number(properties.find(([k]) => k === "hl-page")?.[1] ?? "1");
   const hlPage = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
-  return { color, hlPage };
+  const areaStamp = properties.find(([k]) => k === "hl-type")?.[1] === "area"
+    ? properties.find(([k]) => k === "hl-stamp")?.[1] : undefined;
+  return { color, hlPage, ...(areaStamp ? { areaStamp } : {}) };
 }
 
 /** Parsed DTO properties, including an empty result, are authoritative. Missing
  * facets use the same cached parser as live blocks (O(properties) warm). */
-export function annotationInfoForBlock(block: Pick<BlockDto, "raw" | "properties">, format: Format = "md"): {
-  color: string; hlPage: number;
-} | null {
+export function annotationInfoForBlock(block: Pick<BlockDto, "raw" | "properties">, format: Format = "md"): ReturnType<typeof annotationInfo> {
   return annotationInfo(block.properties ?? facetsOf(block.raw, format).properties);
 }
 

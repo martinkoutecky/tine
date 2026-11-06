@@ -1,3 +1,5 @@
+import { settingLabel, settingAttributes } from "./settingsField";
+import { settings } from "./settingDefinitions";
 // About: build/project information and device-local update controls.
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { ownedWhen, readOwned } from "../owned";
@@ -129,9 +131,9 @@ export function AboutTab(): JSX.Element {
         </Show>
       </div>
       <Show when={desktop() && !updatesManaged()}>
-        <div class="settings-row"><span class="settings-label">{t("about-check-for-updates-automatically")}</span>
+        <div class="settings-row" {...settingAttributes(settings["about-check-for-updates-automatically"])}><span class="settings-label">{settingLabel(settings["about-check-for-updates-automatically"])}</span>
           <button class="settings-toggle" classList={{ on: checkForUpdatesAutomatically() }}
-            role="switch" aria-label={t("about-check-for-updates-automatically")} aria-checked={checkForUpdatesAutomatically()}
+            role="switch" aria-label={settingLabel(settings["about-check-for-updates-automatically"])} aria-checked={checkForUpdatesAutomatically()}
             onClick={() => setCheckForUpdatesAutomatically(!checkForUpdatesAutomatically())}>
             <span class="settings-toggle-knob" />
           </button>

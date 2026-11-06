@@ -21,6 +21,9 @@ use crate::model::RefGroup;
 
 #[allow(missing_docs)]
 mod advanced_patterns;
+pub mod advanced_sort;
+#[cfg(test)]
+mod advanced_sort_tests;
 #[allow(missing_docs)]
 pub mod atom;
 #[cfg(test)]

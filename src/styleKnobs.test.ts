@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { SETTING_SEARCH, settingMatches } from "./components/settingsSearch";
+import { settingMatches } from "./components/settingsSearch";
+import { settingEntries } from "./components/settingsRegistry";
 import { renderEnglish } from "./i18n";
 import {
   KNOBS,
@@ -156,11 +157,11 @@ describe("stored values (N4)", () => {
 describe("Settings search", () => {
   it("every knob with a control is searchable by its title; headings are not", () => {
     for (const k of KNOBS.filter((entry) => entry.type !== "heading")) {
-      const entry = SETTING_SEARCH.find((e) => e.label === k.title);
+      const entry = settingEntries().find((e) => e.label === k.title);
       expect(entry?.tab, `Settings search has no entry for the knob ${k.title}`).toBe("appearance");
       expect(settingMatches(entry!, typeof k.title === "string" ? k.title : renderEnglish(k.title))).toBe(true);
     }
-    expect(SETTING_SEARCH.some((e) => KNOBS.some((k) => k.type === "heading" && k.title === e.label))).toBe(false);
+    expect(settingEntries().some((e) => KNOBS.some((k) => k.type === "heading" && k.title === e.label))).toBe(false);
   });
 });
 

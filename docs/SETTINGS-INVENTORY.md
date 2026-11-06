@@ -1,182 +1,197 @@
-# Core settings disclosure inventory
+# Settings inventory
 
-Reviewed 2026-10-31 (arrival audit L4-04). Each row records the stable search
-label key, visible English label, and current disclosure level. Basic settings
-stay visible; Advanced controls are revealed by their section or by search.
-Conditional mobile, CM6, Sharing and Plugins controls are included even when
-unavailable in the current build. Fine-tuning rows come from the knob registry.
+Generated from the descriptors consumed by the Settings controls and search.
+Run `node scripts/generate-settings-inventory.mjs` after changing a descriptor;
+`node scripts/generate-settings-inventory.mjs --check` checks staleness.
 
-The guard in `src/components/settingsInventory.test.ts` checks all search keys,
-levels and tab IDs. Add the inventory row when adding a setting. Plugin-owned
-settings are declared by each installed manifest and rendered in Plugins; their
-dynamic keys are outside this core inventory.
+IDs are stable navigation targets (`data-setting-id`); labels resolve in the selected language.
+Search also accepts English terms of two or more characters and declared aliases. A single character matches only displayed-language text.
+
+The inventory includes gated controls (CM6, desktop, touch, Sharing) even where a build or device hides them.
 
 <!-- tab:appearance -->
 
-## Appearance
+## appearance
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `appearance` | `settings-search-language` | Language | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-theme-mode` | Theme mode | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-style` | Style | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-color-scheme` | Color scheme | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `themes-install-a-token-theme` | Install a token theme | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-right-to-left-note-layout` | Right-to-left note layout | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-edit-custom-css` | Edit custom.css | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `css-edit-global` | Edit global CSS | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-disable-custom-css` | Disable custom CSS | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-developer-tools` | Developer tools | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-accent-color` | Accent color | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-interface-size` | Interface size | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-wide-mode` | Wide mode | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-standard-page-width` | Standard page width | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-wide-page-width` | Wide page width | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-comment-margin` | Comment margin | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-document-mode` | Document mode | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-document-mode-enter-creates-a-new-block` | Document-mode Enter creates a new block | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-show-brackets` | Show brackets | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-typographic-replacements` | Typographic replacements | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-wrap-code-lines` | Wrap code lines | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `setting-sticky-parents` | Sticky parent bullets | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-auto-pair-brackets-quotes` | Auto-pair brackets & quotes | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-space-after-inserting-a-reference` | Space after inserting a reference | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-dim-in-focus-mode` | Dim in focus mode | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-load-local-file-images` | Load local-file images | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-mobile-navigation-label` | Navigation buttons at the bottom | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-smooth-scrolling-experimental` | Smooth scrolling (experimental) | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-search-system-title-bar-window-controls` | System title bar & window controls | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-show-tine-in-the-system-tray` | Show Tine in the system tray | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-minimize-to-tray` | Minimize to tray | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-search-start-minimized-to-tray` | Start minimized to tray | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `appearance` | `settings-embed-breadcrumbs` | Block embed breadcrumbs | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-embedded-blocks` | Embedded blocks | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-color-indent-guides-by-level` | Color indent guides by level | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-links-to-the-web-or-a-file` | Links to the web or a file | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `appearance` | `settings-links-to-pages-that-do-not-exist` | Links to pages that do not exist yet | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-
-<!-- tab:editor -->
-
-Remembered app link consent is device-local and revocable for each exact URL scheme.
-
-## Editor
-
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `editor` | `settings-search-your-name` | Your name | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `editor` | `links-remembered-schemes` | Remembered app links | Basic | Device-local permission, with per-scheme revocation. |
-| `editor` | `settings-hover-preview-delay` | Hover preview delay | Advanced | Optional reference-preview timing; a large delay keeps previews out of the way. |
-| `editor` | `settings-cm6-label` | Experimental: CodeMirror editor | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-search-file-format` | File format | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `editor` | `settings-search-logical-outdenting` | Logical outdenting | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `editor` | `settings-search-link-autocomplete-default` | Link autocomplete default | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-search-switch-to-an-already-open-tab-when-navigating` | Switch to an already-open tab when navigating | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-search-learn-ctrl-k-choices` | Learn Ctrl+K choices | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-pinyin-label` | Match Chinese page names by Pinyin | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-search-spell-checker` | Spell checker | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `editor` | `settings-ui-spellcheck-languages` | Spellcheck languages | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `editor` | `settings-search-copy-a-parent-block-s-sub-blocks` | Copy a parent block's sub-blocks | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-search-strip-collapsed-when-copying` | Strip collapsed:: when copying | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `editor` | `settings-search-click-a-block-reference-to-zoom-in` | Click a block reference to zoom in | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `editor` | `settings-result-destination-label` | Search results open in | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `theme.gallery.default` | `themes-default` | Default | Basic |
+| `settings-ui-interface-size` | `settings-ui-interface-size` | Interface size | Basic |
+| `settings-mobile-navigation-label` | `settings-mobile-navigation-label` | Navigation buttons at the bottom | Basic |
+| `settings-ui-wide-mode` | `settings-ui-wide-mode` | Wide mode | Basic |
+| `settings-ui-document-mode` | `settings-ui-document-mode` | Document mode | Basic |
+| `settings-ui-document-mode-enter-creates-a-new-block` | `settings-ui-document-mode-enter-creates-a-new-block` | Document-mode Enter creates a new block | Basic |
+| `settings-ui-comment-margin` | `settings-ui-comment-margin` | Comment margin | Basic |
+| `settings-ui-show-brackets` | `settings-ui-show-brackets` | Show brackets | Basic |
+| `settings-ui-typographic-replacements` | `settings-ui-typographic-replacements` | Typographic replacements | Basic |
+| `settings-ui-wrap-code-lines` | `settings-ui-wrap-code-lines` | Wrap code lines | Basic |
+| `setting-sticky-parents` | `setting-sticky-parents` | Sticky parent bullets | Basic |
+| `settings-ui-auto-pair-brackets-quotes` | `settings-ui-auto-pair-brackets-quotes` | Auto-pair brackets & quotes | Basic |
+| `settings-ui-space-after-inserting-a-reference` | `settings-ui-space-after-inserting-a-reference` | Space after inserting a reference | Basic |
+| `settings-ui-dim-in-focus-mode` | `settings-ui-dim-in-focus-mode` | Dim in focus mode | Basic |
+| `settings-ui-load-local-file-images` | `settings-ui-load-local-file-images` | Load local-file images | Basic |
+| `settings-ui-right-to-left-note-layout` | `settings-ui-right-to-left-note-layout` | Right-to-left note layout | Advanced |
+| `settings-ui-smooth-scrolling-experimental` | `settings-ui-smooth-scrolling-experimental` | Smooth scrolling (experimental) | Advanced |
+| `settings-ui-system-title-bar-window-controls` | `settings-ui-system-title-bar-window-controls` | System title bar & window controls | Basic |
+| `settings-ui-window-controls` | `settings-ui-window-controls` | Window controls | Basic |
+| `content-width-fields-standard-page-width` | `content-width-fields-standard-page-width` | Standard page width | Advanced |
+| `content-width-fields-wide-page-width` | `content-width-fields-wide-page-width` | Wide page width | Advanced |
+| `css-edit-graph` | `css-edit-graph` | Edit custom.css | Advanced |
+| `css-edit-global` | `css-edit-global` | Edit global CSS | Advanced |
+| `settings-search-disable-custom-css` | `settings-search-disable-custom-css` | Disable custom CSS | Advanced |
+| `settings-search-developer-tools` | `settings-search-developer-tools` | Developer tools | Advanced |
+| `settings-prose-show-tine-in-the-system-tray` | `settings-prose-show-tine-in-the-system-tray` | Show Tine in the system tray | Basic |
+| `settings-prose-minimize-to-tray` | `settings-prose-minimize-to-tray` | Minimize to tray | Basic |
+| `settings-prose-start-minimized-to-tray` | `settings-prose-start-minimized-to-tray` | Start minimized to tray | Basic |
+| `settings-ui-mode` | `settings-ui-mode` | Mode | Basic |
+| `settings-ui-accent-color` | `settings-ui-accent-color` | Accent color | Basic |
+| `themes-style` | `themes-style` | Style | Basic |
+| `themes-typography` | `themes-typography` | Typography | Basic |
+| `themes-color-scheme` | `themes-color-scheme` | Color scheme | Basic |
+| `themes-install-a-token-theme` | `themes-install-a-token-theme` | Install a token theme | Basic |
+| `settings-language-label` | `settings-language-label` | Language | Basic |
+| `knob.embed-breadcrumbs` | `settings-embed-breadcrumbs` | Block embed breadcrumbs | Advanced |
+| `knob.embed-shading` | `settings-embedded-blocks` | Embedded blocks | Advanced |
+| `knob.guide-colors` | `settings-color-indent-guides-by-level` | Color indent guides by level | Advanced |
+| `knob.external-link-underline` | `settings-links-to-the-web-or-a-file` | Links to the web or a file | Advanced |
+| `knob.missing-page-color` | `settings-links-to-pages-that-do-not-exist` | Links to pages that do not exist yet | Advanced |
+| `theme.gallery.nord` | `Nord` | Nord | Basic |
+| `theme.gallery.solarized` | `Solarized` | Solarized | Basic |
+| `theme.gallery.gruvbox` | `Gruvbox` | Gruvbox | Basic |
+| `theme.gallery.soft` | `Soft` | Soft | Basic |
 
 <!-- tab:journals -->
 
-## Journals
+## journals
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `journals` | `settings-search-journal-date-format` | Journal date format | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-search-first-day-of-week` | First day of week | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-search-carry-over` | Carry-over | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-ui-show-carry-over-buttons` | Show carry-over buttons | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-ui-carry-over-keeps-context` | Carry-over keeps context | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-ui-carry-over-header` | Carry-over header | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-ui-carry-last-n-days` | Carry “last N days” | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-search-task-workflow` | Task workflow | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-search-time-tracking` | Time tracking | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-search-new-journal-template` | New-journal template | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `journals` | `settings-search-quick-capture-enter-key` | Quick-capture Enter key | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `journals` | `settings-search-agenda-window` | Agenda window | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `settings-ui-new-journal-template` | `settings-ui-new-journal-template` | New-journal template | Basic |
+| `settings-ui-journal-date-format` | `settings-ui-journal-date-format` | Journal date format | Basic |
+| `settings-ui-first-day-of-week` | `settings-ui-first-day-of-week` | First day of week | Basic |
+| `settings-ui-show-carry-over-buttons` | `settings-ui-show-carry-over-buttons` | Show carry-over buttons | Basic |
+| `settings-ui-carry-over-keeps-context` | `settings-ui-carry-over-keeps-context` | Carry-over keeps context | Basic |
+| `settings-ui-carry-over-header` | `settings-ui-carry-over-header` | Carry-over header | Basic |
+| `settings-ui-carry-last-n-days` | `settings-ui-carry-last-n-days` | Carry “last N days” | Basic |
+| `settings-ui-task-workflow` | `settings-ui-task-workflow` | Task workflow | Basic |
+| `settings-ui-time-tracking` | `settings-ui-time-tracking` | Time tracking | Basic |
+| `settings-ui-quick-capture-enter-key` | `settings-ui-quick-capture-enter-key` | Quick-capture Enter key | Advanced |
+| `settings-ui-agenda-window` | `settings-ui-agenda-window` | Agenda window | Basic |
 
-<!-- tab:files -->
+<!-- tab:editor -->
 
-## Files
+## editor
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `files` | `settings-search-new-asset-filename` | New asset filename | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `files` | `settings-search-watch-for-external-edits` | Watch for external edits | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `files` | `settings-search-diagram-editors` | Diagram editors | Advanced | Optional fine-tuning, compatibility or troubleshooting choice. |
-| `files` | `settings-orphaned-media` | Orphaned media | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `settings-ui-file-format` | `settings-ui-file-format` | File format | Basic |
+| `settings-ui-spell-checker` | `settings-ui-spell-checker` | Spell checker | Basic |
+| `settings-ui-logical-outdenting` | `settings-ui-logical-outdenting` | Logical outdenting | Basic |
+| `settings-ui-spellcheck-languages` | `settings-ui-spellcheck-languages` | Spellcheck languages | Basic |
+| `settings-hover-preview-delay` | `settings-hover-preview-delay` | Hover preview delay | Advanced |
+| `settings-cm6-label` | `settings-cm6-label` | Experimental: CodeMirror editor | Advanced |
+| `settings-ui-link-autocomplete-default` | `settings-ui-link-autocomplete-default` | Link autocomplete default | Advanced |
+| `settings-ui-switch-to-an-already-open-tab-when-navigating` | `settings-ui-switch-to-an-already-open-tab-when-navigating` | Switch to an already-open tab when navigating | Advanced |
+| `settings-result-destination-label` | `settings-result-destination-label` | Search results open in | Advanced |
+| `settings-pinyin-label` | `settings-pinyin-label` | Match Chinese page names by Pinyin | Advanced |
+| `settings-ui-learn-ctrl-k-choices` | `settings-ui-learn-ctrl-k-choices` | Learn Ctrl+K choices | Advanced |
+| `settings-ui-copy-a-parent-block-s-sub-blocks` | `settings-ui-copy-a-parent-block-s-sub-blocks` | Copy a parent block's sub-blocks | Advanced |
+| `settings-ui-strip-collapsed-when-copying` | `settings-ui-strip-collapsed-when-copying` | Strip collapsed:: when copying | Advanced |
+| `settings-ui-click-a-block-reference-to-zoom-in` | `settings-ui-click-a-block-reference-to-zoom-in` | Click a block reference to zoom in | Basic |
+| `links-remembered-schemes` | `links-remembered-schemes` | Remembered app links | Basic |
+| `comment-name-label` | `comment-name-label` | Your name | Basic |
 
 <!-- tab:backups -->
 
-## Backups & recovery
+## backups
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `backups` | `settings-search-snapshots-to-keep` | Snapshots to keep | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `backups` | `settings-search-always-ask-before-applying-an-external-change` | Always ask before applying an external change | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `backups` | `settings-ui-duplicate-journal-days` | Duplicate journal days | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `backups` | `journal-filename-panel-journal-files-named-by-title` | Journal files named by title | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `backups` | `settings-ui-conflicts` | Conflicts | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `settings-ui-snapshots-to-keep` | `settings-ui-snapshots-to-keep` | Snapshots to keep | Basic |
+| `settings-prose-always-ask-before-applying-an-external-change` | `settings-prose-always-ask-before-applying-an-external-change` | Always ask before applying an external change | Basic |
+| `settings-ui-duplicate-journal-days` | `settings-ui-duplicate-journal-days` | Duplicate journal days | Basic |
+| `settings-ui-conflicts` | `settings-ui-conflicts` | Conflicts | Basic |
+| `settings-available-snapshots` | `settings-available-snapshots` | Available snapshots | Basic |
+| `journal-filename-panel-journal-files-named-by-title` | `journal-filename-panel-journal-files-named-by-title` | Journal files named by title | Basic |
+
+<!-- tab:files -->
+
+## files
+
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `settings-ui-new-asset-filename` | `settings-ui-new-asset-filename` | New asset filename | Basic |
+| `settings-ui-watch-for-external-edits` | `settings-ui-watch-for-external-edits` | Watch for external edits | Basic |
+| `settings-ui-diagram-editors` | `settings-ui-diagram-editors` | Diagram editors | Advanced |
+| `settings-orphaned-media` | `settings-orphaned-media` | Orphaned media | Basic |
+| `media-editor.drawio` | `draw.io command` | draw.io command | Advanced |
+| `media-editor.excalidraw` | `Excalidraw command` | Excalidraw command | Advanced |
 
 <!-- tab:graph -->
 
-## Graph
+## graph
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `graph` | `settings-search-graph` | Graph | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `graph` | `settings-graph-folder-label` | Graph folder | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `graph` | `settings-search-home-page` | Home page | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `graph` | `graph-publish-publish` | Publish | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `graph` | `git-settings-label` | Commit changes to git | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `graph` | `seen-settings-label` | Changed since you last looked | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `graph` | `query-export-limit-setting-query-export-size-limit` | Query export size limit | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `git-settings-label` | `git-settings-label` | Commit changes to git | Basic |
+| `seen-settings-label` | `seen-settings-label` | Changed since you last looked | Basic |
+| `settings-graph-folder-label` | `settings-graph-folder-label` | Graph folder | Basic |
+| `home-page-setting-home-page` | `home-page-setting-home-page` | Home page | Basic |
+| `graph-publish-graph` | `graph-publish-graph` | Graph | Basic |
+| `graph-publish-publish` | `graph-publish-publish` | Publish | Basic |
+| `query-export-limit-setting-query-export-size-limit` | `query-export-limit-setting-query-export-size-limit` | Query export size limit | Basic |
 
 <!-- tab:sharing -->
 
-## Sharing
+## sharing
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `sharing` | `quick-share-settings-account` | GitHub account | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `sharing` | `quick-share-settings-shares` | Share links on this device | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `sharing` | `quick-share-settings-find` | Find shares on GitHub | Basic | Visible workflow, accessibility, permission or safety choice. |
-
-<!-- tab:plugins -->
-
-## Plugins
-
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `plugins` | `settings-ui-plugins` | Plugins | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `quick-share-settings-account` | `quick-share-settings-account` | GitHub account | Basic |
+| `quick-share-settings-shares` | `quick-share-settings-shares` | Share links on this device | Basic |
+| `quick-share-settings-markers` | `quick-share-settings-markers` | Pending in this graph | Basic |
+| `quick-share-settings-find` | `quick-share-settings-find` | Find shares on GitHub | Basic |
 
 <!-- tab:diagnostics -->
 
-## Help & diagnostics
+## diagnostics
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `diagnostics` | `settings-search-help-diagnostics` | Help & diagnostics | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `diagnostics` | `diagnostics-tab-rescan-graph` | Rescan graph | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `diagnostics` | `error-toast-history-recent-error-messages` | Recent error messages | Basic | Visible workflow, accessibility, permission or safety choice. |
-| `diagnostics` | `graph-verification-verify-synchronized-graph` | Verify synchronized graph | Basic | Visible workflow, accessibility, permission or safety choice. |
-
-<!-- tab:shortcuts -->
-
-## Keyboard shortcuts
-
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `shortcuts` | `settings-search-keyboard-shortcuts` | Keyboard shortcuts | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `diagnostics-tab-help-diagnostics` | `diagnostics-tab-help-diagnostics` | Help & diagnostics | Basic |
+| `diagnostics-refresh-everything` | `diagnostics-refresh-everything` | Refresh everything on every save (debug) | Basic |
+| `diagnostics-tab-rescan-graph` | `diagnostics-tab-rescan-graph` | Rescan graph | Basic |
+| `error-toast-history-recent-error-messages` | `error-toast-history-recent-error-messages` | Recent error messages | Basic |
+| `graph-verification-verify-synchronized-graph` | `graph-verification-verify-synchronized-graph` | Verify synchronized graph | Basic |
 
 <!-- tab:about -->
 
-## About
+## about
 
-| Tab ID | Setting key | Label | Level | Rationale |
-|---|---|---|---|---|
-| `about` | `settings-search-about` | About | Basic | Visible workflow, accessibility, permission or safety choice. |
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `about-check-for-updates-automatically` | `about-check-for-updates-automatically` | Check for updates automatically | Basic |
+| `settings-ui-about` | `settings-ui-about` | About | Basic |
+
+<!-- tab:plugins -->
+
+## plugins
+
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `plugins-install-a-local-package` | `plugins-install-a-local-package` | Install a local package | Basic |
+| `settings-ui-plugins` | `settings-ui-plugins` | Plugins | Basic |
+
+<!-- tab:shortcuts -->
+
+## shortcuts
+
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `settings-ui-keyboard-shortcuts` | `settings-ui-keyboard-shortcuts` | Keyboard shortcuts | Basic |
+
+## Device and registry entries
+
+In addition to the rows above, search and Appearance use the same installed theme and signed community theme registries: each package contributes its name and description, with a distinct ID for its row. Built-in gallery cards use the gallery registry.
+
+Installed plugins contribute each manifest setting's label and description, plus the plugin name. Choosing a result opens that exact plugin version's settings form. Plugin and theme text is supplied by its author and stays verbatim in every interface language.
