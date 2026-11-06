@@ -144,6 +144,7 @@
       "tine",
       "delete",
       "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--yes",
       "--graph",
       "$GRAPH"
     ],
@@ -153,11 +154,48 @@
       "blocks": [],
       "broken_refs": 1,
       "deleted": "proof/1~diekug",
+      "format": "md",
       "kind": "deleted",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.md",
+      "removed_text": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n",
+      "removed_text_omitted_bytes": 0,
       "rev": "af3d00c0c23b984e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "yes": true
+      },
+      "verb": "block.delete"
+    },
+    "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev af3d00c0c23b984e\nremoved text (block and children):\n- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-delete-confirmation",
+    "command": [
+      "tine",
+      "delete",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "broken_refs": 1,
+          "page": "pages/proof.md",
+          "reason": "confirmation"
+        },
+        "message": "Block references broken by this deletion: 1; Pass --yes (or --force) to confirm; nothing changed"
+      },
       "schema": "tine.cli/1"
     },
     "request": {
@@ -166,7 +204,7 @@
       },
       "verb": "block.delete"
     },
-    "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev af3d00c0c23b984e\n"
+    "text": "tine: refused:confirmation: Block references broken by this deletion: 1; Pass --yes (or --force) to confirm; nothing changed"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n- new\n  author:: proof\n\t- nested\n\t  author:: proof\n",
@@ -1059,6 +1097,7 @@
       "tine",
       "delete",
       "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--yes",
       "--graph",
       "$GRAPH"
     ],
@@ -1068,11 +1107,48 @@
       "blocks": [],
       "broken_refs": 1,
       "deleted": "proof/1~diekug",
+      "format": "org",
       "kind": "deleted",
       "more": 0,
       "name": "proof",
       "page": "pages/proof.org",
+      "removed_text": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n",
+      "removed_text_omitted_bytes": 0,
       "rev": "91d9a75ff352831f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "yes": true
+      },
+      "verb": "block.delete"
+    },
+    "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev 91d9a75ff352831f\nremoved text (block and children):\n* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-delete-confirmation",
+    "command": [
+      "tine",
+      "delete",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "broken_refs": 1,
+          "page": "pages/proof.org",
+          "reason": "confirmation"
+        },
+        "message": "Block references broken by this deletion: 1; Pass --yes (or --force) to confirm; nothing changed"
+      },
       "schema": "tine.cli/1"
     },
     "request": {
@@ -1081,7 +1157,7 @@
       },
       "verb": "block.delete"
     },
-    "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev 91d9a75ff352831f\n"
+    "text": "tine: refused:confirmation: Block references broken by this deletion: 1; Pass --yes (or --force) to confirm; nothing changed"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n* new\n:PROPERTIES:\n:author: proof\n:END:\n** nested\n:PROPERTIES:\n:author: proof\n:END:\n",

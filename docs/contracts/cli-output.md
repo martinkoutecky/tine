@@ -303,7 +303,14 @@ when it is `busy`.
 
 ### `block.delete`
 
-`tine delete BLOCK [--rev REV]`. The block and its children, through the same write path. Kind `deleted`: the
+`tine delete BLOCK [--yes|--force] [--rev REV]`. The block and its children, through the same write path.
+If deletion would break incoming block references, it refuses before admission unless `--yes`
+(alias `--force`, matching page deletion) is supplied. The refusal is `refused` (exit 6), with
+`detail.reason: "confirmation"`, `detail.admitted: false`, and `detail.broken_refs` giving the
+count; its message names the count and both confirmation flags. References wholly inside the
+removed subtree do not require confirmation. No deletion is saved on refusal.
+
+Kind `deleted`: the
 `written` fields above (`blocks` is empty: the deleted blocks have no handle in the new text), plus:
 
 | field | type | presence | disclosure | meaning |
@@ -317,12 +324,19 @@ when it is `busy`.
 | `more` | integer | always | yes | as `written` |
 | `deleted` | string | always | no | the deleted block's handle, as it was before the deletion |
 | `broken_refs` | integer | always | yes | `((uuid))` references elsewhere in the graph to an `id::` in the deleted subtree, not counting references inside the subtree itself (the app's delete notice counts the same way) |
+| `removed_text` | string | always | yes | removed block and children as a standalone page fragment, including properties, in the page's format; canonical indentation and LF line endings; the longest UTF-8 prefix fitting 65,536 bytes |
+| `removed_text_omitted_bytes` | integer | always | yes | bytes omitted from that fragment after the prefix, zero when complete |
+| `format` | string | always | no | `"md"` or `"org"`, the removed fragment's format, as in a page read |
 
-Read by the text output: `deleted`, `broken_refs`, `name`, `rev`.
+Read by the text output: `deleted`, `broken_refs`, `name`, `rev`, `removed_text`, `removed_text_omitted_bytes`.
 
 A run write's `git` object is as for `written`.
 
-Text: `deleted HANDLE (breaks N references)`, then `NAME rev REV`, then the `git` line as for `written`.
+Text: `deleted HANDLE (breaks N references)`, then `NAME rev REV`, then the `git` line as for `written`,
+then `removed text (block and children):` and the fragment. When incomplete, a final line says
+`removed text truncated at 65536 UTF-8 bytes; omitted bytes: N`. Save this reply for recovery;
+an incomplete fragment cannot restore the whole subtree. Confirmation never bypasses the
+revision, read-only, ambiguity, round-trip, or guarded-save checks.
 
 ### Runs: `run.begin` / `run.show` / `run.end` / `run.revert`
 
@@ -542,6 +556,7 @@ A failed command prints one line to stderr and exits non-zero.
 | `error.detail.rev` | string | optional | `stale` on `--rev`: the page's current rev |
 | `error.detail.uuid` | string | optional | `refused` / `broken-ref`: the UUID no block has |
 | `error.detail.reason` | string | optional | `refused`: why (below); the text puts it in `refused:<reason>` |
+| `error.detail.broken_refs` | integer | optional | `block.delete` confirmation refusal: count of incoming references the deletion would break |
 | `error.detail.diagnostics` | array of `Diagnostic` | optional | `bad-args` from a query that does not parse |
 | `error.detail.diag` | string | optional | `internal`: the diagnostic id (below) |
 
@@ -643,7 +658,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
 | `page-exists` | page creation or rename would replace an existing file or alias |
-| `confirmation` | `page delete` needs `--yes` or `--force` |
+| `confirmation` | `page delete`, or `delete` of a block whose removal would break incoming references, needs `--yes` or `--force` |
 | `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
 | `git` | a run verb or `--run` write: the graph's git repository cannot take the run's commits (none, bare, a merge/rebase in progress, a detached HEAD, an ignored file, a libgit2 error) |
 | `git-busy` | a `--run` write while another git command holds the index (before any change), or inside a `git` object: the branch kept moving while a run write committed |

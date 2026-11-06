@@ -80,7 +80,7 @@ tine\-add(1)
 Insert a page fragment, attributing every new block to its author
 .TP
 tine\-delete(1)
-Delete a block with its children; prints how many references to it the deletion leaves broken
+Delete a block with its children; refuses broken references without \-\-yes and prints the removed text (up to 65,536 UTF\-8 bytes, with omitted byte count)
 .TP
 tine\-move(1)
 Move a block, with its children, under, after or before another block on the same page

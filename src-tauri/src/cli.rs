@@ -169,11 +169,12 @@ enum Command {
         #[command(flatten)]
         write: WriteArgs,
     },
-    /// Delete a block with its children; prints how many references to it
-    /// the deletion leaves broken.
+    #[command(about = crate::i18n_shell::shell_text("en", "shell-cli-delete-help"))]
     Delete {
         #[arg(value_name = "BLOCK")]
         handle: String,
+        #[arg(long, visible_alias = "force", help = crate::i18n_shell::shell_text("en", "shell-cli-delete-confirm-help"))]
+        yes: bool,
         #[command(flatten)]
         write: WriteArgs,
     },
@@ -752,8 +753,8 @@ fn read_command(command: Command) -> i32 {
             }));
             write_verb(write.read.target(), "block.add", args)
         }
-        Command::Delete { handle, write } => {
-            let args = write.args(json!({ "handle": handle }));
+        Command::Delete { handle, yes, write } => {
+            let args = write.args(json!({ "handle": handle, "yes": yes }));
             write_verb(write.read.target(), "block.delete", args)
         }
         Command::Move {
@@ -896,6 +897,17 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    #[test]
+    fn cli_delete_confirmation_flags_parse() {
+        for flag in ["--yes", "--force"] {
+            let matches = Cli::command()
+                .try_get_matches_from(["tine", "delete", "a/1~abcdef", flag])
+                .unwrap();
+            assert_eq!(matches.subcommand().unwrap().1.get_flag("yes"), true);
+        }
+        Cli::try_parse_from(["tine", "delete", "a/1~abcdef"]).unwrap();
     }
 
     #[test]
