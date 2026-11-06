@@ -23,7 +23,7 @@ vi.mock("./document", () => ({
 }));
 vi.mock("./editorController", () => ({ startEditing: () => {} }));
 vi.mock("./keybindings", () => ({ installKeybindings: () => () => {}, eventToBindingString: () => "" }));
-vi.mock("./ui", () => ({ datePicker: () => null }));
+vi.mock("./ui", () => ({ datePicker: () => null, applyTaskWorkflow: () => {} }));
 vi.mock("./spellcheckSettings", () => ({ initSpellcheckSettings: async () => {} }));
 vi.mock("./refCompletionSettings", () => ({ initRefCompletionSettings: async () => {} }));
 vi.mock("./lsShimInstall", () => ({}));

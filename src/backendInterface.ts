@@ -18,6 +18,7 @@ import type {
   AssetInfo,
   GuideCopyResult,
   GuidePage,
+  GraphMeta,
   Highlight,
   PageDto,
   PageKind,
@@ -74,8 +75,8 @@ export interface Backend {
   captureTarget(): Promise<string>;
   captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number): Promise<"new" | "pending" | "saved" | "missing">;
   /** Lease the graph selected for this Quick Capture show before issuing
-   * graph-scoped reads from its independent WebView. */
-  bindCaptureGraph(): Promise<void>;
+   * graph-scoped reads from its independent WebView, returning its config. */
+  bindCaptureGraph(): Promise<GraphMeta>;
   listKnownGraphs(): Promise<KnownGraph[]>;
   forgetKnownGraph(path: string): Promise<void>;
   /** Reveal a remembered graph's folder in the desktop file manager. */

@@ -81,6 +81,7 @@ fn capture_target_for_state(state: &AppState) -> Result<String, String> {
 #[derive(serde::Serialize)]
 pub(crate) struct CaptureGraphBindingResult {
     pub(crate) binding_generation: u64,
+    pub(crate) meta: GraphMeta,
 }
 
 /// Complete this native show's read lease. A newer show returns None and
@@ -111,11 +112,21 @@ pub(crate) fn capture_graph_binding(
     if window.label() != "capture" {
         return Err("capture graph binding is only available to quick capture".into());
     }
-    let binding_generation = state
+    capture_graph_config(&state)
+}
+
+fn capture_graph_config(state: &AppState) -> Result<CaptureGraphBindingResult, String> {
+    let binding = state
         .capture_graph_binding()
-        .ok_or("no graph bound for quick capture")?
-        .binding_generation;
-    Ok(CaptureGraphBindingResult { binding_generation })
+        .ok_or("no graph bound for quick capture")?;
+    let slot = slot_for_window(state, &binding.target)?;
+    if slot.binding_generation != binding.binding_generation {
+        return Err("quick capture graph binding is stale".into());
+    }
+    Ok(CaptureGraphBindingResult {
+        binding_generation: binding.binding_generation,
+        meta: graph_meta(&slot),
+    })
 }
 
 struct LoadedGraph {
@@ -1203,6 +1214,27 @@ mod tests {
             )
             .unwrap();
         Arc::new(state)
+    }
+
+    #[test]
+    fn capture_config_uses_the_shows_graph_and_rejects_a_replaced_binding() {
+        let dir = scratch("capture-workflow");
+        std::fs::create_dir_all(dir.join("logseq")).unwrap();
+        std::fs::write(dir.join("logseq/config.edn"), "{:preferred-workflow :todo}").unwrap();
+        let state = bound_state(&dir, "graph-1", "another-window");
+        let slot = slot_for_window(&state, "graph-1").unwrap();
+        state.bind_capture_graph("graph-1".into(), slot.binding_generation);
+        let result = capture_graph_config(&state).unwrap();
+        assert_eq!(result.binding_generation, slot.binding_generation);
+        assert_eq!(result.meta.preferred_workflow, "todo");
+        assert_eq!(result.meta.root, dir.display().to_string());
+        // The same label now owns a new binding. Never return its config for
+        // the old show, even if focus still points at that label.
+        state.bind_capture_graph("graph-1".into(), slot.binding_generation + 1);
+        assert!(capture_graph_config(&state).is_err());
+        drop(slot);
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

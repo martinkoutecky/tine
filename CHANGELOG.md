@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Quick Capture uses the graph's preferred TODO/DOING or LATER/NOW task workflow, including Settings changes without restarting (GH #884).
 - Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886).
 - Linked References no longer rebuilds every page-properties row when a source page is loaded again, which more than doubled memory on pages with many references (GH #886).
 - Opening Quick Capture before the main window no longer shows a block reference count error (internal: UI-COLD-CAPTURE-REFCOUNTS).

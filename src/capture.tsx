@@ -16,7 +16,7 @@ import { initParser } from "./render/parse";
 import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
-import { datePicker } from "./ui";
+import { applyTaskWorkflow, datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
@@ -24,7 +24,7 @@ import { backend } from "./backend";
 import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
 import { startUiLanguage } from "./i18n/preference";
 import { reportUiFailure } from "./uiFailure";
-import { latestOwner, readOwned } from "./owned";
+import { latestOwner, ownedWhen, readOwned, readOwnedResource, type Owner } from "./owned";
 import { installBackendClock } from "./journal";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
@@ -255,9 +255,20 @@ function Capture() {
   // either use adaptive or issue its query without any graph candidates.
   // A later show wins if refreshes overlap while the window is being hidden or
   // re-shown, so stale reads cannot activate an older lifecycle.
+  let configRevision = 0;
+  let configGeneration = 0;
+  const refreshCaptureConfig = async (owner: Owner) => {
+    const revision = configRevision;
+    const result = await readOwned(owner, backend().bindCaptureGraph());
+    // A live publication can arrive while a show or retry snapshot is in flight.
+    if (result.kind === "current"
+        && (revision === configRevision || configGeneration !== backend().graphBindingGeneration()))
+      applyTaskWorkflow(result.value);
+    return result;
+  };
   const refreshPolicyThenResettleAndActivate = async () => {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
-    const result = await readOwned(owner, Promise.all([initLinkDefault(), backend().bindCaptureGraph()]));
+    const result = await readOwned(owner, Promise.all([initLinkDefault(), refreshCaptureConfig(owner)]));
     if (result.kind === "stale") return;
     resettleAndActivate();
   };
@@ -379,7 +390,7 @@ function Capture() {
     if (composing) return;
     if (needsRebind && !retry) {
       rebinding = true;
-      void readOwned(submitOwner, backend().bindCaptureGraph()).then(result => {
+      void refreshCaptureConfig(submitOwner).then(result => {
         rebinding = false;
         if (result.kind === "stale") return;
         needsRebind = false;
@@ -590,6 +601,20 @@ function Capture() {
     void initSpellcheckSettings();
     void initRefCompletionSettings();
     seed();
+    let stopConfig = () => {};
+    onCleanup(() => stopConfig());
+    void readOwnedResource(ownedWhen(() => captureAlive), backend().onGraphConfigChanged(change => {
+      if (captureAlive && change.binding_generation === backend().graphBindingGeneration()) {
+        configRevision++;
+        configGeneration = change.binding_generation;
+        applyTaskWorkflow(change.meta);
+      }
+    }), stop => stop()).then(result => {
+      if (result.kind === "current") {
+        if (captureAlive) stopConfig = result.value;
+        else result.value();
+      }
+    }).catch(error => { if (captureAlive) reportUiFailure("capture-preference", error); });
 
     const root = document.getElementById("capture-root");
     if (root) {

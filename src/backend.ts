@@ -239,6 +239,7 @@ class TauriBackend implements Backend {
   async bindCaptureGraph() {
     const result = await this.call<CaptureGraphBindingResult>("capture_graph_binding");
     this.bindingGeneration = result.binding_generation;
+    return result.meta;
   }
   listKnownGraphs() {
     return this.call<KnownGraph[]>("list_known_graphs");

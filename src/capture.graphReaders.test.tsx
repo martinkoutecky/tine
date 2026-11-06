@@ -1,5 +1,6 @@
 import { afterAll, expect, it, vi } from "vitest";
 import { backend } from "./backend";
+import type { GraphMeta } from "./types";
 import { editorIn, maybeEditorIn } from "./tests/editorDriver";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -19,7 +20,7 @@ afterAll(() => vi.restoreAllMocks());
 it("cold capture edits and completes pages without general graph readers or error toasts", async () => {
   // A capture binding grants bounded completion, not a normal graph slot.
   // Reject exactly as native GraphContext does, even after binding succeeds.
-  vi.spyOn(backend(), "bindCaptureGraph").mockResolvedValue();
+  vi.spyOn(backend(), "bindCaptureGraph").mockResolvedValue({ root: "/capture-graph", preferred_workflow: "now" } as GraphMeta);
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(17);
   vi.spyOn(backend(), "getCaptureEnterFiles").mockResolvedValue(false);
   const counts = vi.spyOn(backend(), "getBlockRefCounts").mockRejectedValue("no graph loaded for window capture");

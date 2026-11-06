@@ -109,7 +109,7 @@ async function loadHarness(
     graphEpoch: () => 0,
     bumpDataRev: vi.fn(),
     bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
-    setWorkflow: vi.fn(),
+    applyTaskWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
     seedFavorites: vi.fn(),
     favorites: () => [],
