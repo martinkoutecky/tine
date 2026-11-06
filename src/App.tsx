@@ -77,6 +77,7 @@ import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
+import { initPasteSettings } from "./pasteSettings";
 import { initHoverPreviewSettings } from "./hoverPreviewSettings";
 import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
 import { initCommentIdentity } from "./commentIdentity";
@@ -826,6 +827,7 @@ export function App(): JSX.Element {
   onMount(() => void initSmoothScroll());
   onMount(() => void initCopySettings());
   onMount(() => void initRefCompletionSettings());
+  onMount(() => void initPasteSettings());
   onMount(initHoverPreviewSettings);
   onMount(() => void initNavSettings());
   onMount(() => { initCommentIdentity(); initCommentNamePrompt(); });

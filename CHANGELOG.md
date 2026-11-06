@@ -55,6 +55,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Settings → Editor → Auto-embed pasted video links** can be turned off to keep YouTube, Vimeo, Loom and Bilibili URLs as plain links in both editors, including Quick Capture. Automatic embedding stays on by default; no video titles are fetched on paste (#861).
 - **Toggle embed breadcrumbs** in the command palette switches the saved Block embed breadcrumbs setting. Assign a shortcut under Settings → Keyboard shortcuts; it has no default key (GH #860).
 - The prompt before opening another app's link offers **Always open <scheme> links** (#503). The choice applies to that exact scheme on this device, across graphs. **Settings → Editor → Remembered app links** lets you forget each choice and ask again.
 - Indent guides take a muted color by nesting level, six colors repeating down the page, so you can follow one level of a long nested outline by its color (#856). Nothing else is drawn. It is on by default; **Settings → Appearance → Advanced → Fine-tuning → Color indent guides by level** returns to the single guide color. Levels count from the outline you are looking at (a zoomed-in block's children are level 1; an embed or Linked References entry starts again at level 1), and a theme's own guide color tints the colors. Restyle them with `--guide-hue-1` to `--guide-hue-6` in `custom.css`.

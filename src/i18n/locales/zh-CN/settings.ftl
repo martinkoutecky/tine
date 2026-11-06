@@ -777,3 +777,5 @@ settings-cm6-label = 实验性：CodeMirror 编辑器
 settings-hover-preview-delay = 悬停预览延迟
 settings-hover-preview-delay-seconds = 悬停预览延迟（秒）
 settings-hover-preview-delay-hint = 鼠标悬停在页面或块引用上后，等待多少秒才打开预览。默认 1 秒。可设为较大的值（如 100），避免预览打扰。触摸长按不受影响。
+settings-auto-embed-video-links = 自动嵌入粘贴的视频链接
+settings-auto-embed-video-links-hint = 关闭后，粘贴的 YouTube、Vimeo、Loom 和 Bilibili 网址将保留为普通链接。默认开启。粘贴时不会获取视频标题。
