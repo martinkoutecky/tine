@@ -66,8 +66,7 @@ const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
 it.each(['md', 'org'] as const)('GH741 F2 typing DONE over bare DOING closes its clock (%s)', format => {
   const { textarea, blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, true, format);
   try {
-    textarea!.replaceText(''); textarea!.select(0, 0);
-    textarea!.reportInput({ bubbles: true, inputType: 'deleteContentBackward' });
+    textarea!.input('', 0, { inputType: 'deleteContentBackward' });
     for (const ch of 'DONE') typeChar(textarea!, ch);
     const info = logbookInfo(doc.byId[blockId].raw, format);
     expect(info.rows).toHaveLength(1);

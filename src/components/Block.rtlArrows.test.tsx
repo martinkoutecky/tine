@@ -32,18 +32,25 @@ describe("a right-to-left block in the outline (GH #823)", () => {
     expect(root.querySelector(".editor-wrap")!.getAttribute("dir")).toBe("rtl");
   });
 
-  it("ArrowRight leaves backward and ArrowLeft stays inside at offset 0", () => {
+  it("ArrowRight leaves backward and ArrowLeft stays inside at offset 0", async () => {
     const root = mount(["before", FA, "after"]);
     startEditing(roots()[1], 0);
+    // CM reads the inherited CSS direction during its first layout measure.
+    // Give it that frame before sending a user's arrow key.
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     editorIn(root).keydown({ key: "ArrowLeft", bubbles: true, cancelable: true });
     expect(editingId()).toBe(roots()[1]);
+    // The first key moves CM's caret into the text; test the other edge key
+    // from offset zero again (synthetic textarea keys do not move its caret).
+    editorIn(root).select(0);
     editorIn(root).keydown({ key: "ArrowRight", bubbles: true, cancelable: true });
     expect(editingId()).toBe(roots()[0]);
   });
 
-  it("ArrowLeft leaves forward at the end", () => {
+  it("ArrowLeft leaves forward at the end", async () => {
     const root = mount(["before", FA, "after"]);
     startEditing(roots()[1], FA.length);
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     editorIn(root).keydown({ key: "ArrowLeft", bubbles: true, cancelable: true });
     expect(editingId()).toBe(roots()[2]);
   });

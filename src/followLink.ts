@@ -21,6 +21,7 @@ import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
 import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { activeElement, isElementTag } from "./windowRealm";
+import { focusedEditorCommandBridge } from "./editorCommandBridge";
 
 type CaretContext = { text: string; caret: number; format: Format };
 
@@ -30,15 +31,17 @@ type CaretContext = { text: string; caret: number; format: Format };
 function caretContext(): CaretContext | null {
   if (typeof document === "undefined") return null;
   const active = activeElement();
-  if (!isElementTag(active, "textarea")) return null;
   const id = editingId();
   const node = id ? docNode(id) : undefined;
   const format: Format = node && pageByName(node.page)?.format === "org" ? "org" : "md";
-  return { text: active.value, caret: active.selectionStart ?? 0, format };
+  if (isElementTag(active, "textarea")) return { text: active.value, caret: active.selectionStart ?? 0, format };
+  const bridge = focusedEditorCommandBridge();
+  const caret = bridge?.blockId === id ? bridge.textCaret?.() : null;
+  return caret ? { ...caret, format } : null;
 }
 
 export interface FollowLinkDeps {
-  /** Source of the editor text, caret and format; defaults to the focused textarea. */
+  /** Source of the editor text, caret and format; defaults to the focused block editor. */
   read?(): CaretContext | null;
 }
 
