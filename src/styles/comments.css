@@ -72,6 +72,11 @@
 .block-content.done > .author-chip {
   text-decoration: none;
 }
+/* A block's author pill shares the first line with the references and comment
+   pills, which are centered on it (GH #843); center this one too (GH #883). */
+.block-content > .author-chip {
+  margin-top: calc((var(--ls-block-line-height) - 16px) / 2);
+}
 
 /* Someone else's comment or reply sits on a background of its own, one tint per
    author name (authorTint in src/commentIdentity.ts), and its chip takes the same

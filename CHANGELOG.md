@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Opening Quick Capture before the main window no longer shows a block reference count error (internal: UI-COLD-CAPTURE-REFCOUNTS).
+- Author tags stay aligned when a block has a references button beside its tag (GH #883).
 - Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).
 - Standalone code blocks expose their Markdown fences when entered from a neighboring block. The language and text before or after the code can be edited; Escape or moving out of code editing also reveals the source (GH #879).
 - `tine delete` refuses before removing a block with incoming references unless confirmed with `--yes` (or `--force`). Every successful reply includes the removed block and its children for recovery, with an explicit notice if the text exceeds 65,536 bytes (GH #844).
