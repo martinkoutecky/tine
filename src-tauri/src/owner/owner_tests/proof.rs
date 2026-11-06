@@ -226,7 +226,12 @@ fn cli_command(verb: &str, args: &Value) -> Vec<String> {
                 command.extend(["--author".into(), get("author_property")]);
             }
         }
-        "block.delete" => command.extend(["delete".into(), get("handle")]),
+        "block.delete" => {
+            command.extend(["delete".into(), get("handle")]);
+            if args["yes"] == true {
+                command.push("--yes".into());
+            }
+        }
         "block.prop" => {
             command.extend([
                 "prop".into(),
@@ -328,7 +333,16 @@ fn write_transcript_corpus() {
                 "block.move",
                 json!({"handle": UUID, "to": "$two", "at": "after"}),
             ),
-            ("delete", "block.delete", json!({"handle": UUID})),
+            (
+                "delete",
+                "block.delete",
+                json!({"handle": UUID, "yes": true}),
+            ),
+            (
+                "delete-confirmation",
+                "block.delete",
+                json!({"handle": UUID}),
+            ),
             (
                 "add",
                 "block.add",

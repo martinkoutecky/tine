@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A rename or merge is now refused, naming the journal, when it would break a link that reaches a journal through the old name (for example `[[old/sub]]` where a journal declares `alias:: old/sub`, and `old` is renamed). Journals keep their names. A journal no such link reaches does not block the rename (REG-CM-JOURNAL-REFERENCE-LOSS, UI-CM-JOURNAL-REFERENCE-LOSS).
 - Keyboard follow-link on Org pages uses the current graph filename format after a format change, including links whose parsed text is already cached (UI-CM-ORG-FOLLOW-CODEC).
 
+- `tine delete` refuses before removing a block with incoming references unless confirmed with `--yes` (or `--force`). Every successful reply includes the removed block and its children for recovery, with an explicit notice if the text exceeds 65,536 bytes (GH #844).
 - References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
 - Advanced Logseq queries recognise `sort-by` with a `juxt` of `get` functions on priority, scheduled, deadline and content, including scheduled-else-deadline. Later keys break ties, missing values follow the supplied defaults, and content sorts by the full raw text. Single-key forms work too; an unsupported key still refuses the whole query (GH #852).
 - Development: typing DONE over a bare DOING closes its running clock in the CodeMirror editor (UI-CM6-MARKER-CLOCK-EXIT).

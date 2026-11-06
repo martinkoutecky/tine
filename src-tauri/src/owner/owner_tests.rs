@@ -2025,6 +2025,183 @@ fn move_carries_the_subtree_and_refuses_a_cycle() {
 }
 
 #[test]
+fn cli_delete_requires_confirmation_and_returns_removed_text() {
+    use super::terminal::{error_json, error_text, exit_code, render};
+    for org in [false, true] {
+        let graph = Graph::new();
+        let (rel, removed, survivor) = if org {
+            (
+                "pages/proof.org",
+                format!("* one\n:PROPERTIES:\n:id: {UUID}\n:END:\n** child\n*** grandchild\n"),
+                "* two\n",
+            )
+        } else {
+            (
+                "pages/a.md",
+                format!("- one\n  id:: {UUID}\n\t- child\n\t\t- grandchild\n"),
+                "- two\n",
+            )
+        };
+        // Keep a.md present but unrelated when the UUID lives on the Org page.
+        std::fs::write(graph.root.join("pages/a.md"), "- unrelated\n").unwrap();
+        let before = format!("{removed}{survivor}");
+        std::fs::write(graph.root.join(rel), &before).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let other_before = std::fs::read(graph.root.join("pages/b.md")).unwrap();
+        let err = verb(&slot, "block.delete", json!({"handle": UUID})).unwrap_err();
+        assert_eq!(err.code, "refused");
+        assert_eq!(exit_code(&err.code), 6);
+        let json: Value = serde_json::from_str(&error_json(&err)).unwrap();
+        assert_eq!(json["error"]["detail"]["admitted"], false);
+        assert_eq!(json["error"]["detail"]["reason"], "confirmation");
+        assert_eq!(json["error"]["detail"]["broken_refs"], 1);
+        let text = error_text(&err);
+        for expected in ["1", "--yes", "--force", "nothing changed"] {
+            assert!(text.contains(expected), "{text}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        assert_eq!(
+            std::fs::read(graph.root.join("pages/b.md")).unwrap(),
+            other_before
+        );
+        let stale = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": UUID, "yes": true, "rev": "old"}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            stale.code, "stale",
+            "confirmation must retain the revision guard"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        let deleted = verb(&slot, "block.delete", json!({"handle": UUID, "yes": true})).unwrap();
+        assert_eq!(deleted["broken_refs"], 1);
+        assert_eq!(deleted["removed_text"], removed);
+        assert_eq!(deleted["removed_text_omitted_bytes"], 0);
+        assert_eq!(deleted["format"], if org { "org" } else { "md" });
+        let mut text = String::new();
+        render(&deleted, &mut text);
+        assert!(text.contains(&removed), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            survivor
+        );
+        // No confirmation needed for an unreferenced block; its reply carries text too.
+        // Address through the current page handle rather than the removed UUID.
+        let name = deleted["name"].as_str().unwrap();
+        let read = verb(&slot, "page.show", json!({"name": name})).unwrap();
+        let handle = block_handle(&read, 0);
+        let last = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": format!("{name}/{handle}")}),
+        )
+        .unwrap();
+        assert_eq!(last["removed_text"], survivor);
+    }
+}
+
+#[test]
+fn cli_delete_checks_incoming_references_to_children() {
+    for org in [false, true] {
+        let graph = Graph::new();
+        let (rel, removed, survivor) = if org {
+            (
+                "pages/proof.org",
+                format!("* parent\n** child\n:PROPERTIES:\n:id: {UUID}\n:END:\n"),
+                "* keep\n",
+            )
+        } else {
+            (
+                "pages/proof.md",
+                format!("- parent\n\t- child\n\t  id:: {UUID}\n"),
+                "- keep\n",
+            )
+        };
+        std::fs::write(graph.root.join("pages/a.md"), "- unrelated\n").unwrap();
+        let before = format!("{removed}{survivor}");
+        std::fs::write(graph.root.join(rel), &before).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let page = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let handle = format!("proof/{}", block_handle(&page, 0));
+        let err = verb(&slot, "block.delete", json!({"handle": handle})).unwrap_err();
+        assert_eq!(err.detail.unwrap()["broken_refs"], 1);
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        let deleted = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": handle, "yes": true}),
+        )
+        .unwrap();
+        assert_eq!(deleted["removed_text"], removed);
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            survivor
+        );
+    }
+}
+
+#[test]
+fn cli_delete_internal_references_need_no_confirmation() {
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/b.md"), "- unrelated\n").unwrap();
+    let removed = format!("- one\n  id:: {UUID}\n\t- back (({UUID}))\n");
+    std::fs::write(graph.root.join("pages/a.md"), &removed).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let deleted = verb(&slot, "block.delete", json!({"handle": UUID})).unwrap();
+    assert_eq!(deleted["broken_refs"], 0);
+    assert_eq!(deleted["removed_text"], removed);
+    assert!(std::fs::read_to_string(graph.root.join("pages/a.md"))
+        .unwrap()
+        .trim()
+        .is_empty());
+}
+
+#[test]
+fn cli_delete_bounds_removed_text_at_a_utf8_boundary() {
+    let graph = Graph::new();
+    let removed = format!("- {}\n", "界".repeat(22_000));
+    std::fs::write(graph.root.join("pages/a.md"), &removed).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({"handle": format!("a/{}", block_handle(&read, 0))}),
+    )
+    .unwrap();
+    let text = deleted["removed_text"].as_str().unwrap();
+    assert!(text.len() <= 65_536);
+    assert!(text.len() + '界'.len_utf8() > 65_536);
+    assert!(removed.starts_with(text));
+    assert_eq!(
+        deleted["removed_text_omitted_bytes"],
+        removed.len() - text.len()
+    );
+    let mut output = String::new();
+    super::terminal::render(&deleted, &mut output);
+    assert!(
+        output.contains("truncated at 65536 UTF-8 bytes"),
+        "{output}"
+    );
+    assert!(output.contains(&(removed.len() - text.len()).to_string()));
+}
+
+#[test]
 fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
     let graph = Graph::new();
     let slot = graph.slot();
@@ -2045,7 +2222,7 @@ fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
     let deleted = verb(
         &slot,
         "block.delete",
-        json!({ "handle": format!("a/{one}") }),
+        json!({ "handle": format!("a/{one}"), "yes": true }),
     )
     .unwrap();
     assert_eq!(
