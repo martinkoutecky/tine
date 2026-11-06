@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup,
 import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
-import { blockWritable, depthOf, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
+import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
 import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { cm6CaretReveal } from "../editor/cm6CaretReveal";
@@ -12,6 +12,8 @@ import { cm6CodeHighlight, refreshCodeHighlight } from "../editor/cm6CodeHighlig
 import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
+import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
+import { editorWindowFocus } from "../editor/windowFocus";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
@@ -33,7 +35,7 @@ import { cm6Typing } from "../editor/cm6Typing";
 import { offsetThroughRewrite } from "../editor/caretThroughRewrite";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import { spellcheckEnabled } from "../spellcheckSettings";
-import { isNodeValue } from "../windowRealm";
+import { documentHasFocus, isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
 import { codeFenceOnly } from "../editor/codeFence";
@@ -95,6 +97,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const refreshPreview = StateEffect.define<null>();
   let updating = false;
   let rawBeforeCommit = shownNode.raw;
+  const markerBaseline = editorMarkerBaseline(shownNode.raw, format);
   const commitRecovery = editorCommitRecovery(() => view?.contentDOM, () => node(props.id) === shownNode,
     () => view?.state.doc.toString() ?? "");
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
@@ -116,7 +119,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         pendingScrollAnchor = undefined; anchorFrame = undefined;
       });
     }
-    setRaw(props.id, next);
+    setRaw(props.id, next, { markerBaseline: markerBaseline(raw) });
   };
   // Projection transactions change the local coordinate space only. Never
   // publish those replacements as edits or run completion/typing transforms.
@@ -203,6 +206,49 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     photo: () => { void assets.capturePhotoCmd(); }, voice: () => { void assets.voiceMemoToggle(); },
   });
   const command = (id: string) => sheet?.blocks(id) || commands[id]?.() || false;
+  const registerCommandBridge = () => {
+    removeCommandBridge?.();
+    removeCommandBridge = registerFocusedEditorCommandBridge({
+      blockId: props.id,
+      blur: () => view?.contentDOM.blur(),
+      replaceText: (text, container) => {
+        if (!view || !current() || typing.active() || !container.contains(view.contentDOM)) return false;
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: text.length }, userEvent: "input" });
+        return true;
+      },
+      textSelection: () => {
+        const s = view?.state.selection.main;
+        return view && s && !s.empty ? { text: view.state.doc.toString(), start: s.from, end: s.to } : null;
+      },
+      textCaret: () => view?.hasFocus && current()
+        ? { text: view.state.doc.toString(), caret: view.state.selection.main.head } : null,
+      dispatch: id => {
+        typing.beforeKey();
+        if (!view || !current() || typing.active()) return false;
+        return command(id);
+      },
+    });
+  };
+  const exitEditOnBlur = (v: EditorView, handoff?: HTMLElement, intentIsCurrent = captureEditIntent()) => {
+    commitBlockEditorExit({ id: props.id, text: v.state.doc.toString(), format, literal: literal(), handoff: !!handoff, commit });
+    const endIfCurrent = () => {
+      if (!intentIsCurrent() || editingId() !== props.id) return;
+      if (handoff?.isConnected && handoff.ownerDocument.activeElement === handoff) return;
+      if (handoff) finishPageHeaderEdit(props.id);
+      endEdit("blur");
+    };
+    if (handoff) queueMicrotask(endIfCurrent);
+    else endIfCurrent();
+  };
+  const windowFocus = editorWindowFocus({ id: props.id, element: () => view?.contentDOM,
+    selection: () => ({ anchor: view!.state.selection.main.anchor, head: view!.state.selection.main.head }),
+    focus: saved => {
+      if (!view || !current()) return;
+      if (saved) view.dispatch({ selection: { anchor: Math.min(saved.anchor, view.state.doc.length), head: Math.min(saved.head, view.state.doc.length) } });
+      view.focus();
+    },
+    exit: () => { if (view && current()) exitEditOnBlur(view); },
+  });
   // The view wraps a heading block's header line in `<span class="heading-text hN">` inside the block's own
   // line box; the editor wraps its first line in the same span, so both resolve the line box the same way
   // and entering or leaving edit does not move anything (CM6-HEADING). Level 1..6 from the block's own facets
@@ -247,28 +293,27 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         keymap.of(defaultKeymap), cm6EmptyCaret(),
         EditorView.domEventHandlers({
-          focus: () => { noteSurfaceFocused(props.surface); return false; },
+          focus: () => { noteSurfaceFocused(props.surface); registerCommandBridge(); return false; },
           blur: (event, v) => {
+            clipboard.dispose();
             const intentIsCurrent = captureEditIntent();
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
             const leave = () => {
               if (!current() || !intentIsCurrent() || editingId() !== props.id) return;
-              commit(v.state.doc.toString());
               if (assets.holdsBlur() || isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
                 || inPageFindPreservesEditorBlur()
-                || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return;
-              if (v.hasFocus) return;
+                || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")
+                || !documentHasFocus(v.contentDOM)) {
+                commit(v.state.doc.toString());
+                windowFocus.remember();
+                return;
+              }
+              if (v.hasFocus) { commit(v.state.doc.toString()); return; }
               const target = event.relatedTarget as HTMLElement | null;
               const handoff = target?.matches('[data-cm6-editor]')
                 && target.getAttribute("data-cm6-editor") === props.id ? target : null;
-              const endIfCurrent = () => {
-                if (!intentIsCurrent() || editingId() !== props.id) return;
-                if (handoff?.isConnected && handoff.ownerDocument.activeElement === handoff) return;
-                endEdit("blur");
-              };
-              if (handoff) queueMicrotask(endIfCurrent);
-              else endIfCurrent();
+              exitEditOnBlur(v, handoff ?? undefined, intentIsCurrent);
             };
             // compositionend's pending DOM reconciliation owns its last flush.
             // A blur during preedit still commits the live buffer before exit.
@@ -400,24 +445,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     const caretReveal = cm6CaretReveal(view);
     view.dispatch({ effects: StateEffect.appendConfig.of(caretReveal.extension) });
     onCleanup(caretReveal.cancel);
-    removeCommandBridge = registerFocusedEditorCommandBridge({
-      blockId: props.id,
-      blur: () => view?.contentDOM.blur(),
-      replaceText: (text, container) => {
-        if (!view || !current() || typing.active() || !container.contains(view.contentDOM)) return false;
-        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: text.length }, userEvent: "input" });
-        return true;
-      },
-      textSelection: () => {
-        const s = view?.state.selection.main;
-        return view && s && !s.empty ? { text: view.state.doc.toString(), start: s.from, end: s.to } : null;
-      },
-      dispatch: id => {
-        typing.beforeKey();
-        if (!view || !current() || typing.active()) return false;
-        return command(id);
-      },
-    });
+    if (view.hasFocus) registerCommandBridge();
   });
   createEffect(() => {
     if (!current()) return;
@@ -456,7 +484,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   onCleanup(() => {
     pendingScrollAnchor?.cancel();
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
-    alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
+    alive = false; typing.dispose(); clipboard.dispose(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
   });
   return <div class="cm6-block-editor editor-wrap" dir={blockDirAttr(source(), format)} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
     <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>

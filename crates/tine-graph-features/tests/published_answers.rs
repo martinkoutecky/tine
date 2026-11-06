@@ -567,6 +567,7 @@ fn not_namespace_is_live_only() {
             "title:: .\n\n- [[./x]] [[a/b]] [[https://a.b/c]]\n",
         ),
         ("pages/dotx.md", "title:: ./x\n\n- x\n"),
+        ("pages/owner.md", "alias:: old/sub\n\n- owner\n"),
     ];
     let root = tempfile::tempdir().unwrap();
     let store = graph(&root.path().join("live"), &files);
@@ -589,6 +590,14 @@ fn not_namespace_is_live_only() {
             "{name}: {live:?}"
         );
     }
+    let alias = view
+        .inventory(tine_store::InventoryScope::All)
+        .0
+        .iter()
+        .find(|row| row.name == "old/sub")
+        .cloned()
+        .unwrap();
+    assert!(tine_graph_features::inventory_wire::entry_wire(&alias).namespace_excluded);
     store.close();
     let snapshot = static_snapshot(&root.path().join("site"), &files, true);
     for name in ["./x", "https://a.b/c"] {
@@ -597,4 +606,7 @@ fn not_namespace_is_live_only() {
             "{name}"
         );
     }
+    assert!(row(&snapshot, "old/sub")
+        .get("namespace_excluded")
+        .is_none());
 }

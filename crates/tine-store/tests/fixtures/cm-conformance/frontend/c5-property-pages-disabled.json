@@ -30,6 +30,8 @@
   "keyOf": {
     "a": "a"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "a": {
       "journal": [
@@ -70,5 +72,29 @@
         "a"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    }
+  ]
 }

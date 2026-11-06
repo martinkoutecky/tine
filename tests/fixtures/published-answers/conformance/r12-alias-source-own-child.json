@@ -1,0 +1,168 @@
+{
+  "aliases": [
+    [
+      "ML",
+      "owner"
+    ],
+    [
+      "ML/alias",
+      "owner"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "ML",
+          "ML/alias"
+        ],
+        "name": "owner",
+        "pages": []
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "c",
+        "target": {
+          "id": "pages/c.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml",
+        "link": {
+          "kind": "page",
+          "name": "owner"
+        },
+        "name": "ML",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml/alias",
+        "link": {
+          "kind": "page",
+          "name": "owner"
+        },
+        "name": "ML/alias",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml/child",
+        "name": "ML/child",
+        "target": {
+          "id": "pages/ML%2Fchild.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml/linked",
+        "name": "ML/linked",
+        "target": {
+          "id": "pages/ML%2Flinked.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "owner",
+        "name": "owner",
+        "target": {
+          "id": "pages/owner.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "ML/child",
+      "path": "pages/ML%2Fchild.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "ML/child",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "ML/child",
+      "path": "pages/ML%2Fchild.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "ML/child"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "c"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "owner"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

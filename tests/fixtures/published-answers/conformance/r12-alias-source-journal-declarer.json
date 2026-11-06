@@ -1,0 +1,112 @@
+{
+  "aliases": [
+    [
+      "ML",
+      "Oct 26th, 2026"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "ML"
+        ],
+        "name": "Oct 26th, 2026",
+        "pages": []
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "control",
+        "name": "control",
+        "target": {
+          "id": "pages/control.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 26th, 2026"
+        },
+        "name": "ML",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "journals/2026_10_26.md"
+          ]
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "control",
+      "path": "pages/control.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Oct 26th, 2026",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Oct 26th, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "control",
+      "path": "pages/control.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "control"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

@@ -1,0 +1,215 @@
+{
+  "backlinks": {
+    "Oct 26th, 2026": [],
+    "control": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/control.md",
+        0
+      ],
+      [
+        "journals/2026_10_26.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "control",
+      "name": "control",
+      "target": {
+        "id": "pages/control.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
+      "name": "ML",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "journals/2026_10_26.md"
+        ]
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
+      "target": {
+        "id": "journals/2026_10_26.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "ML": "ml",
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "control": "control"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "oct 26th, 2026"
+      ]
+    },
+    "control": {
+      "journal": [
+        "journal",
+        "control"
+      ],
+      "page": [
+        "page",
+        "control"
+      ]
+    }
+  },
+  "owner": {
+    "ML": {
+      "journal": null,
+      "page": "journals/2026_10_26.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "journals/2026_10_26.md",
+      "page": null
+    },
+    "control": {
+      "journal": null,
+      "page": "pages/control.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "oct 26th, 2026",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Oct 26th, 2026",
+      "owner": "journals/2026_10_26.md",
+      "parent": null
+    },
+    {
+      "key": "control",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "control",
+      "owner": "pages/control.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "ML": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": null,
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "backend": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    "control": {
+      "backend": [
+        "page",
+        "control"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "control"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "control"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "control"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "control"
+      ],
+      "parent": null
+    }
+  ]
+}

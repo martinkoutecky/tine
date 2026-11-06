@@ -1,0 +1,121 @@
+{
+  "aliases": [
+    [
+      "old/sub",
+      "owner"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "old/sub"
+        ],
+        "name": "owner",
+        "pages": []
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "old",
+        "name": "old",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/old.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "old/sub",
+        "link": {
+          "kind": "page",
+          "name": "owner"
+        },
+        "name": "old/sub",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "old/sub/child",
+        "name": "old/sub/child",
+        "target": {
+          "id": "pages/old%2Fsub%2Fchild.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "owner",
+        "name": "owner",
+        "target": {
+          "id": "pages/owner.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "old/sub/child",
+      "path": "pages/old%2Fsub%2Fchild.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "old/sub/child",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "old/sub/child",
+      "path": "pages/old%2Fsub%2Fchild.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "old/sub/child"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "owner"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

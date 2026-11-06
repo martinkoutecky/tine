@@ -316,6 +316,8 @@ mod journal_guide_tests {
         let tips = include_str!("templates/tips.md");
         for label in [
             "Ctrl/Cmd+Shift+V",
+            "Option+Shift+Cmd+V",
+            "Edit → Paste and Match Style",
             "Paste as link",
             "Duplicate block below (with children)",
             "Duplicate block above (with children)",

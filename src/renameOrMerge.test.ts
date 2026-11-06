@@ -86,7 +86,7 @@ it("offers a merge into a journal day reached by another date spelling", async (
 // M-Q5 (D-20261102-MC5): a name that is only an alias asks three ways, in
 // the app's own dialog: merge into the owner, make it its own page, cancel.
 it("an alias-only name asks merge / own page / cancel and sends the answer", async () => {
-  offer({ kind: "aliasOf", owner: "pages/Machine Learning.md", name: "Machine Learning", merge: true });
+  offer({ kind: "aliasOf", owner: "pages/Machine Learning.md", name: "Machine Learning", merge: true, ownPage: true });
   const confirm = vi.spyOn(backend(), "confirm");
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
   const answer = async (choice: "merge" | "own-page" | null) => {
@@ -104,6 +104,20 @@ it("an alias-only name asks merge / own page / cancel and sends the answer", asy
   await answer("merge");
   expect(rename).toHaveBeenLastCalledWith("ML notes", "ML", "rename-page", "pages/ML notes.md", "pages/Machine Learning.md", []);
   expect(confirm).not.toHaveBeenCalled();
+});
+
+it("an alias-only source uses Rust's merge-only offer and submits no source file", async () => {
+  const asked = offer({ kind: "aliasOf", owner: "pages/Artificial Intelligence.md", name: "Artificial Intelligence", merge: true, ownPage: false });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
+  const pending = renameOrMergePage("ML", "AI", { name: "ML", pageKind: "page" });
+  await vi.waitFor(() => expect(aliasRenameRequest()).not.toBeNull());
+  const request = aliasRenameRequest()!;
+  expect(request.ownPage).toBe(false);
+  expect(request.owner).toBe("Artificial Intelligence");
+  request.finish("merge");
+  expect(await pending).toBe("merged");
+  expect(asked).toHaveBeenCalledWith("ML", "AI", undefined);
+  expect(rename).toHaveBeenCalledWith("ML", "AI", "rename-page", undefined, "pages/Artificial Intelligence.md", []);
 });
 
 // CM-OWN-CHILD / M-Q6 and R14: the backend's refusal reaches the user with

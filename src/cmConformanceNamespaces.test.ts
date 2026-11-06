@@ -13,10 +13,9 @@
 // - the `{{namespace X}}` macro's tree (`namespaceNode`);
 // - the "Hierarchy" section of every page (`namespaceHierarchyRows`).
 // Each view's answer is compared with the model's: a page's parent is the
-// model's own answer (`Ref10.nsParent`, which the bridge exports per page as
-// `parent`: none for `./x`, `../x/y` or a URL, model round 10, S15; the test
-// searches no string prefix); a node is a model page with a parent or a page
-// below it; a count is the number of model pages below.
+// model's graph-aware `treeParent`; nodes, children and the global subset are
+// exported directly by r11's `tree` and `namespaceTree`. The test reconstructs
+// neither a page universe from inventory names nor parent edges from prefixes.
 //
 // Differences are compared with the `frontendNamespaces` part of
 // `expected-differences.json`; `CM_REFRESH=1` rewrites that part.
@@ -34,6 +33,9 @@ interface Case {
   journalFileFormat: string | null;
   inventory: PageInventoryEntry[];
   pages: ModelPage[];
+  treeParent: { page: [string, string]; parent: [string, string] | null }[];
+  tree: { page: [string, string]; children: [string, string][] }[];
+  namespaceTree: { page: [string, string]; children: [string, string][] }[];
 }
 
 const FIXTURES = path.resolve(__dirname, "../crates/tine-store/tests/fixtures/cm-conformance");
@@ -74,26 +76,26 @@ async function runCase(c: Case): Promise<string[]> {
   // The model's namespace structure over its page keys (pages of either kind:
   // `allPageNames` lists journals too).
   const model = new Map<string, string>(); // key -> name
-  const parentOf = new Map<string, string | null>(); // key -> the model's parent key
   for (const page of c.pages) {
     if (model.has(page.key)) continue;
     model.set(page.key, page.name);
-    parentOf.set(page.key, page.parent);
   }
+  const parentOf = new Map(c.treeParent.map((row) => [row.page[1], row.parent?.[1] ?? null]));
+  const childrenOf = new Map(c.tree.map((row) => [row.page[1], row.children.map((p) => p[1])]));
   const modelParent = (key: string): string | null => parentOf.get(key) ?? null;
   // The model pages below `key`: those whose parent chain reaches it.
-  const below = (key: string) => [...model.keys()].filter((k) => {
-    const seen = new Set<string>();
-    for (let p = modelParent(k); p !== null && !seen.has(p); p = modelParent(p)) {
-      if (p === key) return true;
-      seen.add(p);
+  const below = (key: string) => {
+    const found = new Set<string>();
+    const pending = [...(childrenOf.get(key) ?? [])];
+    while (pending.length) {
+      const child = pending.pop()!;
+      if (found.has(child)) continue;
+      found.add(child);
+      pending.push(...(childrenOf.get(child) ?? []));
     }
-    return false;
-  });
-  const modelNodes = new Map<string, string | null>(); // node key -> parent key
-  for (const [key] of model) {
-    if (modelParent(key) !== null || below(key).length) modelNodes.set(key, modelParent(key));
-  }
+    return [...found];
+  };
+  const modelNodes = new Map(c.namespaceTree.map((row) => [row.page[1], modelParent(row.page[1])]));
 
   // The tree the sidebar and the Namespaces view show.
   const names = index.allPageNames();

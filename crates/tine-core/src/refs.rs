@@ -709,9 +709,9 @@ mod rename_site_tests {
 
     /// Q1: a property key that names the page is rewritten as OG's
     /// `replace-property-ref!` does (lower-cased, hyphenated); a bare alias
-    /// member stays (R5, declared).
+    /// member follows too (D-20261105-CM13, deliberate OG difference).
     #[test]
-    fn property_keys_follow_as_in_og_and_alias_members_stay() {
+    fn property_keys_and_alias_members_follow() {
         assert_eq!(
             rename(
                 "- block\n  Old:: value\n  alias:: Old, [[Old]]\n",
@@ -719,7 +719,7 @@ mod rename_site_tests {
                 "Old",
                 "New Page"
             ),
-            "- block\n  new-page:: value\n  alias:: Old, [[New Page]]\n"
+            "- block\n  new-page:: value\n  alias:: New Page, [[New Page]]\n"
         );
         assert_eq!(
             rename(
@@ -729,6 +729,45 @@ mod rename_site_tests {
                 "New"
             ),
             "* block\n:PROPERTIES:\n:new: value\n:END:\n"
+        );
+    }
+
+    /// CM13: preserve separators and unrelated values, use the existing
+    /// linkable-property spelling when a new member contains a comma.
+    #[test]
+    fn bare_alias_values_follow_in_markdown_and_org() {
+        for (org, text, expected) in [
+            (
+                false,
+                "aliases::  oLD ,keep, Old/sub\n\n- body\n",
+                "aliases::  New ,keep, New/sub\n\n- body\n",
+            ),
+            (
+                true,
+                "#+alias:  oLD ,keep, Old/sub\n\n* body\n",
+                "#+alias:  New ,keep, New/sub\n\n* body\n",
+            ),
+            (
+                false,
+                "alias:: Old, keep\n",
+                "alias:: [[New, Page]], keep\n",
+            ),
+        ] {
+            let new = if expected.contains("New, Page") {
+                "New, Page"
+            } else {
+                "New"
+            };
+            assert_eq!(rename(text, org, "Old", new), expected);
+        }
+        assert_eq!(
+            rename(
+                "alias:: O\u{308}ld/sub\r\n\r\n- [[Öld/sub]] [[./Öld/sub]]\r\n",
+                false,
+                "Öld",
+                "New"
+            ),
+            "alias:: New/sub\r\n\r\n- [[New/sub]] [[./Öld/sub]]\r\n"
         );
     }
 

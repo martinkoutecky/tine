@@ -157,6 +157,80 @@
     "n": "n",
     "n/y": "n/y"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "n/y"
+    ],
+    [
+      "page",
+      "a/b/c"
+    ],
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "n"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b/c"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b/c"
+        ]
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "n/y"
+        ]
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    }
+  ],
   "open": {
     "Notes": {
       "journal": [
@@ -362,5 +436,143 @@
         "n/y"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b/c"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b/c"
+        ]
+      ],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "n/y"
+        ]
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "n/y"
+    ],
+    [
+      "page",
+      "a/b/c"
+    ],
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "n"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "n/y"
+      ],
+      "parent": [
+        "page",
+        "n"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "a/b/c"
+      ],
+      "parent": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a/b"
+      ],
+      "parent": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "n"
+      ],
+      "parent": null
+    }
+  ]
 }

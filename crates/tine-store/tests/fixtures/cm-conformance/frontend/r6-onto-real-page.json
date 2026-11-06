@@ -61,6 +61,8 @@
     "a": "a",
     "b": "b"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "a": {
       "journal": [
@@ -134,5 +136,47 @@
         "b"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "b"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "b"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "b"
+      ],
+      "parent": null
+    }
+  ]
 }

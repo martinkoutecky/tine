@@ -1,0 +1,380 @@
+{
+  "backlinks": {
+    "AI": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:artificial intelligence",
+            "raw": "alias:: AI",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Artificial Intelligence"
+      }
+    ],
+    "Artificial Intelligence": [],
+    "Machine Learning": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "c": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Artificial Intelligence.md",
+        0
+      ],
+      [
+        "pages/AI.md",
+        1
+      ],
+      [
+        "pages/Machine Learning.md",
+        1
+      ],
+      [
+        "pages/c.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "empty_alias": true,
+      "is_journal": false,
+      "key": "ai",
+      "link": {
+        "kind": "page",
+        "name": "Artificial Intelligence"
+      },
+      "name": "AI",
+      "target": {
+        "id": "pages/AI.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "artificial intelligence",
+      "name": "Artificial Intelligence",
+      "target": {
+        "id": "pages/Artificial Intelligence.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "c",
+      "target": {
+        "id": "pages/c.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "machine learning",
+      "name": "Machine Learning",
+      "target": {
+        "id": "pages/Machine Learning.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
+      "name": "ML",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Machine Learning.md"
+        ]
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "AI": "ai",
+    "Artificial Intelligence": "artificial intelligence",
+    "ML": "ml",
+    "Machine Learning": "machine learning",
+    "c": "c"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "AI": {
+      "journal": [
+        "journal",
+        "ai"
+      ],
+      "page": [
+        "page",
+        "ai"
+      ]
+    },
+    "Artificial Intelligence": {
+      "journal": [
+        "journal",
+        "artificial intelligence"
+      ],
+      "page": [
+        "page",
+        "artificial intelligence"
+      ]
+    },
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "Machine Learning": {
+      "journal": [
+        "journal",
+        "machine learning"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "c": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "owner": {
+    "AI": {
+      "journal": null,
+      "page": "pages/AI.md"
+    },
+    "Artificial Intelligence": {
+      "journal": null,
+      "page": "pages/Artificial Intelligence.md"
+    },
+    "ML": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "Machine Learning": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "c": {
+      "journal": null,
+      "page": "pages/c.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "ai",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "AI",
+      "owner": "pages/AI.md",
+      "parent": null
+    },
+    {
+      "key": "artificial intelligence",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Artificial Intelligence",
+      "owner": "pages/Artificial Intelligence.md",
+      "parent": null
+    },
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "c",
+      "owner": "pages/c.md",
+      "parent": null
+    },
+    {
+      "key": "machine learning",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Machine Learning",
+      "owner": "pages/Machine Learning.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "AI": {
+      "backend": [
+        "page",
+        "artificial intelligence"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "artificial intelligence"
+      ]
+    },
+    "Artificial Intelligence": {
+      "backend": [
+        "page",
+        "artificial intelligence"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "artificial intelligence"
+      ]
+    },
+    "ML": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "Machine Learning": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "c": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ai"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "artificial intelligence"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ai"
+    ],
+    [
+      "page",
+      "artificial intelligence"
+    ],
+    [
+      "page",
+      "machine learning"
+    ],
+    [
+      "page",
+      "c"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ai"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "artificial intelligence"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "machine learning"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    }
+  ]
+}

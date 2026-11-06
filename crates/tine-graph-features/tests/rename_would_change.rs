@@ -216,10 +216,10 @@ fn a_page_holding_only_rewrite_targets_is_rewritten() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// A namespace descendant is renamed (and its references rewritten) only when
-/// it is a page the rename moves; a reference to a name no file owns stays.
+/// The typed namespace map covers unclaimed descendants too (CM12/CM13),
+/// so a held draft must block the rename when it would change that reference.
 #[test]
-fn a_descendant_no_file_owns_is_not_rewritten() {
+fn a_descendant_no_file_owns_is_rewritten() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[("pages/Old.md", "- body\n")]);
     let answer = pages::rename_would_change(
@@ -229,14 +229,13 @@ fn a_descendant_no_file_owns_is_not_rewritten() {
         &[block("see [[Old/Child]]"), block("see [[Old]]")],
     )
     .unwrap();
-    assert_eq!(answer, vec![false, true]);
+    assert_eq!(answer, vec![true, true]);
     let _ = fs::remove_dir_all(&root);
 }
 
-/// Alias members are left as written (declared R5), unless the member is an
-/// explicit `[[link]]`.
+/// CM13: held bare alias values change just as explicit links do.
 #[test]
-fn bare_alias_members_stay() {
+fn bare_alias_members_follow() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[("pages/Alias.md", "- body\n")]);
     let answer = pages::rename_would_change(
@@ -246,7 +245,7 @@ fn bare_alias_members_stay() {
         &[block("x\nalias:: Alias"), block("x\nalias:: [[Alias]]")],
     )
     .unwrap();
-    assert_eq!(answer, vec![false, true]);
+    assert_eq!(answer, vec![true, true]);
     let _ = fs::remove_dir_all(&root);
 }
 

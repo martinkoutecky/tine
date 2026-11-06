@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "owner",
+      "path": "pages/owner.md",
+      "preBlock": "alias:: 2026-10-26, ML",
+      "title": null
+    }
+  ],
+  "links": []
+}

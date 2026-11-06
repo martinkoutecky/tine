@@ -1,0 +1,8 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: old/sub, old/sub/ref\n\n- owner\n",
+    "pages/old%2Fsub%2Fchild.md": "- child\n",
+    "pages/c.md": "- [[old/sub]] [[old/sub/ref]]\n- {{query (page \"old/sub\")}}\n- {{query (page \"old/sub/child\")}}\n"
+  },
+  "renames": [{"old": "old/sub", "new": "new/sub"}]
+}

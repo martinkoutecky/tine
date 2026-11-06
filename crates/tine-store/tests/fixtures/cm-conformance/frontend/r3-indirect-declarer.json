@@ -119,6 +119,7 @@
         "name": "B"
       },
       "name": "X",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -135,6 +136,8 @@
     "Notes": "notes",
     "X": "x"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "A": {
       "journal": [
@@ -266,5 +269,65 @@
         "b"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "b"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -879,6 +879,17 @@ flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
 
 Every page rename is planned as a `HostOp`, including one moved page.
+Renames and confirmed merges rewrite bare `alias::` / `aliases::` members
+(Org `#+alias:` / `#+aliases:` too) through the same reference scanner and
+guarded save as links (D-20261105-CM13, deliberate OG difference). The
+explicit-reference index includes declaring files even without another link.
+Namespace members follow the typed-name substitution; stored page-name query
+arguments naming a merged source use the selected survivor's own name.
+Renaming an alias-only name rewrites every declarer without choosing a source
+owner, moving its contents, or creating a file for the alias (CM12). It has
+no OwnPage answer. A redirecting empty alias target selects its unique
+declaring owner through the shared CM11 selector and retains the empty file.
+Same-key alias respelling is a rename. Ambiguous target owners still refuse.
 Single-page selection refuses unsaved input only where the rewrite changes
 it, and includes held referrers absent from the index. Admission checks that
 selection's held buffers, versions, saved status, spellings and membership.
@@ -1716,6 +1727,29 @@ snapshot's `answers` v1 rows never carry it (v1 is frozen,
 `docs/contracts/quick-share.md`). Rename asks the same test: the moved subtree
 (`InventoryScope::FilesAtOrUnder`) and the own-child guard take only namespace
 names under the old name, so renaming `.` leaves `./x` alone.
+
+R10-Q2 (D-20261105-CM11, model round 11) excludes alias-only spellings from
+the namespace page universe. The live inventory keeps these names for alias
+completion and navigation, with `namespace_excluded: true` from the Rust wire
+answer. File-backed alias pages and reference-only pages remain nodes. All
+namespace views and counts read this answer; TypeScript does not decide
+whether an alias is a page. An edge goes only to an existing immediate
+nonempty parent; an alias-only intermediate supplies no edge across it (r11
+C12). The global tree omits isolated pages. Both live namespace flags are
+omitted from the frozen published `answers` v1 rows. No checkpoint field or
+FORMAT changes.
+
+The rename offer applies the same EMPTY-ALIAS content-free predicate as
+navigation. A redirecting alias target, even with an empty file, asks to merge
+into its unique declaring owner or make the typed name its own page. The
+first answer retains the empty target file; the second fills it using the
+existing guarded merge path. Both retain the declaring alias, map children
+and links to the typed name, and map stored queries to the chosen survivor's
+name. Rust's `RenameOffer::AliasOf` carries separate `merge` and `ownPage`
+permissions. A reference-only source has no OwnPage permission and its API
+submission is refused; an empty alias file source retains both choices.
+Cancel writes nothing. Alias-only source renaming remains unchanged pending
+R10-Q3. All writes still pass through the host's guarded save/merge path.
 
 `register_unlinked_reference(subscription, target)` registers a mounted reader;
 `target: null` releases it. Registrations are in-memory in the graph/window's

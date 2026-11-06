@@ -1,0 +1,8 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: old/sub\n\n- owner\n",
+    "pages/c.md": "- [[old/sub]] [[ref/only]]\n",
+    "pages/real%2Falias.md": "- content\n",
+    "pages/other.md": "alias:: real/alias\n\n- other\n"
+  }
+}

@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+const mode = vi.hoisted(() => ({ published: false }));
+vi.mock("../publishedBackend", () => ({ isPublishedExport: () => mode.published }));
 import { buildNamespaceTree, namespaceHierarchyRows, namespaceNode, namespaceRows } from "./Namespace";
+afterEach(() => { mode.published = false; });
 
 // The inventory lists every namespace parent (CM step 2 batch 10, model rule 1);
 // these views nest what it lists and never add a level of their own.
@@ -13,6 +16,12 @@ const withParents = (names: string[]) => {
 };
 
 describe("buildNamespaceTree", () => {
+  it("keeps frozen published v1's isolated slash leaves and hierarchy", () => {
+    mode.published = true;
+    expect(buildNamespaceTree(["./x"]).map((node) => node.full)).toEqual(["./x"]);
+    expect(namespaceHierarchyRows(["./x"], "./x")).toEqual([["."]]);
+    expect(buildNamespaceTree(["x", "x/y/z"])[0].children[0].full).toBe("x/y/z");
+  });
   it("nests pages by '/' segments, ignoring non-namespaced names", () => {
     const tree = buildNamespaceTree(withParents(["a/b/c", "a/b/d", "a/e", "plain", "z/y"]));
     expect(tree.map((n) => n.seg)).toEqual(["a", "z"]); // "plain" excluded; sorted
@@ -31,11 +40,12 @@ describe("buildNamespaceTree", () => {
     expect(tree[0].children[0].children[0].full).toBe("x/y/z");
   });
 
-  it("never invents a node the list does not hold: a name nests under its nearest listed prefix", () => {
-    expect(buildNamespaceTree(["x/y/z"]).map((n) => [n.seg, n.full, n.children.length])).toEqual([["x/y/z", "x/y/z", 0]]);
-    const tree = buildNamespaceTree(["x/y/z", "x"]);
-    expect(tree.map((n) => n.full)).toEqual(["x"]);
-    expect(tree[0].children.map((n) => [n.seg, n.full])).toEqual([["y/z", "x/y/z"]]);
+  it("does not bridge an absent immediate parent or list an isolated node (r11 C12)", () => {
+    expect(buildNamespaceTree(["x/y/z"])).toEqual([]);
+    expect(buildNamespaceTree(["x/y/z", "x"])).toEqual([]);
+    const tree = buildNamespaceTree(["x/y/z", "x/y/z/child", "x"]);
+    expect(tree.map((n) => n.full)).toEqual(["x/y/z"]);
+    expect(tree[0].children.map((n) => n.full)).toEqual(["x/y/z/child"]);
   });
 
   it("keeps the listed spelling of a parent, not a child's", () => {
@@ -102,7 +112,7 @@ describe("namespace identity and depth (OG-B-FRONT)", () => {
     const tree = buildNamespaceTree(["Café/one", "Cafe\u0301/two", "Café"]);
     expect(tree).toHaveLength(1);
     expect(tree[0].children.map(n => n.seg)).toEqual(["one", "two"]);
-    expect(namespaceHierarchyRows(["Cafe\u0301/two"], "Café")).toEqual([["Cafe\u0301", "two"]]);
+    expect(namespaceHierarchyRows(["Café", "Cafe\u0301/two"], "Café")).toEqual([["Cafe\u0301", "two"]]);
   });
   it("sorts a deep imported namespace without recursion and keeps every level", () => {
     const tree = buildNamespaceTree(withParents([Array(6000).fill("a").join("/")]));

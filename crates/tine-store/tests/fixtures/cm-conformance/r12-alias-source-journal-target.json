@@ -1,0 +1,8 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: ML\n\n- owner\n",
+    "journals/2026_10_26.md": "- day\n",
+    "pages/c.md": "- [[ML]]\n- {{query (page \"ML\")}}\n"
+  },
+  "renames": [{"old": "ML", "new": "2026-10-26"}]
+}

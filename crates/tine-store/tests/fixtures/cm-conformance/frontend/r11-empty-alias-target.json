@@ -1,0 +1,469 @@
+{
+  "backlinks": {
+    "ML": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:machine learning",
+            "raw": "alias:: ML",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Machine Learning"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML notes]] [[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "ML notes": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML notes]] [[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "ML notes/x": [],
+    "Machine Learning": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML notes]] [[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "c": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/ML notes%2Fx.md",
+        0
+      ],
+      [
+        "pages/Machine Learning.md",
+        1
+      ],
+      [
+        "pages/ML.md",
+        2
+      ],
+      [
+        "pages/ML notes.md",
+        1
+      ],
+      [
+        "pages/c.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "c",
+      "target": {
+        "id": "pages/c.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "machine learning",
+      "name": "Machine Learning",
+      "target": {
+        "id": "pages/Machine Learning.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "empty_alias": true,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
+      "name": "ML",
+      "target": {
+        "id": "pages/ML.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml notes",
+      "name": "ML notes",
+      "target": {
+        "id": "pages/ML notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml notes/x",
+      "name": "ML notes/x",
+      "target": {
+        "id": "pages/ML notes%2Fx.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "ML": "ml",
+    "ML notes": "ml notes",
+    "ML notes/x": "ml notes/x",
+    "Machine Learning": "machine learning",
+    "c": "c"
+  },
+  "namespaceNodes": [
+    [
+      "page",
+      "ml notes/x"
+    ],
+    [
+      "page",
+      "ml notes"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "ml notes/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "ml notes"
+      ]
+    }
+  ],
+  "open": {
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "page",
+        "ml"
+      ]
+    },
+    "ML notes": {
+      "journal": [
+        "journal",
+        "ml notes"
+      ],
+      "page": [
+        "page",
+        "ml notes"
+      ]
+    },
+    "ML notes/x": {
+      "journal": [
+        "journal",
+        "ml notes/x"
+      ],
+      "page": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    "Machine Learning": {
+      "journal": [
+        "journal",
+        "machine learning"
+      ],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "c": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "owner": {
+    "ML": {
+      "journal": null,
+      "page": "pages/ML.md"
+    },
+    "ML notes": {
+      "journal": null,
+      "page": "pages/ML notes.md"
+    },
+    "ML notes/x": {
+      "journal": null,
+      "page": "pages/ML notes%2Fx.md"
+    },
+    "Machine Learning": {
+      "journal": null,
+      "page": "pages/Machine Learning.md"
+    },
+    "c": {
+      "journal": null,
+      "page": "pages/c.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "c",
+      "owner": "pages/c.md",
+      "parent": null
+    },
+    {
+      "key": "machine learning",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Machine Learning",
+      "owner": "pages/Machine Learning.md",
+      "parent": null
+    },
+    {
+      "key": "ml",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "ML",
+      "owner": "pages/ML.md",
+      "parent": null
+    },
+    {
+      "key": "ml notes",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ML notes",
+      "owner": "pages/ML notes.md",
+      "parent": null
+    },
+    {
+      "key": "ml notes/x",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "ML notes/x",
+      "owner": "pages/ML notes%2Fx.md",
+      "parent": "ml notes"
+    }
+  ],
+  "spellings": {
+    "ML": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "ML notes": {
+      "backend": [
+        "page",
+        "ml notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml notes"
+      ]
+    },
+    "ML notes/x": {
+      "backend": [
+        "page",
+        "ml notes/x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    "Machine Learning": {
+      "backend": [
+        "page",
+        "machine learning"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "machine learning"
+      ]
+    },
+    "c": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml notes/x"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "ml notes/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "ml notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "machine learning"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ml notes/x"
+    ],
+    [
+      "page",
+      "ml notes"
+    ],
+    [
+      "page",
+      "ml"
+    ],
+    [
+      "page",
+      "machine learning"
+    ],
+    [
+      "page",
+      "c"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ml notes/x"
+      ],
+      "parent": [
+        "page",
+        "ml notes"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "ml notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ml"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "machine learning"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    }
+  ]
+}

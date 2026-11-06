@@ -26,6 +26,40 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it.each(["main", "sidebar", "background"])("opens a page-property search hit as its owning page in %s", async (destination) => {
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: [{ entity: "block", page: "Property Host", kind: "page", path: "pages/Property Host.md",
+        block: { id: "page-property:Page:property host", raw: "reviewer:: Avery", page_property: true, children: [], collapsed: false },
+        display_text: "reviewer:: Avery", evidence: [{ clause_id: 1, field: "visible_content", mode: "contains", spans: [{ start: 11, end: 16 }] }],
+        match_class: "body_evidence" }],
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openSwitcher();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "Avery";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const row = await vi.waitFor(() => {
+        const row = root.querySelector<HTMLElement>(".switcher-row.block-result");
+        expect(row?.querySelector("mark")?.textContent).toBe("Avery");
+        return row!;
+      });
+      row.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: destination === "sidebar", ctrlKey: destination === "background", bubbles: true, cancelable: true }));
+      if (destination === "sidebar") {
+        await vi.waitFor(() => expect(rightSidebar()).toEqual([{ kind: "page", name: "Property Host", pageKind: "page", path: "pages/Property Host.md" }]));
+      } else if (destination === "main") {
+        expect(route()).toEqual({ kind: "page", name: "Property Host", pageKind: "page", path: "pages/Property Host.md" });
+      } else {
+        expect(tabs().some(tab => {
+          const target = tabRoute(tab);
+          return target?.kind === "page" && target.name === "Property Host" && !target.block;
+        })).toBe(true);
+      }
+    } finally { dispose(); }
+  });
   it("finds command palette rows by their shown Chinese label and English original (GH #107)", async () => {
     await setActiveLocale("zh-CN");
     const root = document.createElement("div");

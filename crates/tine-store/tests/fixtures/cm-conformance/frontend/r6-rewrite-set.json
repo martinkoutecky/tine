@@ -187,6 +187,8 @@
     "ref": "ref",
     "rel": "rel"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "A": {
       "journal": [
@@ -384,5 +386,101 @@
         "tasks"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "tasks"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ref"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "rel"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "todo"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "tasks"
+    ],
+    [
+      "page",
+      "ref"
+    ],
+    [
+      "page",
+      "rel"
+    ],
+    [
+      "page",
+      "todo"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "tasks"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ref"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "rel"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "todo"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    }
+  ]
 }

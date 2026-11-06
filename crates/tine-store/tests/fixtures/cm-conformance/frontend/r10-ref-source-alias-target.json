@@ -57,6 +57,7 @@
         "name": "o"
       },
       "name": "ML",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -95,6 +96,8 @@
     "kb": "kb",
     "o": "o"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "ML": {
       "journal": [
@@ -230,5 +233,65 @@
         "o"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "o"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "kb"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "o"
+    ],
+    [
+      "page",
+      "kb"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "o"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "kb"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -108,6 +108,7 @@
         "name": "Zed"
       },
       "name": "Shared",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -136,6 +137,8 @@
     "Zed": "zed",
     "alpha": "alpha"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Notes": {
       "journal": [
@@ -267,5 +270,65 @@
         "alpha"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "zed"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "alpha"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "zed"
+    ],
+    [
+      "page",
+      "alpha"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "zed"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "alpha"
+      ],
+      "parent": null
+    }
+  ]
 }

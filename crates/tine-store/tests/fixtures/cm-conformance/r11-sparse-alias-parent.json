@@ -1,0 +1,6 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: old/sub\n\n- owner\n",
+    "pages/old%2Fsub%2Fchild.md": "- content\n"
+  }
+}

@@ -73,6 +73,7 @@ pub(crate) fn answers(
         .iter()
         .map(|entry| PageInventoryEntryWire {
             not_namespace: false,
+            namespace_excluded: false,
             ..entry_wire(entry)
         })
         .collect();
@@ -123,6 +124,7 @@ pub(crate) fn answers(
                 namespace_parent: false,
                 empty_alias: false,
                 not_namespace: false,
+                namespace_excluded: false,
             },
         );
     }

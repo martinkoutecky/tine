@@ -119,6 +119,7 @@
         "name": "Alpha"
       },
       "name": "Shared",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -136,6 +137,8 @@
     "Notes": "notes",
     "Shared": "shared"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Alpha": {
       "journal": [
@@ -267,5 +270,65 @@
         "alpha"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "alpha"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "beta"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "alpha"
+    ],
+    [
+      "page",
+      "beta"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "alpha"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "beta"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

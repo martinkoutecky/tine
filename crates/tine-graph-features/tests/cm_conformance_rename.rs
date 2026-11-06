@@ -29,6 +29,13 @@
 //! Favorites follow rename only in the frontend (`src/favorites.ts`, Q12):
 //! the model's `favorites` answer is not compared here (a harness gap).
 //!
+//! Round 11: compare the explicit ordered `offers`, concrete target and executed
+//! `answer` projections (including cancellation's original bytes). OwnPage may
+//! fill an existing empty alias file. Historical rename10 success no longer
+//! implies a menu option. Source kind comes directly from the bridge.
+//! Round 12 adds aliasOnly sources and their full target matrix, including
+//! source ties, empty targets, same-key respelling and separate query maps.
+//!
 //! Shares `cm_conformance_shared_tests.rs` with the store harness (which also holds
 //! the test-side alias extractor copy to the original). Step 1 changes no
 //! production code. Without `CM_BRIDGE` the test skips; `CM_REFRESH=1`
@@ -133,9 +140,14 @@ fn run_tine(
     let (choice, confirmed, into) = match rename_offer(store, old, new, None) {
         Ok(RenameOffer::Rename) => (Some(RenameChoice::Rename), false, String::new()),
         Ok(RenameOffer::Merge { into, .. }) => (None, true, into),
-        Ok(RenameOffer::AliasOf { owner, merge, .. }) => {
-            both = merge;
-            if own_page || !merge {
+        Ok(RenameOffer::AliasOf {
+            owner,
+            merge,
+            own_page: can_own,
+            ..
+        }) => {
+            both = merge && can_own;
+            if (own_page || !merge) && can_own {
                 (Some(RenameChoice::OwnPage), false, String::new())
             } else {
                 (None, true, owner)
@@ -268,8 +280,89 @@ fn run_rename(
     let key = |s: &str| shared::fold(&journal, s);
     // The model's answers: the rename, and (round-9 bridge) the same pair as
     // a merge (M-Q5..7). Older bridges have no `merges`.
-    let r = &model["renames"][0];
+    let operation = &model["renames"][0];
+    match spec.name.as_str() {
+        "r11-empty-alias-target" => assert_eq!(operation["sourceKind"], "realPage"),
+        "r11-fileless-empty-alias-target" => assert_eq!(operation["sourceKind"], "fileless"),
+        "r11-empty-alias-source" => assert_eq!(operation["sourceKind"], "emptyAliasFile"),
+        _ => {}
+    }
+    if spec.name.starts_with("r12-alias-source-") {
+        assert_eq!(operation["sourceKind"], "aliasOnly", "{}", spec.name);
+        assert_eq!(operation["aliasSource"], true);
+        assert_eq!(operation["noFileSource"], true);
+        let own = operation["answers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|answer| answer["choice"] == "ownPage")
+            .unwrap();
+        assert_eq!(own["allowed"], false, "no file to make into its own page");
+    }
     let mg = model["merges"].get(0).cloned();
+    let offers: Vec<&str> = operation["offers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let actual_offers = match rename_offer(&store, old, new, None) {
+        Ok(RenameOffer::Rename) => vec!["rename", "cancel"],
+        Ok(RenameOffer::Merge { .. }) => vec!["mergeOwner", "cancel"],
+        Ok(RenameOffer::AliasOf {
+            merge, own_page, ..
+        }) => {
+            let mut choices = Vec::new();
+            if merge {
+                choices.push("mergeOwner");
+            }
+            if own_page {
+                choices.push("ownPage");
+            }
+            choices.push("cancel");
+            choices
+        }
+        _ => vec!["cancel"],
+    };
+    if offers != actual_offers {
+        diffs.push(Diff::new(
+            "rename offers: model and Tine offer different answers",
+            format!("model {offers:?}, Tine {actual_offers:?}"),
+        ));
+    }
+    let own_page = own_page || actual_offers == ["ownPage", "cancel"];
+    let r = if own_page {
+        &operation["ownAnswer"]
+    } else {
+        operation
+    };
+    let cancel = operation["answers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["choice"] == "cancel")
+        .unwrap();
+    assert_eq!(cancel["allowed"], true);
+    let cancelled: BTreeSet<_> = cancel["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        cancelled,
+        spec.files.keys().map(String::as_str).collect(),
+        "cancel preserves every file"
+    );
+    for file in cancel["files"].as_array().unwrap() {
+        assert_eq!(
+            file["text"].as_str(),
+            spec.files
+                .get(file["path"].as_str().unwrap())
+                .map(String::as_str),
+            "cancel preserves exact bytes"
+        );
+    }
     let file_names: BTreeMap<String, String> = ctx
         .files
         .iter()
@@ -278,8 +371,8 @@ fn run_rename(
     drop(ctx);
     drop(view);
 
-    let allowed = r["allowed"].as_bool().unwrap();
-    let base = r["baseAllowed"].as_bool().unwrap();
+    let allowed = offers.contains(&if own_page { "ownPage" } else { "rename" });
+    let base = operation["baseAllowed"].as_bool().unwrap();
     let own_child = r["ownChildUsed"].as_bool().unwrap_or(false);
     let risks: Vec<String> = r["journalRisks"]
         .as_array()
@@ -313,7 +406,7 @@ fn run_rename(
             }
             // Round 10: a reference-only source (`refSource`) has no file,
             // so a null `source` is no refusal reason there.
-            if m["source"].is_null() && m["refSource"] != true {
+            if m["source"].is_null() && m["noFileSource"] != true {
                 why.push("no single source");
             }
             if m["typedInSubtree"] == true || m["targetInSubtree"] == true {
@@ -393,46 +486,34 @@ fn run_rename(
                 into,
             },
             _,
-        ) => {
-            if allowed && !both {
-                // The model allows a plain rename here (the new name is no real
-                // page); Tine refuses it and offers only a merge into the new
-                // name's claimant (an alias owner). Round 9 (M-Q5 dialog):
-                // the model offers both; so does Tine's dialog when the
-                // owner can be merged into (`both`, run twice).
-                diffs.push(Diff::new(
-                    "rename: model allows a plain rename, Tine only merges into the new name's claimant",
-                    format!("{rename}: model allows; Tine refuses AlreadyExists, merges after confirmation ({outcome:?})"),
-                ));
-            }
-            match (&mg, merge_allowed) {
-                (Some(m), Some(true)) => {
-                    if m["target"].as_str() != Some(into.as_str()) {
-                        diffs.push(Diff::new(
-                            "merge: model and Tine merge into different pages",
-                            format!(
-                                "{rename}: model merges into {}, Tine into {into}",
-                                m["target"]
-                            ),
-                        ));
-                        None
-                    } else {
-                        chosen = Some((m, true));
-                        Some((*outcome, true))
-                    }
-                }
-                (None, _) if !allowed => {
+        ) => match (&mg, merge_allowed) {
+            (Some(m), Some(true)) => {
+                if m["target"].as_str() != Some(into.as_str()) {
                     diffs.push(Diff::new(
+                        "merge: model and Tine merge into different pages",
+                        format!(
+                            "{rename}: model merges into {}, Tine into {into}",
+                            m["target"]
+                        ),
+                    ));
+                    None
+                } else {
+                    chosen = Some((m, true));
+                    Some((*outcome, true))
+                }
+            }
+            (None, _) if !allowed => {
+                diffs.push(Diff::new(
                         format!("rename: model {model_says}, Tine performs a confirmed merge"),
                         format!(
                             "{rename}: model {model_says} (journal risks {risks:?}), Tine performs ({outcome:?})"
                         ),
                     ));
-                    None
-                }
-                (None, _) => None,
-                (Some(_), _) => {
-                    diffs.push(Diff::new(
+                None
+            }
+            (None, _) => None,
+            (Some(_), _) => {
+                diffs.push(Diff::new(
                         format!("merge: model {merge_says}, Tine performs a confirmed merge"),
                         format!(
                             "{rename}: model {model_says} and {merge_says} (merge {}), Tine merges into {into} ({outcome:?})",
@@ -450,10 +531,9 @@ fn run_rename(
                                 .unwrap_or_default()
                         ),
                     ));
-                    None
-                }
+                None
             }
-        }
+        },
         (
             TineRename::Performed {
                 outcome,
@@ -462,7 +542,7 @@ fn run_rename(
             },
             true,
         ) => {
-            chosen = Some((r, false));
+            chosen = Some((r, own_page && operation["ownMerge"] == true));
             Some((*outcome, false))
         }
     };
@@ -471,6 +551,20 @@ fn run_rename(
         return (finish(diffs, duplicate, coarse_random), both);
     };
     let (r, is_merge) = chosen.expect("a performed operation has its model answer");
+    let answer_name = if own_page {
+        "ownPage"
+    } else if is_merge {
+        "mergeOwner"
+    } else {
+        "rename"
+    };
+    let answer = operation["answers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["choice"] == answer_name)
+        .unwrap();
+    assert_eq!(answer["allowed"], true, "executed answer is offered");
     // The model's final path of each before file: its own, for a moved file
     // the after file named by its new name, and for a merge's source the
     // survivor (the target's path).
@@ -588,6 +682,18 @@ fn run_rename(
         }
     }
     let finals: BTreeSet<&String> = final_path.values().collect();
+    let model_files: BTreeSet<&String> = answer["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| final_path.get(f["path"].as_str().unwrap()))
+        .collect();
+    if model_files != finals {
+        diffs.push(Diff::new(
+            "answer files: model execution and Tine keep different files",
+            format!("{rename}: model {model_files:?}, Tine {finals:?}"),
+        ));
+    }
     for p in after_files.keys() {
         if !finals.contains(p) {
             diffs.push(Diff::new(
@@ -599,12 +705,12 @@ fn run_rename(
     // Occurrences, per final path, as (kind, key) multisets. Blocks of files
     // whose destination is unknown are left out (reported above).
     let mut model_occ: Occs = BTreeMap::new();
-    for b in r["occAfter"].as_array().unwrap() {
-        let path = b["block"][0].as_str().unwrap();
+    for b in answer["files"].as_array().unwrap() {
+        let path = b["path"].as_str().unwrap();
         let Some(fp) = final_path.get(path) else {
             continue;
         };
-        for o in b["occ"].as_array().unwrap() {
+        for o in b["projection"]["occ"].as_array().unwrap() {
             model_occ.entry(fp.clone()).or_default().push((
                 o[0].as_str().unwrap().to_owned(),
                 key(o[1].as_str().unwrap()),
@@ -637,12 +743,12 @@ fn run_rename(
     diff_multisets("occurrences", &model_occ, &tine_occ, &mut diffs, &label);
     // Alias members.
     let mut model_alias: Occs = BTreeMap::new();
-    for f in r["aliasesAfter"].as_array().unwrap() {
+    for f in answer["files"].as_array().unwrap() {
         let Some(fp) = final_path.get(f["path"].as_str().unwrap()) else {
             continue;
         };
         let e = model_alias.entry(fp.clone()).or_default();
-        for a in f["aliases"].as_array().unwrap() {
+        for a in f["projection"]["aliases"].as_array().unwrap() {
             e.push(("alias".to_owned(), key(a.as_str().unwrap())));
         }
     }
@@ -672,7 +778,7 @@ fn run_rename(
                 // A merge writes stored query arguments by the model's query
                 // map (round 9, `Rulings9.queryMap`: the source's name becomes
                 // the survivor's own name); a rename by the spelling map.
-                let qmap = if is_merge { &r["queryMap"] } else { map };
+                let qmap = &answer["files"][0]["projection"]["queryMap"];
                 let mapped = qmap[&a].as_str().map(str::to_owned).unwrap_or(a);
                 model_args
                     .entry(fp.clone())
