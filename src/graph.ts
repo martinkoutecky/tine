@@ -7,7 +7,7 @@ import { backend, type CustomCssChange, type GraphConfigChange } from "./backend
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
+import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
@@ -85,7 +85,7 @@ export function applyCustomCssChange(change: CustomCssChange): void {
  *  read when membership or the arrangement page moved. */
 export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | null): void {
   if (!previous || previous.preferred_workflow !== meta.preferred_workflow)
-    setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
+    applyTaskWorkflow(meta);
   if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format)
     setJournalTitleFormat(meta.journal_page_title_format);
   setGraphMeta(meta);

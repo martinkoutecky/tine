@@ -10,8 +10,13 @@ the oracle for behaviour; the mechanism here is develop's.
 - **Answer (I-12).** `Store::config()` is the only answer to "the current
   configuration" in the backend. The frontend's is the `graphMeta` signal, and
   `applyConfigDerivedState` (src/graph.ts) is the one producer of state derived
-  from it that is not read reactively (workflow, journal title format,
-  favorites); graph open calls it with `null` ("apply everything").
+  from it that is not read reactively (journal title format and favorites);
+  graph open calls it with `null` ("apply everything"). Task workflow uses
+  `applyTaskWorkflow` (src/taskWorkflow.ts) in both graph windows and Quick Capture.
+  Quick Capture receives the selected graph's config with its native binding
+  before activation, refreshes it on every show, and accepts live config
+  publications only for that binding generation. Its scratch document remains
+  separate and never becomes a graph writer.
 - **Door (I-1).** Every settings write goes through
   `tine_graph_features::config::update`: one read of the file, a pure text
   edit, and a `Transaction::replace` (or `create`) guarded by the revision just
@@ -110,6 +115,7 @@ risk.
 
 - crates/tine-graph-features/tests/audit_rn_b.rs::audit_l7s1_01_character_literals_keep_hidden_and_surgical_config_edits
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_notify_watcher
+- src/capture.workflow.test.tsx
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_poll_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_identical_config_rewrite_publishes_nothing
 - crates/tine-store/tests/config_live_reload.rs::settings_only_writes_keep_parsed_pages

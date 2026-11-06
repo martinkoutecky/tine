@@ -434,15 +434,23 @@ fn publication_event_payloads(
     page_event_payloads(events, binding_generation, Some(answers))
 }
 
+fn config_event_payload(change: &Change, slot: &GraphSlot) -> Option<serde_json::Value> {
+    change
+        .files
+        .iter()
+        .any(|(id, _, _)| id.as_str() == "logseq/config.edn")
+        .then(|| {
+            serde_json::json!({
+                "binding_generation": slot.binding_generation,
+                "meta": crate::state::graph_meta(slot),
+            })
+        })
+}
+
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
 fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: Change) {
     let binding_generation = slot.binding_generation;
-    let config_changed = change.origin == Origin::External
-        && change
-            .files
-            .iter()
-            .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, copies_changed) = window_events(&change);
     crate::spotlight::observe(
         app,
@@ -481,15 +489,15 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
     if conflicts_dirty {
         let _ = app.emit_to(label, "conflicts-changed", ());
     }
-    if config_changed {
-        let _ = app.emit_to(
-            label,
-            "graph-config-changed",
-            serde_json::json!({
-                "binding_generation": binding_generation,
-                "meta": crate::state::graph_meta(slot),
-            }),
-        );
+    if let Some(payload) = config_event_payload(&change, slot) {
+        if change.origin == Origin::External {
+            let _ = app.emit_to(label, "graph-config-changed", &payload);
+        }
+        // The scratch WebView uses this graph's editor preferences too. Its
+        // listener rejects publications from any other binding generation.
+        // Include own Settings writes: the graph view updates optimistically,
+        // but the independent capture view cannot see that local signal.
+        let _ = app.emit_to("capture", "graph-config-changed", &payload);
     }
 }
 
@@ -562,6 +570,29 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_workflow_changes_publish_the_bound_config_for_capture() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let slot = GraphSlot::new(store, root.path().to_path_buf());
+        let subscription = slot.store.subscribe();
+        for workflow in ["todo", "now"] {
+            tine_graph_features::config::set_preferred_workflow(&slot.store, workflow).unwrap();
+            let change = subscription
+                .try_recv()
+                .unwrap()
+                .expect("Settings publication");
+            assert_eq!(change.origin, Origin::Own);
+            let payload = config_event_payload(&change, &slot).expect("capture config event");
+            assert_eq!(payload["meta"]["preferred_workflow"], workflow);
+            assert_eq!(payload["binding_generation"], slot.binding_generation);
+        }
+    }
 
     fn rev(value: u64) -> GraphRev {
         GraphRev::try_from(value.to_string()).unwrap()

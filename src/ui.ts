@@ -26,22 +26,14 @@ import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationName } from "./pageIndex";
 import { forgetDeletedFavorite, renameFavorite } from "./favorites";
-import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
+import { changeGraphSetting } from "./graphPreferences";
 
 export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
 export type { ThemePreference } from "./themePreference";
 import { theme, setAppearancePreference } from "./themePreference";
 import { isHTMLElementNode, onEachWindow, windowOf } from "./windowRealm";
 
-// Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
-export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
-/** Set workflow optimistically and persist to graph config; failure rolls back
- * and toasts. The file is re-read on next graph open. */
-export function changeWorkflow(wf: "now" | "todo") {
-  if (wf === workflow()) return;
-  writeGraphSignal("workflow", workflow, setWorkflow, wf,
-    (next) => backend().setPreferredWorkflow(next), "preferred workflow");
-}
+export { workflow, setWorkflow, applyTaskWorkflow, changeWorkflow } from "./taskWorkflow";
 
 export function timetrackingEnabled(): boolean {
   return graphMeta()?.enable_timetracking ?? true;

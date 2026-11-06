@@ -169,6 +169,7 @@ it("A1: the next File capture after an old-binding refusal refreshes the binding
   await ack(first.id, { ok: false });
   const bind = vi.spyOn(backend(), "bindCaptureGraph").mockImplementationOnce(async () => {
     vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(18);
+    return { preferred_workflow: "now" } as import("./types").GraphMeta;
   });
   const next = await submit();
   await ack(next.id, { ok: true });
@@ -186,6 +187,7 @@ it("A1: a refused old binding keeps text on Esc and files next in the current bi
   expect(scratch()).toContain("refused but still needed");
   const bind = vi.spyOn(backend(), "bindCaptureGraph").mockImplementationOnce(async () => {
     vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(19);
+    return { preferred_workflow: "now" } as import("./types").GraphMeta;
   });
   const next = await submit();
   expect(bind).toHaveBeenCalled();

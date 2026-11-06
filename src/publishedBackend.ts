@@ -865,7 +865,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async captureTarget() {
       return "main";
     },
-    async bindCaptureGraph() {},
+    async bindCaptureGraph() {
+      const result = await answered.loadGraph();
+      if (result.kind === "focused_existing") throw new Error("published graph unavailable");
+      return result.meta;
+    },
     async captureReceipt() { return "pending" as const; },
     async defaultGraphParent() {
       return "";
