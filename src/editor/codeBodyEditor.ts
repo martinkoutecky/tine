@@ -102,3 +102,14 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     },
   };
 }
+
+/** After the fence-scaffold language picker closes, show only the new code
+ * body with the caret at its start (GH #879). */
+export function reenterCodeBody(view: { enter: (start: number) => void }, scaffold: { open: string; body: string }, ref: HTMLTextAreaElement, autosize: () => void): void {
+  view.enter(scaffold.open.length);
+  queueMicrotask(() => {
+    ref.value = scaffold.body;
+    ref.setSelectionRange(0, 0);
+    autosize();
+  });
+}

@@ -141,7 +141,7 @@ import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
-import { createCodeBodyEditor } from "../editor/codeBodyEditor";
+import { createCodeBodyEditor, reenterCodeBody } from "../editor/codeBodyEditor";
 import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
@@ -850,8 +850,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
 
   const closeAc = () => {
-    const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null;
-    scaffoldLanguagePicker = false;
+    const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null; scaffoldLanguagePicker = false;
     releaseCompletionLease();
     completionOriginalRaw = null;
     setAc(null);
@@ -859,14 +858,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setAcItems([]);
     setAcIndex(0);
     setPropertyValueKey(null);
-    if (scaffold) {
-      codeView.enter(scaffold.open.length);
-      queueMicrotask(() => {
-        ref.value = scaffold.body;
-        ref.setSelectionRange(0, 0);
-        autosize();
-      });
-    }
+    if (scaffold) reenterCodeBody(codeView, scaffold, ref, autosize);
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger): boolean =>
     left !== null &&
