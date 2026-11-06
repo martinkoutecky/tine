@@ -33,6 +33,10 @@ may tag, publish, comment, and close issues.
    against the production-protocol candidate binary. Retain screenshots, DOM,
    console/backend logs, graph diff, JUnit, and JSON on failure. See
    `docs/UI-REGRESSION-TESTING.md` for the exact binary and evidence contract.
+   `npm test` (and so hosted CI) also runs the component suite with the
+   CodeMirror 6 editor forced on (`npm run test:cm6`, `vitest.cm6.config.ts`).
+   CM6 ships on Beta-channel builds, so a CM6-only failure blocks a Beta like
+   any other test failure; never drop the config to get a release through.
 6. As soon as that frozen candidate passes its local exact-commit gates, deploy
    that exact tested artifact to `~/research/tine` without waiting to be asked.
    Record and compare the staged/deployed SHA-256 so Martin can test the actual
