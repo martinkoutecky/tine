@@ -194,8 +194,11 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   const filters = createMemo<FilterMap>(() => Object.fromEntries(
     Object.entries(rawFilters()).map(([name, state]) => [navigationName(name), state])
   ));
+  // Working-set membership changes may invalidate the page lookup, but only a
+  // changed filter value should rebuild the visible groups.
+  const filterProperty = createMemo(() => props.unlinked ? null : readPageProperty(props.name, "filters"));
   createEffect(() => {
-    const property = props.unlinked ? null : readPageProperty(props.name, "filters");
+    const property = filterProperty();
     setFilters(property === null ? loadFilters(savedFilterKey()) : parseReferenceFilters(property) ?? {});
   });
   const persistFilters = (f: FilterMap) => {

@@ -7,6 +7,7 @@ import { waitForWarmCache } from "./warmCache";
 import { blockExternalId } from "./document";
 import { observeGraphAnswers } from "./graphAnswers";
 import { installReferenceChangeCounter } from "./toasts";
+import { isQuickCaptureWindow } from "./windowRole";
 
 let applyCounts: (change: GraphAnswersChange) => void;
 let captureCounts: (ids: readonly string[]) => number | Promise<number | null | undefined>;
@@ -34,6 +35,7 @@ const countsMap = createRoot(() => {
   type InitialCounts = { kind: "ready"; counts: Record<string, number> } | { kind: "unavailable" };
   let initial: { epoch: number; result: Promise<InitialCounts> } | null = null;
   const loadCounts = (epoch: number) => {
+    if (isQuickCaptureWindow()) return Promise.resolve<InitialCounts>({ kind: "unavailable" });
     if (initial?.epoch === epoch) return initial.result;
     const owner = latestOwner(scope, "counts", graphOwner(() => epoch === graphEpoch()));
     const result = (async (): Promise<InitialCounts> => {
@@ -68,6 +70,7 @@ const countsMap = createRoot(() => {
       : ids.reduce((n, id) => n + (known.get(id) ?? result.counts[id] ?? 0), 0));
   };
   createEffect(() => {
+    if (isQuickCaptureWindow()) return;
     const epoch = graphEpoch();
     if (epoch !== heldEpoch) { heldEpoch = epoch; counts.clear(); updates.clear(); ready = false; publish(); }
     void (async () => {
