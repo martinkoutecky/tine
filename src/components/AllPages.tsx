@@ -72,7 +72,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
     const pages = allPages();
     if (!pages) return undefined;
     const files = listablePages(pages, journals()).filter((page) => !hiddenFromAllPages(page));
-    return [...files, ...referenceOnlyPages()];
+    return [...files, ...listablePages(referenceOnlyPages(), journals())];
   });
   const labels = createMemo(() => pageListLabels(listed() ?? []));
   const rows = createMemo<AllPagesRow[]>(() => {

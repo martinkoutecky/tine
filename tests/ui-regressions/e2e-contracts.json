@@ -736,7 +736,14 @@
       "stability": "burn-in"
     },
     "scripts/e2e-cm-counts-refonly.mjs": {
+      "setup": "Direct and suite launches use the shared disposable account-home fixture and assert the app's kernel owner lease after graph open.",
       "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "A day named by links and a tag but having no file appears once as a journal in All Pages with Show journals on, opens with its Linked References count and no file creation, and appears in a page query.",
+          "blocking": true,
+          "authority": "O3, D-20261102-CM4 CM-REFONLY; conceptual model step 2 batch 19"
+        },
         {
           "class": "core-operation",
           "userOutcome": "All pages shows each page's Backlinks count as the number of blocks its unfiltered Linked References panel lists (Target 1: its own block and a code span do not count, and one block naming it by two links and a property counts once), lists the pages that only blocks name (Ref Only 2, the tag page Ideas 1, the property-key page rel 1) and no TODO row, no LATER row although pages/LATER.md exists (OG get-all-pages hides built-in names), and no row for a {{embed ((uuid))}} block's uuid; opening Target, and Ref Only from All pages, shows the same number in the Linked References header; a {{query (all-page-tags)}} block lists Ideas, which opens; opening a reference-only page writes no file.",

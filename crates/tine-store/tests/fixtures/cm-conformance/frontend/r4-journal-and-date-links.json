@@ -44,37 +44,14 @@
         1
       ]
     ],
-    []
+    [
+      [
+        "Oct 27th, 2026",
+        1
+      ]
+    ]
   ],
   "inventory": [
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "2026-10-26",
-      "link": {
-        "kind": "journal",
-        "name": "Oct 26th, 2026"
-      },
-      "name": "2026-10-26",
-      "target": {
-        "id": "pages/2026-10-26.md",
-        "kind": "absent"
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "2026-10-27",
-      "link": {
-        "kind": "journal",
-        "name": "Oct 27th, 2026"
-      },
-      "name": "2026-10-27",
-      "target": {
-        "id": "pages/2026-10-27.md",
-        "kind": "absent"
-      }
-    },
     {
       "day": null,
       "is_journal": false,
@@ -96,15 +73,24 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": 20261027,
+      "is_journal": true,
+      "key": "oct 27th, 2026",
+      "name": "Oct 27th, 2026",
+      "target": {
+        "id": "journals/2026_10_27.md",
+        "kind": "absent"
+      }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-26": "oct 26th, 2026",
-    "2026-10-27": "oct 27th, 2026",
     "Notes": "notes",
-    "Oct 26th, 2026": "oct 26th, 2026"
+    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 27th, 2026": "oct 27th, 2026"
   },
   "namespaceNodes": [],
   "namespaceTree": [],

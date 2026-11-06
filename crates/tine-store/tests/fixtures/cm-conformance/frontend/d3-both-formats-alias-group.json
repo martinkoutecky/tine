@@ -104,20 +104,21 @@
         3
       ]
     ],
-    []
+    [
+      [
+        "2026_10_11",
+        1
+      ]
+    ]
   ],
   "inventory": [
     {
-      "day": null,
-      "is_journal": false,
+      "day": 20261110,
+      "is_journal": true,
       "key": "2026_10_11",
-      "link": {
-        "kind": "journal",
-        "name": "2026_10_11"
-      },
       "name": "2026_10_11",
       "target": {
-        "id": "pages/2026_10_11.md",
+        "id": "journals/10.11.2026.md",
         "kind": "absent"
       }
     },
@@ -130,20 +131,6 @@
         "id": "journals/22.10.2026.md",
         "kind": "existing",
         "others": []
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "22.10.2026",
-      "link": {
-        "kind": "journal",
-        "name": "2026_22_10"
-      },
-      "name": "22.10.2026",
-      "target": {
-        "id": "pages/22%2E10%2E2026.md",
-        "kind": "absent"
       }
     },
     {
@@ -167,20 +154,6 @@
         "kind": "existing",
         "others": []
       }
-    },
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "oct 22nd, 2026",
-      "link": {
-        "kind": "journal",
-        "name": "2026_22_10"
-      },
-      "name": "Oct 22nd, 2026",
-      "target": {
-        "id": "pages/Oct 22nd, 2026.md",
-        "kind": "absent"
-      }
     }
   ],
   "journalFileFormat": "dd.MM.yyyy",
@@ -188,9 +161,7 @@
   "keyOf": {
     "2026_10_11": "2026_10_11",
     "2026_22_10": "2026_22_10",
-    "22.10.2026": "2026_22_10",
     "Launch": "launch",
-    "Oct 22nd, 2026": "2026_22_10",
     "n": "n"
   },
   "namespaceNodes": [],

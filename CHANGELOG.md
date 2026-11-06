@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Dates named only by links or tags now appear once as journals in All Pages and page queries, using the graph's journal formats. Creating the journal no longer leaves an extra ordinary date page (UI-CM-FILELESS-DATES).
 - References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
 - Advanced Logseq queries recognise `sort-by` with a `juxt` of `get` functions on priority, scheduled, deadline and content, including scheduled-else-deadline. Later keys break ties, missing values follow the supplied defaults, and content sorts by the full raw text. Single-key forms work too; an unsupported key still refuses the whole query (GH #852).
 - Development: typing DONE over a bare DOING closes its running clock in the CodeMirror editor (UI-CM6-MARKER-CLOCK-EXIT).

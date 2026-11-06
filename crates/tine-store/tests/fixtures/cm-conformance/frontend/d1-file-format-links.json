@@ -63,51 +63,14 @@
         3
       ]
     ],
-    []
+    [
+      [
+        "Oct 23rd, 2026",
+        1
+      ]
+    ]
   ],
   "inventory": [
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "2026-10-22",
-      "link": {
-        "kind": "journal",
-        "name": "Oct 22nd, 2026"
-      },
-      "name": "2026-10-22",
-      "target": {
-        "id": "pages/2026-10-22.md",
-        "kind": "absent"
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "22-10-2026",
-      "link": {
-        "kind": "journal",
-        "name": "Oct 22nd, 2026"
-      },
-      "name": "22-10-2026",
-      "target": {
-        "id": "pages/22-10-2026.md",
-        "kind": "absent"
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "23-10-2026",
-      "link": {
-        "kind": "journal",
-        "name": "Oct 23rd, 2026"
-      },
-      "name": "23-10-2026",
-      "target": {
-        "id": "pages/23-10-2026.md",
-        "kind": "absent"
-      }
-    },
     {
       "day": null,
       "is_journal": false,
@@ -148,6 +111,16 @@
       }
     },
     {
+      "day": 20261023,
+      "is_journal": true,
+      "key": "oct 23rd, 2026",
+      "name": "Oct 23rd, 2026",
+      "target": {
+        "id": "journals/23-10-2026.md",
+        "kind": "absent"
+      }
+    },
+    {
       "day": null,
       "is_journal": false,
       "key": "plan",
@@ -162,12 +135,10 @@
   "journalFileFormat": "dd-MM-yyyy",
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-22": "oct 22nd, 2026",
-    "22-10-2026": "oct 22nd, 2026",
-    "23-10-2026": "oct 23rd, 2026",
     "24-10-2026": "oct 24th, 2026",
     "Notes": "notes",
     "Oct 22nd, 2026": "oct 22nd, 2026",
+    "Oct 23rd, 2026": "oct 23rd, 2026",
     "Plan": "plan"
   },
   "namespaceNodes": [],
