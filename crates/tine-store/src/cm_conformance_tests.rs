@@ -52,6 +52,37 @@ use shared::{Ctx, Diff, GraphSpec, Section};
 const RANDOM_DEFAULT: usize = 300;
 const WORKERS: usize = 4;
 
+/// Batch 20: the bridge must receive the prose block too. Otherwise an
+/// empty difference report cannot detect its omission from query answers.
+#[test]
+fn preamble_projection_keeps_prose_and_outline_positions() {
+    let fixture = json!({"files": {
+        "pages/Markdown.md": "related:: [[Target]]\n\nProse [[Target]]\n\n- body\n",
+        "pages/Org.org": "#+TITLE: Org\n#+RELATED: [[Target]]\n\nProse [[Target]]\n* body\n",
+    }});
+    let spec = GraphSpec::from_fixture("preamble-projection", &fixture);
+    let dir = tempfile::tempdir().unwrap();
+    spec.write(dir.path());
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    for (rel, text) in &spec.files {
+        let file = shared::file_json(
+            &view,
+            rel,
+            text,
+            document_alias_spellings,
+            tine_core::config::FileNameFormat::Legacy,
+            &Default::default(),
+        );
+        let blocks = file["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 3, "{rel}: header, prose, outline: {blocks:?}");
+        assert_eq!(blocks[1]["text"], "Prose [[Target]]", "{rel}");
+        assert_eq!(blocks[1]["occ"], json!([["link", "Target"]]), "{rel}");
+        assert_eq!(blocks[2]["text"], "body", "{rel}");
+    }
+    store.close();
+}
+
 /// The Linked References link table (Q9's third owner, crate private) as
 /// pairs of model keys.
 fn link_pairs(

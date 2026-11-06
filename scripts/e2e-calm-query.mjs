@@ -7,6 +7,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const out = path.resolve(process.env.OUT ?? "artifacts/queries/native");
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -37,6 +38,10 @@ fs.writeFileSync(`${graph}/pages/Planning.md`, [
   "- Upcoming journey task", `  SCHEDULED: <${tomorrow.iso} ${tomorrow.weekday}>`, "",
 ].join("\n"));
 fs.writeFileSync(`${graph}/pages/Links.md`, "- [[Tasks]] [[Tasks]]\n  unrelated-column:: only outside the task results\n");
+fs.writeFileSync(`${graph}/pages/Preamble queries.md`, '- {{query [[Preamble target]] {:title "Preamble results"}}}\n');
+for (const [ext, header, outline] of [["md", "related:: [[Preamble target]]", "- ordinary"], ["org", "#+RELATED: [[Preamble target]]", "* ordinary"]]) {
+  fs.writeFileSync(`${graph}/pages/Preamble ${ext}.${ext}`, `${header}\n\nProse ${ext} [[Preamble target]]\n\n${outline}\n`);
+}
 const queries = `${graph}/pages/Queries.md`;
 fs.writeFileSync(queries, [
   '- {{query (task TODO) {:title "Open tasks"}}}',
@@ -44,6 +49,7 @@ fs.writeFileSync(queries, [
   '- {{query (task TODO DONE) {:title "Task board"}}}', "  tine.view:: board", "  tine.group-field:: state",
   '- {{tine-query @block and scheduled < today {:title "Planning query"}}}', "",
 ].join("\n"));
+const account = installAccountHome(out, out);
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: `${out}/xdg/data`, XDG_CONFIG_HOME: `${out}/xdg/config`, XDG_CACHE_HOME: `${out}/xdg/cache`, WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const driver = process.env.TAURI_DRIVER ?? `${process.env.CARGO_HOME}/bin/tauri-driver`;
 const app = path.resolve(process.env.TINE_APP ?? "target/release/tine");
@@ -60,12 +66,18 @@ async function session(run, journey) {
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: app } } });
     await ensureMainWindow(browser);
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
+    await assertAppLease(account);
     await dismissToasts(browser);
     await journey(browser);
     await browser.saveScreenshot(`${out}/accepted-${run}.png`);
     await sleep(1500);
   } catch (error) {
     const state = await browser?.execute(() => ({ text: document.body.innerText,
+      editors: [...document.querySelectorAll("textarea.block-editor, .cm-content")].map(editor => ({
+        block: editor.closest("[data-block-id]")?.getAttribute("data-block-id"),
+        text: editor instanceof HTMLTextAreaElement ? editor.value : editor.textContent,
+        focused: editor === document.activeElement,
+      })),
       inputs: [...document.querySelectorAll(".qc-panel input")].map(input => {
         const rect = input.getBoundingClientRect();
         const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
@@ -153,6 +165,41 @@ async function closeEditor(browser) {
   }
 }
 await session(1, async browser => {
+  phase = "preamble query rows open, promote, edit and save in Markdown and Org";
+  for (const ext of ["md", "org"]) {
+    await openPageByName(browser, "Preamble queries");
+    await markQuery(browser, "Preamble results");
+    await resultsCurrent(browser);
+    const row = `${active} [data-block-id="page-preamble:Page:preamble ${ext}"]`;
+    await browser.$(row).waitForExist({ timeout: 15_000 });
+    assert.ok((await browser.$(row).getText()).includes(`Prose ${ext}`), "query shows the source prose");
+    // A preamble has no outline anchor yet; its page breadcrumb opens its source.
+    await browser.execute(selector => document.querySelector(selector)?.closest(".query-group")?.querySelector(".query-page")?.click(), row);
+    await browser.waitUntil(() => browser.execute(name => [...document.querySelectorAll(".page-title")].some(el => el.textContent.trim() === name), `Preamble ${ext}`), { timeout: 15_000 });
+    await openPageByName(browser, "Preamble queries");
+    await markQuery(browser, "Preamble results");
+    await browser.$(`${row} .block-content`).click();
+    const editorSelector = `${active} textarea.block-editor, ${active} .cm-content`;
+    const editor = await browser.$(editorSelector);
+    await editor.waitForExist({ timeout: 15_000 });
+    await browser.waitUntil(() => browser.execute((selector, expected) => {
+      const editor = document.querySelector(selector);
+      const text = editor instanceof HTMLTextAreaElement ? editor.value : editor?.textContent;
+      return document.activeElement === editor && text === expected;
+    }, editorSelector, `Prose ${ext} [[Preamble target]]`), { timeout: 15_000, timeoutMsg: "source prose editor was not focused" });
+    // Replace the selection through native key entry. A separate element-clear
+    // command can blur/finish the edit before replacement text is delivered.
+    await browser.keys(["Control", "a"]);
+    await editor.addValue(`Edited ${ext} [[Preamble target]]`);
+    assert.equal(await editor.getValue(), `Edited ${ext} [[Preamble target]]`);
+    await browser.keys("Escape");
+    const file = `${graph}/pages/Preamble ${ext}.${ext}`;
+    const marker = ext === "md" ? "-" : "*";
+    await browser.waitUntil(() => fs.readFileSync(file, "utf8").includes(`${marker} Edited ${ext} [[Preamble target]]`), { timeout: 15_000, timeoutMsg: "promoted prose was not durably saved" });
+    assert.ok(fs.readFileSync(file, "utf8").includes(ext === "md" ? "related::" : "#+RELATED:"), "the peer property header survives promotion");
+    await browser.waitUntil(() => browser.execute((selector, text) => [...document.querySelectorAll(`${selector} .query-group .block-content`)].some(el => el.textContent.includes(text)), active, `Edited ${ext}`), { timeout: 15_000 });
+    assert.equal(await browser.$(row).isExisting(), false, "refreshed result uses the promoted outline row");
+  }
   phase = "rest, title rename, inline live results";
   await openPageByName(browser, "Queries"); await markQuery(browser, "Open tasks");
   await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-count`)?.textContent === "2", active), { timeout: 20_000 });
@@ -335,9 +382,17 @@ await session(1, async browser => {
   await browser.$(".all-pages-backlinks").waitForExist({ timeout: 15_000 });
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".all-pages-row")].find(row => row.querySelector(".all-pages-open")?.textContent === "Tasks")?.querySelector(".all-pages-backlinks")?.textContent === "2"), { timeout: 20_000 });
   await browser.execute(() => [...document.querySelectorAll(".all-pages-col")].find(button => button.textContent.startsWith("Backlinks"))?.click());
-  assert.equal(await browser.execute(() => document.querySelector(".all-pages-row .all-pages-open")?.textContent), "Tasks");
+  const backlinkCounts = await browser.execute(() => [...document.querySelectorAll(".all-pages-row .all-pages-backlinks")]
+    .map(el => Number(el.textContent)).filter(Number.isFinite));
+  assert.ok(backlinkCounts.length > 1 && backlinkCounts.every((count, i) => i === 0 || backlinkCounts[i - 1] >= count), "Backlinks sorts descending, including the new preamble references");
 });
 await session(2, async browser => {
+  phase = "promoted preamble query results survive restart";
+  await openPageByName(browser, "Preamble queries");
+  await markQuery(browser, "Preamble results");
+  for (const ext of ["md", "org"]) {
+    await browser.waitUntil(() => browser.execute((selector, text) => [...document.querySelectorAll(`${selector} .query-group .block-content`)].some(el => el.textContent.includes(text)), active, `Edited ${ext}`), { timeout: 15_000 });
+  }
   phase = "persisted query and task after restart, board navigation";
   await openPageByName(browser, "Queries"); await markQuery(browser, "Planning query");
   await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));

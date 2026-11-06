@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Block queries now include matching prose before the first Markdown bullet or Org heading, separate from the page-property header. Clicking its result edits and saves the source prose in place as its first outline block. Existing launch checkpoints rebuild once on the first upgraded open (REG-CM-PREAMBLE-QUERY-ROWS, UI-CM-PREAMBLE-QUERY-ROWS).
 - A rename or merge is now refused, naming the journal, when it would break a link that reaches a journal through the old name (for example `[[old/sub]]` where a journal declares `alias:: old/sub`, and `old` is renamed). Journals keep their names. A journal no such link reaches does not block the rename (REG-CM-JOURNAL-REFERENCE-LOSS, UI-CM-JOURNAL-REFERENCE-LOSS).
 - Keyboard follow-link on Org pages uses the current graph filename format after a format change, including links whose parsed text is already cached (UI-CM-ORG-FOLLOW-CODEC).
 

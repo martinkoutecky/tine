@@ -59,6 +59,34 @@ pub fn page_preamble_content(raw: &str) -> Option<Range> {
     page_preamble_content_in(raw, &parse_document(raw, false))
 }
 
+/// The shared prose boundary for Markdown and Org pre-blocks. Org prose
+/// starts after the last parser-owned page property (including its drawer).
+pub fn preamble_content_range(raw: &str, is_org: bool) -> Option<Range> {
+    preamble_content_range_in(raw, is_org, &parse_document(raw, is_org))
+}
+
+/// [`preamble_content_range`] over already parsed regions, with no second parse.
+pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions) -> Option<Range> {
+    if !is_org {
+        return page_preamble_content_in(raw, regions);
+    }
+    if regions.quarantined {
+        return None;
+    }
+    let mut start = 0;
+    for property in regions.page_properties() {
+        start = start.max(property.line.1);
+        if let Some(drawer) = regions.property_regions.get(property.region) {
+            start = start.max(drawer.1);
+        }
+    }
+    let start = start.min(raw.len());
+    let rest = &raw[start..];
+    let leading = rest.len() - rest.trim_start_matches('\n').len();
+    let content = rest.trim_matches('\n');
+    (!content.is_empty()).then(|| Range(start + leading, start + leading + content.len()))
+}
+
 /// [`page_preamble_content`] over `raw`'s Markdown regions already parsed.
 pub fn page_preamble_content_in(raw: &str, regions: &BlockRegions) -> Option<Range> {
     let header = page_header_in(raw, regions);

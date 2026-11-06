@@ -11,8 +11,8 @@ import { preserveAboveViewport } from "../scrollContainer";
 import { SurfaceContext } from "./Block";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
-import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { openPageInSidebar, openBlockInSidebar, openQueryExport, switcherOpen } from "../ui";
+import { openPageTarget, openPageTargetInNewTab, openInNewTab } from "../router";
+import { openPageInSidebar, openQueryExport, switcherOpen } from "../ui";
 import { openShareDialog } from "../shareState";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { createQuerySubscription } from "../querySubscription";
@@ -78,7 +78,7 @@ import {
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
 import { QueryMacroActions } from "./QueryMacroActions";
-import { QueryResultTask } from "./QueryResultTask";
+import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
@@ -1269,17 +1269,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                                 onMouseDown={internalLinkMouseDown}
                                 onClick={(e) => {
                                   const bh = blockHit();
-                                  const uuid = blockDtoExternalId(bh.block);
-                                  const route = { kind: "page" as const, name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) };
-                                  const dest = internalLinkDest(e);
-                                  if (dest === "sidebar") openBlockInSidebar({ uuid, page: bh.page, pageKind: bh.kind, ...(bh.path ? { path: bh.path } : {}) });
-                                  else if (dest === "background") openInNewTab(route);
-                                  else if (dest === "pane") openRouteInOtherPane(route);
-                                  else openPageAtBlock({ name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) });
+                                  openQueryResult({ id: bh.block.id, page: bh.page, kind: bh.kind, path: bh.path, dto: bh.block }, e);
                                 }}
                                 onAuxClick={(e) => internalLinkAuxClick(e, () => {
                                   const bh = blockHit();
-                                  openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: blockDtoExternalId(bh.block), ...(bh.path ? { path: bh.path } : {}) });
+                                  openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, ...(bh.block.page_preamble ? {} : { block: blockDtoExternalId(bh.block) }), ...(bh.path ? { path: bh.path } : {}) });
                                 })}
                               >
                                 <QueryResultTask row={{ id: blockHit().block.id, page: blockHit().page, kind: blockHit().kind,

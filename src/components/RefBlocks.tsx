@@ -46,6 +46,7 @@ export function RefBlocks(props: {
   /** GH #486: a click on a page-property row edits that page's properties
    *  (the caller owns the source page's edit path). Absent: read-only row. */
   onEditPageProperties?: (event: MouseEvent) => void;
+  onEditPreamble?: () => void;
   queryResult?: boolean;
   readOnly?: boolean;
   /** Hover previews share the source's fold (GH #748). Unwritable or missing
@@ -63,6 +64,7 @@ function RefBlocksAtDepth(props: {
   path?: string;
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
+  onEditPreamble?: () => void;
   readOnly?: boolean;
   pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
@@ -79,6 +81,7 @@ function RefBlocksAtDepth(props: {
           pageKind={props.pageKind}
           path={props.path}
           onEditPageProperties={props.onEditPageProperties}
+          onEditPreamble={props.onEditPreamble}
           readOnly={props.readOnly}
           pageBody={props.pageBody}
           onOpenBlock={props.onOpenBlock}
@@ -96,6 +99,7 @@ function RefBlock(props: {
   pageKind?: "journal" | "page";
   path?: string;
   onEditPageProperties?: (event: MouseEvent) => void;
+  onEditPreamble?: () => void;
   readOnly?: boolean;
   pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
@@ -243,6 +247,12 @@ function RefBlock(props: {
             dir={blockDirAttr(props.block.raw, format())}
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
             onClick={(event) => {
+              if (props.block.page_preamble && props.onEditPreamble) {
+                if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
+                event.stopPropagation();
+                props.onEditPreamble();
+                return;
+              }
               // GH #486: the same gesture as the source page's properties area
               // (Page.tsx editPageHeader); links and buttons keep their own click.
               if (!props.block.page_property || !props.onEditPageProperties) return;
@@ -317,6 +327,7 @@ function RefBlock(props: {
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
               queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
+              onEditPreamble={props.onEditPreamble}
               readOnly={props.readOnly} pageBody={props.pageBody} onOpenBlock={props.onOpenBlock}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>

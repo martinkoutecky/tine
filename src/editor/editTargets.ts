@@ -21,6 +21,9 @@ export const FORBID_EDIT_SELECTOR = [
   // The embed owns its whole surface, including gaps between nested rows.
   // Nested editors remain allowed: their own host does not contain this ancestor.
   ".embed-block",
+  // DTO result rows own source actions (including preamble promotion on click).
+  // A query host must not replace them with its editor on the earlier press.
+  ".ref-block",
   ".block-marker",
   ".block-checkbox",
   // {{cloze}} reveals in place on click (GH #763).

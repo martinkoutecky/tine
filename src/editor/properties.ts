@@ -193,7 +193,7 @@ export function caretOnPropertyLine(raw: string, caret: number): boolean {
  * answer (`page_preamble::page_preamble_content`), which the store's Linked
  * References, All pages counts and rename read as that block too (CM step 2
  * batch 8, I-12). */
-export function splitPagePreamble(raw: string | null | undefined): {
+export function splitPagePreamble(raw: string | null | undefined, format: Format = "md"): {
   properties: string | null;
   content: string | null;
   /** Exact suffix following the canonical header, including separator newlines.
@@ -201,6 +201,14 @@ export function splitPagePreamble(raw: string | null | undefined): {
   remainder: string | null;
 } {
   if (!raw) return { properties: null, content: null, remainder: null };
+  if (format === "org") {
+    if (!parserReady()) return { properties: raw, content: null, remainder: null };
+    const range = JSON.parse(page_preamble_content_json(raw, true)) as [number, number] | null;
+    if (!range) return { properties: raw, content: null, remainder: null };
+    const at = utf8ToUtf16Cursor(raw);
+    const start = at(range[0]);
+    return { properties: raw.slice(0, start) || null, content: raw.slice(start, at(range[1])), remainder: raw.slice(start) };
+  }
   const { end, entries } = pageHeader(raw);
   const remainder = entries.length ? raw.slice(end) || null : raw;
   return {
@@ -219,7 +227,7 @@ function preambleContent(raw: string, headed: boolean, remainder: string | null)
   if (!parserReady()) return unread();
   let json: string;
   try {
-    json = page_preamble_content_json(raw);
+    json = page_preamble_content_json(raw, false);
   } catch (error) {
     reportUiFailure("page-header-read", error);
     return unread();
