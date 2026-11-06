@@ -129,6 +129,9 @@ revisions 2 and 3).
   negotiates.
 - A change applies live and is broadcast (`ui-language-changed`) to the other
   windows.
+- The macOS Edit menu's **Paste and Match Style** entry uses
+  `shell-edit-paste-match-style` and follows the resolved locale at startup and
+  on a live language change, using the same shell catalog as the tray.
 
 ## Checks
 

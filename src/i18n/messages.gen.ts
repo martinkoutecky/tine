@@ -2988,6 +2988,7 @@ export interface MessageArgs {
   "sheet-type-text": {};
   "sheet-undo": {};
   "shell-boot-opening": {};
+  "shell-edit-paste-match-style": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
   "shell-tray-quit": {};
