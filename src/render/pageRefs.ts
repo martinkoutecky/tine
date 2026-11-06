@@ -15,6 +15,11 @@ export function setFileNameFormat(format: string | null | undefined): void {
   legacyFileNames = format !== "triple-lowbar";
 }
 
+/** Codec used by link targets; decoded-name caches depend on this as well as syntax. */
+export function fileNameFormat(): "legacy" | "triple-lowbar" {
+  return legacyFileNames ? "legacy" : "triple-lowbar";
+}
+
 /** The page an accepted link target names, by the native policy
  *  (`block_regions::reference_target_name`, filename candidates): an Org
  *  `[[file:…]]` link names the linked file's page, decoded with the graph's

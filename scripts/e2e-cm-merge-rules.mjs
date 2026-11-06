@@ -12,6 +12,7 @@
 // Written by the cm-merge-rules lane.
 // Extended in batches 16/17: empty alias targets and sources without files,
 // including alias-only context-menu rename, owner selection and reload.
+// Batch 18: CM3-1 journal-reference-loss refusal explains itself and writes nothing.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -22,9 +23,10 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const artifacts = path.join(root, "artifacts/cm-merge-rules");
+const artifacts = path.join(root, "artifacts/cm/cm-merge-rules");
 fs.mkdirSync(artifacts, { recursive: true });
 const run = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(run, "graph");
@@ -46,13 +48,17 @@ const seeded = {
   "pages/Foo.md": "- foo body\n",
   "pages/Foo%2Fbar.md": "- bar body\n",
   "pages/p.md": "- see [[Foo]] and [[Foo/bar]]\n",
+  "pages/old.md": "- source\n",
+  "pages/journal referrer.md": "- see [[old/sub]]\n",
+  "journals/2026_10_26.md": "alias:: old/sub\n\n- day\n",
 };
 for (const [rel, text] of Object.entries(seeded)) fs.writeFileSync(path.join(graph, rel), text);
 fs.writeFileSync(path.join(graph, "journals", "2026_11_04.md"), "- journal\n");
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
 fs.mkdirSync(path.join(run, "data", APP_ID), { recursive: true });
 fs.writeFileSync(path.join(run, "data", APP_ID, "tine-settings.json"), JSON.stringify({ known_graphs: [{ name: "graph", path: graph }], last_graph_path: graph }));
-const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(run, "data"),
+const ownerFixture = accountHomeFixture(run, run);
+const env = { ...ownerFixture.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(run, "data"),
   XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4912);
@@ -95,7 +101,19 @@ try {
     connectionRetryTimeout: 30_000, capabilities: tauriCapabilities(process.env.TINE_APP || path.join(root, "target/debug/tine"), "cm-merge-rules") });
   await ensureMainWindow(browser);
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
+  await assertAppLease(ownerFixture);
   const before = snapshot();
+
+  stage = "CM3-1: the post's namespace rename names the journal at risk and writes nothing";
+  await openPageByName(browser, "old");
+  await renameTitle("new");
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) =>
+      /links reach the journal/.test(toast.textContent ?? "") && /Oct 26th, 2026/.test(toast.textContent ?? ""))),
+  { timeout: 15_000, timeoutMsg: "no refusal explaining the lost references to Oct 26th, 2026" });
+  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false);
+  assert.equal(await currentPageTitle(browser), "old");
+  assert.deepEqual(snapshot(), before, "the journal-risk refusal changed a file");
 
   stage = "M-Q5: the alias-only name asks three ways";
   await openPageByName(browser, "ML notes");
@@ -192,7 +210,8 @@ try {
   assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a refusal offers no choice");
   assert.deepEqual(snapshot(), beforeRefusal, "the refused rename changed a file");
 
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "M-Q5 dialog and own-page outcome; empty-target owner merge and file-less Cancel; alias-only context-menu owner merge retains the empty target, rewrites declarations and queries and survives reload; M-Q6 own-child refusal writes nothing", graph }, null, 2));
+  ownerFixture.verify();
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "CM3-1 journal-risk refusal names the journal and writes nothing; M-Q5 dialog and own-page outcome; empty-target owner merge and file-less Cancel; alias-only context-menu owner merge retains the empty target, rewrites declarations and queries and survives reload; M-Q6 own-child refusal writes nothing", graph }, null, 2));
   console.log(`PASS CM merge rules. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
@@ -203,4 +222,5 @@ try {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-driver.pid, "SIGTERM"); } catch {}
   fs.closeSync(log);
+  ownerFixture.close?.();
 }

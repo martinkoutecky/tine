@@ -81,4 +81,5 @@ rename-alias-choice-merge = 合并到“{ $owner }”
 rename-alias-choice-own-page = 让“{ $to }”成为独立页面（仍是“{ $owner }”的别名）
 rename-refused-own-child = 无法将“{ $old }”重命名为“{ $new }”：“{ $new }”已是“{ $old }”下的页面或别名，而“{ $old }”下的所有页面都会随之移动。
 rename-refused-file-taken = 无法重命名：文件 { $file } 属于页面“{ $page }”。请先重命名或合并该页面。
+rename-refused-journal-reference-loss = 无法重命名：有些链接通过这个名称指向日记 { $journals }。日记不会改名，因此重命名会使这些链接失效。
 rename-alias-choice-stale-what = 重命名

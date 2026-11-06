@@ -529,6 +529,9 @@ export async function renameOrMergePage(
 export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | Msg | null {
   if (typeof outcome === "object" && "refused" in outcome) {
     const reason = outcome.refused;
+    if (reason.kind === "journalReferenceLoss") {
+      return msg("rename-refused-journal-reference-loss", { journals: reason.journals.join(", ") });
+    }
     return reason.kind === "ownChild"
       ? msg("rename-refused-own-child", { old: reason.old, new: reason.new })
       : msg("rename-refused-file-taken", { file: reason.file, page: reason.page });

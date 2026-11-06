@@ -63,4 +63,5 @@ rename-alias-choice-merge = Merge into “{ $owner }”
 rename-alias-choice-own-page = Make “{ $to }” its own page (still an alias of “{ $owner }”)
 rename-refused-own-child = Couldn't rename “{ $old }” to “{ $new }”: “{ $new }” is already a page or an alias inside “{ $old }”, and every page under “{ $old }” moves with it.
 rename-refused-file-taken = Couldn't rename: the file { $file } belongs to the page “{ $page }”. Rename or merge that page first.
+rename-refused-journal-reference-loss = Couldn't rename: some links reach the journal { $journals } through this name. Journals keep their names, so renaming would break those links.
 rename-alias-choice-stale-what = The rename

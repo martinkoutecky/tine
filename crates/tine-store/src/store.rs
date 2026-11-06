@@ -2700,6 +2700,8 @@ pub struct WholeGraph {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
 }
 
+mod journal_rename;
+
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
     if result.exceeded {
         Err(QueryError::ResultTooLarge {
