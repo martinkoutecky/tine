@@ -401,7 +401,7 @@ pub fn delete_page_expected(
 /// Pages that explicitly reference a renamed name (`WholeGraph::explicit_referrers`,
 /// OG `:block/refs` semantics: `{{query}}` arguments are not references) are
 /// rewritten, including bare `tags::` members and self-references; a bare
-/// `alias::` member stays, as in OG `replace-old-page!` (C3Y Y4). Non-UTF-8
+/// `alias::` member follows too (D-20261105-CM13, deliberate OG difference). Non-UTF-8
 /// candidates refuse (C3W W2), as does a page listed unreadable that may hold a
 /// renamed name; a non-round-tripping Org referrer
 /// refuses the entire rename (H1). An `old` with no file still rewrites its

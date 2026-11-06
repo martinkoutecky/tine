@@ -1,0 +1,144 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "ML"
+        ],
+        "name": "other",
+        "pages": [
+          "owner"
+        ]
+      },
+      {
+        "aliases": [
+          "ML"
+        ],
+        "name": "owner",
+        "pages": [
+          "other"
+        ]
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "c",
+        "name": "c",
+        "target": {
+          "id": "pages/c.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml",
+        "link": {
+          "kind": "page",
+          "name": "other"
+        },
+        "name": "ML",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/other.md",
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "other",
+        "name": "other",
+        "target": {
+          "id": "pages/other.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "owner",
+        "name": "owner",
+        "target": {
+          "id": "pages/owner.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "other",
+      "path": "pages/other.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "c",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "c",
+      "path": "pages/c.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "c"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "other",
+      "path": "pages/other.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "other"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "owner",
+      "path": "pages/owner.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "owner"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

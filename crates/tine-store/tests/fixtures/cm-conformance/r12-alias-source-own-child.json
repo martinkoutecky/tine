@@ -1,0 +1,13 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: ML, ML/alias\n\n- owner\n",
+    "pages/ML%2Fchild.md": "- child\n",
+    "pages/c.md": "- [[ML]] [[ML/linked]]\n- {{query (page \"ML\")}}\n"
+  },
+  "renames": [
+    {"old": "ML", "new": "ML/child"},
+    {"old": "ML", "new": "ML/alias"},
+    {"old": "ML", "new": "ML/unused"},
+    {"old": "ML", "new": "ML/linked"}
+  ]
+}

@@ -108,6 +108,7 @@
         "name": "a b"
       },
       "name": "shared",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -136,6 +137,8 @@
     "shared": "shared",
     "x": "x"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Notes": {
       "journal": [
@@ -267,5 +270,65 @@
         "x"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "a b"
+    ],
+    [
+      "page",
+      "x"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "x"
+      ],
+      "parent": null
+    }
+  ]
 }

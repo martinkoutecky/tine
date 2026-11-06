@@ -15,6 +15,7 @@ import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
+import { isGuidePageName } from "../guide";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
 import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
 import "../graph"; // installs the document rename's navigation refresh handler
@@ -810,6 +811,11 @@ function PageMenu(props: {
     const page = pageByName(props.name);
     return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
   };
+  // A link can name an alias without loading a page of that name. Renaming
+  // is a name operation; Rust's planner decides the source and its offers.
+  // Keep loaded read-only pages and stale pinned file targets guarded.
+  const canRenameName = () => !readOnly()
+    || (!path && !pageByName(props.name) && !isGuidePageName(props.name));
   const runFileAction = async (reveal: boolean) => {
     const owner = graphOwner();
     const name = props.name;
@@ -962,7 +968,7 @@ function PageMenu(props: {
       </For>
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
           because window.prompt is a silent no-op in WebKitGTK. */}
-      <Show when={!readOnly() && pageMenuAvailability(props.pageKind).rename}>
+      <Show when={canRenameName() && pageMenuAvailability(props.pageKind).rename}>
         <RenamePage name={props.name} pageKind={props.pageKind} path={path} close={props.close} />
       </Show>
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).delete}>

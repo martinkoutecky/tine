@@ -122,6 +122,8 @@
     "TODO": "todo",
     "p": "p"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "A": {
       "journal": [
@@ -261,5 +263,83 @@
         "p"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "p"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "todo"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a]"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "p"
+    ],
+    [
+      "page",
+      "todo"
+    ],
+    [
+      "page",
+      "a]"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "todo"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a]"
+      ],
+      "parent": null
+    }
+  ]
 }

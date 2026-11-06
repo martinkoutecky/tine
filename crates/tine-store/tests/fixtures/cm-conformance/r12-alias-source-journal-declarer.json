@@ -1,0 +1,7 @@
+{
+  "files": {
+    "journals/2026_10_26.md": "alias:: ML\n\n- day\n",
+    "pages/control.md": "title:: control\n\n- stationary\n"
+  },
+  "renames": [{"old": "ML", "new": "AI"}]
+}

@@ -123,6 +123,7 @@
         "name": "Hub"
       },
       "name": "H",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -184,6 +185,8 @@
     "topic": "topic",
     "x": "x"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Favs": {
       "journal": [
@@ -385,5 +388,101 @@
         "x"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "favs"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "hub"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "x"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "topic"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "favs"
+    ],
+    [
+      "page",
+      "hub"
+    ],
+    [
+      "page",
+      "x"
+    ],
+    [
+      "page",
+      "topic"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "favs"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "hub"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "x"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "topic"
+      ],
+      "parent": null
+    }
+  ]
 }

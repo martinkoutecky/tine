@@ -92,6 +92,37 @@
     "Foo/bar": "foo/bar",
     "p": "p"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "foo/bar"
+    ],
+    [
+      "page",
+      "foo"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "foo/bar"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "foo/bar"
+        ]
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    }
+  ],
   "open": {
     "Foo": {
       "journal": [
@@ -198,5 +229,73 @@
         "p"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "foo/bar"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "foo/bar"
+        ]
+      ],
+      "page": [
+        "page",
+        "foo"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "foo/bar"
+    ],
+    [
+      "page",
+      "foo"
+    ],
+    [
+      "page",
+      "p"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "foo/bar"
+      ],
+      "parent": [
+        "page",
+        "foo"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "foo"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
+    }
+  ]
 }

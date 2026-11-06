@@ -1,4 +1,5 @@
 import { shortcutKey } from "../shortcutKey";
+import { plainTextPaste } from "../editor/plainTextPaste";
 import { bindCollapseCommandSurface } from "../collapseCommandSurface";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
@@ -47,7 +48,7 @@ import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } f
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -97,6 +98,7 @@ import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAut
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { pushToast } from "../toasts";
+import { acceptBlockRefPick, blockPickItems } from "../editor/blockRefPick";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
 import { clipboardEventFlavors } from "../editor/clipboardFlavors";
@@ -108,7 +110,7 @@ import { parserReady } from "../render/parse";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
-import { leadingMarker, setMarker } from "../editor/marker";
+import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 import {
   caretAtFirstRow,
@@ -123,7 +125,8 @@ import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, car
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
-import { normalizePlanning } from "../editor/planning";
+import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
+import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
 import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -138,7 +141,6 @@ import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
-import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
@@ -147,12 +149,12 @@ import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, rendered
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
-import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
+import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
@@ -572,9 +574,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
   const autocompleteLayerId = `block-completion-${createUniqueId()}`;
   const selectionOverflowLayerId = `block-selection-overflow-${createUniqueId()}`;
-  // Caret/selection stashed when the *window* (not this block) loses focus, so
-  // returning to Tine resumes editing exactly where you left off.
-  let savedSel: { start: number; end: number } | null = null;
   const node = () => docNode(props.id);
   // The node this editor instance was built to show. A page replacement (an
   // external change, the host's answer to an Open) purges the page's nodes and
@@ -647,10 +646,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   };
   onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
-  // Keep the last accepted task state while a typed marker passes through
-  // incomplete text (DOING -> D -> DO -> DON -> DONE). All editor entry methods
-  // still use setRaw's single clock writer and the current, reattached history.
-  let markerBaseline = node().raw;
+  const markerBaseline = editorMarkerBaseline(node().raw, pageFmt());
   const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode, () => ref.value);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
@@ -682,8 +678,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     }
     autosize();
     rawBeforeLastCommit = node().raw;
-    if (leadingMarker(node().raw, pageFmt())) markerBaseline = node().raw;
-    keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, next, { ...setRawOpts, markerBaseline }));
+    keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, next, { ...setRawOpts, markerBaseline: markerBaseline(node().raw) }));
   };
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
@@ -967,17 +962,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       }
       if (result.kind === "stale") return;
       setAcBlockState("ready");
-      const items: AcItem[] = [];
-      for (const g of result.value) {
-        for (const b of g.blocks) {
-          items.push({
-            label: blockFirstLine(b.raw, pageByName(g.page)?.format === "org" ? "org" : "md") || g.page,
-            sub: g.page,
-            blockRef: { uuid: b.id, externalId: blockDtoExternalId(b), page: g.page, kind: g.kind },
-          });
-        }
-      }
-      setAcItems(items);
+      setAcItems(blockPickItems(result.value, props.id));
       return;
     }
     // OG leaves blank page/tag search active but renders no rows and does not
@@ -1163,18 +1148,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
   const { uploadAsset, capturePhotoCmd, voiceMemoToggle, desktopVoiceMemoToggle, createDrawioDiagram, pasteClipboardFiles } = assets;
 
-  let pasteRaw = false;
-  let pasteRawToken = 0;
-  let pasteRawTimer: number | undefined;
-  const clearPasteRaw = () => {
-    pasteRaw = false;
-    pasteRawToken += 1;
-    if (pasteRawTimer !== undefined) {
-      window.clearTimeout(pasteRawTimer);
-      pasteRawTimer = undefined;
-    }
-  };
-  onCleanup(clearPasteRaw);
+  const plainPaste = plainTextPaste();
+  const clearPasteRaw = plainPaste.clearRaw;
+  onCleanup(plainPaste.dispose);
 
   const pasteLiteralText = (text: string) => {
     const start = ref.selectionStart;
@@ -1185,6 +1161,16 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
+  };
+
+  const capturePlainPaste = () => {
+    const value = ref.value, start = ref.selectionStart, end = ref.selectionEnd;
+    return {
+      current: () => editorMounted && ref.isConnected && ref.ownerDocument.activeElement === ref
+        && blockWritable(props.id) && !compositionActive && ref.value === value
+        && ref.selectionStart === start && ref.selectionEnd === end,
+      insert: pasteLiteralText,
+    };
   };
 
   const selectAc = (item: AcItem) => {
@@ -1223,23 +1209,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       return;
     }
     if (item.blockRef) {
-      const { uuid, externalId, page, kind } = item.blockRef;
-      const binding = captureBinding();
-      const trigger = ac();
-      const editorValue = ref.value;
-      let inserted = false;
-      const intended = () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue;
-      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, (stampedId) => {
-        if (!bindingCurrent(binding) || ac() !== trigger || ref.value !== editorValue) return null;
-        const sourcePage = docNode(props.id)?.page;
-        if (!sourcePage) return null;
-        replaceTrigger(`((${stampedId}))`);
-        inserted = true;
-        return sourcePage;
-      }, intended).then((saved) => {
-        if (!saved && bindingCurrent(binding) && (inserted || ac() === trigger))
-          pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
-      }).catch((error) => { if (bindingCurrent(binding)) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error"); });
+      const binding = captureBinding(), trigger = ac(), editorValue = ref.value;
+      acceptBlockRefPick(item.blockRef, {
+        intended: () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue,
+        current: () => bindingCurrent(binding),
+        triggerOpen: () => ac() === trigger,
+        sourcePage: () => docNode(props.id)?.page,
+        insert: (text) => replaceTrigger(text),
+      });
       return;
     }
     if (item.plugin) {
@@ -2032,6 +2009,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       case "editor/paste-as-link":
         void pasteAsLinkCmd();
         return true;
+      case "editor/paste-plain":
+        plainPaste.request(capturePlainPaste);
+        return true;
     }
   };
   let unregisterFocusedEditorBridge: (() => void) | undefined;
@@ -2217,20 +2197,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       return;
     }
 
-    // Ctrl/Cmd+Shift+V is Logseq's universal raw-paste gesture.
-    // ClipboardEvent does not expose modifier keys, so remember the preceding
-    // keydown briefly and consume it in onPaste. Do not preventDefault: the
-    // platform still has to perform the native clipboard read and dispatch paste.
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && shortcutKey(e) === "v") {
-      clearPasteRaw();
-      pasteRaw = true;
-      const token = ++pasteRawToken;
-      pasteRawTimer = window.setTimeout(() => {
-        if (pasteRawToken === token) clearPasteRaw();
-      }, 1_000);
-      return;
-    }
-    if (pasteRaw) clearPasteRaw();
+    if (plainPaste.keydown(e, capturePlainPaste)) return;
 
     if (acVisible() && e.key === "Escape") {
       e.preventDefault(); closeAc(); return;
@@ -2625,12 +2592,12 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   };
 
   const onBlur = (e: FocusEvent) => {
-    clearPasteRaw();
+    plainPaste.dispose();
     // The palette must retain the source occurrence until its contextual
     // Select embedding block action runs. Blur still commits the draft.
     if (embedNavExit && (e.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) {
       commit(ref.value);
-      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      windowFocus.remember();
       return;
     }
     unregisterFocusedEditor();
@@ -2648,7 +2615,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // caret mounted so dismissal can return to the same editing transaction.
     if ((e.relatedTarget as HTMLElement | null)?.closest?.(".date-picker") || inPageFindPreservesEditorBlur()) {
       commit(ref.value);
-      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      windowFocus.remember();
       return;
     }
     // Android can blur the WebView editor before document.hasFocus() reflects
@@ -2658,16 +2625,16 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // Graph/block changes stay guarded by assetEditorIsCurrent after the await.
     if (assets.holdsBlur()) {
       commit(ref.value);
-      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      windowFocus.remember();
       return;
     }
     // The editor's own window lost focus (switched to another app or window): stay
-    // in edit mode and remember the caret so onWindowFocus can resume exactly here.
+    // in edit mode and remember the caret so windowFocus can resume exactly here.
     // Commit as-is — we're still editing, not exiting. If the window that gains
-    // focus next is another Tine window, onOtherWindowFocus ends the edit there.
+    // focus next is another Tine window, windowFocus ends the edit there.
     if (!documentHasFocus(ref)) {
       commit(ref.value);
-      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      windowFocus.remember();
       return;
     }
     const target = e.relatedTarget;
@@ -2684,8 +2651,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const exitEditOnBlur = (handoff?: HTMLTextAreaElement) => {
     const intentIsCurrent = captureEditIntent();
     const calcExit = isCalc();
-    commit(calcExit || codeShown() || handoff ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
-    if (!handoff) finishPageHeaderEdit(props.id);
+    commitBlockEditorExit({ id: props.id, text: ref.value, format: pageFmt(), literal: calcExit || !!codeShown(), handoff: !!handoff,
+      commit: text => commit(text, calcExit ? { calc: true } : undefined) });
     const endIfCurrent = () => {
       // Blur precedes the destination's focus event. Let it record the active
       // surface before deciding whether this occurrence still owns the exit.
@@ -2698,33 +2665,18 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     else endIfCurrent();
   };
 
-  // When the window regains focus, re-focus this block's editor and restore the
-  // caret — WebKitGTK drops the native focus on window switch and doesn't put it
-  // back. Guarded so we never steal focus if editing moved on while we were away.
-  const onWindowFocus = () => {
-    if (editingId() !== props.id || !ref || !ref.isConnected) return;
-    ref.focus();
-    resizeNow(); // a window shown after being hidden may have fit to a 0-height layout
-    if (savedSel) {
-      const end = Math.min(savedSel.end, ref.value.length);
-      const start = Math.min(savedSel.start, end);
-      ref.setSelectionRange(start, end);
-      savedSel = null;
-    }
-  };
-  // Another Tine window gained focus while this editor's window had lost it: the
-  // user moved to a different workspace window, so the edit ends (one editing
-  // transaction app-wide). Switching to another application keeps editing.
-  const onOtherWindowFocus = () => {
-    if (editingId() !== props.id || !ref || !ref.isConnected) return;
-    if (documentHasFocus(ref)) return;
-    savedSel = null;
-    exitEditOnBlur();
-  };
-  onMount(() => onCleanup(onEachWindow((win) => listen(win, "focus", () => {
-    if (win === windowOf(ref)) onWindowFocus();
-    else onOtherWindowFocus();
-  }))));
+  const windowFocus = editorWindowFocus({ id: props.id, element: () => ref,
+    selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
+    focus: saved => {
+      ref.focus();
+      resizeNow();
+      if (saved) {
+        const end = Math.min(saved.end, ref.value.length);
+        ref.setSelectionRange(Math.min(saved.start, end), end);
+      }
+    },
+    exit: () => exitEditOnBlur(),
+  });
 
   // Paste copied files/images as graph assets. Native file lists use path-based
   // imports; browser-only file payloads use a bounded byte fallback. Ordinary
@@ -2732,8 +2684,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const onPaste = (e: ClipboardEvent) => {
     // Consume the modifier latch on EVERY paste, including file/image pastes.
     // Otherwise an intercepted shortcut could affect a later context-menu paste.
-    const rawPaste = pasteRaw;
-    clearPasteRaw();
+    const rawPaste = plainPaste.consume();
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (rawPaste) {
       e.preventDefault();

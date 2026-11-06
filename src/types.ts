@@ -218,7 +218,7 @@ export type RenameRefusal =
 export type RenameOffer =
   | { kind: "rename" }
   | { kind: "merge"; into: string; name: string; journal: boolean }
-  | { kind: "aliasOf"; owner: string; name: string; merge: boolean }
+  | { kind: "aliasOf"; owner: string; name: string; merge: boolean; ownPage: boolean }
   | { kind: "refused"; reason: RenameRefusal; message: string };
 
 export type ResolvedPage =
@@ -253,6 +253,7 @@ export interface PageInventoryEntry {
    *  `refs::is_namespace_name` (model round 10, S15); the views never test the
    *  spelling themselves. Absent means false. */
   not_namespace?: boolean;
+  namespace_excluded?: boolean;
 }
 
 /** What one publication changed in the `page_inventory` answer when no page

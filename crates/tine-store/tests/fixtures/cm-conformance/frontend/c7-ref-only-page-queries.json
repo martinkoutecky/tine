@@ -152,6 +152,37 @@
     "proj": "proj",
     "proj/sub": "proj/sub"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "proj/sub"
+    ],
+    [
+      "page",
+      "proj"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "proj/sub"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "proj/sub"
+        ]
+      ],
+      "page": [
+        "page",
+        "proj"
+      ]
+    }
+  ],
   "open": {
     "A": {
       "journal": [
@@ -324,5 +355,109 @@
         "proj/sub"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "proj/sub"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "proj/sub"
+        ]
+      ],
+      "page": [
+        "page",
+        "proj"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "todo"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "b"
+    ],
+    [
+      "page",
+      "proj/sub"
+    ],
+    [
+      "page",
+      "proj"
+    ],
+    [
+      "page",
+      "todo"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "proj/sub"
+      ],
+      "parent": [
+        "page",
+        "proj"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "proj"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "todo"
+      ],
+      "parent": null
+    }
+  ]
 }

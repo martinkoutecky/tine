@@ -27,6 +27,8 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph,
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
 fs.writeFileSync(path.join(graph, "pages/Notes.md"), "- [[Work/Plan]] [[./rel/x]] [[../up/y]] [[https://a.b/c]]\n");
 fs.writeFileSync(path.join(graph, "pages/Scratch.md"), "- scratch\n");
+// R10-Q2: completion/navigation retain the alias; namespace views omit it.
+fs.writeFileSync(path.join(graph, "pages/Owner.md"), "alias:: old/sub\n\n- owner content\n");
 fs.writeFileSync(path.join(graph, "journals", "2026_11_04.md"), "- journal\n");
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
 fs.mkdirSync(path.join(run, "data", APP_ID), { recursive: true });
@@ -140,6 +142,18 @@ try {
     crumb: document.querySelector(".ns-crumb") !== null,
   }));
   assert.deepEqual(views, { hierarchy: false, crumb: false }, `./rel/x namespace views: ${JSON.stringify(views)}`);
+
+  stage = "old/sub remains an alias completion and opens its owner";
+  await openPageByName(browser, "Scratch");
+  await browser.$(".ls-block .block-content-wrapper").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5_000 });
+  await complete("[[old/s", (names) => names.includes("old/sub"));
+  await browser.keys("Escape");
+  // The Quick Switcher lists an alias under its owner's row (the helper's
+  // `query` option): searching old/sub must open Owner.
+  await openPageByName(browser, "Owner", { query: "old/sub" });
+  await openPageByName(browser, "old");
+  assert.equal(await browser.$(".page-hierarchy").isExisting(), false, "alias-only child supplies no Hierarchy row");
 
   fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "[[ completion offers a namespace parent once and inserts it; ./x, ../x and URL names make no parent in the popup or All pages; the sidebar tree, the Namespaces view, the Hierarchy section and the crumb treat only namespace names as namespaces", graph }, null, 2));
   console.log(`PASS CM namespace parents in completion. ${run}`);

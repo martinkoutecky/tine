@@ -78,6 +78,8 @@
     "Favs": "favs",
     "x": "x"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "A": {
       "journal": [
@@ -184,5 +186,65 @@
         "x"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "favs"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "favs"
+    ],
+    [
+      "page",
+      "x"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "favs"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "x"
+      ],
+      "parent": null
+    }
+  ]
 }

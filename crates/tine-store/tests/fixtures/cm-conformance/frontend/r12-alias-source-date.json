@@ -1,0 +1,272 @@
+{
+  "backlinks": {
+    "c": [],
+    "owner": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[2026-10-26]] [[ML]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/owner.md",
+        1
+      ],
+      [
+        "pages/c.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026-10-26",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
+      "name": "2026-10-26",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/owner.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "c",
+      "target": {
+        "id": "pages/c.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
+      "name": "ML",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/owner.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "owner",
+      "name": "owner",
+      "target": {
+        "id": "pages/owner.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "2026-10-26": "oct 26th, 2026",
+    "ML": "ml",
+    "c": "c",
+    "owner": "owner"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "2026-10-26": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "c": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    "owner": {
+      "journal": [
+        "journal",
+        "owner"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "owner": {
+    "2026-10-26": {
+      "journal": null,
+      "page": "pages/owner.md"
+    },
+    "ML": {
+      "journal": null,
+      "page": "pages/owner.md"
+    },
+    "c": {
+      "journal": null,
+      "page": "pages/c.md"
+    },
+    "owner": {
+      "journal": null,
+      "page": "pages/owner.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "c",
+      "owner": "pages/c.md",
+      "parent": null
+    },
+    {
+      "key": "owner",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "owner",
+      "owner": "pages/owner.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "2026-10-26": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "ML": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "c": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    },
+    "owner": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "owner"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "c"
+    ],
+    [
+      "page",
+      "owner"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "owner"
+      ],
+      "parent": null
+    }
+  ]
+}

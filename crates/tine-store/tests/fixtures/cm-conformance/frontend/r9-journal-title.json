@@ -107,6 +107,8 @@
     "Notes": "notes",
     "Oct 26th, 2026": "oct 26th, 2026"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
@@ -246,5 +248,65 @@
         "oct 26th, 2026"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "meeting"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "meeting"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "meeting"
+      ],
+      "parent": null
+    }
+  ]
 }

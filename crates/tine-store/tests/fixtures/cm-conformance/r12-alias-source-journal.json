@@ -1,0 +1,9 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: ML\n\n- owner\n",
+    "journals/2026_10_26.md": "alias:: ML/sub\n\n- day\n",
+    "pages/AI.md": "- target\n",
+    "pages/c.md": "- [[ML/sub]]\n"
+  },
+  "renames": [{"old": "ML", "new": "AI"}, {"old": "ML", "new": "fresh"}]
+}

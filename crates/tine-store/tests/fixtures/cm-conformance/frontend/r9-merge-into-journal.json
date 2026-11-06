@@ -78,6 +78,8 @@
     "meeting": "meeting",
     "p": "p"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Oct 26th, 2026": {
       "journal": [
@@ -188,5 +190,65 @@
         "p"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "meeting"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "p"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "meeting"
+    ],
+    [
+      "page",
+      "p"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "meeting"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
+    }
+  ]
 }
