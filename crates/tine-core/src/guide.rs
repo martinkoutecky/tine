@@ -2315,6 +2315,20 @@ mod og_20d_guide_tests {
             vec!["app open", "typed", "saved first", "window", "stale"],
             vec!["--journal", "creating", "standard input"],
             vec!["broken", "references", "delete"],
+            vec![
+                "tine delete",
+                "refuses",
+                "--yes",
+                "--force",
+                "nothing changed",
+            ],
+            vec![
+                "removed text",
+                "children",
+                "properties",
+                "65,536",
+                "truncated",
+            ],
             vec!["exits 6", "nothing changed", "exits 8"],
         ] {
             assert!(
