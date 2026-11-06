@@ -145,6 +145,9 @@ const suites = {
     // through ui-e2e.yml windows_scenario, outside its default fan-out.
     ["beta-journal-863", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863" }],
     ["beta-journal-863-edit", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-edit" }],
+    ["beta-journal-863-large", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-large" }],
+    ["beta-journal-863-large-edit", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-large-edit" }],
+    ["beta-journal-863-large-heavy", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-large-heavy" }],
     ["beta-journal-863-directory-case", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-directory-case" }],
     ["beta-journal-863-crlf", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-crlf" }],
     ["beta-journal-863-upper-extension", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-upper-extension" }],

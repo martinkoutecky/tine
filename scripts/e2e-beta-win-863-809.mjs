@@ -4,6 +4,8 @@
 // 863-created-unreferenced, 863-external, 863-external-alternate,
 // 863-external-alternate-blur, 863-custom, 863-crlf, 863-directory-case,
 // 863-upper-extension, and 863-edit (typing before any title open).
+// 863-large / 863-large-edit generate 11,500 pages and 1,559 journals;
+// 863-large-heavy adds bounded repeated embeds and task queries to today.
 // Each starts a fresh fixture. Existing-file cases
 // also save successive edits from Journals while the editor remains open.
 // Fixture data only. A passing Linux run does not establish a Windows fix.
@@ -17,6 +19,7 @@ import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { generateRealisticGraph } from "./generate-realistic-graph.mjs";
 import { x11Tools } from "./lib/e2e-x11.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
@@ -31,6 +34,9 @@ const nativePort = Number(process.env.E2E_NATIVE_PORT || 4673);
 const issues = process.env.ONLY ? process.env.ONLY.split(",") : ["863", "809"];
 // Run each journal lifecycle independently with ONLY=863-<case>.
 const journalCase = issues.find(issue => issue.startsWith("863")) ?? "863";
+const large = journalCase.startsWith("863-large");
+const editFirst = journalCase === "863-edit" || journalCase === "863-large-edit";
+const pageTimeout = large ? 60_000 : 15_000;
 const creates = journalCase.startsWith("863-created");
 const external = journalCase.startsWith("863-external");
 const custom = journalCase === "863-custom";
@@ -40,18 +46,25 @@ const virtual = creates || external;
 const referenced = virtual && journalCase !== "863-created-unreferenced";
 const journalsDirectory = directoryCase ? "Journals" : "journals";
 for (const dir of ["pages", journalsDirectory, "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
+if (large) {
+  const manifest = await generateRealisticGraph({ root: graph, pages: 11500, journals: 1559 });
+  fs.writeFileSync(path.join(out, "graph-manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+}
 for (const dir of ["home", "data", "config", "cache", "state", "appdata", "localappdata", "webview"]) fs.mkdirSync(path.join(run, dir), { recursive: true });
 const now = new Date();
 const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 const journalRel = `${journalsDirectory}/${custom ? day : day.replaceAll("-", "_")}.${journalCase === "863-upper-extension" ? "MD" : "md"}`;
 const journalFile = path.join(graph, journalRel);
-const journalBytes = `- GH863 existing journal body${journalCase === "863-crlf" ? "\r\n" : "\n"}`;
+const journalBytes = `- GH863 existing journal body${journalCase === "863-crlf" ? "\r\n" : "\n"}`
+  + (large ? fs.readFileSync(journalFile, "utf8") : "")
+  + (journalCase === "863-large-heavy" ? Array.from({ length: 40 }, () => "- {{embed [[Area 0/Topic 0]]}}\n- {{query (task TODO DOING)}}\n").join("") : "");
 const pageName = "Probe Alpha";
 const pageFile = path.join(graph, `pages/${pageName}.md`);
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), `{:journal/page-title-format "yyyy-MM-dd"${custom ? ' :journal/file-name-format "yyyy-MM-dd"' : ""}}\n`);
 if (!virtual) fs.writeFileSync(journalFile, journalBytes);
 fs.writeFileSync(pageFile, "- GH809 original page body\n");
 if (referenced) fs.writeFileSync(path.join(graph, "pages/Journal mentions.md"), `- [[${day}]]\n`);
+const initialJournalFiles = fs.readdirSync(path.join(graph, journalsDirectory)).sort();
 const fixture = accountHomeFixture(run, out);
 // The shared Windows launcher takes its profile root from the harness process.
 process.env.E2E_WEBVIEW_USER_DATA_ROOT = path.join(run, "webview");
@@ -108,9 +121,9 @@ function stop() {
 const watchdog = setTimeout(() => {
   report.status = "failed";
   report.classification = "ambiguous";
-  report.observed = `No completion within 150 seconds; last stage: ${report.stage}`;
+  report.observed = `No completion within ${large ? 300 : 150} seconds; last stage: ${report.stage}`;
   write(); stop(); fixture.close?.(); process.exit(1);
-}, 150_000);
+}, large ? 300_000 : 150_000);
 try {
   if (process.platform === "linux") {
     wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], { env, stdio: "ignore" });
@@ -126,7 +139,7 @@ try {
     capabilities: tauriCapabilities(app, "gh863-809", process.platform, target.debuggerAddress)
   });
   await ensureMainWindow(browser);
-  await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
+  await browser.$(".ls-block").waitForExist({ timeout: large ? 60_000 : 30_000 });
   await assertAppLease(fixture);
   const main = await browser.getWindowHandle();
   step("app-ready", await browser.execute(() => ({ title: document.title, ua: navigator.userAgent })));
@@ -146,13 +159,14 @@ try {
         if (!watched.has(command)) return invoke(command, args, options);
         const request = { command, session: args?.session, id: args?.id, path: args?.path, name: args?.name, kind: args?.kind,
           pages: args?.pages, key: args?.key, version: args?.version, dto: page(args?.dto) };
+        const started = performance.now();
         try {
           const result = await invoke(command, args, options);
           const reply = command === "journal_feed_page" ? { pages: result.pages.map(page), unreadable: result.unreadable }
             : command === "get_page" || command === "get_page_by_path" ? page(result) : result;
-          keep(evidence.ipc, { ...request, reply });
+          keep(evidence.ipc, { ...request, elapsedMs: performance.now() - started, reply });
           return result;
-        } catch (error) { keep(evidence.ipc, { ...request, error: String(error) }); throw error; }
+        } catch (error) { keep(evidence.ipc, { ...request, elapsedMs: performance.now() - started, error: String(error) }); throw error; }
       };
       const observer = new MutationObserver(() => {
         const text = [...document.querySelectorAll(".conflict-banner")].map(el => el.textContent).join("\n");
@@ -168,13 +182,13 @@ try {
             conflictReported: mail.notice?.conflictReported, notice: mail.notice });
         }) }).then(() => done(null), error => done(String(error)));
     }).then(error => { if (error) throw new Error(`Could not observe page mail: ${error}`); });
-    await openPageByName(browser, pageName); // The route starts on an ordinary page.
+    await openPageByName(browser, pageName, large ? { timeout: pageTimeout } : {}); // The route starts on an ordinary page.
     const clicked = await browser.execute(() => {
       const button = document.querySelector('.topbar-optional-action[title="Journals"]');
       button?.click(); return !!button;
     });
     if (!clicked) throw new Error("Journals toolbar button was absent");
-    await browser.waitUntil(() => browser.execute(() => !!document.querySelector("h1.journal-title")), { timeout: 15_000 });
+    await browser.waitUntil(() => browser.execute(() => !!document.querySelector("h1.journal-title")), { timeout: pageTimeout });
     let openedFile = journalFile;
     let expectedBytes = journalBytes;
     let expectedBody = "GH863 existing journal body";
@@ -205,7 +219,7 @@ try {
       step("863-file-created", { journalCase, openedFile, editorActive: await editor.isExisting(), expectedBytes });
       fs.writeFileSync(path.join(out, "before-click-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
     }
-    if (journalCase !== "863-edit") {
+    if (!editFirst) {
       step("863-before-title-click", await browser.execute(() => ({
         titles: [...document.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim()),
         body: document.querySelector(".main-content")?.textContent,
@@ -223,7 +237,7 @@ try {
             && document.querySelector(".main-content")?.textContent.includes(body) ? "opened" : null;
         }, expectedBody);
         return outcome !== null;
-      }, { timeout: 15_000, timeoutMsg: "Journal title did not open the existing body on its own route" });
+      }, { timeout: pageTimeout, timeoutMsg: "Journal title did not open the existing body on its own route" });
       if (outcome === "refused") { report.classification = "product"; throw new Error("GH863 physical-page refusal"); }
       if (fs.readFileSync(openedFile, "utf8") !== expectedBytes) throw new Error("Opening the journal changed its bytes");
       if (virtual && fs.readdirSync(path.join(graph, "journals")).join() !== path.basename(openedFile)) throw new Error("Virtual journal opening created an extra file");
@@ -231,9 +245,9 @@ try {
       step("863-pass", "Toolbar Journals > today's title opened its existing file without changing bytes");
     }
     if (!virtual) {
-      if (journalCase !== "863-edit") await browser.$('.topbar-optional-action[title="Journals"]').click();
+      if (!editFirst) await browser.$('.topbar-optional-action[title="Journals"]').click();
       const body = await browser.$(`[data-feed-day="${day}"] .block-content-wrapper`);
-      await body.waitForExist({ timeout: 15_000 });
+      await body.waitForExist({ timeout: pageTimeout });
       await body.click();
       const editor = await browser.$(".main-content textarea.block-editor");
       await editor.waitForExist({ timeout: 10_000 });
@@ -254,13 +268,14 @@ try {
       }, day);
       await browser.waitUntil(() => browser.execute(text =>
         !document.querySelector(".main-content .journal-feed-day") && document.querySelector(".main-content")?.textContent.includes(text), typed),
-      { timeout: 15_000, timeoutMsg: "Edited journal title did not reopen its saved text" });
+      { timeout: pageTimeout, timeoutMsg: "Edited journal title did not reopen its saved text" });
       await assertNoJournalConflict();
       if (fs.readFileSync(openedFile, "utf8") !== expectedBytes) throw new Error("Reopening the edited journal changed its bytes");
-      if (fs.readdirSync(path.join(graph, journalsDirectory)).join() !== path.basename(openedFile)) throw new Error("Editing the journal created an extra file");
+      if (JSON.stringify(fs.readdirSync(path.join(graph, journalsDirectory)).sort()) !== JSON.stringify(initialJournalFiles)) throw new Error("Editing the journal changed the journal file set");
       step("863-feed-edits-pass", "Three successive feed edits saved to the existing file without conflict, then its title reopened the saved text");
     }
     await captureJournalProbe("journal-ipc.json");
+    fs.writeFileSync(path.join(out, "diagnostics.json"), JSON.stringify(await diagnostics(), null, 2) + "\n");
   }
 
   if (issues.includes("809")) {
