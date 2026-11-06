@@ -601,12 +601,7 @@
     }
   },
   "frontendNames": {
-    "fixtures": {
-      "n4-org-file-links-triple-lowbar": [
-        "frontend file link: nearestLink reads \"Ten___Child\" in pages/note.org (\"see [[file:./Ten___Child.org][ten]]\"), pages/Ten___Child.org is named \"Ten/Child\"",
-        "frontend file link: nearestLink reads \"a/b\" in pages/note.org (\"and [[file:./a.b.org][ab]]\"), pages/a.b.org is named \"a.b\""
-      ]
-    }
+    "fixtures": {}
   },
   "frontendNamespaces": {
     "fixtures": {}
@@ -785,10 +780,7 @@
       "n6-title-rename: Shown Title -> Renamed": [],
       "o1-twin-journal-day: duplicate days": [],
       "r10-ref-source-alias-target: kb -> ML": [],
-      "r10-ref-source-journal-risk: kb -> kc": [
-        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
-        "rename \"kb\" -> \"kc\": model refuses (base guard + journal risk) (journal risks [\"\\\"kb/sub\\\"\"]), Tine performs (Renamed)"
-      ],
+      "r10-ref-source-journal-risk: kb -> kc": [],
       "r10-ref-source-merge: kb -> n/y": [],
       "r10-ref-source-own-child: kb -> kb/x": [],
       "r10-ref-source-parent-only: kb -> n": [],
@@ -808,19 +800,10 @@
       "r12-alias-source-date: 2026-10-26 -> AI": [],
       "r12-alias-source-date: ML -> 2026-10-26": [],
       "r12-alias-source-empty-target: ML -> AI": [],
-      "r12-alias-source-journal-declarer: ML -> AI": [
-        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
-        "rename \"ML\" -> \"AI\": model refuses (base guard + journal risk) (journal risks [\"\\\"ml\\\"\"]), Tine performs (Renamed)"
-      ],
+      "r12-alias-source-journal-declarer: ML -> AI": [],
       "r12-alias-source-journal-target: ML -> 2026-10-26": [],
-      "r12-alias-source-journal: ML -> AI": [
-        "rename \"ML\" -> \"AI\": model refuses (base guard + journal risk) and refuses the merge (journal risk) (merge journalRisks=[\"ml/sub\"], source=null, target=\"pages/AI.md\", targetInSubtree=false, typedInSubtree=false), Tine merges into pages/AI.md (Merged)",
-        "model [\"cancel\"], Tine [\"mergeOwner\", \"cancel\"]"
-      ],
-      "r12-alias-source-journal: ML -> fresh": [
-        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
-        "rename \"ML\" -> \"fresh\": model refuses (base guard + journal risk) (journal risks [\"\\\"ml/sub\\\"\"]), Tine performs (Renamed)"
-      ],
+      "r12-alias-source-journal: ML -> AI": [],
+      "r12-alias-source-journal: ML -> fresh": [],
       "r12-alias-source-namespace: old/sub -> new/sub": [],
       "r12-alias-source-other-owner: ML -> AI": [],
       "r12-alias-source-own-child: ML -> ML/alias": [],
@@ -843,10 +826,7 @@
       "r6-onto-alias: a -> c (own page)": [],
       "r6-onto-real-page: a -> b": [],
       "r6-ref-only-descendant: old -> new": [],
-      "r6-refused-journal-risk: old -> new": [
-        "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
-        "rename \"old\" -> \"new\": model refuses (journal risk) (journal risks [\"\\\"old/sub\\\"\"]), Tine performs (Renamed)"
-      ],
+      "r6-refused-journal-risk: old -> new": [],
       "r6-rewrite-set: Tasks -> Chores": [],
       "r6-task-marker-page: A -> Alpha": [],
       "r9-case-rename-onto-taken-file: N/y -> n/y": [
@@ -1168,42 +1148,6 @@
           ]
         }
       },
-      "merge: model refuses the merge (journal risk), Tine performs a confirmed merge": {
-        "detail": "rename \"n\" -> \"A\": model refuses (base guard + journal risk) and refuses the merge (journal risk) (merge journalRisks=[\"n/y\"], source=\"pages/n.md\", target=\"pages/N%2Fy.md\", targetInSubtree=false, typedInSubtree=false), Tine merges into pages/N%2Fy.md (Merged)",
-        "graph": {
-          "files": {
-            "journals/2026_10_27.md": "alias:: a, n/y\n\n- [[A]] and [[N/y]]\n  - child [[A]]\n- TODO task [[A]]\n  - child [[n/y]]\n",
-            "pages/N%2Fy.md": "title:: a\nalias:: n/y\n",
-            "pages/n.md": "- [#A] priority\n  - child [[A]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "n/y"
-                }
-              },
-              "tine": "(not [[n/y]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "x"
-              },
-              "tine": "@page and name = 'x'"
-            }
-          ],
-          "renames": [
-            {
-              "new": "A",
-              "old": "n"
-            }
-          ]
-        }
-      },
       "rename offers: model and Tine offer different answers": {
         "detail": "model [\"cancel\"], Tine [\"rename\", \"cancel\"]",
         "graph": {
@@ -1276,47 +1220,6 @@
             {
               "new": "n/y",
               "old": "N/y"
-            }
-          ]
-        }
-      },
-      "rename: model refuses (base guard + journal risk), Tine performs": {
-        "detail": "rename \"A\" -> \"n\": model refuses (base guard + journal risk) (journal risks [\"\\\"a\\\"\"]), Tine performs (Renamed)",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "alias:: B, a\n\n- #B tagged\n- TODO task [[a]]\n  - child [[N/y]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "x"
-                  },
-                  {
-                    "page": {
-                      "name": "a"
-                    }
-                  }
-                ]
-              },
-              "tine": "(or [[x]] (page \"a\"))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "B"
-              },
-              "tine": "@page and name = 'B'"
-            }
-          ],
-          "renames": [
-            {
-              "new": "n",
-              "old": "A"
             }
           ]
         }

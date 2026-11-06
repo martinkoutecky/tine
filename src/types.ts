@@ -205,10 +205,12 @@ export interface AliasGroup {
 
 /** Why the backend refused a rename the user can act on
  *  (`pages::RenameBlocked`): the new name is inside the page's own namespace
- *  and used (CM-OWN-CHILD, M-Q6), or its file belongs to another page (R14). */
+ *  and used (CM-OWN-CHILD, M-Q6), its file belongs to another page (R14),
+ *  or rewriting an occurrence would lose a journal-owned key (CM3-1). */
 export type RenameRefusal =
   | { kind: "ownChild"; old: string; new: string }
-  | { kind: "fileTaken"; file: string; page: string };
+  | { kind: "fileTaken"; file: string; page: string }
+  | { kind: "journalReferenceLoss"; journals: string[] };
 
 /** What renaming a page asks of the user, answered by the rename's own planner
  *  (`pages::rename_offer`; the window never re-derives it). `merge`: the new

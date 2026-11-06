@@ -134,6 +134,17 @@ it("a refused rename writes nothing and words the backend's reason", async () =>
   expect(rename).not.toHaveBeenCalled();
 });
 
+it("explains journal reference loss with every affected journal and submits no rename", async () => {
+  const rename = vi.spyOn(backend(), "renamePage");
+  const reason = { kind: "journalReferenceLoss" as const, journals: ["Oct 26th, 2026", "Oct 27th, 2026"] };
+  offer({ kind: "refused", reason, message: "" });
+  const result = await renameOrMergePage("old", "new");
+  const message = renderEnglish(renameOutcomeMessage(result, "old", "new") as Msg);
+  expect(message).toContain("links reach the journal");
+  for (const journal of reason.journals) expect(message).toContain(journal);
+  expect(rename).not.toHaveBeenCalled();
+});
+
 // Rule 2 B7: a refused start, a failed flush and a possibly committed rename
 // are different outcomes with different messages.
 it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", async () => {

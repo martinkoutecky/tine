@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { nearestLink } from "./nearestLink";
+import { setFileNameFormat } from "../render/pageRefs";
+import { parseBlock } from "../render/parse";
+
+it("follows Org file links with the current codec even when the AST is cached", () => {
+  const raw = "[[file:Ten___Child.org]] [[file:a.b.org]]";
+  const ast = parseBlock(raw, true);
+  try {
+    for (const [format, child, dotted] of [
+      ["legacy", "Ten___Child", "a/b"],
+      ["triple-lowbar", "Ten/Child", "a.b"],
+      ["legacy", "Ten___Child", "a/b"],
+    ]) {
+      setFileNameFormat(format);
+      expect(parseBlock(raw, true)).toBe(ast);
+      expect(nearestLink(raw, 4, { format: "org" })?.value).toBe(child);
+      expect(nearestLink(raw, raw.length - 4, { format: "org" })?.value).toBe(dotted);
+    }
+  } finally {
+    setFileNameFormat("legacy");
+  }
+});
 
 // GH #274. Transcribed from OG `thingatpt.cljs extract-nearest-link-from-text`;
 // these cases encode OG's actual rule, including the parts that are surprising.

@@ -2334,6 +2334,7 @@ export interface MessageArgs {
   "rename-alias-choice-stale-what": {};
   "rename-alias-choice-title": { "to": string | number };
   "rename-refused-file-taken": { "file": string | number; "page": string | number };
+  "rename-refused-journal-reference-loss": { "journals": string | number };
   "rename-refused-own-child": { "new": string | number; "old": string | number };
   "render-asset-moved-to-trash": {};
   "render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more": {};

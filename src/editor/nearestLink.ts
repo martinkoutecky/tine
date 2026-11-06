@@ -25,13 +25,13 @@ export interface NearestLink {
 
 import { parseBlock, blockRegions } from "../render/parse";
 import { nested_reference_names } from "../render/wasm/lsdoc_wasm.js";
-import { linkTargetName } from "../render/pageRefs";
+import { fileNameFormat, linkTargetName } from "../render/pageRefs";
 import { inlineText } from "../render/facets";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline, ListItem, Format } from "../render/ast";
 
 const rank: Record<NearestLinkKind, number> = { page: 0, block: 1, tag: 2, url: 3 };
-const candidatesByAst = new WeakMap<Block[], NearestLink[]>();
+const candidatesByAst = new WeakMap<Block[], { codec: ReturnType<typeof fileNameFormat>; links: NearestLink[] }>();
 
 /** Nearest accepted link, using OG's whole-block distance and kind tie policy.
  * No incomplete-token fallback: unaccepted syntax has no navigation target.
@@ -40,13 +40,14 @@ const candidatesByAst = new WeakMap<Block[], NearestLink[]>();
  * no candidates. Parser failures throw. Candidates share the bounded AST cache. */
 export function nearestLink(text: string, caret: number, options: { includeUrls?: boolean; format: Format }): NearestLink | null {
   const blocks = parseBlock(text, options.format === "org");
-  let candidates = candidatesByAst.get(blocks);
-  if (!candidates) {
-    candidates = collectCandidates(text, blocks, options.format ?? "md");
-    candidatesByAst.set(blocks, candidates);
+  const codec = fileNameFormat();
+  let cached = candidatesByAst.get(blocks);
+  if (!cached || cached.codec !== codec) {
+    cached = { codec, links: collectCandidates(text, blocks, options.format ?? "md") };
+    candidatesByAst.set(blocks, cached);
   }
   let best: NearestLink | null = null, bestScore = -Infinity;
-  for (const candidate of candidates) {
+  for (const candidate of cached.links) {
     if (candidate.kind === "url" && !options.includeUrls) continue;
     const { start, end, kind } = candidate;
     const score = caret < start ? caret - start : caret > end ? end - caret : 0;
