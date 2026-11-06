@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scrolling Linked References on a routed page no longer resets unchanged groups when a source page loads (GH #886).
 - Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).
 - The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).
 - On macOS, Cmd+Shift+V pastes plain text without depending on a native paste event (#857).
