@@ -458,6 +458,24 @@ pub(super) fn render(ok: &Value, out: &mut String) {
             );
             let _ = writeln!(out, "{} rev {}", text(ok, "name"), text(ok, "rev"));
             git_line(ok, out);
+            let _ = writeln!(
+                out,
+                "{}",
+                crate::i18n_shell::shell_text("en", "shell-cli-delete-removed")
+            );
+            let removed = text(ok, "removed_text");
+            out.push_str(removed);
+            if !removed.ends_with('\n') {
+                out.push('\n');
+            }
+            let omitted = count(ok, "removed_text_omitted_bytes");
+            if omitted > 0 {
+                let _ = writeln!(
+                    out,
+                    "{} {omitted}",
+                    crate::i18n_shell::shell_text("en", "shell-cli-delete-truncated")
+                );
+            }
         }
         "refs" => groups(list(ok, "groups"), out),
         "search" => {

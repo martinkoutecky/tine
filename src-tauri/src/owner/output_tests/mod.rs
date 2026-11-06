@@ -230,7 +230,7 @@ impl Fixture {
         ));
         all.push((
             "block.delete",
-            self.ok("block.delete", json!({ "handle": UUID })),
+            self.ok("block.delete", json!({ "handle": UUID, "yes": true })),
         ));
         all
     }
