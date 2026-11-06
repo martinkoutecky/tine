@@ -85,6 +85,7 @@
         "name": "Oct 26th, 2026"
       },
       "name": "kb/sub",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -123,6 +124,8 @@
     "kb/sub": "kb/sub",
     "p": "p"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Oct 26th, 2026": {
       "journal": [
@@ -258,5 +261,65 @@
         "p"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "p"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "kb"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "p"
+    ],
+    [
+      "page",
+      "kb"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "kb"
+      ],
+      "parent": null
+    }
+  ]
 }

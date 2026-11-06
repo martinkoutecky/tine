@@ -158,7 +158,7 @@ mod inventory_adapter_tests {
                 r#"{"key":"display beta","name":"Display Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]}}"#,
                 r#"{"key":"jun 26th, 2026","name":"Jun 26th, 2026","is_journal":true,"day":20260626,"target":{"kind":"existing","id":"journals/2026_06_26.md","others":["journals/Jun 26th, 2026.org"]}}"#,
                 r#"{"key":"only linked","name":"Only Linked","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Only Linked.md"}}"#,
-                r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]},"link":{"name":"Display Alpha","kind":"page"}}"#,
+                r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]},"link":{"name":"Display Alpha","kind":"page"},"namespace_excluded":true}"#,
                 // A namespace parent (model rule 1): no file, flagged.
                 r#"{"key":"team","name":"Team","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Team.md"},"namespace_parent":true}"#,
                 r#"{"key":"team/child","name":"Team/Child","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Team%2FChild.md","others":[]}}"#,

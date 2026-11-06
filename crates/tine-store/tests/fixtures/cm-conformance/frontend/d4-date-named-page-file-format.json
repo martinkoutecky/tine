@@ -76,6 +76,8 @@
     "Oct 25th, 2026": "oct 25th, 2026",
     "x": "x"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "25-10-2026": {
       "journal": [
@@ -182,5 +184,47 @@
         "x"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "oct 25th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "x"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "oct 25th, 2026"
+    ],
+    [
+      "page",
+      "x"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "oct 25th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "x"
+      ],
+      "parent": null
+    }
+  ]
 }

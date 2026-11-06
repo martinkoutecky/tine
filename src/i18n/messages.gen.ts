@@ -2326,6 +2326,7 @@ export interface MessageArgs {
   "reload-on-focus-live-file-notifications-are-unavailable-for-this-graph": { "message": string | number };
   "reload-on-focus-tine-couldn-t-finish-checking-for-external-changes": { "error": string | number };
   "rename-alias-choice-body": { "from": string | number; "owner": string | number; "to": string | number };
+  "rename-alias-choice-fileless": { "from": string | number; "owner": string | number; "to": string | number };
   "rename-alias-choice-merge": { "owner": string | number };
   "rename-alias-choice-no-merge": { "from": string | number; "owner": string | number };
   "rename-alias-choice-own-page": { "owner": string | number; "to": string | number };
@@ -2987,6 +2988,7 @@ export interface MessageArgs {
   "sheet-type-text": {};
   "sheet-undo": {};
   "shell-boot-opening": {};
+  "shell-edit-paste-match-style": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
   "shell-tray-quit": {};

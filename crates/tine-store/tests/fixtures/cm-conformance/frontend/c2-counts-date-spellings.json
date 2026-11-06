@@ -194,6 +194,8 @@
     "Oct 27th, 2026": "oct 27th, 2026",
     "n": "n"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
@@ -399,5 +401,83 @@
         "n"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 27th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "launch"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "n"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "journal",
+      "oct 27th, 2026"
+    ],
+    [
+      "page",
+      "launch"
+    ],
+    [
+      "page",
+      "n"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "oct 27th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "launch"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "n"
+      ],
+      "parent": null
+    }
+  ]
 }

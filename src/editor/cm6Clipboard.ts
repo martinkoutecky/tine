@@ -20,6 +20,7 @@ import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from ".
 import { structuredHtmlPaste } from "./htmlPaste";
 import { isPasteableUrl, videoPasteMacro, wrapLink } from "./format";
 import { editorAssets } from "./editorAssets";
+import { plainTextPaste } from "./plainTextPaste";
 
 interface ClipboardContext {
   id: string;
@@ -35,13 +36,8 @@ interface ClipboardContext {
 /** Adapt the existing paste policies to CM state. Outline and identity changes
  * still go through the document commands; text changes use CM transactions. */
 export function cm6Clipboard(ctx: ClipboardContext) {
-  let rawPaste = false;
-  let rawTimer: ReturnType<typeof setTimeout> | undefined;
-  const clearRaw = () => {
-    rawPaste = false;
-    if (rawTimer !== undefined) clearTimeout(rawTimer);
-    rawTimer = undefined;
-  };
+  const plainPaste = plainTextPaste();
+  const clearRaw = plainPaste.clearRaw;
   const available = (v: EditorView) => ctx.current() && v.dom.isConnected && !v.compositionStarted;
   const apply = (v: EditorView, edit: { text: string; start: number; end: number }) => {
     v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: edit.text },
@@ -49,6 +45,13 @@ export function cm6Clipboard(ctx: ClipboardContext) {
   };
   const literal = (v: EditorView, text: string) => {
     v.dispatch(v.state.replaceSelection(text), { userEvent: "input.paste", scrollIntoView: true });
+  };
+  const capturePlainPaste = (v: EditorView) => {
+    const before = v.state;
+    return {
+      current: () => available(v) && v.hasFocus && v.state.doc.eq(before.doc) && v.state.selection.eq(before.selection),
+      insert: (text: string) => literal(v, text),
+    };
   };
   const insertOutline = (v: EditorView, nodes: OutlineNode[], tag: string, asChildren = false) => {
     const host = node(ctx.id);
@@ -100,24 +103,21 @@ export function cm6Clipboard(ctx: ClipboardContext) {
   };
   const commands = guardedCommands<[EditorView]>(available, {
     "editor/paste-as-link": v => { void pasteAsLink(v); return true; },
+    "editor/paste-plain": v => { plainPaste.request(() => capturePlainPaste(v)); return true; },
     "editor/copy-embed": v => {
       if (!v.state.selection.main.empty) return false;
       ctx.commit(v.state.doc.toString()); void copyBlockLink(ctx.id, "embed"); return true;
     },
   });
   const keydown = (e: KeyboardEvent, v: EditorView) => {
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && shortcutKey(e) === "v") {
-      clearRaw(); rawPaste = true; rawTimer = setTimeout(clearRaw, 1_000); return false;
-    }
-    clearRaw();
+    if (plainPaste.keydown(e, () => capturePlainPaste(v))) return e.defaultPrevented;
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && shortcutKey(e) === "c" && v.state.selection.main.empty) {
       ctx.commit(v.state.doc.toString()); void copyBlockLink(ctx.id, "ref"); return true;
     }
     return false;
   };
   const paste = (e: ClipboardEvent, v: EditorView) => {
-    const raw = rawPaste;
-    clearRaw();
+    const raw = plainPaste.consume();
     if (!available(v)) return true;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (raw) { if (text) literal(v, text); return true; }
@@ -176,5 +176,5 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     ctx.assets.pasteImage(e);
     return false;
   };
-  return { paste, keydown, commands, clearRaw };
+  return { paste, keydown, commands, clearRaw, dispose: plainPaste.dispose };
 }

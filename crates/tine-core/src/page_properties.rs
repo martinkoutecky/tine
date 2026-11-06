@@ -183,20 +183,39 @@ pub fn document_preamble_block(doc: &Document) -> Option<DocBlock> {
 /// The pre-block's blocks every reference question reads, in page order:
 /// the page-property header block, then the prose block.
 pub fn document_pre_blocks(doc: &Document) -> impl Iterator<Item = DocBlock> {
+    doc.pre_block
+        .as_deref()
+        .map_or_else(Vec::new, |pre| {
+            pre_block_projections(pre, page_document_is_org(doc))
+        })
+        .into_iter()
+        .map(|(_, block)| block)
+}
+
+/// Which parser-owned part of a page's pre-block a projection represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreBlockKind {
+    /// The page-property header.
+    Properties,
+    /// Prose before the first outline block.
+    Preamble,
+}
+
+/// Project both parts once, retaining their role for clients assigning result
+/// identities. The document-only walker above drops the role and shares the
+/// same parser boundary. Pure: no graph identities, I/O or persisted state.
+pub fn pre_block_projections(pre: &str, is_org: bool) -> Vec<(PreBlockKind, DocBlock)> {
     let mut out = Vec::new();
-    if let Some(pre) = doc.pre_block.as_deref() {
-        let is_org = page_document_is_org(doc);
-        let (raw, prose) = pre_block_parts(pre, is_org);
-        if !raw.is_empty() {
-            out.push(property_projection(&raw, is_org));
-        }
-        if let Some(range) = prose {
-            let mut block = DocBlock::new(&pre[range]);
-            block.set_org(is_org);
-            out.push(block);
-        }
+    let (raw, prose) = pre_block_parts(pre, is_org);
+    if !raw.is_empty() {
+        out.push((PreBlockKind::Properties, property_projection(&raw, is_org)));
     }
-    out.into_iter()
+    if let Some(range) = prose {
+        let mut block = DocBlock::new(&pre[range]);
+        block.set_org(is_org);
+        out.push((PreBlockKind::Preamble, block));
+    }
+    out
 }
 
 /// Count each projected block reference once per referring block. The one

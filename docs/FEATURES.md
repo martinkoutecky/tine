@@ -434,7 +434,8 @@ within a column; merged cells are still v2+.
 
 ## Search & navigation
 
-- `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only —
+- `Ctrl+K` quick switcher: page titles + block text and user property keys/values,
+  including Markdown and Org page headers (hidden built-ins and `tine.*` stay out —
   no false hits on hidden properties/uuids), with separated page/breadcrumb context,
   bounded two-line evidence excerpts, all positive matching terms highlighted, and
   middle-click → background tab. **Shift+Enter** opens the selected page or block in

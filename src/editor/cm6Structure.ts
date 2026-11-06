@@ -41,7 +41,7 @@ interface StructureContext {
   annotation(): boolean;
   viewPrev(): string | null;
   viewNext(): string | null;
-  embedExit: { hostBlockId: string; firstRoot(): string | undefined } | null;
+  embedExit: { hostBlockId: string; firstRoot(): string | undefined; rowHost?(id: string): { id: string; scope: OutlineScope | null } | null } | null;
   collapse: CollapseSurfaceApi | null;
 }
 
@@ -51,6 +51,10 @@ export function cm6Structure(ctx: StructureContext) {
   const editSurface = () => ctx.surface.startsWith("embed:") ? ctx.surface : null;
   const navSurface = () => ctx.surface.startsWith("ref:") || ctx.surface.startsWith("embed:") ? ctx.surface : null;
   const structuralScope = ctx.scope?.navOnly ? null : ctx.scope;
+  // Where this row sits: a whole-block embed's root row stands for its host
+  // (D-20261030-EMB), as the textarea's `position()` in Block.tsx.
+  const position = (): { id: string; scope: OutlineScope | null } =>
+    ctx.embedExit?.rowHost?.(ctx.id) ?? { id: ctx.id, scope: ctx.scope };
   const selection = (v: EditorView): CaretSelection => {
     const s = v.state.selection.main;
     return { start: s.from, end: s.to, direction: s.empty ? "none" : s.anchor > s.head ? "backward" : "forward" };
@@ -78,23 +82,25 @@ export function cm6Structure(ctx: StructureContext) {
       v.dispatch({ changes: { from: ll.lineStart, to: ll.lineStart + removed, insert: out ? "" : "  " }, selection: { anchor: caret }, userEvent: "input" });
       return true;
     }
-    if (out ? ctx.scope?.forceExpandedRoot === node(ctx.id)?.parent : !ctx.scope?.navOnly && ctx.scope?.roots.includes(ctx.id)) return true;
+    const { id, scope } = position();
+    if (out ? scope?.forceExpandedRoot === node(id)?.parent : !scope?.navOnly && scope?.roots.includes(id)) return true;
     ctx.commit(text);
-    if (out) outdentBlock(ctx.id, s, editSurface());
-    else if (indentBlock(ctx.id, s, editSurface()) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
+    if (out) outdentBlock(id, s, editSurface(), ctx.id);
+    else if (indentBlock(id, s, editSurface(), ctx.id) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
     return true;
   };
   const move = (v: EditorView, dir: -1 | 1) => {
     const s = selection(v);
+    const { id, scope } = position();
     ctx.commit(v.state.doc.toString());
-    void withBlockMoving(node(ctx.id).page, async () => {
+    void withBlockMoving(node(id)?.page ?? "", async () => {
       startEditing(ctx.id, s, null, editSurface());
       const intentIsCurrent = captureEditIntent();
-      const moving = ctx.scope && !ctx.scope.navOnly ? moveItem(ctx.id, dir) : moveBlockFeed(ctx.id, dir);
+      const moving = scope && !scope.navOnly ? moveItem(id, dir) : moveBlockFeed(id, dir);
       const active = () => v.dom.ownerDocument.activeElement;
       if (intentIsCurrent() && (active() === v.contentDOM || active() === v.dom.ownerDocument.body)) restore(v, s);
       const moved = await moving;
-      if (ctx.current() && moved !== false && moved !== "none") noticeMoveOutOfView(ctx.id, ctx.scope);
+      if (ctx.current() && moved !== false && moved !== "none") noticeMoveOutOfView(id, scope);
       await new Promise<void>(resolve => v.dom.ownerDocument.defaultView!.requestAnimationFrame(() => resolve()));
       // A DOM reorder can clear the browser range while retaining focus. CM's
       // observer reconciles that range on its frame; restore both state and DOM.
@@ -112,7 +118,7 @@ export function cm6Structure(ctx: StructureContext) {
   };
   const selectBlockAtEdge = (v: EditorView, dir: -1 | 1) => {
     if (!atEdge(v, dir > 0)) return false;
-    selectBlock(ctx.id, ctx.scope);
+    selectBlock(position().id, position().scope);
     moveSelection(dir, true);
     return true;
   };
@@ -139,7 +145,7 @@ export function cm6Structure(ctx: StructureContext) {
     "editor/select-all": v => {
       const s = v.state.selection.main;
       if (s.from !== 0 || s.to !== v.state.doc.length) return false;
-      selectBlockSubtree(ctx.id, ctx.scope);
+      selectBlockSubtree(position().id, position().scope);
       return true;
     },
     "editor/select-block-up": v => selectBlockAtEdge(v, -1),
@@ -230,7 +236,7 @@ export function cm6Structure(ctx: StructureContext) {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     if (plain && s.empty && ctx.annotation()
       && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return false;
-    if (plain && e.key === "Escape") { selectBlock(ctx.id, ctx.scope); return true; }
+    if (plain && e.key === "Escape") { selectBlock(position().id, position().scope); return true; }
     if (plain && s.empty && e.key === "Backspace") {
       if (ctx.code() && raw === "" && !node(ctx.id).children.length) {
         const n = node(ctx.id);

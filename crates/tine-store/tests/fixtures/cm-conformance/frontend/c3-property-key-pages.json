@@ -182,6 +182,8 @@
     "status": "status",
     "type": "type"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "Book": {
       "journal": [
@@ -387,5 +389,119 @@
         "type"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "book"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "shelf"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "status"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "type"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "rating"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "done-at"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "book"
+    ],
+    [
+      "page",
+      "shelf"
+    ],
+    [
+      "page",
+      "status"
+    ],
+    [
+      "page",
+      "type"
+    ],
+    [
+      "page",
+      "rating"
+    ],
+    [
+      "page",
+      "done-at"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "book"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "shelf"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "status"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "type"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "rating"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "done-at"
+      ],
+      "parent": null
+    }
+  ]
 }

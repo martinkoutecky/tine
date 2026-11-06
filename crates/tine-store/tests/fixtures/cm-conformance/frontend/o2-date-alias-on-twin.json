@@ -56,6 +56,7 @@
         "name": "A"
       },
       "name": "2026-10-26",
+      "namespace_excluded": true,
       "target": {
         "kind": "alias",
         "owners": [
@@ -109,6 +110,8 @@
     "Notes": "notes",
     "a": "a"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
@@ -236,5 +239,65 @@
         "a"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "a"
+    ],
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "journal",
+      "oct 26th, 2026"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    }
+  ]
 }

@@ -61,6 +61,8 @@
     "ML": "ml",
     "Notes": "notes"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     "ML": {
       "journal": [
@@ -134,5 +136,47 @@
         "notes"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ml"
+    ],
+    [
+      "page",
+      "notes"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ml"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
 }

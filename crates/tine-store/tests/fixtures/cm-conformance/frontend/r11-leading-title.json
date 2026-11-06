@@ -1,0 +1,302 @@
+{
+  "backlinks": {
+    "/n/y": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[/n/y]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "c": [],
+    "n": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[/n/y]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/p.md",
+        1
+      ],
+      [
+        "pages/c.md",
+        0
+      ]
+    ],
+    [
+      [
+        "/n",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "c",
+      "target": {
+        "id": "pages/c.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n",
+      "name": "/n",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/%2Fn.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "n/y",
+      "name": "/n/y",
+      "target": {
+        "id": "pages/p.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "/n": "n",
+    "/n/y": "n/y",
+    "c": "c"
+  },
+  "namespaceNodes": [
+    [
+      "page",
+      "n/y"
+    ],
+    [
+      "page",
+      "n"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "n/y"
+        ]
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    }
+  ],
+  "open": {
+    "/n": {
+      "journal": [
+        "journal",
+        "n"
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    },
+    "/n/y": {
+      "journal": [
+        "journal",
+        "n/y"
+      ],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    },
+    "c": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "owner": {
+    "/n": {
+      "journal": null,
+      "page": null
+    },
+    "/n/y": {
+      "journal": null,
+      "page": "pages/p.md"
+    },
+    "c": {
+      "journal": null,
+      "page": "pages/c.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "c",
+      "owner": "pages/c.md",
+      "parent": null
+    },
+    {
+      "key": "n",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "n",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "n/y",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "/n/y",
+      "owner": "pages/p.md",
+      "parent": "n"
+    }
+  ],
+  "spellings": {
+    "/n": {
+      "backend": [
+        "page",
+        "n"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "n"
+      ]
+    },
+    "/n/y": {
+      "backend": [
+        "page",
+        "n/y"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "n/y"
+      ]
+    },
+    "c": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "n/y"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "n/y"
+        ]
+      ],
+      "page": [
+        "page",
+        "n"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "c"
+    ],
+    [
+      "page",
+      "n/y"
+    ],
+    [
+      "page",
+      "n"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "n/y"
+      ],
+      "parent": [
+        "page",
+        "n"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "n"
+      ],
+      "parent": null
+    }
+  ]
+}

@@ -13,6 +13,7 @@ export type AliasRenameRequest = {
   /** False: the merge is not allowed (the owner is one of the renamed page's
    *  own namespace children, M-Q6); only "own page" and Cancel are offered. */
   merge: boolean;
+  ownPage: boolean;
   finish: (answer: AliasRenameAnswer) => void;
 };
 
@@ -24,11 +25,12 @@ export const [aliasRenameRequest, setAliasRenameRequest] = graphScopedSignal<Ali
 /** Ask the M-Q5 question (`RenameAliasChoice` renders it). A newer question
  *  cancels an open one. Escape, layer dismissal and unmounting answer null.
  *  O(1). */
-export function chooseAliasRename(from: string, to: string, owner: string, merge: boolean): Promise<AliasRenameAnswer> {
+export function chooseAliasRename(from: string, to: string, owner: string, merge: boolean, ownPage: boolean): Promise<AliasRenameAnswer> {
   pendingRequest?.finish(null);
   return new Promise((resolve) => {
-    const request: AliasRenameRequest = { from, to, owner, merge, finish(answer) {
+    const request: AliasRenameRequest = { from, to, owner, merge, ownPage, finish(answer) {
       if (pendingRequest !== request) return;
+      if ((answer === "own-page" && !ownPage) || (answer === "merge" && !merge)) return;
       pendingRequest = null;
       setAliasRenameRequest(null);
       resolve(answer);

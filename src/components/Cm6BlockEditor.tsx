@@ -295,6 +295,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); registerCommandBridge(); return false; },
           blur: (event, v) => {
+            clipboard.dispose();
             const intentIsCurrent = captureEditIntent();
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
@@ -483,7 +484,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   onCleanup(() => {
     pendingScrollAnchor?.cancel();
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
-    alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
+    alive = false; typing.dispose(); clipboard.dispose(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
   });
   return <div class="cm6-block-editor editor-wrap" dir={blockDirAttr(source(), format)} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
     <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>

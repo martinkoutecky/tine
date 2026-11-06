@@ -78,6 +78,37 @@
     "kb": "kb",
     "kb/x": "kb/x"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "kb/x"
+    ],
+    [
+      "page",
+      "kb"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "kb/x"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "kb/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "kb"
+      ]
+    }
+  ],
   "open": {
     "Oct 26th, 2026": {
       "journal": [
@@ -188,5 +219,73 @@
         "kb/x"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "kb/x"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "kb/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "kb"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "kb/x"
+    ],
+    [
+      "page",
+      "kb"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "kb/x"
+      ],
+      "parent": [
+        "page",
+        "kb"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "kb"
+      ],
+      "parent": null
+    }
+  ]
 }

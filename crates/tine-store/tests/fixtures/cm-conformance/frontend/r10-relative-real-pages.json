@@ -93,6 +93,8 @@
     "./x": "./x",
     "cc": "cc"
   },
+  "namespaceNodes": [],
+  "namespaceTree": [],
   "open": {
     ".": {
       "journal": [
@@ -199,5 +201,65 @@
         "cc"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "cc"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "."
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "./x"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "cc"
+    ],
+    [
+      "page",
+      "."
+    ],
+    [
+      "page",
+      "./x"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "cc"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "."
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "./x"
+      ],
+      "parent": null
+    }
+  ]
 }

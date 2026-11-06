@@ -29,6 +29,12 @@ const backendMock = vi.hoisted(() => {
         row("../x/y", false, true),
         row("a", false),
         row("a/b", true),
+        row("old", false),
+        { ...row("old/sub", false), target: { kind: "alias", owners: ["pages/owner.md"] }, namespace_excluded: true },
+        row("real", false),
+        row("real/alias", true),
+        row("refs", false),
+        row("refs/only", false),
         row("https://a.b", false, true),
         row("https://a.b/c", false, true),
       ],
@@ -64,8 +70,20 @@ describe("namespace views ask the store which names are namespaces", () => {
     await loaded();
     const { root, dispose } = mount(() => <NamespaceTree />);
     try {
-      await vi.waitFor(() => expect([...root.querySelectorAll(".ns-node-label")].map((n) => n.textContent)).toEqual(["a", "b"]));
+      await vi.waitFor(() => expect([...root.querySelectorAll(".ns-node-label")].map((n) => n.textContent)).toEqual(["a", "b", "real", "alias", "refs", "only"]));
     } finally { dispose(); }
+  });
+
+  it("alias-only names have no hierarchy, while file and reference pages remain", async () => {
+    await loaded();
+    const ns = await import("./Namespace");
+    const index = await import("../pageIndex");
+    expect(index.allPageNames()).toContain("old/sub");
+    expect(ns.namespaceHierarchyRows(index.allPageNames(), "old")).toEqual([]);
+    expect(ns.namespaceHierarchyRows(index.allPageNames(), "old/sub")).toEqual([]);
+    expect(ns.namespaceNode(index.allPageNames(), "old/sub")).toBeNull();
+    expect(ns.namespaceHierarchyRows(index.allPageNames(), "real")).toEqual([["real", "alias"]]);
+    expect(ns.namespaceHierarchyRows(index.allPageNames(), "refs")).toEqual([["refs", "only"]]);
   });
 
   it("the Hierarchy section of `.`, `./x`, `../x/y` and a URL is empty; `a` keeps its own", async () => {

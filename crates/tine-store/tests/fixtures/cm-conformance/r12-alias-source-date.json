@@ -1,0 +1,7 @@
+{
+  "files": {
+    "pages/owner.md": "alias:: 2026-10-26, ML\n\n- owner\n",
+    "pages/c.md": "- [[2026-10-26]] [[ML]]\n- {{query (page \"2026-10-26\")}}\n"
+  },
+  "renames": [{"old": "2026-10-26", "new": "AI"}, {"old": "ML", "new": "2026-10-26"}]
+}

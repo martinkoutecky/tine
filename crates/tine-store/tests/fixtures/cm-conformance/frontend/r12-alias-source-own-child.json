@@ -1,0 +1,418 @@
+{
+  "backlinks": {
+    "ML/child": [],
+    "c": [],
+    "ml/linked": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML]] [[ML/linked]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ],
+    "owner": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "64cf203d-2ff6-8c6a-8601-98c864c20c71",
+            "raw": "[[ML]] [[ML/linked]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "c"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/owner.md",
+        1
+      ],
+      [
+        "pages/c.md",
+        0
+      ],
+      [
+        "pages/ML%2Fchild.md",
+        0
+      ]
+    ],
+    [
+      [
+        "ML/linked",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "c",
+      "name": "c",
+      "target": {
+        "id": "pages/c.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
+      "name": "ML",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/owner.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml/alias",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
+      "name": "ML/alias",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/owner.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml/child",
+      "name": "ML/child",
+      "target": {
+        "id": "pages/ML%2Fchild.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ml/linked",
+      "name": "ML/linked",
+      "target": {
+        "id": "pages/ML%2Flinked.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "owner",
+      "name": "owner",
+      "target": {
+        "id": "pages/owner.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "ML": "ml",
+    "ML/alias": "ml/alias",
+    "ML/child": "ml/child",
+    "ML/linked": "ml/linked",
+    "c": "c",
+    "owner": "owner"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "ML": {
+      "journal": [
+        "journal",
+        "ml"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "ML/alias": {
+      "journal": [
+        "journal",
+        "ml/alias"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "ML/child": {
+      "journal": [
+        "journal",
+        "ml/child"
+      ],
+      "page": [
+        "page",
+        "ml/child"
+      ]
+    },
+    "ML/linked": {
+      "journal": [
+        "journal",
+        "ml/linked"
+      ],
+      "page": [
+        "page",
+        "ml/linked"
+      ]
+    },
+    "c": {
+      "journal": [
+        "journal",
+        "c"
+      ],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    "owner": {
+      "journal": [
+        "journal",
+        "owner"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "owner": {
+    "ML": {
+      "journal": null,
+      "page": "pages/owner.md"
+    },
+    "ML/alias": {
+      "journal": null,
+      "page": "pages/owner.md"
+    },
+    "ML/child": {
+      "journal": null,
+      "page": "pages/ML%2Fchild.md"
+    },
+    "ML/linked": {
+      "journal": null,
+      "page": null
+    },
+    "c": {
+      "journal": null,
+      "page": "pages/c.md"
+    },
+    "owner": {
+      "journal": null,
+      "page": "pages/owner.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "c",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "c",
+      "owner": "pages/c.md",
+      "parent": null
+    },
+    {
+      "key": "ml/child",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "ML/child",
+      "owner": "pages/ML%2Fchild.md",
+      "parent": null
+    },
+    {
+      "key": "ml/linked",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ml/linked",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "owner",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "owner",
+      "owner": "pages/owner.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "ML": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "ML/alias": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "ML/child": {
+      "backend": [
+        "page",
+        "ml/child"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml/child"
+      ]
+    },
+    "ML/linked": {
+      "backend": [
+        "page",
+        "ml/linked"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ml/linked"
+      ]
+    },
+    "c": {
+      "backend": [
+        "page",
+        "c"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "c"
+      ]
+    },
+    "owner": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml/child"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "c"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ml/linked"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "ml/child"
+    ],
+    [
+      "page",
+      "c"
+    ],
+    [
+      "page",
+      "owner"
+    ],
+    [
+      "page",
+      "ml/linked"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "ml/child"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "c"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "owner"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ml/linked"
+      ],
+      "parent": null
+    }
+  ]
+}

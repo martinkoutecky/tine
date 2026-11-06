@@ -53,6 +53,16 @@ and replaces the route in place. Friendly search remains the primary authoring
 surface; raw DSL is optional. Presentation stays orthogonal per ADR 0030, with a
 search/excerpt view alongside list, table, and board.
 
+Friendly search text includes user property keys and values on blocks and page
+headers in Markdown and Org (GH #870, D-20261105-SP). OG's hidden built-in set,
+including registered flashcard keys, graph-configured hidden properties and
+Tine's `tine.*` metadata are excluded. Editable Logseq built-ins still count.
+Membership, ranking, snippets and evidence use the same text; page-header hits
+open the owning page. Visible labels and exact query text keep their existing
+projections. The additional block search memo is runtime-only (`serde(skip)`),
+so warming it changes no persisted projection, index or answer. Friendly search
+scans documents directly and has no checkpointed result cache.
+
 ## Consequences
 
 Search and queries share semantics, diagnostics, evidence, and performance

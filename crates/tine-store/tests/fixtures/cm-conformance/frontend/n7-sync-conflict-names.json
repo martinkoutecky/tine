@@ -155,6 +155,37 @@
     "a/b": "a/b",
     "linker": "linker"
   },
+  "namespaceNodes": [
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
   "open": {
     "Bar": {
       "journal": [
@@ -331,5 +362,109 @@
         "linker"
       ]
     }
-  }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "bar"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "linker"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "a/b"
+        ]
+      ],
+      "page": [
+        "page",
+        "a"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "journal",
+      "oct 26th, 2026"
+    ],
+    [
+      "page",
+      "a/b"
+    ],
+    [
+      "page",
+      "bar"
+    ],
+    [
+      "page",
+      "linker"
+    ],
+    [
+      "page",
+      "a"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a/b"
+      ],
+      "parent": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "bar"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "linker"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a"
+      ],
+      "parent": null
+    }
+  ]
 }
