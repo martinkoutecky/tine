@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ensurePageLoaded, forgetPage, reloadPage, resetStore } from "../document/workingSet";
+import { doc } from "../document/model";
 import {
   buildMatrix,
   buildMatrixWindow,
@@ -11,7 +13,44 @@ import {
 
 afterEach(() => {
   clearMatrixDimensionCache();
+  resetStore();
   vi.useRealTimers();
+});
+
+it.each([8, 32])("GH #886: disjoint admission and forgetting never rescan K observed grids, K=%i", K => {
+  vi.useFakeTimers();
+  let reads = 0;
+  const stops: (() => void)[] = [];
+  for (let i = 0; i < K; i++) stops.push(observeMatrixDimensions(`grid${i}`, Array.from({ length: 500 }, (_, j) => `r${i}-${j}`), () => { reads++; return 3; }, () => {}));
+  try {
+    vi.runAllTimers(); reads = 0;
+    ensurePageLoaded({ name: "unrelated", title: "unrelated", kind: "page", pre_block: null, blocks: [] });
+    expect(reads).toBe(0); vi.runAllTimers(); expect(reads).toBe(0);
+    forgetPage("unrelated"); vi.runAllTimers(); expect(reads).toBe(0);
+  } finally { stops.forEach(stop => stop()); }
+});
+
+it("GH #886: same-ID row replacement and removal update widths only in the owning grid", () => {
+  const page = (wide: boolean) => ({ name: "P", title: "P", kind: "page" as const, pre_block: null,
+    blocks: [{ id: "row", raw: wide ? "wide" : "narrow", collapsed: false,
+      children: wide ? [{ id: "cell", raw: "cell", collapsed: false, children: [] }] : [] }] });
+  ensurePageLoaded(page(true));
+  let cols = 0;
+  // Width 3 -> 1 makes shrink discovery observable as well as growth.
+  const stop = observeMatrixDimensions("grid", ["row"], () => pageByNameForWidth(), n => { cols = n; });
+  function pageByNameForWidth() { return doc.byId.row?.children.length ? 3 : 1; }
+  let unrelatedReads = 0;
+  const stopOther = observeMatrixDimensions("other", ["other-row"], () => { unrelatedReads++; return 4; }, () => {});
+  unrelatedReads = 0;
+  try {
+    expect(cols).toBe(3); reloadPage(page(false)); expect(cols).toBe(1);
+    reloadPage(page(true)); expect(cols).toBe(3);
+    forgetPage("P"); expect(cols).toBe(1);
+    expect(unrelatedReads).toBe(0);
+    // The still-observed missing row becomes available again on admission.
+    ensurePageLoaded(page(true)); expect(cols).toBe(3);
+    expect(unrelatedReads).toBe(0);
+  } finally { stop(); stopOther(); }
 });
 
 describe("buildMatrix", () => {

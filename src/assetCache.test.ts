@@ -11,6 +11,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it.each([8, 32])("GH #886: releasing K evicted leases never scans live entries, K=%i", async K => {
+  backendMock.readAsset.mockResolvedValue(new Uint8Array([1]));
+  vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:release"), revokeObjectURL: vi.fn() });
+  const leases = [];
+  for (let i = 0; i < 128 + K; i++) leases.push(await acquireAssetBlob(`asset-${i}.png`));
+  const original = Map.prototype[Symbol.iterator];
+  let entriesVisited = 0;
+  vi.spyOn(Map.prototype, Symbol.iterator).mockImplementation(function (this: Map<unknown, unknown>) {
+    const iterator = original.call(this), next = iterator.next.bind(iterator);
+    iterator.next = () => {
+      const entry = next();
+      const value = entry.done ? null : entry.value[1];
+      if (value && typeof value === "object" && "leases" in value && value.evicted) entriesVisited++;
+      return entry;
+    };
+    return iterator;
+  });
+  for (const lease of leases) lease.release();
+  for (let i = 0; i < 15; i++) await Promise.resolve();
+  expect(entriesVisited).toBe(0);
+  expect(URL.revokeObjectURL).toHaveBeenCalledTimes(K);
+});
+
 describe("asset blob cache bounds", () => {
   it("shares a mounted icon's blob even after block images evict it from the idle cache", async () => {
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => `blob:icon-held`), revokeObjectURL: vi.fn() });

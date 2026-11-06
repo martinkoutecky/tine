@@ -1,3 +1,5 @@
+import { clearOnBindingInvalidated } from "../binding";
+
 export interface MatrixCell {
   blockId: string | null;
   row: number;
@@ -51,6 +53,7 @@ interface DimensionEntry {
   key: string;
   rowIds: readonly string[];
   rowCount: number;
+  indexedRows: readonly string[];
   scanned: number;
   cols: number;
   passCols: number;
@@ -60,6 +63,15 @@ interface DimensionEntry {
 }
 
 const dimensionEntries = new Map<string, DimensionEntry>();
+const dimensionsByRow = new Map<string, Set<DimensionEntry>>();
+
+function unindexDimensions(entry: DimensionEntry): void {
+  for (const row of entry.indexedRows) {
+    const entries = dimensionsByRow.get(row);
+    entries?.delete(entry);
+    if (!entries?.size) dimensionsByRow.delete(row);
+  }
+}
 
 function publishDimensions(entry: DimensionEntry, cols: number): void {
   if (cols === entry.cols) return;
@@ -101,9 +113,14 @@ export function observeMatrixDimensions(
 ): () => void {
   let entry = dimensionEntries.get(key);
   if (!entry || entry.rowIds !== rowIds || entry.rowCount !== rowIds.length) {
-    if (entry) cancelDimensionScan(entry);
-    entry = { key, rowIds, rowCount: rowIds.length, scanned: 0, cols: 1, passCols: 1, scanTimer: null, listeners: new Set(), cellCountAt };
+    if (entry) { cancelDimensionScan(entry); unindexDimensions(entry); }
+    entry = { key, rowIds, rowCount: rowIds.length, indexedRows: [...new Set(rowIds)], scanned: 0, cols: 1, passCols: 1, scanTimer: null, listeners: new Set(), cellCountAt };
     dimensionEntries.set(key, entry);
+    for (const row of entry.indexedRows) {
+      let entries = dimensionsByRow.get(row);
+      if (!entries) dimensionsByRow.set(row, entries = new Set());
+      entries.add(entry);
+    }
     scanDimensions(entry, DIMENSION_INITIAL_SCAN);
     scheduleDimensionScan(entry);
   }
@@ -114,6 +131,7 @@ export function observeMatrixDimensions(
     entry!.listeners.delete(listener);
     if (entry!.listeners.size === 0 && dimensionEntries.get(key) === entry) {
       cancelDimensionScan(entry!);
+      unindexDimensions(entry!);
       dimensionEntries.delete(key);
     }
   };
@@ -135,6 +153,15 @@ export function invalidateMatrixDimensions(key: string): void {
   scheduleDimensionScan(entry);
 }
 
+/** Whole-page writes already know which nodes they replace. A grid's width
+ * depends on its rows, including missing rows that a later admission supplies. */
+export function invalidateMatrixDimensionsForRows(rows: Iterable<string>): void {
+  const affected = new Set<DimensionEntry>();
+  for (const row of rows) for (const entry of dimensionsByRow.get(row) ?? []) affected.add(entry);
+  for (const entry of affected) invalidateMatrixDimensions(entry.key);
+}
+
+/** Unscoped edit/history replay can change arbitrary rows. */
 export function invalidateAllMatrixDimensions(): void {
   for (const key of dimensionEntries.keys()) invalidateMatrixDimensions(key);
 }
@@ -142,7 +169,9 @@ export function invalidateAllMatrixDimensions(): void {
 export function clearMatrixDimensionCache(): void {
   for (const entry of dimensionEntries.values()) cancelDimensionScan(entry);
   dimensionEntries.clear();
+  dimensionsByRow.clear();
 }
+clearOnBindingInvalidated(clearMatrixDimensionCache);
 
 export function matrixDimensionCacheSizeForTests(): number {
   return dimensionEntries.size;

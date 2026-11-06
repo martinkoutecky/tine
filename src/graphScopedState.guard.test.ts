@@ -261,7 +261,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/reloadOnFocus.ts#waiters",
   "src/reloadOnFocus.ts#applications",
   "src/resourceRead.ts#recorded",
-  "src/sheet/matrix.ts#dimensionEntries",
   "src/sheet/queryHydration.ts#runningHydrationItems",
   "src/sheet/queryHydration.ts#pageHydrations",
   "src/sheet/queryHydration.ts#hydrationClaims",
@@ -272,7 +271,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 41;
+const LEGACY_COLLECTION_COUNT = 40;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }

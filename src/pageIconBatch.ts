@@ -1,5 +1,6 @@
 import { msg } from "./i18n";
-import { createSignal } from "solid-js";
+import { batch as batchUpdates } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
 import { graphOwner, readOwned } from "./owned";
 import { graphEpoch } from "./graphSession";
@@ -23,16 +24,16 @@ import { pageNameForPath, resolvedTarget } from "./pageIndex";
 // edits. Unloaded names refresh on matching property publications or full
 // invalidations, in one batch per microtask.
 let cacheRev = -1;
-const [iconMap, setIconMap] = createSignal<Record<string, string>>({});
+const [iconMap, setIconMap] = createStore<Record<string, string | undefined>>({});
 const requested = new Map<string, string>();
 let pending = new Map<string, string>();
 let scheduled = false;
-clearOnBindingInvalidated(() => { requested.clear(); pending.clear(); cacheRev = -1; setIconMap({}); });
+clearOnBindingInvalidated(() => { requested.clear(); pending.clear(); cacheRev = -1; setIconMap(reconcile({})); });
 
 function ensureRev() {
   const epoch = graphEpoch();
   if (epoch !== cacheRev) {
-    setIconMap({}); // new graph: drop the previous graph's icons
+    setIconMap(reconcile({})); // new graph: drop the previous graph's icons
     cacheRev = epoch;
     requested.clear();
     pending.clear();
@@ -60,16 +61,13 @@ function flush() {
       if (result.kind === "stale") return;
       const map = result.value;
       const current = batch.filter(name => changed(iconChangeKey(name)) === revisions.get(name));
-      // Only re-render if an answer differs from what is shown — otherwise the
-      // signal (and every reference subscribed to it) stays untouched.
-      const prev = iconMap();
-      if (!current.some((n) => (map[n] ?? "") !== (prev[n] ?? ""))) return;
-      const next = { ...prev };
-      for (const n of current) {
-        if (map[n]) next[n] = map[n];
-        else delete next[n];
-      }
-      setIconMap(next);
+      // Publish only changed names. No dictionary copy or unrelated reader
+      // notification when one icon arrives in a later scroll batch.
+      batchUpdates(() => {
+        for (const n of current) {
+          if ((map[n] ?? "") !== (iconMap[n] ?? "")) setIconMap(n, map[n] || undefined);
+        }
+      });
     })
     .catch(() => {
       if (!owner()) return;
@@ -92,7 +90,7 @@ export function pageIcon(name: string): string {
       queueMicrotask(flush);
     }
   }
-  return iconMap()[name] ?? "";
+  return iconMap[name] ?? "";
 }
 
 /** Loaded-page lookup, with the shared policy's property precedence

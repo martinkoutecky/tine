@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
 - Long Linked and Unlinked References sections stay responsive while scrolling: groups far from view are set aside and redrawn when you come back, keeping their folds, edits and selection, and memory no longer grows with every group you scroll past (GH #886).
 - Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886).
 - Opening Quick Capture before the main window no longer shows a block reference count error (internal: UI-COLD-CAPTURE-REFCOUNTS).

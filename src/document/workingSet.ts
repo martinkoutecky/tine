@@ -5,7 +5,7 @@ import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, writeWholePages, F
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
-import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
+import { invalidateMatrixDimensionsForRows, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
 import { readOwned, type Owner, bindingOwner } from "../owned";
@@ -62,6 +62,21 @@ export function rekeyPageIdentityByPath(id: string, newName: string, rev: string
   return true;
 }
 
+/** Only walk the written page, never all observed grids. Collect before and
+ * after a replacement so removed and newly supplied row identities both fire. */
+function matrixRowsForPage(name: string): string[] {
+  const ids: string[] = [];
+  const visit = (roots: readonly string[]) => {
+    for (const id of roots) {
+      ids.push(id);
+      const node = doc.byId[id];
+      if (node) visit(node.children);
+    }
+  };
+  visit(pageByName(name)?.roots ?? []);
+  return ids;
+}
+
 function upsertPage(dto: PageDto & { id?: string }) {
   // A real page with this name exists again → lift any delete tombstone so edits
   // to the freshly-(re)created page save normally.
@@ -92,6 +107,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
   // ends the carried edit: Editor `replacedUnderEditor`). Without this the page stayed stale for as long as a block on
   // it was open in the editor (Syncthing while Tine was in the background).
   const carried = existing ? editorOnPage(dto) : null;
+  const matrixRows = matrixRowsForPage(dto.name);
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   setBaseRev(dto.name, dto.rev ?? null);
   batch(() => {
@@ -109,7 +125,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
     if (carried) reopenEditor(dto.name, carried);
   });
   activatePageInstance(dto.name);
-  invalidateAllMatrixDimensions();
+  invalidateMatrixDimensionsForRows([...matrixRows, ...matrixRowsForPage(dto.name)]);
   if (replacing) invalidateUndoForPage(dto.name);
 }
 
@@ -319,6 +335,7 @@ export function loadGuidePages(dtos: PageDto[]) {
  *  disk version"): otherwise the unsaved in-memory copy is left untracked — not
  *  dirty, not conflicted — and is silently lost at close. */
 export function forgetPage(name: string) {
+  const matrixRows = matrixRowsForPage(name);
   forgetSaveState(name);
   // The page is leaving the working set; a stale undo snapshot must not be able to
   // re-add it (and, with baseRev gone, recreate an externally-deleted file).
@@ -333,7 +350,7 @@ export function forgetPage(name: string) {
     })
   ));
   retirePageInstance(name);
-  invalidateAllMatrixDimensions();
+  invalidateMatrixDimensionsForRows(matrixRows);
 }
 
 /** Delete through the page host: ordinary input is published first; a conflict
@@ -455,24 +472,26 @@ export function retireFeedPages(offscreen: readonly string[]): string[] {
   if (count <= 12) return [];
   const pins = pinnedPages(false);
   const retired: string[] = [];
-  hydrateWorkingSet(() => setDoc(produce(state => {
+  const matrixRows: string[] = [];
+  hydrateWorkingSet(() => writeWholePages(retired, () => setDoc(produce(state => {
     for (const name of offscreen) {
       if (count <= 12) break;
       if (!feed.has(name) || pins.has(name) || pageFrozen(name) || reloadDisposition(name) !== "reload") continue;
       const i = state.pages.findIndex(page => page.name === name);
       if (i < 0) continue;
+      for (const id of matrixRowsForPage(name)) matrixRows.push(id);
       purgePageNodes(state, name);
       state.pages.splice(i, 1);
       retired.push(name);
       count--;
     }
-  })));
+  }))));
   for (const name of retired) {
     forgetSaveState(name);
     invalidateUndoForPage(name);
     retirePageInstance(name);
   }
-  if (retired.length) invalidateAllMatrixDimensions();
+  invalidateMatrixDimensionsForRows(matrixRows);
   return retired;
 }
 
@@ -520,6 +539,7 @@ export function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
   const evicted: string[] = [];
+  const matrixRows: string[] = [];
   hydrateWorkingSet(() => writeWholePages(evicted, () => setDoc(
     produce((s) => {
       // Oldest first (insertion order); stop once at the cap or only pinned left.
@@ -529,6 +549,7 @@ export function evictIfNeeded() {
           i++;
           continue;
         }
+        for (const id of matrixRowsForPage(name)) matrixRows.push(id);
         purgePageNodes(s, name);
         s.pages.splice(i, 1);
         evicted.push(name);
@@ -536,7 +557,7 @@ export function evictIfNeeded() {
     })
   )));
   for (const name of evicted) retirePageInstance(name);
-  invalidateAllMatrixDimensions();
+  invalidateMatrixDimensionsForRows(matrixRows);
 }
 
 /** Clear the entire working set. Used for test isolation and when switching

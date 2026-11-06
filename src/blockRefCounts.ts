@@ -1,6 +1,7 @@
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { reportUiFailure } from "./uiFailure";
-import { createEffect, createRoot, createSignal } from "solid-js";
+import { batch, createEffect, createRoot } from "solid-js";
+import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { backend, type GraphAnswersChange } from "./backend";
 import { graphEpoch } from "./graphSession";
 import { waitForWarmCache } from "./warmCache";
@@ -13,21 +14,25 @@ let applyCounts: (change: GraphAnswersChange) => void;
 let captureCounts: (ids: readonly string[]) => number | Promise<number | null | undefined>;
 
 // One initial count map per graph; native publication deltas update only their
-// targets. A pulse notifies badges without copying the graph-sized map (I-25).
+// targets. Reader-owned keys notify only those badges, without copying the
+// graph-sized map or retaining a second graph-sized count dictionary (I-25).
 const countsMap = createRoot(() => {
   let counts = new Map<string, number>();
   const updates = new Map<string, { rev: bigint; count: number }>();
-  const [changed, setChanged] = createSignal(0);
-  const publish = () => setChanged((n) => n + 1);
+  const readers = new ChangeKeyRegistry();
+  const publish = () => { for (const id of readers.keys()) readers.advance(id); };
   applyCounts = (change) => {
-    if (heldEpoch !== graphEpoch()) { heldEpoch = graphEpoch(); counts.clear(); updates.clear(); ready = false; }
-    const rev = BigInt(change.rev);
-    for (const [id, count] of Object.entries(change.blockRefCounts)) {
-      if ((updates.get(id)?.rev ?? -1n) >= rev) continue;
-      updates.set(id, { rev, count });
-      counts.set(id, count);
-    }
-    if (Object.keys(change.blockRefCounts).length) publish();
+    batch(() => {
+      if (heldEpoch !== graphEpoch()) { heldEpoch = graphEpoch(); counts.clear(); updates.clear(); ready = false; publish(); }
+      const rev = BigInt(change.rev);
+      for (const [id, count] of Object.entries(change.blockRefCounts)) {
+        if ((updates.get(id)?.rev ?? -1n) >= rev) continue;
+        updates.set(id, { rev, count });
+        const before = counts.get(id) ?? 0;
+        counts.set(id, count);
+        if (before !== count) readers.advance(id);
+      }
+    });
   };
   const scope = {};
   let heldEpoch = graphEpoch();
@@ -87,7 +92,7 @@ const countsMap = createRoot(() => {
       }
     })();
   });
-  return () => { changed(); return counts; };
+  return (id: string) => { readers.read(id); return counts.get(id) ?? 0; };
 });
 
 observeGraphAnswers((change) => applyCounts(change));
@@ -96,7 +101,7 @@ observeGraphAnswers((change) => applyCounts(change));
  *  not yet loaded). Reactive: re-runs when the map (re)loads. */
 export function blockRefCount(id: string): number {
   const externalId = blockExternalId(id) ?? id;
-  return countsMap().get(externalId) ?? 0;
+  return countsMap(externalId);
 }
 
 /** Capture counts by external identity BEFORE an edit removes/transfers it.

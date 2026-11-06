@@ -7,6 +7,27 @@ import { pageIcon, pageIconOwnerPath } from "./pageIconBatch";
 import { refreshPageIndex, resetPageIndex } from "./pageIndex";
 import { setToasts, toasts } from "./toasts";
 import { bumpDataRev } from "./graphSession";
+import { createComputed, createRoot } from "solid-js";
+
+it.each([8, 32])("GH #886: one new unloaded icon leaves K unrelated readers asleep, K=%i", async K => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+  vi.spyOn(backend(), "pageIcons").mockResolvedValue({});
+  const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
+  let runs = 0;
+  const dispose = createRoot(d => {
+    for (let i = 0; i < K; i++) createComputed(() => { runs++; pageIcon(`unloaded-${K}-${i}`); });
+    return d;
+  });
+  try {
+    await settle(); runs = 0;
+    vi.mocked(backend().pageIcons).mockResolvedValue({ [`single-${K}`]: "*" });
+    let shown = "";
+    const stopTarget = createRoot(d => { createComputed(() => { shown = pageIcon(`single-${K}`); }); return d; });
+    await settle(); stopTarget();
+    expect(shown).toBe("*");
+    expect(runs).toBe(0);
+  } finally { dispose(); }
+});
 
 afterEach(() => { vi.restoreAllMocks(); setToasts([]); });
 

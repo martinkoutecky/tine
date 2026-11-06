@@ -19,6 +19,7 @@ import { isStaticIconImage } from "./staticImage";
 // same asset share one read. Bound both count and retained backing bytes: Blob
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
+  key: string;
   icon?: boolean;
   /** The read limit this entry's IPC read was issued with. */
   maxBytes: number;
@@ -132,7 +133,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
   }
   const live = liveEntries.get(key);
   if (live) return live;
-  const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false, maxBytes };
+  const entry: CacheEntry = { key, promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false, maxBytes };
   const owner = graphOwner();
   // Publish identity before starting the limiter: its first two tasks begin
   // synchronously, and must see themselves in the cache.
@@ -191,9 +192,7 @@ function retain(entry: CacheEntry): () => void {
       queueMicrotask(() => {
         entry.cleanupQueued = false;
         if (entry.leases !== 0) return;
-        for (const [key, candidate] of liveEntries) {
-          if (candidate === entry) liveEntries.delete(key);
-        }
+        if (liveEntries.get(entry.key) === entry) liveEntries.delete(entry.key);
         revokeEvictedUrl(entry.promise);
       });
     }
@@ -287,6 +286,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     return url;
   }
   const entry: CacheEntry = {
+    key: rel,
     maxBytes: MAX_IMAGE_BYTES,
     staticIcon: isStaticIconImage(bytes),
     url,

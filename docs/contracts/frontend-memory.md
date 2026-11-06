@@ -18,6 +18,10 @@ with a 1 MiB single-entry admission limit. Charge covers source strings and DTO
 structure conservatively. Invalidations remove obsolete completed answers at
 publication while unrelated saves preserve them. Binding reset eagerly clears
 answers and queued requests; late replies cannot repopulate the new binding.
+Inactive accounting follows answer completion and keyed consumer acquisition or
+release. Eviction uses last-access order, regardless of completion or disposal
+order; maintenance never walks active answers on another answer's arrival or
+release. Precise publications visit only their named block answers.
 Dependency keys with reactive consumers are released at the end of the turn on
 disposal; immediate reacquisition during recomputation preserves their signal.
 Untracked key

@@ -6,6 +6,25 @@ import { doc, setDoc } from "./document/model";
 import { deleteBlock, loadFeed, mergeWithNext, resetStore, resolveBlockRef } from "./document";
 import { setToasts, toasts } from "./toasts";
 import { initParser } from "./render/parse";
+import { For } from "solid-js";
+import { render } from "solid-js/web";
+import { BlockRefCountBadge } from "./components/BlockRefCountBadge";
+import * as badgeCounts from "./blockRefCounts";
+
+it.each([8, 32])("GH #886: a count delta leaves K unrelated mounted badges asleep, K=%i", K => {
+  const host = document.createElement("div"); document.body.append(host);
+  const probe = vi.spyOn(badgeCounts, "blockRefCount");
+  const dispose = render(() => <For each={Array.from({ length: K }, (_, i) => `badge${i}`)}>{id => <BlockRefCountBadge id={id} open={false} toggle={() => {}} />}</For>, host);
+  try {
+    probe.mockClear();
+    applyGraphAnswers({ rev: `${20000 + K}`, inventoryChanged: false, blockRefCounts: { unrelated: 1 } });
+    expect(probe.mock.calls.length).toBe(0);
+    applyGraphAnswers({ rev: `${20001 + K}`, inventoryChanged: false, blockRefCounts: { badge0: K } });
+    expect(probe.mock.calls.length).toBeGreaterThan(0);
+    expect(probe.mock.calls.every(([id]) => id === "badge0")).toBe(true);
+    expect(host.textContent).toContain(`${K}`);
+  } finally { dispose(); host.remove(); }
+});
 
 vi.mock("./warmCache", () => ({
   waitForWarmCache: vi.fn(async () => true),

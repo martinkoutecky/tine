@@ -184,15 +184,16 @@ export function writeWholePages<T>(pages: readonly string[], write: () => T): T 
 }
 /** Moves on every write that can change any page's structure (each setDoc write
  * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded),
- * except whole-page admission, reload, forget and eviction (`writeWholePages`):
- * those replace the page's `roots`, so a question about one page's trees must
- * also track that page's `roots` (MarginColumn does). */
+ * except whole-page admission, reload, forget and eviction (`writeWholePages`),
+ * which publish the affected pages' own structure revisions. */
 export const structureRevision = (): number => identityStructureRevision();
 /** Whether `test` holds for some block in the trees under `roots`; stops at the
- * first. Reads plain nodes untracked and depends on structureRevision alone, so
- * a whole-page question at open subscribes to nothing per block (BIGLOAD-090b). */
+ * first. Reads plain nodes untracked and tracks the roots' owning pages plus
+ * unscoped structural edits, with no per-block subscriptions (BIGLOAD-090b). */
 export function someBlockInTrees(roots: readonly string[], test: (n: ReadonlyNode) => boolean): boolean {
   structureRevision();
+  const pages = untrack(() => new Set(roots.map(id => doc.byId[id]?.page).filter((page): page is string => page !== undefined)));
+  for (const page of pages) void pageStructureRevisions[page];
   return untrack(() => {
     const byId = unwrap(doc.byId);
     const visit = (ids: readonly string[]): boolean => {

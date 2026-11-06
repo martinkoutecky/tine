@@ -8,11 +8,14 @@ export class ChangeKeyRegistry {
   private inactive = new Set<string>();
   private sequence = 0;
   private nextInstance = 0;
-  private released = new Set<() => void>();
+  private released = new Set<(keys: readonly string[]) => void>();
+  private acquired = new Set<(key: string) => void>();
+  private releasing = new Map<string, Dependency>();
   get size(): number { return this.entries.size; }
   keys(): IterableIterator<string> { return this.entries.keys(); }
   hasConsumers(key: string): boolean { return (this.entries.get(key)?.consumers ?? 0) > 0; }
-  onRelease(callback: () => void): void { this.released.add(callback); }
+  onRelease(callback: (keys: readonly string[]) => void): void { this.released.add(callback); }
+  onAcquire(callback: (key: string) => void): void { this.acquired.add(callback); }
 
   read(key: string): { instance: number; revision: number } {
     let entry = this.entries.get(key);
@@ -22,18 +25,27 @@ export class ChangeKeyRegistry {
     }
     if (getListener()) {
       const held = entry;
-      held.consumers++;
+      if (held.consumers++ === 0) for (const callback of this.acquired) callback(key);
       this.inactive.delete(key);
       onCleanup(() => {
         if (--held.consumers !== 0) return;
         // Recomputing a resource releases and immediately reacquires its keys.
         // Preserve that signal/revision; dispose an actually abandoned key at
         // the end of this turn, without changing unrelated dependency tokens.
-        queueMicrotask(() => {
-          if (held.consumers || this.entries.get(key) !== held || this.inactive.has(key)) return;
-          this.entries.delete(key);
-          for (const callback of this.released) callback();
+        if (!this.releasing.size) queueMicrotask(() => {
+          // Report every key left without consumers, including one kept for
+          // imperative readers: its caches must become evictable either way.
+          const released: string[] = [];
+          for (const [key, entry] of this.releasing) {
+            if (entry.consumers) continue;
+            released.push(key);
+            if (this.entries.get(key) !== entry || this.inactive.has(key)) continue;
+            this.entries.delete(key);
+          }
+          this.releasing.clear();
+          if (released.length) for (const callback of this.released) callback(released);
         });
+        this.releasing.set(key, held);
       });
     } else if (!entry.consumers) {
       this.inactive.delete(key);
