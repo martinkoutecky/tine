@@ -26,6 +26,9 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { isElementNode } from "../windowRealm";
 import { CalGlyph } from "./blockParts";
+import { annotationInfo } from "../editor/annotation";
+import { AnnotationBody } from "./AnnotationBody";
+import { visibleBody } from "../render/block";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -105,6 +108,7 @@ function RefBlock(props: {
   const facets = createMemo(() => facetsFromDto(props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
+  const annotation = () => annotationInfo(facets().properties);
   // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
     !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
@@ -246,7 +250,11 @@ function RefBlock(props: {
                 <Show
                   when={beginQuery()}
                   fallback={
-                    <AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />
+                    <Show when={annotation()?.areaStamp} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />}>
+                      <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
+                        color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
+                        line={visibleBody(props.block.raw, format()).join("\n")} />
+                    </Show>
                   }
                 >
                   {(match) => <BeginQuery match={match()} currentPage={props.page} />}

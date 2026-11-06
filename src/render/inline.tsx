@@ -64,7 +64,9 @@ import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, Cloze
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
-import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
+import { annotationInfoForBlock, pdfAssetFile } from "../editor/annotation";
+import { openAnnotationPdf } from "../openAnnotationPdf";
+import { PdfAreaImage } from "../components/PdfAreaImage";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
@@ -791,7 +793,7 @@ function mediaResizeGrip(
 // are read from disk via the backend and shown as a blob URL. When rendered
 // inside a real block (`blockId` set, not the lightbox/capture scratch), a
 // corner grip lets you drag-resize; the result is written back as a width %.
-function AssetImage(props: {
+export function AssetImage(props: {
   url: string;
   alt: string;
   width?: string;
@@ -799,6 +801,7 @@ function AssetImage(props: {
   blockId?: string;
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
+  onClick?: (event: MouseEvent) => void;
 }): JSX.Element {
   if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
@@ -952,7 +955,7 @@ function AssetImage(props: {
             src={src()!}
             alt={props.alt}
             style={imgStyle()}
-            onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
+            onClick={props.onClick ?? ((e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); })}
           />
         </Show>
         <Show when={assetActions()}>
@@ -1408,16 +1411,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks keep the shared destinations (sidebar / tab / other pane).
           if (ann && dest === "default") {
-            const owner = graphOwner();
-            void readOwned(owner, backend().getPage(g.page, g.kind))
-              .then((result) => {
-                if (result.kind === "stale") return;
-                const page = result.value;
-                const file = pdfFileFromPreBlock(page?.pre_block, page?.format);
-                if (file) openPdf(file, file, ann.hlPage, props.id);
-                else pushToast(msg("render-couldn-t-find-the-pdf-for-this-highlight"), "error");
-              })
-              .catch(() => { pushToast(msg("render-couldn-t-open-the-pdf-for-this-highlight"), "error"); });
+            openAnnotationPdf(g.page, ann.hlPage, props.id, g.kind);
             return;
           }
           // Shift-click opens the referenced block in the right sidebar, Ctrl/Cmd+click
@@ -1451,6 +1445,9 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               <AstBody raw={lines()!.join("\n")} format={fmt()} />
             </Show>
           </LinkDepthContext.Provider>
+          <Show when={props.label === undefined && annotation()?.areaStamp}>
+            {stamp => <PdfAreaImage page={grp()!.page} highlightId={props.id} hlPage={annotation()!.hlPage} stamp={stamp()} />}
+          </Show>
         </Show>
       </span>
       <Show when={peek.open() && preview() && capped().blocks.length > 0}>

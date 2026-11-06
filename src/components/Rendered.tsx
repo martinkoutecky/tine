@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { Show, Switch, Match, useContext, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
-import { isPropertyLine } from "../render/block";
+import { visibleBody } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
 import { AstBody } from "../render/body";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
@@ -105,9 +105,9 @@ function RenderedContent(props: {
   // child blocks. The detection + rendering live in editor/annotation +
   // components/AnnotationBody.
   const annotation = () => annotationInfo(facets().properties);
-  // The highlight text shown in the annotation swatch = the first visible (non-
-  // property) line of the block (cheap; the shared line recognizer).
-  const annotationLine = () => node().raw.split("\n").find((l) => !isPropertyLine(l) && l.trim() !== "") ?? "";
+  // Use the parser-owned body so Org drawer boundaries stay hidden as well as
+  // property values (GH #869). The annotation label is its first visible line.
+  const annotationLine = () => visibleBody(node().raw, fmt()).find(l => l.trim() !== "") ?? "";
 
   // Click edits the block, placing the caret WHERE you clicked when lsdoc span
   // data can map the rendered leaf back through source bytes and hidden props.
@@ -150,6 +150,7 @@ function RenderedContent(props: {
         hlPage={annotation()!.hlPage}
         line={annotationLine()}
         page={node().page}
+        areaStamp={annotation()!.areaStamp}
       />
     </Show>
   );
