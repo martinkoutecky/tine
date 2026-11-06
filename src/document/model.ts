@@ -104,10 +104,22 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
         if (rawField) {
           updateAuthoredIdentity(args[1] as string);
         } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {
+          publishPageIndex();
           // Producers can replace/reparent/remove arbitrary nodes. Rebuild on
           // the next lookup, never on ordinary raw-only typing or folding.
-          authoredIdentityPages.clear();
-          setIdentityStructureRevision(v => v + 1);
+          if (scopedStructurePages) {
+            // GH #886: admitting, replacing or evicting whole pages changes only
+            // those pages' trees. Clearing every page's index made each mounted
+            // reference group rebuild its source's claims per page load, so a
+            // scroll through N groups did N x N work.
+            for (const page of scopedStructurePages) {
+              authoredIdentityPages.delete(page);
+              setPageStructureRevisions(page, (v) => (v ?? 0) + 1);
+            }
+          } else {
+            authoredIdentityPages.clear();
+            setIdentityStructureRevision(v => v + 1);
+          }
         }
       });
     }
@@ -158,9 +170,23 @@ interface AuthoredIdentityPage {
 const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
 clearOnBindingInvalidated(() => authoredIdentityPages.clear());
 const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0);
+const [pageStructureRevisions, setPageStructureRevisions] = createStore<Record<string, number | undefined>>({});
+let scopedStructurePages: readonly string[] | null = null;
+/** Run a setDoc write that adds, replaces or removes only the whole pages in
+ * `pages` (read after the write, so a producer may fill the array as it goes).
+ * Their authored-identity indexes rebuild; other pages' do not. Only page
+ * admission, reload, forget and eviction use this: an edit producer can move
+ * nodes between pages and keeps the global invalidation. */
+export function writeWholePages<T>(pages: readonly string[], write: () => T): T {
+  const outer = scopedStructurePages;
+  scopedStructurePages = pages;
+  try { return write(); } finally { scopedStructurePages = outer; }
+}
 /** Moves on every write that can change any page's structure (each setDoc write
- * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded).
- * A whole-document question can read nodes untracked and depend on this alone. */
+ * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded),
+ * except whole-page admission, reload, forget and eviction (`writeWholePages`):
+ * those replace the page's `roots`, so a question about one page's trees must
+ * also track that page's `roots` (MarginColumn does). */
 export const structureRevision = (): number => identityStructureRevision();
 /** Whether `test` holds for some block in the trees under `roots`; stops at the
  * first. Reads plain nodes untracked and depends on structureRevision alone, so
@@ -205,6 +231,7 @@ function updateAuthoredIdentity(id: string): void {
  * structural changes; ordinary body edits update just one index entry. */
 export function authoredBlockClaims(page: string, identity: string): ReadonlySet<string> | undefined {
   identityStructureRevision();
+  void pageStructureRevisions[page];
   let index = authoredIdentityPages.get(page);
   if (!index) {
     index = untrack(() => {
@@ -283,50 +310,64 @@ export function docHasBlockIdentity(id: string): boolean {
 
 // name → index into `doc.pages`, rebuilt only when the working set's membership
 // changes (add / remove / rename / evict), NOT on a keystroke. Turns the O(pages)
-// linear `find` in `pageByName`/`formatForPage`/`mainPages` — which run in the
-// per-block render hot path and ~7×/page render — into an O(1) lookup. We map to
-// the index (not the proxy) and read `doc.pages[idx]` live, so a property change
-// (roots/preBlock/format) stays fine-grained-reactive and the index never goes
-// stale: the index re-derives whenever any page's `name` or the array length moves.
-// Publish positions by name: a source load must not invalidate every retained
-// property link just because its target is absent from the working set (GH #886).
+// linear `find` in `pageByName`/`formatForPage`/`mainPages` (per-block render hot
+// path, ~7×/page render) into an O(1) lookup. Readers subscribe per name to a
+// token naming that page's record, not to its position: evicting the oldest page
+// shifts every later page's position, and position subscribers would all re-run,
+// once per mounted reference group, on every eviction while scrolling (GH #886).
+// Field reads (roots/preBlock/format) stay fine-grained on the record itself.
 // Prefix keys so Solid's reserved property keys remain ordinary page names.
-const [pageIndexByName, setPageIndexByName] = createStore<Record<string, number | undefined>>({});
-const updatePageIndex = createRoot(() => createMemo(() => {
-  const next: Record<string, number> = {};
-  doc.pages.forEach((page, i) => { next[`page:${page.name}`] = i; });
-  untrack(() => setPageIndexByName(reconcile(next)));
-  return next;
-}));
+const recordTokens = new WeakMap<object, number>();
+let nextRecordToken = 0;
+const recordToken = (page: FeedPage): number => {
+  const raw = unwrap(page);
+  let token = recordTokens.get(raw);
+  if (token === undefined) recordTokens.set(raw, token = ++nextRecordToken);
+  return token;
+};
+const [pageRecordByName, setPageRecordByName] = createStore<Record<string, number | undefined>>({});
+let pagePositions: Record<string, number> = {};
+/** Republish names, positions and record tokens. `setDoc` calls this inside the
+ *  write's own batch, so a reader learns of a replaced or removed record in the
+ *  same update as the rest of the write (a lagging memo let a block's memo run
+ *  against its deleted node before the owning list disposed it). */
+function publishPageIndex(): void {
+  const positions: Record<string, number> = {};
+  const tokens: Record<string, number> = {};
+  doc.pages.forEach((page, i) => {
+    const key = `page:${page.name}`;
+    positions[key] = i;
+    tokens[key] = recordToken(page);
+  });
+  pagePositions = positions;
+  setPageRecordByName(reconcile(tokens));
+}
+
+/** The loaded record named by `key`, subscribing only to that name's record. */
+function keyedPage(key: string): FeedPage | undefined {
+  void pageRecordByName[key];
+  const i = pagePositions[key];
+  return i === undefined ? undefined : untrack(() => doc.pages[i]);
+}
 
 /** The pages shown in the main content area, in feed order. Memoized: the O(feed)
  *  resolve runs once per structural change, not on each of its ~7 calls per render. */
 export const mainPages = createRoot(() =>
   createMemo((): readonly ReadonlyFeedPage[] => {
-    untrack(updatePageIndex);
-    const idx = pageIndexByName;
     return doc.feed
-      .map((n) => {
-        const i = idx[`page:${n}`];
-        return i === undefined ? undefined : doc.pages[i];
-      })
+      .map((n) => keyedPage(`page:${n}`))
       .filter(Boolean) as FeedPage[];
   })
 );
 
 /** A loaded page record by name (anywhere in the working set), or undefined. */
 export function pageByName(name: string): ReadonlyFeedPage | undefined {
-  // Refresh a stale index even inside an enclosing batch, without subscribing
-  // the caller to its other names. The keyed position below owns that dependency.
-  untrack(updatePageIndex);
-  const i = pageIndexByName[`page:${name}`];
-  return i === undefined ? undefined : doc.pages[i];
+  return keyedPage(`page:${name}`);
 }
 
 /** Record the identity chosen for a new page after its first successful save. */
 export function setPageId(name: string, id: string): void {
-  untrack(updatePageIndex);
-  const i = pageIndexByName[`page:${name}`];
+  const i = pagePositions[`page:${name}`];
   if (i !== undefined) setDoc("pages", i, "id", id);
 }
 
