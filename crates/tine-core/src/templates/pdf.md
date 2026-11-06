@@ -10,6 +10,7 @@ icon:: 📄
 	- On desktop, choose **Open another view** in the reader's **⋯** menu to read two parts of the same PDF side by side. Each view keeps its own page and zoom; a highlight made, recolored or removed in one appears in the other at once.
 	- On a phone, select text or long-press a highlight to open its annotation actions.
 	- Every highlight becomes a **block** on a notes page named after the PDF, so you can write underneath it, link it, and reference it like any other bullet — and each note jumps straight back to its spot in the document.
+	- An area highlight shows its clipped image on that notes page, in a `((block reference))`, and in an embed. Right-click the rectangle and choose **Copy ref**, then paste into another page to cite the image. Click the image to open the PDF at that highlight. A missing image stays as an asset placeholder until it arrives through sync.
 	- If the highlight file changes outside Tine, choose **Keep mine** to merge your edits or **Use disk version** to discard them. If the disk highlight file cannot be read, **Discard my changes** asks for confirmation, clears only your local highlight edits, and leaves the disk file untouched; an unused local area image may remain.
 	- If an area image cannot be cleaned up after a highlight saves, choose **Retry cleanup** in the PDF viewer. Closing or switching graphs waits until that cleanup succeeds.
 	- It's how you turn a paper into linked, searchable notes without ever leaving Tine.

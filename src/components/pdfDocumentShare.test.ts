@@ -3,7 +3,9 @@ import type * as pdfjs from "pdfjs-dist";
 import { acquirePdfDocument, sharedPdfDocumentCount, type OpenPdfDocument } from "./pdfDocumentShare";
 
 function fakeDoc() {
-  return { destroy: vi.fn(async () => {}) } as unknown as pdfjs.PDFDocumentProxy & { destroy: ReturnType<typeof vi.fn> };
+  return { loadingTask: { destroy: vi.fn(async () => {}) } } as unknown as pdfjs.PDFDocumentProxy & {
+    loadingTask: { destroy: ReturnType<typeof vi.fn> };
+  };
 }
 
 describe("shared PDF document", () => {
@@ -16,9 +18,9 @@ describe("shared PDF document", () => {
     expect(open).toHaveBeenCalledTimes(1);
     a.release();
     a.release(); // idempotent
-    expect(doc.destroy).not.toHaveBeenCalled();
+    expect(doc.loadingTask.destroy).not.toHaveBeenCalled();
     b.release();
-    expect(doc.destroy).toHaveBeenCalledTimes(1);
+    expect(doc.loadingTask.destroy).toHaveBeenCalledTimes(1);
     expect(sharedPdfDocumentCount()).toBe(0);
   });
 
@@ -51,7 +53,7 @@ describe("shared PDF document", () => {
     expect(sharedPdfDocumentCount()).toBe(0);
     resolve();
     await a.loaded;
-    expect(doc.destroy).not.toHaveBeenCalled(); // the destroyed task already retired it
+    expect(doc.loadingTask.destroy).not.toHaveBeenCalled(); // the destroyed task already retired it
   });
 
   it("destroys a loading task created after every view left while the bytes were read", async () => {

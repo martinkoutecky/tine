@@ -39,11 +39,7 @@ if [ "$_toolchain_active" -eq 1 ]; then
   export CARGO_HOME="$TINE_TOOLCHAIN/cargo"
   export RUSTUP_HOME="$TINE_TOOLCHAIN/rustup"
   export PATH="$CARGO_HOME/bin:$PATH"
-  # The pinned Emscripten SDK that builds the PDF decoder (npm run build:pdf-decoder).
-  if [ -z "${EMSDK:-}" ] && [ -x "$TINE_TOOLCHAIN/emsdk/upstream/emscripten/emcc" ]; then
-    export EMSDK="$TINE_TOOLCHAIN/emsdk"
-  fi
-  # pdf.js 5 needs Node.js 22.13+ (package.json engines); use the toolchain's
+  # pdf.js 6 needs Node.js 22.13+ (package.json engines); use the toolchain's
   # Node when the system one is older.
   for _node_dir in "$TINE_TOOLCHAIN"/node-v22.*-linux-x64/bin; do
     if [ -x "$_node_dir/node" ] && ! node -e 'process.exit(parseInt(process.versions.node) < 22 ? 1 : 0)' 2>/dev/null; then

@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
+- Advanced Logseq queries recognise `sort-by` with a `juxt` of `get` functions on priority, scheduled, deadline and content, including scheduled-else-deadline. Later keys break ties, missing values follow the supplied defaults, and content sorts by the full raw text. Single-key forms work too; an unsupported key still refuses the whole query (GH #852).
+
 - Development: picking a block without an id in the CodeMirror editor's `((` picker wrote a reference to an id the block never got, so the reference showed nothing; it now references the id it stamps, as the classic editor does (internal: UI-CM6-PICKER-DANGLING-REF).
 - A page named like a relative path or a web address, such as `./notes/x`, `../x/y` or `https://example.com/a`, is no longer shown as a namespace: the sidebar's Namespaces tree and the Namespaces view no longer list it, and its page shows no Hierarchy section and no namespace path above the title. Renaming a page named `.` (or `https:`) no longer moves `./x` (or `https://example.com/a`) along with it, and renaming `.` onto an existing `./x` is offered as a merge instead of being refused as "its own child". Logseq treats these names the same way. Published sites keep showing such names as before (REG-CM-RENAME-RELATIVE-NAME-SUBTREE, UI-CM-NS-VIEWS-RELATIVE-URL-NAMES).
 
@@ -34,6 +37,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- PDF viewer updated to pdf.js 6.5.438 (#867). Its compatible image decoder also removes the Emscripten SDK requirement for building Tine.
 - Renaming a page to a name that is only another page's alias now asks three ways, in Tine's own dialog: **Merge into** that page, **Make it its own page** (the name stays an alias of the other page, so links to it still show in that page's Linked References), or **Cancel**. Before, a merge was the only choice (D-20261102-MC5, UI-CM-ALIAS-RENAME-DIALOG).
 - A link to an alias opens its owner while the alias's own page is empty, as in Logseq ([discussion #825](https://github.com/martinkoutecky/tine/discussions/825)): with `alias:: ML` on Machine Learning and an `ML` page with no real content (no text, no properties, at most one empty bullet), `[[ML]]` opens Machine Learning, and so does opening `ML` from the sidebar, a favorite or the keyboard. Once `ML` has content, `[[ML]]` opens it; this follows edits at once. The empty page stays in All pages, and the alias group's **Related pages** row opens it (UI-CM-EMPTY-ALIAS-LINK-OPENS-EMPTY-PAGE).
 - A query for a page reference finds the page by any of its names (discussion #825, rule 7): with `alias:: ML` on Machine Learning, `{{query [[ML]]}}` and `{{query [[Machine Learning]]}}` both list every block that links `[[ML]]` or `[[Machine Learning]]` and the page's own blocks, exactly what its Linked References shows. This holds for `[[A]]`, `#A`, `(page-ref A)` and Tine query `ref('A')` and `direct_ref('A')`, and `(not [[A]])` leaves all of them out. Saved queries that name an aliased page can show more results than before; `(page …)`, `name = …` and `(page-tags …)` still name one page. A live query follows an `alias::` edit at once (internal REG-CM-QUERY-REFS-ALIAS-CLASS).
