@@ -37,6 +37,7 @@ import {
 } from "../copySettings";
 import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
+import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
 import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds } from "../hoverPreviewSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
@@ -747,6 +748,9 @@ function EditorTab(props: { search: string }): JSX.Element {
     <>
       <CommentNameSetting />
       <LinkSchemeSettings />
+      <Field setting={settings["settings-auto-embed-video-links"]}>
+        <Toggle on={autoEmbedVideoLinks()} onClick={() => setAutoEmbedVideoLinks(!autoEmbedVideoLinks())} />
+      </Field>
       <Field
         setting={settings["settings-ui-file-format"]}
         hint={

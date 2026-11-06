@@ -85,6 +85,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | Setting ID | Catalog key / package label | Label | Level |
 |---|---|---|---|
 | `settings-ui-file-format` | `settings-ui-file-format` | File format | Basic |
+| `settings-auto-embed-video-links` | `settings-auto-embed-video-links` | Auto-embed pasted video links | Basic |
 | `settings-ui-spell-checker` | `settings-ui-spell-checker` | Spell checker | Basic |
 | `settings-ui-logical-outdenting` | `settings-ui-logical-outdenting` | Logical outdenting | Basic |
 | `settings-ui-spellcheck-languages` | `settings-ui-spellcheck-languages` | Spellcheck languages | Basic |

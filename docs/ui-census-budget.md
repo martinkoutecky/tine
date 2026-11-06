@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-06, GH #861 (roadmap AG, Martin's 2026-11-03 placement, Section B of SMALL-010-1106):
+  `settings.editor.open` 9→10 for the explicitly approved **Auto-embed pasted video links**
+  setting. This one default-on switch keeps pasted video URLs as plain links when off;
+  no title-fetch setting or new command is added.
 - 2026-11-01, GH #764 and GH #818 (D-20261101-L5 decided both for 0.10 on development; this entry records only
   that): `commands.registry` 145→147, `commands.registry.editor` 26→27 and `commands.palette` 88→89. **Merge selected
   blocks** (#764) is a palette and keymap command with no default key and no menu row. **New block after this block's

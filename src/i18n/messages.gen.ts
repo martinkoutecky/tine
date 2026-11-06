@@ -2447,6 +2447,8 @@ export interface MessageArgs {
   "settings-appearance": {};
   "settings-asset-trash-confirmation": { "count": number; "size": string | number };
   "settings-asset-trash-emptied": { "count": number };
+  "settings-auto-embed-video-links": {};
+  "settings-auto-embed-video-links-hint": {};
   "settings-autodetect": {};
   "settings-available-snapshots": {};
   "settings-backup-load-failed": { "error": string | number };

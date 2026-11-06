@@ -21,6 +21,7 @@ import { structuredHtmlPaste } from "./htmlPaste";
 import { isPasteableUrl, videoPasteMacro, wrapLink } from "./format";
 import { editorAssets } from "./editorAssets";
 import { plainTextPaste } from "./plainTextPaste";
+import { autoEmbedVideoLinks } from "../pasteSettings";
 
 interface ClipboardContext {
   id: string;
@@ -169,7 +170,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
       && !ctx.literal() && calcSource(source) === null && !code && !caretInFence(source, s.from, ctx.format) && !caretOnOpeningFence(source, s.from, ctx.format)) {
       apply(v, wrapLink(source, s.from, s.to, url, ctx.format)); return true;
     }
-    const video = videoPasteMacro(text);
+    const video = autoEmbedVideoLinks() ? videoPasteMacro(text) : null;
     if (video && s.empty) { literal(v, video); return true; }
     // URI-only payloads and asynchronous recovery have no browser text default.
     if (insertPlain && text) { literal(v, text); return true; }

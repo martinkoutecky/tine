@@ -45,7 +45,8 @@ export const SURFACES = Object.freeze({
   "settings.appearance.open": settingsOpen("appearance", 29),
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
   "settings.appearance.advanced": settingsAdvanced("appearance", 16),
-  "settings.editor.open": settingsOpen("editor", 9),
+  // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
+  "settings.editor.open": settingsOpen("editor", 10),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
   // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting.
   "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 13 : 12),
