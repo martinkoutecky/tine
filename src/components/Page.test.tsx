@@ -1132,8 +1132,8 @@ describe("zoomed block view", () => {
       blocks: [{
         id: "passage", raw: "A passage to discuss.", collapsed: false,
         children: [{
-          id: "comment", raw: "A comment.\nquote:: passage", collapsed: false,
-          properties: [["quote", "passage"]] as [string, string][],
+          id: "comment", raw: "A comment.\ntine.quote:: passage", collapsed: false,
+          properties: [["tine.quote", "passage"]] as [string, string][],
           children: [{ id: "reply", raw: "A reply.", collapsed: false, children: [] }],
         }],
       }],

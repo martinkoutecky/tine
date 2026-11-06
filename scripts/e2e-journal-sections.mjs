@@ -79,7 +79,7 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
     const fileName = fs.readdirSync(path.join(graph, "pages")).find(file => file.toLowerCase() === `${name}.${format}`.toLowerCase());
     check(fileName, "Customize did not create the page file");
     const file = path.join(graph, "pages", fileName);
-    const marker = format === "org" ? "#+tine/journal-sections: true" : "tine/journal-sections:: true";
+    const marker = format === "org" ? "#+tine.journal-sections: true" : "tine.journal-sections:: true";
     const seeded = await waitForFileText(file, text => text.includes(marker) && text.includes("#+BEGIN_QUERY") && text.includes("{{tine-query "));
     check(seeded.includes(':title "Sections config fixture"') && seeded.includes("(task TODO)"), "seed lost the configured query title or expression");
     check(seeded.indexOf("#+BEGIN_QUERY") < seeded.indexOf("{{tine-query "), "seeded agenda precedes config sections");

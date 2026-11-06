@@ -5,7 +5,10 @@ import { Rich } from "../i18n/Rich";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 export { ClozeMacro, TweetMacro, VideoMacro, YoutubeTimestamp, ZoteroMacro, youtubeTimestampMacroFor } from "./MediaMacros";
 import { TableWrap } from "./TableWrap";
-import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { reservedGroupHeight } from "../reservedGroupHeight";
+import { preserveAboveViewport } from "../scrollContainer";
+import { SurfaceContext } from "./Block";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
@@ -53,7 +56,7 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
 import { QueryOgHint, QueryPageRows, QueryResultsRegion, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { QueryHit, QueryPublicationRequest, RefGroup } from "../types";
+import type { Format, QueryHit, QueryPublicationRequest, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
@@ -197,6 +200,11 @@ export function QueryMacro(props: {
   builtIn?: boolean;
   /** App-inserted query from config.edn, with user-facing refusal copy. */
   configQuery?: boolean;
+  /** GH #855: the text of the block this query lives in, when it is shown away
+   *  from that block (a journal section on the journal feed, no `blockId`).
+   *  Its view properties (`tine.sort`, `tine.group-field`, legacy table keys)
+   *  apply as on the block itself; nothing is written back to it. */
+  hostRaw?: { raw: string; format: Format };
 }): JSX.Element {
   return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
 }
@@ -213,12 +221,26 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // Ask the engine: removing the last builder row can print `(and)` or leave
   // only view directives. Those are the same no-condition query as blank text.
   const emptyDraft = () => arg() === "" || reading()?.og_hint?.no_conditions === true;
-  const hostProperties = createMemo<[string, string][]>(() => {
+  /** Every property of the host block: the live block, or the read-only
+   *  `hostRaw` of a query shown away from it (GH #855). */
+  const hostAllProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
-    const node = id ? docNode(id) : undefined;
-    if (!id || !node) return [];
-    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine.") || key === "query-table");
+    if (id) {
+      const node = docNode(id);
+      return node ? facetsOf(node.raw, formatForBlock(id)).properties : [];
+    }
+    return props.hostRaw ? facetsOf(props.hostRaw.raw, props.hostRaw.format).properties : [];
   }, [], { equals: sameJson });
+  /** One host property, matched case-insensitively like `blockProperty`. */
+  const hostProperty = (key: string): string | null => {
+    if (props.blockId) return blockProperty(props.blockId, key);
+    const lower = key.toLowerCase();
+    const found = hostAllProperties().find(([k]) => k.toLowerCase() === lower);
+    return found ? found[1].trim() : null;
+  };
+  const hostProperties = createMemo<[string, string][]>(
+    () => hostAllProperties().filter(([key]) => key.startsWith("tine.") || key === "query-table"),
+    [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
     () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
     undefined,
@@ -279,12 +301,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   // What exporting or sharing this block starts from: its query text, host properties and page.
   const exportRequest = (): QueryPublicationRequest => {
-    const id = props.blockId;
-    const node = id ? docNode(id) : undefined;
     // These renderer-only properties must also travel to the generated home.
     // They do not belong to parseQuery's key (query-table itself does).
-    const legacyDisplay = id && node ? facetsOf(node.raw, formatForBlock(id)).properties
-      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc") : [];
+    const legacyDisplay = hostAllProperties()
+      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc");
     return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
       properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
   };
@@ -298,14 +318,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return sheetConfig(facetsOf(docNode(props.blockId).raw, formatForBlock(props.blockId)).properties);
   });
   const currentView = (): QueryView => {
-    if (!props.blockId) return "list";
-    const view = blockProperty(props.blockId, "tine.view");
+    const view = hostProperty("tine.view");
     return view === "search" || view === "table" || view === "board" ? view : "list";
   };
-  const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
+  const blockFace = (): QueryView => {
+    const face = runnable()?.block_presentation ?? currentView();
+    // GH #855: a table or board edits its own block; away from that block (the
+    // journal feed) the rows show as the list, as they did before.
+    return !props.blockId && (face === "table" || face === "board") ? "list" : face;
+  };
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
   const legacyTable = () => blockFace() === "list"
-    && (!props.blockId || blockProperty(props.blockId, "tine.view") === null)
+    && hostProperty("tine.view") === null
     && (reading()?.legacy_table ?? false);
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
@@ -724,10 +748,33 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
   const [noticeFocused, setNoticeFocused] = createSignal(false);
   const [sheetOpen, setSheetOpen] = createSignal(false);
-  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
+  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text"; close?: boolean } | null>(null);
   const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
   const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
   let queryEl: HTMLDivElement | undefined;
+  // The query itself remounts before parsing/execution can produce group shells.
+  // Keep its complete measured box through that asynchronous gap as well (#810).
+  const hostSurface = useContext(SurfaceContext);
+  let hasAnswer = false;
+  createComputed(() => { hasAnswer = !!displayed(); });
+  const reservedQuery = reservedGroupHeight(() => props.blockId === undefined ? undefined
+    : JSON.stringify(["query-macro", hostSurface, props.blockId, props.body]), () => queryEl, () => hasAnswer);
+  const [answerShell, setAnswerShell] = createSignal(false);
+  let queryAlive = true;
+  onCleanup(() => { queryAlive = false; });
+  createEffect(() => {
+    if (!displayed()) setAnswerShell(false);
+    // The keyed group shells restore their own spacers in onMount. Keep the
+    // enclosing reserve until that commit finishes; a transient short box can
+    // otherwise clamp scrollTop at the bottom even if restored in the same frame.
+    else queueMicrotask(() => {
+      if (!queryAlive) return;
+      if (queryEl) preserveAboveViewport(queryEl, () => setAnswerShell(true), undefined, true);
+      else setAnswerShell(true);
+    });
+  });
+  /** GH #850: the gear closes the builder's inline editor when it is already open. */
+  const closeEdit = () => setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab: editRequest()?.tab ?? "filter", close: true });
   const closeDisplay = () => {
     setEditRequest(null);
     queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
@@ -793,9 +840,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     : queryBlockColumns(groups()));
   const displayView = (): ViewSettings => {
     const view = reading()?.view ?? {};
-    if (legacyTable()) return { ...view, columns: props.blockId
-      ? hostColumns(blockProperty(props.blockId, "query-properties")) ?? legacyDefaultColumns() : legacyDefaultColumns() };
-    return { ...view, columns: view.columns?.length || props.blockId && blockProperty(props.blockId, "tine.columns") !== null
+    if (legacyTable()) return { ...view, columns: hostColumns(hostProperty("query-properties")) ?? legacyDefaultColumns() };
+    return { ...view, columns: view.columns?.length || hostProperty("tine.columns") !== null
       ? view.columns : undefined };
   };
 
@@ -810,10 +856,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // properties, like OG's query_table.cljs (audit #9); a header click then
   // overrides them for this view, as OG's click does (it also persists the
   // choice on the block; Tine keeps the click local and never rewrites the file).
-  const hostSortState = createMemo(() =>
-    props.blockId
-      ? hostSort(blockProperty(props.blockId, "query-sort-by"), blockProperty(props.blockId, "query-sort-desc"))
-      : null);
+  const hostSortState = createMemo(() => hostSort(hostProperty("query-sort-by"), hostProperty("query-sort-desc")));
   const [sortOverride, setSortOverride] = createSignal<TableSort | null>(null);
   const sortState = (): TableSort | null => sortOverride() ?? hostSortState();
   const rows = createMemo<Row[]>(() =>
@@ -829,8 +872,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       })
     )
   );
-  const hostCols = createMemo(() =>
-    props.blockId ? hostColumns(blockProperty(props.blockId, "query-properties")) : null);
+  const hostCols = createMemo(() => hostColumns(hostProperty("query-properties")));
   /** Column ids in display order: `block`, `page`, then property keys. */
   const cols = createMemo(() => {
     const named = hostCols();
@@ -916,6 +958,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   return (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
@@ -1008,7 +1051,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
                 <QueryMacroActions current={runnable} hostBlockId={props.blockId} groups={groups} pages={() => pageRows() ?? []}
                   editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
-                  edit={requestEdit} both={bothKinds}
+                  edit={requestEdit} editOpen={() => sheetOpen() && showBuilder()} closeEdit={closeEdit} both={bothKinds}
                   fold={blockFace() === "list" ? (collapsed) => {
                     void collapseQueryResults(groups(), collapsed).then(epochs => {
                       if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
@@ -1116,7 +1159,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                             <QueryPageRows
                               rows={both().pages}
                               view={simpleView()}
-                              groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                              groupBy={runnable()?.view.group_by ?? hostProperty("tine.group-by") ?? undefined}
                               columns={displayView().columns}
                             />
                           ),
@@ -1161,7 +1204,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                       <QueryPageRows
                         rows={pages()}
                         view={simpleView()}
-                        groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                        groupBy={runnable()?.view.group_by ?? hostProperty("tine.group-by") ?? undefined}
                         columns={displayView().columns}
                       />
                     </Show>

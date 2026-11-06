@@ -1,7 +1,7 @@
 ## Margin dialogue: comments on a passage (Ctrl/Cmd+R)
 comment-on-whole-block = 针对整个块
 comment-quote-changed = 引用的文字已更改
-# $author (string): the value of the block's author:: property.
+# $author (string): the value of the block's tine.author:: property.
 comment-written-by = 作者：{ $author }
 comment-written-by-you = 作者：你
 comment-author-you = 你
@@ -23,6 +23,14 @@ comment-stale-write-what = 该评论
 
 ## Settings → Editing: the name your comments carry
 comment-name-label = 你的名字
-comment-name-hint = 你在页边写的批注和回复会以此名字保存为 <code>author::</code>，这样与他人共享的图谱就能看出谁写了什么。留空则不写作者；此时你自己的批注显示为“你”。保存在本设备上，不写入图谱。
+comment-name-hint = 你在页边写的批注和回复会以此名字保存为 <code>tine.author::</code>，这样与他人共享的图谱就能看出谁写了什么。留空则不写作者；此时你自己的批注显示为“你”。保存在本设备上，不写入图谱。
 comment-name-placeholder = 你的名字
+
+## 在 git 图谱中第一次批注或回复前的一次性“你的名字”提问 (tine#841)
+comment-name-prompt-title = 为你的批注署名？
+comment-name-prompt-body = 此图谱位于 git 仓库中，其他人可能会读到你的批注。设置名字后，你写的每条批注和回复都会带上它，别人就能看出是谁写的。不设置的话，你的批注对所有人都显示为“你”。
+comment-name-prompt-scope = 你的名字是本设备上的 Tine 设置，适用于你所有的图谱，而不是此图谱的设置。随时可在 设置 > 编辑器 > 你的名字 中修改。若选择跳过，Tine 不会再询问。
+comment-name-prompt-dismiss = 跳过
+comment-name-prompt-save = 使用此名字
+comment-name-prompt-graph-changed = 在询问你的名字时图谱已切换，因此没有写入该批注。
 comment-margin-draft-pending = 请先发送或放弃未发送的回复，再隐藏评论

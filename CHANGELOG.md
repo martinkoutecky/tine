@@ -10,14 +10,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).
 - `tine delete` refuses before removing a block with incoming references unless confirmed with `--yes` (or `--force`). Every successful reply includes the removed block and its children for recovery, with an explicit notice if the text exceeds 65,536 bytes (GH #844).
 - The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).
 - On macOS, Cmd+Shift+V pastes plain text without depending on a native paste event (#857).
 - References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
+
+## [0.9.0-beta.7] - 2026-11-05
+
+### Fixed
+
+- Enter after a completed standalone `$$…$$` formula followed by text now creates the next block (#862).
+- Escape in a Markdown or Org source block's code editor now reveals editable raw text, including the source delimiters; a second Escape leaves editing (#865).
+- Clicking a virtual journal's title opens the file created since the feed was read, including a file created externally under a different accepted date filename while editing delays the feed refresh. Before, the title could target the proposed filename and report that the physical page was no longer available (GH #863).
+- The "changed on disk while you were editing" banner clears automatically when a conflicted draft becomes exactly identical to the disk version, including after a later sync delivery. Differing versions keep the unsaved edits and conflict review (GH #875).
 - Ctrl+F highlights matching text in table and grid cells and brings the active cell into view (#876).
 - Author indicators on embed blocks preserve the embedded bullets' alignment (#873).
 - Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
 - `tine` command line: a write (`add`, `edit`, `prop`, `move`, `delete`, `ref`, `embed`) to a page name that two files claim, for example after a sync conflict, a case twin (`Foo.md` and `foo.md`) or a `title::` that repeats another page's name, is refused and names both files. Before, it went silently to one of them and the other was never mentioned. Reading the page still shows the file that owns the name; `page rename` and `page delete` already refused (REG-CLI-DUPNAME-WRITE-ONE-TWIN).
+
+## [0.9.0-beta.6] - 2026-11-03
+
+### Changed
+
+- Every property Tine gives its own meaning is now named `tine.<name>`, so your own properties with the same name stay yours (Discussion #825). A child bullet with your own `quote::` no longer turns into a margin comment, and an `author::` in your book notes stays a property row instead of becoming an author chip. Margin comments now write `tine.quote::`, `tine.quote-prefix::`, `tine.quote-suffix::` and `tine.author::`; the command line's `tine add` / `tine edit --author` write `tine.author::`; folder exports record their folder as `tine.export::`; and the Favorites, Today's sections and Exports pages are marked `tine.favorites::`, `tine.journal-sections::` and `tine.exports::`. Pages marked with the older `tine/favorites::`, `tine/journal-sections::` or `tine/exports::` keep working. **If you made comments or folder exports in a 0.9 Beta**, rename their properties with find/replace: on comment blocks and their replies `quote::` → `tine.quote::`, `quote-prefix::` → `tine.quote-prefix::`, `quote-suffix::` → `tine.quote-suffix::` and `author::` → `tine.author::`; on folder-export query blocks `export::` → `tine.export::` (in Org files the same keys appear as `:quote:`, `:author:`, `:export:` …). Leave `author::` on your other blocks alone (UI-PROPNAMES-USER-QUOTE, UI-PROPNAMES-USER-AUTHOR, REG-PROPNAMES-CLI-AUTHOR, REG-PROPNAMES-STABLE-MARKERS).
+
+### Fixed
+
+- Macros in `config.edn` named with keywords, as Logseq writes them (`:macros {:bar "..."}`), now work like `"bar"` names. Before, `{{bar 5}}` stayed raw text, and every macro listed after the first keyword name was ignored as well (GH #854, REG-GH854-CONFIG-MACRO-KEYWORD-NAMES).
+- A journal section shown under today's journal now sorts and groups by the View settings saved on its block on the sections page (GH #855, UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES).
+- **Review** on the "changed on disk while you were editing" banner now shows the page's review of your edits against the disk version, also when the page is already open and scrolled down. Before, it did nothing there (GH #858, UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER).
+- On Windows, images no longer look washed out next to other image viewers: Tine's windows now draw colours in sRGB (GH #804, REG-GH804-WINDOWS-WEBVIEW-SRGB).
+- The left sidebar's "All pages" heading is the same size as the other section headings (GH #704, UI-GH704-SIDEBAR-HEADINGS-ONE-SIZE).
+- Typing a page link in Quick Capture no longer shows the red error "Couldn't refresh the page list. The last loaded list is kept." in the capture window. Nothing was lost: the capture window asked for a list of pages it is not given, and page completion there never needed it (UI-CAPTURE-NO-PAGE-INVENTORY).
+
+## [0.9.0-beta.5] - 2026-11-02
+
+### Changed
+
+- The first margin comment or reply you write in a graph that is under git, when you have not set **Your name**, now asks for a name once, so comments you share show who wrote them instead of reading "you" to everyone. The name is a Tine setting on this device, used in all graphs. Skipping is remembered for all graphs and is not asked again; the comment is written either way, and the setting stays under Settings > Editor (#841).
+
+### Fixed
+
+- The gear on a query block now closes the query editor when you click it again; the second click used to leave it open (#850).
+- Editing a block shown under a query result, such as a child you expanded, no longer re-runs the query while you are still typing there: the results stay as they are until you leave the block, as they already did for the result block itself. Expanded and collapsed result rows keep their state through the rerun (#851).
+- A page no longer goes missing from page links, quick switch and All Pages after you close it or Tine finishes saving it while another lookup was running. Until the next edit, a link to it could open a new empty page and a new file could take its name (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE).
+- A page with many linked references no longer keeps moving while you do nothing. With more than 80 source pages loaded, references kept reloading one another, so their text changed form and the scrollbar crept (#849).
+- Coming back to a tab or going back in history now returns to the row you were reading in Linked References, even when the references load slowly, instead of the top, the end of the scrollbar or a nearby reference (#848).
+- A block's reference count and margin comment count badges are now the same size and on the same line (#843).
+- Beta AppImages now ask GitHub's latest prerelease for updates through `appimageupdatetool`, as stable does with its latest release, instead of a file on tine.page. Whoever controls tine.page's hosting can no longer point that tool at other code. Tine's in-app updater was not affected: it checks signatures.
+- `tine add`, `edit`, `prop`, `move`, `delete` and the other write commands running at the same time on one page now all land, in some order, instead of most failing with "the page kept changing" (exit 6) when no `--rev` or handle had gone out of date. Commands take turns; `--rev` and block handles still refuse a page that moved, and text from the app, an editor or Syncthing is still never overwritten (#842).
+- On Android and iOS, switching to another app commits pending edits immediately and, with **Commit and sync automatically**, pushes them, even inside the commit interval. Switching apps without edits adds no commit; the timed cadence is unchanged (D-20261101-GB).
+- A Search tab that is still searching now says "Searching…" instead of "Pages 0 / Blocks 0 / No matching pages"; a finished empty search still says no results (#838).
+- A missing image's placeholder shows its full alt text on the block's text line instead of a clipped sliver (#836).
+- Pasting an image or a copied file into Quick Capture now imports it into the capture graph's assets and inserts the link, instead of failing with "no graph loaded for window capture". Drag-and-drop onto the capture window is not supported yet (#835).
+- Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).
+- `tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).
+- Scrolling up a long page with block embeds no longer throws the page back down, which could leave it stuck in one place (#810). The earlier fix for this issue in 0.9.0-beta.2 made these jumps more frequent. Tine now prepares outline windows and block bodies before they reach the visible area of their pane and keeps the reading position when they replace a placeholder. Remounted query and reference groups also keep their measured height.
+- Android: when a line you tap to edit is moved out of view while the keyboard opens, Tine now brings it back just above the keyboard toolbar, where 0.7.4 put it, instead of at the top of the screen, where the pinned parent blocks could still cover it (#783). With an interface zoom other than 100%, a line just under the pinned parents is no longer taken as visible and left covered. Not yet confirmed on the reporter's phone.
 
 ### Added
 

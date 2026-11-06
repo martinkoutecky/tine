@@ -79,6 +79,15 @@ follows a bullet marker), and the leading-ATX/list-marker grammar of a bare list
 (`format.ts` `trimBlockTrailingSpace`). The empty-card separator fix is included. Copy projection
 preserves a final raw newline, including the seven manager-approved corpus exceptions.
 
+Display-math Enter state excludes parser-owned trailing whitespace when deciding
+whether a closing delimiter is interior to a literal range (#862). Completed
+math therefore permits the next outline block even when prose follows it.
+The approved #278 difference from OG remains: Enter inside open display math
+inserts a newline. Escape from a projected code body saves through the existing
+editor commit, then reveals editable raw source at its end for the rest of that
+editing session (#865, OG `extensions/code.cljs` `render!`). The next Escape
+uses ordinary raw-editor block selection. Both Markdown and Org use this owner.
+
 Unit cost: no new persisted record, index or transport. Edits are bounded to one
 block; cached optimized edits need zero ownership parses, raw entry points need
 one, and changed debug edits add a preservation reparse. No page/graph parse.

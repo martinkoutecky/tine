@@ -1,7 +1,7 @@
 // ADR 0078 §3, slice 3: on Android and iOS, git follows the app's visibility
 // edges (the session-activity edges, GH #426). Going to the background, the
 // pages are flushed first, so the backend's background commit includes the
-// last edit; then the graphs' git threads commit (at most once per interval)
+// last edit; then the graphs' git threads commit what is pending (D-20261101-GB)
 // and, when they sync automatically, push. Coming back, automatic sync runs a
 // cycle. Desktop sends nothing: it commits on the cadence and at quit.
 import { backend } from "./backend";

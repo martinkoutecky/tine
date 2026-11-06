@@ -301,7 +301,7 @@ fn nodes(n: u64) -> String {
 }
 
 /// The compact outline (spec A3): each block line starts with its address
-/// (and its `[author:: NAME]` when it has one), `1.2` = the second child of
+/// (and its `[tine.author:: NAME]` when it has one), `1.2` = the second child of
 /// the first top-level block; continuation and property lines are indented
 /// under it. Everything the payload discloses is said here too (`cli-output.md`
 /// "Disclosure fields"): the human text never reads more complete than the
@@ -687,7 +687,7 @@ fn block_properties(block: &Value) -> Vec<(String, String)> {
 }
 
 fn is_author_key(key: &str) -> bool {
-    tine_core::doc::property_key_norm(key) == "author"
+    tine_core::doc::property_key_norm(key) == tine_core::tine_keys::AUTHOR
 }
 
 /// What the DocBlock projection says a block body's properties are, for
@@ -698,12 +698,12 @@ fn projected_properties(raw: &str, org: bool) -> Vec<(String, String)> {
     block.properties()
 }
 
-/// A block's `author::` and its other lines. Whether the block has an author
+/// A block's `tine.author::` and its other lines. Whether the block has an author
 /// is the projection's answer (`properties` in the payload, which treats a
 /// `key::` line inside a code fence as content), never a scan of the lines.
 /// The line shown beside the address is not repeated below it: it is the
 /// candidate author line whose removal leaves exactly the projection's other
-/// properties, so a literal `author::` line (in a fence, or a look-alike with
+/// properties, so a literal `tine.author::` line (in a fence, or a look-alike with
 /// the same value) stays.
 fn split_author<'a>(
     raw: &'a str,
@@ -747,7 +747,7 @@ fn author_value(line: &str) -> Option<&str> {
     if let Some((key, value)) = tine_core::property_line::parse_property_line(line) {
         return is_author_key(key).then_some(value);
     }
-    // Org drawer: `:author: value`.
+    // Org drawer: `:tine.author: value`.
     let rest = line.trim().strip_prefix(':')?;
     let (key, value) = rest.split_once(':')?;
     (is_author_key(key) && value.starts_with(' ')).then(|| value.trim())
@@ -768,7 +768,7 @@ fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
         let head = lines.next().unwrap_or("");
         match author {
             Some(author) => {
-                let _ = writeln!(out, "{indent}{address} [author:: {author}] {head}");
+                let _ = writeln!(out, "{indent}{address} [tine.author:: {author}] {head}");
             }
             None => {
                 let _ = writeln!(out, "{indent}{address} {head}");

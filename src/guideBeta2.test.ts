@@ -71,3 +71,10 @@ it("the Guide teaches the sidebar tab tree (GH #704)", () => {
 it("the Guide teaches the Favorites touch hold (D-20261019-FT1)", () => {
   expect(guide("where-things-are")).toContain("hold a favorite still for a moment to pick it up, then drag; a finger that moves first scrolls the list");
 });
+
+it("the Guide says Quick Capture takes pasted images as graph assets (GH #835)", () => {
+  const capture = guide("quick-capture");
+  expect(capture).toContain("Paste an image (a screenshot) or a copied file into the box");
+  expect(capture).toContain("`assets` folder");
+  expect(capture).toContain("Dragging files onto the capture box is not supported yet");
+});

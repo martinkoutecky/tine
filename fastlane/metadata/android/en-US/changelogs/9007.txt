@@ -1,0 +1,1 @@
+Seventh Tine 0.9 Beta. Enter after a $$ formula makes a new block, and Escape in a code block shows its raw text. Ctrl+F finds text in table and grid cells. The changed-on-disk banner clears itself when your draft matches the file. Opening an existing journal no longer reports a missing file. Merging pages keeps all their aliases.

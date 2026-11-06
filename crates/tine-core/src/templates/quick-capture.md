@@ -16,6 +16,7 @@ icon:: ⚡
 	- **Leave the title empty** → the text is appended to **today's journal**. This is the fast path: hotkey, type, done.
 	- **Type a page title** (the field at the top of the window) → it's filed to that **page** instead, created if it doesn't exist yet. Perfect for "add this to my Reading notes" without leaving what you're doing.
 	- It's the real editor in there: `[[` page links, `#` tags, `/` slash commands, and nested bullets all work.
+	- Paste an image (a screenshot) or a copied file into the box and it is saved into your graph's `assets` folder, with a link in the captured bullet. Dragging files onto the capture box is not supported yet.
 - ## Create one yourself
 	- 1. Open your desktop environment's keyboard-shortcut settings.
 	- 2. Add a custom shortcut whose command is `tine --capture`.

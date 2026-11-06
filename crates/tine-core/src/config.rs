@@ -1122,10 +1122,14 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     map
 }
 
-/// `:macros {"name" "template" …}` — string→string map. Mirrors `parse_shortcuts`
-/// but with STRING keys (macro names) rather than keyword keys. Values are template
-/// strings (with `$1..$N` placeholders the frontend fills in). Stops cleanly on the
-/// first non-string key/value rather than desyncing on unexpected EDN.
+/// `:macros {"name" "template" :name "template" …}` — name→template map. Keys
+/// are strings or keywords, mixed freely (GH #854): OG looks a macro up by its
+/// name string, then by `(keyword name)` (`frontend/components/block.cljs`), so
+/// a keyword key `:ns/name` is the macro `ns/name` (namespace kept, as
+/// `(keyword "ns/name")` is `:ns/name`), and a string key wins over a keyword
+/// key of the same name. Values are template strings (with `$1..$N`
+/// placeholders the frontend fills in). Stops cleanly on the first other key or
+/// value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let Some(start) = read_keyword(edn, ":macros") else {
@@ -1137,16 +1141,48 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         return map;
     }
     let close = match_close_brace(edn, from);
+    let mut string_keys = std::collections::HashSet::new();
     let mut i = from + 1;
     while i < close {
         i = skip_blank(edn, i);
-        if i >= close || b[i] != b'"' {
-            break; // key must be a string
-        }
-        let Some(key) = read_string_at(edn, i) else {
+        if i >= close {
             break;
+        }
+        let (key, keyword) = match b[i] {
+            b'"' => {
+                let Some(key) = read_string_at(edn, i) else {
+                    break;
+                };
+                i = edn_str_end(edn, i);
+                (key, false)
+            }
+            b':' => {
+                let kstart = i + 1;
+                let mut j = kstart;
+                while j < close
+                    && !matches!(
+                        b[j],
+                        b' ' | b'\t'
+                            | b'\n'
+                            | b'\r'
+                            | b','
+                            | b'"'
+                            | b';'
+                            | b'{'
+                            | b'}'
+                            | b'['
+                            | b']'
+                            | b'('
+                            | b')'
+                    )
+                {
+                    j += 1;
+                }
+                i = j;
+                (edn[kstart..j].to_string(), true)
+            }
+            _ => break, // neither a string nor a keyword key
         };
-        i = edn_str_end(edn, i);
         let vfrom = skip_blank(edn, i);
         if vfrom >= close || b[vfrom] != b'"' {
             break; // value must be a string
@@ -1155,7 +1191,15 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
             break;
         };
         i = edn_str_end(edn, vfrom);
-        if !key.is_empty() {
+        if key.is_empty() {
+            continue;
+        }
+        if keyword {
+            if !string_keys.contains(&key) {
+                map.insert(key, val);
+            }
+        } else {
+            string_keys.insert(key.clone());
             map.insert(key, val);
         }
     }
@@ -1404,6 +1448,59 @@ mod tests {
             cfg.macros.get("greet").map(String::as_str),
             Some("Hello, **$1**! See [[$2]]")
         );
+    }
+
+    /// GH #854: a Logseq `config.edn` names macros with keywords (`:bar`). OG
+    /// looks a macro up by its name string, then by `(keyword name)`, so both
+    /// forms work there; Tine used to stop at the first keyword key.
+    #[test]
+    fn parses_macros_with_keyword_keys() {
+        let edn = r#"{:macros {:bar "[:span {:class \"score s$1\"} $1]"
+                               :r "red $1"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(
+            cfg.macros.get("bar").map(String::as_str),
+            Some("[:span {:class \"score s$1\"} $1]")
+        );
+        assert_eq!(cfg.macros.get("r").map(String::as_str), Some("red $1"));
+    }
+
+    #[test]
+    fn a_keyword_macro_key_no_longer_drops_later_macros() {
+        let edn = r#"{:macros {"poem" "Roses are $1"
+                               :g "green $1", "greet" "Hello $1"
+                               ;; a comment between entries
+                               :o "orange"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(
+            cfg.macros.get("poem").map(String::as_str),
+            Some("Roses are $1")
+        );
+        assert_eq!(cfg.macros.get("g").map(String::as_str), Some("green $1"));
+        assert_eq!(
+            cfg.macros.get("greet").map(String::as_str),
+            Some("Hello $1")
+        );
+        assert_eq!(cfg.macros.get("o").map(String::as_str), Some("orange"));
+    }
+
+    /// OG tries the string name first, then `(keyword name)`: when a map has
+    /// both `"x"` and `:x`, the string entry wins whatever their order. A
+    /// namespaced `:ns/name` matches `{{ns/name}}`, because ClojureScript's
+    /// `(keyword "ns/name")` is the keyword `:ns/name`.
+    #[test]
+    fn macro_string_key_wins_over_keyword_key_and_namespaced_keyword_keeps_namespace() {
+        let edn = r#"{:macros {:x "from keyword" "x" "from string"
+                               "y" "from string" :y "from keyword"
+                               :ns/name "namespaced"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(cfg.macros.get("x").map(String::as_str), Some("from string"));
+        assert_eq!(cfg.macros.get("y").map(String::as_str), Some("from string"));
+        assert_eq!(
+            cfg.macros.get("ns/name").map(String::as_str),
+            Some("namespaced")
+        );
+        assert_eq!(cfg.macros.get("name"), None);
     }
 
     #[test]

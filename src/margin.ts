@@ -38,7 +38,7 @@ export const MARGIN_THREAD_GAP = 8;
 const isComment = (n: Node, format: Format): boolean =>
   n.parent !== null && quoteSelectorOf(facetsOf(n.raw, format).properties) !== null;
 
-/** Whether `id` is a comment: it has a parent block and a `quote::`. */
+/** Whether `id` is a comment: it has a parent block and a `tine.quote::`. */
 export function isCommentId(id: string, format: Format): boolean {
   const n = docNode(id);
   return !!n && isComment(n, format);

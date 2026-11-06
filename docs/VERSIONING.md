@@ -31,10 +31,13 @@ After the stable cut, the soak branch is deleted until the next candidate.
 
 Each Beta is published as its own GitHub release at that tag, marked as a
 prerelease. From 0.8.0-beta.3 on, installed Betas read their updates from a
-fixed address, `https://tine.page/updates/beta/latest.json` (AppImages: the
-`amd64`/`aarch64.AppImage.zsync` files next to it). After a Beta is published,
-the release workflow redeploys tine.page, which copies the newest Beta's
-update files from its release (`scripts/pages-beta-manifest.mjs`).
+fixed address, `https://tine.page/updates/beta/latest.json`. After a Beta is
+published, the release workflow redeploys tine.page, which copies the newest
+Beta's update files from its release (`scripts/pages-beta-manifest.mjs`).
+AppImage update information in a Beta points at GitHub's latest prerelease
+(`gh-releases-zsync|…|latest-pre|…`), which trusts GitHub alone, as on stable.
+Betas built before this keep reading the `amd64`/`aarch64.AppImage.zsync` files
+that tine.page still serves next to the manifest.
 
 Betas up to 0.8.0-beta.2 read their updates from the release at the old moving
 tag `beta`. That tag moves one last time, to 0.8.0-beta.3, and then stays

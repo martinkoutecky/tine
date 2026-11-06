@@ -71,8 +71,8 @@ const key = (ta: EditorDriver, k: string) => ta.keydown(new KeyboardEvent("keydo
 const commented = () => [
   block("p", "Gradient descent converges here because the step size shrinks.", [
     block("kid", "an ordinary child"),
-    block("c1", "Only if the loss is convex.\nquote:: converges here because", [block("r1", "Fair, I will add it.\nauthor:: claude")]),
-    block("c2", "Which step size?\nquote:: the step size"),
+    block("c1", "Only if the loss is convex.\ntine.quote:: converges here because", [block("r1", "Fair, I will add it.\ntine.author:: claude")]),
+    block("c2", "Which step size?\ntine.quote:: the step size"),
   ]),
   block("after", "The next block."),
 ];
@@ -123,7 +123,7 @@ describe("a hidden comment margin", () => {
       expect(blockEl(pane, "p")!.textContent).toContain("converges here because the step size shrinks.");
       // The comments are still blocks of the page: nothing was removed or rewritten.
       expect(COMMENTS.every((id) => docNode(id) !== undefined)).toBe(true);
-      expect(docNode("c1").raw).toBe("Only if the loss is convex.\nquote:: converges here because");
+      expect(docNode("c1").raw).toBe("Only if the loss is convex.\ntine.quote:: converges here because");
       expect(docNode("p").children).toEqual(["kid", "c1", "c2"]);
 
       expect(setCommentMarginVisible(true)).toBe(true);

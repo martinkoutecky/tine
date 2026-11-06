@@ -1,15 +1,15 @@
-import { For, Show, createComputed, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
 import { isBlockEmbedMacro } from "./blockParts";
-import { observeNear, unobserveNear } from "../lazyObserve";
+import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
@@ -22,8 +22,9 @@ import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { reservedGroupHeight } from "../reservedGroupHeight";
+import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
-import { clearOnBindingInvalidated } from "../binding";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -62,6 +63,8 @@ function keepUnchanged<T extends object>(previous: Map<string, T> | undefined, e
 // the real block and saves to its page. Keyed by uuid so a reactive refresh
 // reuses existing rows and never yanks the caret out of a block being edited.
 interface LiveRefGroupProps {
+  /** Owner-provided identity for reference groups; never derived from a row. */
+  heightKey?: string;
   page: string;
   kind: PageKind;
   path?: string;
@@ -95,45 +98,33 @@ interface LiveRefGroupProps {
 // again: a placeholder of one row's estimate made the window about one embed
 // shorter than its spacer, and every block below it jumped (and jumped back when
 // the rows mounted). Keyed by the embedding block, so it reads no row of an
-// offscreen group (I-25); other surfaces have no such identity and keep the
-// estimate. Bounded and graph-scoped like BlockList's window heights; the width
-// guards a pane resized in between.
-const groupHeights = new Map<string, { width: number; height: number }>();
-const MAX_GROUP_HEIGHTS = 512;
-clearOnBindingInvalidated(() => groupHeights.clear());
+// offscreen group (I-25). Reference owners supply heightKey; queries also retain
+// their outer shell's height. The bounded, graph-scoped cache checks pane width.
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
-  const [reserved, setReserved] = createSignal(0);
   let el: HTMLDivElement | undefined;
   // Kept current while alive: a cleanup must not read props, whose getters may
   // already answer for an unmounted embed.
-  let key: string | undefined;
-  createComputed(() => {
-    key = props.hostBlockId === undefined ? undefined
-      : `${props.hostBlockId}\0${props.embedId ?? props.page}\0${props.blocks.length}`;
-  });
+  const ownerSurface = useContext(SurfaceContext);
+  const reserved = reservedGroupHeight(() => {
+    const owner = props.heightKey ?? props.hostBlockId;
+    return owner === undefined ? undefined : JSON.stringify([
+      ownerSurface, props.surface, owner, props.kind, props.path ?? props.page,
+      props.embedId, props.blocks.length, !!props.excerpt,
+    ]);
+  }, () => el, near);
   onMount(() => {
     if (!el || near()) return;
     const node = el;
-    const remembered = key === undefined ? undefined : groupHeights.get(key);
-    if (remembered && remembered.width === node.clientWidth) setReserved(remembered.height);
-    observeNear(node, () => setNear(true));
+    observeNear(node, entry => preserveAboveViewport(node, () => setNear(true), undefined, false, entry, 1200));
     onCleanup(() => unobserveNear(node));
-  });
-  onCleanup(() => {
-    if (key === undefined || !el?.isConnected || !untrack(near)) return;
-    const height = el.getBoundingClientRect().height;
-    if (height <= 0) return;
-    groupHeights.delete(key);
-    groupHeights.set(key, { width: el.clientWidth, height });
-    if (groupHeights.size > MAX_GROUP_HEIGHTS) groupHeights.delete(groupHeights.keys().next().value!);
   });
 
   return (
     <div ref={el} class="live-ref-group"
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}>
-      <Show when={near()}><MountedRefGroup {...props} /></Show>
+      <Show when={near()}><MountedRefGroup {...props} geometryHost={() => el} /></Show>
     </div>
   );
 }
@@ -141,7 +132,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // Offscreen groups own only their spacer and observation. Their row maps,
 // resources and local disclosure state are created together on first approach.
 // The mounted child keeps the existing render-once lifecycle and keyed rows.
-function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
+function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLElement | undefined }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   // The host block's own outline and surface, read before this group provides its own.
   const hostScope = useContext(OutlineScopeContext);
@@ -150,10 +141,28 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
 
-  // Load the source page only once the group is near the viewport.
+  // GH #849: only the viewport moves a source page in or out of the working set.
+  // A group near the view pins its page; once away it may be evicted (its rows
+  // fall back to their DTO copies) and it loads again on coming back. So a page
+  // answering a read can never evict what another read needs, and an idle page has
+  // no loads left to do, however many source pages it references.
+  const [nearView, setNearView] = createSignal(true);
+  const [acquire, setAcquire] = createSignal(0);
+  onCleanup(pinPageNearViewport(() => nearView() ? props.page : null));
+  onMount(() => {
+    const host = props.geometryHost();
+    if (host) onCleanup(trackNear(host, setNearView));
+  });
+  createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
+    if (previous && isNear && !present && (!previous[0] || previous[1])) setAcquire(n => n + 1);
+  }));
+  // Load the source page only once the group is near the viewport. A string
+  // source: the parent recomputing an equal group must not read again.
   const [readyResource] = createResource(
-    () => ({ p: props.page, k: props.kind, path: props.path }),
-    async ({ p, k, path }) => {
+    () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
+    async (source) => {
+      const [p, k, savedPath] = JSON.parse(source) as [string, PageKind, string | null];
+      const path = savedPath ?? undefined;
       const occupied = pageByName(p);
       if (occupied) return occupied.kind === k && (!path || occupied.id === path);
       const epoch = graphEpoch();
@@ -175,12 +184,27 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
       if (ensurePageLoaded(dto)) return false; // declined: stay on the DTO path
       const loaded = pageByName(p);
       return loaded?.kind === k && (!path || loaded.id === path);
-    }
+    },
+    { storage: initial => {
+      const [read, write] = createSignal<boolean | undefined>(initial);
+      const anchored = ((value: boolean | undefined | ((previous: boolean | undefined) => boolean | undefined)) => {
+        let result: boolean | undefined;
+        const change = () => { result = write(value); };
+        const host = props.geometryHost();
+        if (host) preserveAboveViewport(host, change, undefined, true);
+        else change();
+        return result;
+      }) as typeof write;
+      return [read, anchored];
+    } }
   );
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
+  // Page lookup observes the working-set index. Stop another page loading from
+  // invalidating this group's breadcrumbs and rows when its source is unchanged.
+  const sourcePage = createMemo(() => pageByName(props.page));
   const liveNode = (id: string) => {
-    const page = pageByName(props.page);
+    const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;
     const dto = dtoById(id);
     if (!dto) {
@@ -229,7 +253,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // the edit happens in place, live, exactly as on the source page.
   const headerBlockId = (): string | null => {
     if (!ready()) return null;
-    const page = pageByName(props.page);
+    const page = sourcePage();
     const first = page && page.kind === props.kind ? docNode(page.roots[0] ?? "") : undefined;
     return first?.originatedFromPageHeader && editingId() === first.id ? first.id : null;
   };
@@ -239,7 +263,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // arrives (including an emptied header, whose transient node is removed).
   const readOnlyRow = (b: BlockDto): BlockDto => {
     if (!b.page_property || !ready()) return b;
-    const page = pageByName(props.page);
+    const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return b;
     const first = docNode(page.roots[0] ?? "");
     return { ...b, raw: first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "" };
@@ -551,11 +575,17 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <For each={groupedIds()}>
           {(id) => {
-            const crumb = () => {
+            const crumb = createMemo<Crumb[]>((previous) => {
+              if (!props.showBreadcrumb) return [];
               const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));
               const tail = all.slice(-3);
-              return all.length > 3 ? [{ label: "…" }, ...tail] : tail;
-            };
+              const next = all.length > 3 ? [{ label: "…" }, ...tail] : tail;
+              // Identity resolution also observes other working-set loads.
+              // Keep unchanged crumbs keyed so their inline bodies stay mounted.
+              return previous && previous.length === next.length
+                && previous.every((item, i) => item.id === next[i].id && item.label === next[i].label)
+                ? previous : next;
+            });
             return (
               <>
                 <Show when={props.showBreadcrumb && crumb().length > 0 && startsParentGroup(id)}>

@@ -226,8 +226,17 @@ lock. It is produced by `serve.rs` and exercised by the handover tests, not by `
 `tine add`, `tine edit`, `tine prop set|remove`, `tine move`. Every write goes through the graph's owner and
 the page host's guarded save, the path the app's own edits use: the owner first saves any text typed in a window
 holding the page, then reads the page, resolves the command's blocks against what it read, plans the new bytes,
-checks they read back as the intended outline, and writes. If the page changed in between (someone typed), it
-re-reads and re-resolves once; a second change is `stale`. Writes are never retried by the client.
+checks they read back as the intended outline, and writes. Commands writing one page through one owner take
+turns, so they never race each other: parallel writes that name no revision land, in some order, while `--rev`
+and a handle are checked against the page as it stands at that command's turn. Turns follow the order commands
+reach the line; a `--run` write reaches it only after the graph's run lock, whose waiters have no order, and
+`page rename` and `page delete` take the whole graph's turn and resolve their name in it. If something outside
+the owner's commands changed the page in between (someone typed, an editor, Syncthing), the write re-reads and
+re-resolves once; a second change is `stale`. A write still in line after 45 seconds is `refused`, reason
+`page-busy`, nothing written (other writers behind a wedged or very slow one). The 45 seconds cover the line
+only: a `--run` write's wait for the run lock, or a write that got its turn late and then ran long, can pass the
+client's 60-second reply wait, which reports `uncertain` while the owner finishes the write. A client that exits
+or is killed while its write stands in line does not cancel it: the write can land up to that wait later. Writes are never retried by the client.
 
 - **Blocks** are named by a **handle**: `PAGE/POS~FP` as a read prints it (see "The text outline"), or a block's
   `id::` UUID (graph-wide). The position is used when its fingerprint still matches; otherwise the one block on the
@@ -244,11 +253,15 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   current `detail.rev`.
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
   (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
-  page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
-  `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
+  page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
+  `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
-- **`block.edit`**: the text replaces the block's editor text, as typing it would: OG hidden built-ins
-  (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
+- **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
+  built-ins including SRS keys, graph-configured hidden keys, and visible ones such as `status::`, `src::`,
+  `tine.author::`) is kept byte-exact; children are kept too. Removing a property takes `tine prop remove`. This is an
+  intentional difference from typing in the app, whose editor buffer owns visible properties, and from OG, which
+  has no command line (#840, D-20261101-CLIE). A block whose parse failed is refused (`refused:kernel`): the
+  in-scope threat is malformed input, where properties cannot be told from text.
   Raw text returned by reads may be submitted directly: an explicitly supplied primary property replaces
   the retained row with the same normalized key, so a read-then-edit never adds a second copy. This also
   permits an explicit new value, except that a supplied primary `id` differing from an existing accepted
@@ -256,10 +269,12 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   malformed agent input, such as submitting another block's raw text or mistyping its UUID.
   IDs compare after trimming, ignoring ASCII letter case, as block-handle resolution does. Same-id and
   omitted-id edits keep the identity; a block without an accepted id may receive one, even when its body
-  contains a non-primary lookalike. A property-looking line inside a fence does not replace metadata.
-  On a block whose own primary properties
-  include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
-  kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
+  contains a non-primary lookalike. A property-looking line inside a fence is text: it neither replaces
+  metadata nor counts as naming a key.
+  `--author NAME` on the command line sets `tine.author::`, replacing a retained or supplied one and adding one
+  to a block without it. An empty name is refused (`refused:kernel`, malformed input). `TINE_AUTHOR` alone names
+  the run's commits and leaves `tine.author::` alone: set once for a session, it would overwrite people's attribution
+  on every edit.
   Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
   property ownership and creates no more property groups than canonical placement. Otherwise the join
   restores canonical placement so OG can read the retained properties, including repairing earlier split groups.
@@ -275,7 +290,7 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
   nothing changes. **`--author NAME`** (or `TINE_AUTHOR`, default `agent`) names the agent on created blocks'
-  `author::` and on the run's commits.
+  `tine.author::` and on the run's commits; on `block.edit`, see above.
 
 Kind `written`. Write replies carry no page text.
 
@@ -410,7 +425,7 @@ searched.
 ### `page.create`
 
 `tine page create NAME` creates an empty page through the owner's guarded save,
-with EditKind `create-page`. It creates no blocks, so there is no `author::` to
+with EditKind `create-page`. It creates no blocks, so there is no `tine.author::` to
 add. An existing page, alias or file refuses as `refused:page-exists`. Its payload
 and text are the `block.edit` / `written` fields above (`blocks: []`, `more: 0`).
 An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits.
@@ -494,8 +509,8 @@ One block per line, indented two spaces per level:
 
 ```
 # a
-id pages/a.md rev 9e8b1eedbf3d8ef0
-1~eea65l [author:: claude] one
+id pages/a.md rev d24f22bfce0d5568
+1~xy4j47 [tine.author:: claude] one
          id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
   1.1~3as2k7 under one
 2~hl6h22 TODO two
@@ -504,8 +519,8 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
 - The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
   PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
   the shared built-in editor projection; OG hidden built-ins, including SRS keys,
-  are left out, as are `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` only when the block's own
-  primary properties include `quote`). Ordinary author/context properties contribute to the fingerprint.
+  are left out, as are `tine.quote::`, `tine.quote-prefix::`, `tine.quote-suffix::` and `tine.author::` only when the block's own
+  primary properties include `tine.quote`). Ordinary author/context properties contribute to the fingerprint.
   Graph-configured hiding does not alter fingerprints; handles remain independent of that display preference.
   A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
@@ -518,13 +533,15 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
   file. When the page cannot be read at that moment the preview comes from the graph's index
   and prints positions relative to the block, with no handles. Result groups (`refs`, `query`) print positions only.
 - **Attribution sits beside the address** (spec A3: "each block line starts with its address and
-  its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property
+  its `tine.author::` when there is one"): `ADDRESS [tine.author:: NAME] first line`. The `tine.author::` property
   line is not repeated among the block's other lines. The JSON `raw` is unchanged and still holds
   it. Other properties are shown as lines under the block, as written.
+  The key is `tine.author` (D-20261102-PNS, Discussion #825; earlier versions used a bare `author::`, with no
+  reader kept for it). A user's own `author::` (book notes) is an ordinary property line.
 - **Whether a block has an author is the projection's answer.** The text reads `properties`
   (`BlockDto.properties`, the DocBlock projection in `tine-core`, which treats a `key::` line inside a
-  code fence as content) and does not scan `raw`. A literal `author:: NAME` line in a code fence is
-  content: it is neither attribution nor hidden. A block with no `properties` entry for `author` has
+  code fence as content) and does not scan `raw`. A literal `tine.author:: NAME` line in a code fence is
+  content: it is neither attribution nor hidden. A block with no `properties` entry for `tine.author` has
   no attribution.
 - Continuation and property lines are indented under the address.
 - A block preview cut by its bound ends with a line naming how many nodes were omitted
@@ -582,7 +599,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `owner-unsafe` | 5 | the owner namespace or endpoint path is unsafe: on a shared Windows machine another account pre-created or loosened the directory, or occupied the pipe name (a lingering predecessor name is retried for 3 s first) |
 | `owner-lock` | 5 | the owner lock call itself failed (not contention) |
 | `unsupported` | 5 | no CLI owner on this platform (iOS/Android and unshipped targets) |
-| `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or the page changed twice while the write ran. Not admitted; read again |
+| `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or something other than another command changed the page twice while the write ran. Not admitted; read again |
 | `refused` | 6 | the owner refused; `detail.reason` says why (below). Nothing changed |
 | `draft-failed` | 7 | a write was admitted but its draft could not be saved (disk full, app-data error); nothing changed |
 | `unwritten` | 8 | a write was admitted and applied in the owner, but the file is not written yet; Tine keeps trying |
@@ -649,7 +666,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `app-owner` | `tine serve --stop` to a graph the app owns |
 | `draft-namespace` | a yield whose opening app keeps its drafts elsewhere |
 | `unsaved` | the page has typed text Tine could not save; save or discard it in the app |
-| `page-busy` | other work held the page; try again |
+| `page-busy` | other work held the page, or the write waited 45 seconds behind other commands writing to it; try again |
 | `host` | the page host refused the write |
 | `no-host` | no page host could be started for the write |
 | `read-only` | the page is read-only in Tine (a Guide page, or a page that cannot round-trip) |
