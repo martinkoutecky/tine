@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-06, GH #860 / roadmap AG (Martin's 2026-11-03 placement, confirmed in the issue thread):
+  `commands.registry` 147→148 and `commands.palette` 89→90 for **Toggle embed breadcrumbs**,
+  explicitly requested as a palette command, rebindable with no default key like Toggle custom CSS.
+  It changes the existing Fine-tuning setting; no new Settings control or topbar button.
 - 2026-11-01, GH #764 and GH #818 (D-20261101-L5 decided both for 0.10 on development; this entry records only
   that): `commands.registry` 145→147, `commands.registry.editor` 26→27 and `commands.palette` 88→89. **Merge selected
   blocks** (#764) is a palette and keymap command with no default key and no menu row. **New block after this block's
