@@ -721,7 +721,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // scaffold both come here (GH #507). While open `codeShown` keeps the raw
   // view so the opener line stays visible; choosing a language, or Escape,
   // then drops into the body-only view.
+  let scaffoldLanguagePicker = false;
   const openFenceLanguagePicker = (raw: string, fenceEnd: number) => {
+    scaffoldLanguagePicker = true;
     setAc({ kind: "code-language", query: "", start: fenceEnd, end: fenceEnd });
     setAcIndex(0);
     setAcItems(codeLanguageItems("").map((language) => ({
@@ -785,6 +787,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
 
   const closeAc = () => {
+    const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null;
+    scaffoldLanguagePicker = false;
     releaseCompletionLease();
     completionOriginalRaw = null;
     setAc(null);
@@ -793,6 +797,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     setAcIndex(0);
     setPropertyValueKey(null);
     propertyCompletion.end();
+    if (scaffold) {
+      codeView.enter(scaffold.open.length);
+      queueMicrotask(() => {
+        ref.value = scaffold.body;
+        ref.setSelectionRange(0, 0);
+        autosize();
+      });
+    }
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger): boolean =>
     left !== null &&
@@ -1117,6 +1129,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     commit(spaced.raw);
     if (enteredCalc !== null) setEditingCalc(true);
     closeAc();
+    if (codeWrap) codeView.enter(codeWrap.open.length);
     queueMicrotask(() => {
       const shown = enteredCalc ?? codeWrap?.body ?? spaced.raw;
       const openingEnd =
@@ -1527,14 +1540,15 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const focusNow = () => {
     const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
-    const rawCaret = historySelection && !codeBodyProjection(editorValue(), pageFmt()) ? historySelection.start
+    const rawCaret = historySelection ? historySelection.start
+      : want !== null && typeof want === "object" && "start" in want ? want.codeBodyStart ?? null
       : typeof want === "number" ? want : null;
     if (rawCaret !== null) codeView.enter(rawCaret, historySelection?.end ?? rawCaret);
     ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
     ref.focus({ preventScroll: true }); // the engine's own focus scroll differs; revealCaretSettled (onMount) owns it (GH #745)
     const v = ref.value;
     if (historySelection) {
-      const offset = codeView.mixed() ? codeShown()!.open.length : 0;
+      const offset = codeShown()?.open.length ?? 0;
       const end = Math.min(historySelection.end - offset, v.length);
       const start = Math.min(historySelection.start - offset, end);
       ref.setSelectionRange(start, end);
@@ -1781,7 +1795,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     e.preventDefault();
     const movedEditor = ref;
     const { id, scope } = position();
-    const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+    const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection, codeBodyStart: codeShown()?.open.length };
     const restore = () => restoreMovedSelection(ref, props.id, selection.start, selection.end, selection.direction);
     commit(ref.value);
     void withBlockMoving(docNode(id)?.page ?? "", async () => {
@@ -1956,7 +1970,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (ll && (pageFmt() === "org" || ll.lineStart > 0)) { nudgeListItem(ll, +2); return true; }
       const { id, scope } = position();
       if (!scope?.navOnly && scope?.roots.includes(id)) return true;
-      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection, codeBodyStart: codeShown()?.open.length };
       commit(ref.value);
       if (indentBlock(id, selection, editSurface(), props.id) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
       return true;
@@ -1967,7 +1981,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (ll && (pageFmt() === "org" || ll.lineStart > 0) && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       const { id, scope } = position();
       if (scope?.forceExpandedRoot === docNode(id)?.parent) return true;
-      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection, codeBodyStart: codeShown()?.open.length };
       commit(ref.value); outdentBlock(id, selection, editSurface(), props.id); return true;
     },
   };

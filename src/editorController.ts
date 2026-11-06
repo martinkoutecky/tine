@@ -14,7 +14,11 @@ import { clearOnBindingInvalidated } from "./binding";
 // Where layout is unavailable, Up falls back to the last source line.
 // Structural edits keep the same editor projection, so a selection is expressed
 // in textarea coordinates (unlike numeric raw-block targets) (#519).
-export type EditorSelection = { start: number; end: number; direction: "forward" | "backward" | "none" };
+export type EditorSelection = {
+  start: number; end: number; direction: "forward" | "backward" | "none";
+  /** Visible-source body start, retaining code mode across a structural remount. */
+  codeBodyStart?: number;
+};
 export type CaretPos = number | { col: number; edge: "first" | "last" } | EditorSelection;
 
 export type EndEditReason =

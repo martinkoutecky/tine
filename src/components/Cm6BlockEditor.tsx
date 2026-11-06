@@ -78,7 +78,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const visible = () => parts().visible;
   const [isCalc, setCalc] = createSignal(calcSource(visible()) !== null);
   const [pickingLanguage, setPickingLanguage] = createSignal(false);
-  const codeView = createCodeBodyEditor(visible, () => format, () => !cell && !isCalc() && !pickingLanguage(), source);
+  const codeView = createCodeBodyEditor(visible, () => format, () => !cell && !isCalc() && !pickingLanguage(), source, true);
   const code = codeView.shown;
   const literal = () => isCalc() || code() !== null;
   const shown = () => isCalc() ? calcSource(visible()) ?? visible() : code()?.body ?? visible();
