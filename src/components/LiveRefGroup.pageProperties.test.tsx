@@ -9,6 +9,7 @@ import { editingId } from "../editorController";
 import { pagePropsPanel, closePageProps } from "../ui";
 import type { BlockDto, PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { ensurePageLoaded, forgetPage } from "../document/workingSet";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { adoptResults, advanceResultsEpoch, captureResultsTicket } from "../queryResultsEpoch";
@@ -118,6 +119,33 @@ describe("preamble query rows", () => {
 });
 
 describe("page properties in Linked References (GH #486)", () => {
+  it("keeps the rendered properties row when its source page is re-admitted unchanged (GH #886)", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(sourcePage());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[propertyRow()]} surface="ref" eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      const row = await vi.waitFor(() => {
+        const el = root.querySelector(".page-property-reference");
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      const key = row.querySelector(".prop-key");
+      expect(key).not.toBeNull();
+      // A source evicted from the working set and loaded again (or a watcher
+      // reload with identical text) must not rebuild every property row: on a
+      // page with hundreds of groups that churn tripled renderer memory.
+      forgetPage("Source");
+      await Promise.resolve();
+      expect(ensurePageLoaded(sourcePage())).toBeNull();
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      await Promise.resolve();
+      expect(root.querySelector(".page-property-reference")).toBe(row);
+      expect(row.querySelector(".prop-key")).toBe(key);
+    } finally {
+      dispose();
+    }
+  });
+
   it("restores identical read-only markup in both groups after header editing (GH #753)", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(sourcePage());
     const { root, dispose } = mount(() => <>

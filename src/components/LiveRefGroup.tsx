@@ -285,12 +285,27 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   // GH #753: the materialized header survives editing. Return to the DTO
   // renderer on exit, using current header text until the backlink refresh
   // arrives (including an emptied header, whose transient node is removed).
+  // GH #886: the row keeps its object identity while its text is unchanged.
+  // RefBlocks keys rows by object, so a fresh copy per evaluation rebuilt every
+  // property row whenever the source page was evicted and loaded again; across
+  // hundreds of groups that churn more than doubled renderer memory.
+  const readOnlyRows = new WeakMap<BlockDto, BlockDto>();
   const readOnlyRow = (b: BlockDto): BlockDto => {
-    if (!b.page_property || !ready()) return b;
+    if (!b.page_property) return b;
+    const kept = readOnlyRows.get(b) ?? b;
+    if (!ready()) return kept;
     const page = sourcePage();
-    if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return b;
+    if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return kept;
     const first = docNode(page.roots[0] ?? "");
-    return { ...b, raw: first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "" };
+    const raw = first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "";
+    if (raw.trimEnd() === b.raw.trimEnd()) {
+      readOnlyRows.delete(b);
+      return b;
+    }
+    if (kept !== b && kept.raw === raw) return kept;
+    const row = { ...b, raw };
+    readOnlyRows.set(b, row);
+    return row;
   };
   // OG edits the referencing page's properties block in place (og-1.0.0
   // block.cljs block-content/properties-cp on a pre-block). Tine's edit path for
