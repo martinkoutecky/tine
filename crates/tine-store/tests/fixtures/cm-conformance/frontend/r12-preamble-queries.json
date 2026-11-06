@@ -1,0 +1,534 @@
+{
+  "backlinks": {
+    "Markdown": [],
+    "Mixed": [],
+    "Mixed Org": [],
+    "Org": [],
+    "Target": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:markdown",
+            "raw": "Prose [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Markdown"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:mixed",
+            "raw": "related:: [[Target]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:mixed",
+            "raw": "Prose [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Mixed"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:mixed org",
+            "raw": ":PROPERTIES:\n:related: [[Target]]\n:END:",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:mixed org",
+            "raw": "Prose [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Mixed Org"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:org",
+            "raw": "Prose [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Org"
+      }
+    ],
+    "related": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:mixed",
+            "raw": "related:: [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Mixed"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:mixed org",
+            "raw": ":PROPERTIES:\n:related: [[Target]]\n:END:",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Mixed Org"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Target.md",
+        6
+      ],
+      [
+        "pages/Org.org",
+        0
+      ],
+      [
+        "pages/Mixed.md",
+        0
+      ],
+      [
+        "pages/Mixed Org.org",
+        0
+      ],
+      [
+        "pages/Markdown.md",
+        0
+      ]
+    ],
+    [
+      [
+        "related",
+        2
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "markdown",
+      "name": "Markdown",
+      "target": {
+        "id": "pages/Markdown.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "mixed",
+      "name": "Mixed",
+      "target": {
+        "id": "pages/Mixed.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "mixed org",
+      "name": "Mixed Org",
+      "target": {
+        "id": "pages/Mixed Org.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "org",
+      "name": "Org",
+      "target": {
+        "id": "pages/Org.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "related",
+      "name": "related",
+      "target": {
+        "id": "pages/related.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "target",
+      "name": "Target",
+      "target": {
+        "id": "pages/Target.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Markdown": "markdown",
+    "Mixed": "mixed",
+    "Mixed Org": "mixed org",
+    "Org": "org",
+    "Target": "target",
+    "related": "related"
+  },
+  "namespaceNodes": [],
+  "namespaceTree": [],
+  "open": {
+    "Markdown": {
+      "journal": [
+        "journal",
+        "markdown"
+      ],
+      "page": [
+        "page",
+        "markdown"
+      ]
+    },
+    "Mixed": {
+      "journal": [
+        "journal",
+        "mixed"
+      ],
+      "page": [
+        "page",
+        "mixed"
+      ]
+    },
+    "Mixed Org": {
+      "journal": [
+        "journal",
+        "mixed org"
+      ],
+      "page": [
+        "page",
+        "mixed org"
+      ]
+    },
+    "Org": {
+      "journal": [
+        "journal",
+        "org"
+      ],
+      "page": [
+        "page",
+        "org"
+      ]
+    },
+    "Target": {
+      "journal": [
+        "journal",
+        "target"
+      ],
+      "page": [
+        "page",
+        "target"
+      ]
+    },
+    "related": {
+      "journal": [
+        "journal",
+        "related"
+      ],
+      "page": [
+        "page",
+        "related"
+      ]
+    }
+  },
+  "owner": {
+    "Markdown": {
+      "journal": null,
+      "page": "pages/Markdown.md"
+    },
+    "Mixed": {
+      "journal": null,
+      "page": "pages/Mixed.md"
+    },
+    "Mixed Org": {
+      "journal": null,
+      "page": "pages/Mixed Org.org"
+    },
+    "Org": {
+      "journal": null,
+      "page": "pages/Org.org"
+    },
+    "Target": {
+      "journal": null,
+      "page": "pages/Target.md"
+    },
+    "related": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "markdown",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Markdown",
+      "owner": "pages/Markdown.md",
+      "parent": null
+    },
+    {
+      "key": "mixed",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Mixed",
+      "owner": "pages/Mixed.md",
+      "parent": null
+    },
+    {
+      "key": "mixed org",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Mixed Org",
+      "owner": "pages/Mixed Org.org",
+      "parent": null
+    },
+    {
+      "key": "org",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Org",
+      "owner": "pages/Org.org",
+      "parent": null
+    },
+    {
+      "key": "related",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "related",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "target",
+      "kind": "page",
+      "linkedRefs": 6,
+      "name": "Target",
+      "owner": "pages/Target.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "Markdown": {
+      "backend": [
+        "page",
+        "markdown"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "markdown"
+      ]
+    },
+    "Mixed": {
+      "backend": [
+        "page",
+        "mixed"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "mixed"
+      ]
+    },
+    "Mixed Org": {
+      "backend": [
+        "page",
+        "mixed org"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "mixed org"
+      ]
+    },
+    "Org": {
+      "backend": [
+        "page",
+        "org"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "org"
+      ]
+    },
+    "Target": {
+      "backend": [
+        "page",
+        "target"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "target"
+      ]
+    },
+    "related": {
+      "backend": [
+        "page",
+        "related"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "related"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "markdown"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "mixed org"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "mixed"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "org"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "target"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "related"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "markdown"
+    ],
+    [
+      "page",
+      "mixed org"
+    ],
+    [
+      "page",
+      "mixed"
+    ],
+    [
+      "page",
+      "org"
+    ],
+    [
+      "page",
+      "target"
+    ],
+    [
+      "page",
+      "related"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "markdown"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "mixed org"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "mixed"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "org"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "target"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "related"
+      ],
+      "parent": null
+    }
+  ]
+}

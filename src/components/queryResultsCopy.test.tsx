@@ -1,13 +1,35 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import { closeExportModal, exportModal } from "../ui";
 import { openQueryResultsCopy } from "./queryResultsCopy";
 import { bumpGraphEpoch } from "../graphSession";
 import type { BlockDto, RefGroup } from "../types";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+import { initParser } from "../render/parse";
+import { ensurePageLoaded, resetStore } from "../document";
+
+beforeAll(initParser);
 
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, children, collapsed: false });
-afterEach(() => { vi.restoreAllMocks(); closeExportModal(); });
+afterEach(() => { vi.restoreAllMocks(); closeExportModal(); resetStore(); });
+
+it.each(["md", "org"] as const)("copies the %s preamble itself before and after source hydration", async format => {
+  const source = { id: `pages/Copy.${format}`, name: "Copy", title: "Copy", kind: "page" as const, format,
+    pre_block: (format === "md" ? "related:: [[Target]]" : "#+RELATED: [[Target]]") + "\n\nProse [[Target]]\n",
+    blocks: [block("ordinary", "Unrelated outline")] };
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue(source);
+  for (const loaded of [false, true]) {
+    if (loaded) ensurePageLoaded(source);
+    const groups: RefGroup[] = [{ page: "Copy", kind: "page", path: source.id,
+      blocks: [{ ...block("page-preamble:Page:copy", "Prose [[Target]]"), page_preamble: true }] }];
+    adoptResults(groups, captureResultsTicket());
+    await openQueryResultsCopy(groups);
+    const modal = exportModal();
+    expect(modal && "nodes" in modal && modal.nodes).toMatchObject([{ raw: "Copy", children: [{ raw: "Prose [[Target]]", children: [] }] }]);
+    expect(JSON.stringify(modal)).not.toContain("Unrelated outline");
+    closeExportModal();
+  }
+});
 
 it("copies duplicate matched descendants only once under the journal date title", async () => {
   const child = block("c", "Child");

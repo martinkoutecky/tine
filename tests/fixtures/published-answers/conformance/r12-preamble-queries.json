@@ -1,0 +1,172 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "markdown",
+        "name": "Markdown",
+        "target": {
+          "id": "pages/Markdown.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "mixed",
+        "name": "Mixed",
+        "target": {
+          "id": "pages/Mixed.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "mixed org",
+        "name": "Mixed Org",
+        "target": {
+          "id": "pages/Mixed Org.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "org",
+        "name": "Org",
+        "target": {
+          "id": "pages/Org.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "related",
+        "name": "related",
+        "target": {
+          "id": "pages/related.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "target",
+        "name": "Target",
+        "target": {
+          "id": "pages/Target.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Markdown",
+      "path": "pages/Markdown.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Mixed",
+      "path": "pages/Mixed.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Mixed Org",
+      "path": "pages/Mixed Org.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Org",
+      "path": "pages/Org.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Target",
+      "path": "pages/Target.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Markdown",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Markdown",
+      "path": "pages/Markdown.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Markdown"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Mixed",
+      "path": "pages/Mixed.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Mixed"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "Mixed Org",
+      "path": "pages/Mixed Org.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Mixed Org"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "Org",
+      "path": "pages/Org.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Org"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Target",
+      "path": "pages/Target.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Target"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

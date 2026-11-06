@@ -12,6 +12,8 @@ import { LiveRefGroup } from "./LiveRefGroup";
 import { ensurePageLoaded, forgetPage } from "../document/workingSet";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
+import { adoptResults, advanceResultsEpoch, captureResultsTicket } from "../queryResultsEpoch";
+import { createSignal } from "solid-js";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
 // References as its properties row. OG lists the referencing page's
@@ -57,6 +59,64 @@ const propertyRow = (raw = HEADER): BlockDto => ({
 const replaceValue = (textarea: EditorDriver, value: string) => {
   textarea.input(value, undefined, { inputType: "insertText", data: value });
 };
+
+describe("preamble query rows", () => {
+  it.each([ ["md", "query"], ["org", "query"], ["md", "ref"], ["org", "ref"] ] as const)("promotes and edits the %s source prose through the ordinary save on %s", async (format, surface) => {
+    const host = await bindTestHost();
+    answerOpensFromDocument(host);
+    const submit = vi.spyOn(backend(), "pageSubmit");
+    const header = format === "md" ? "related:: [[Target]]\n" : "#+RELATED: [[Target]]\n";
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(format), pre_block: header + "\nProse [[Target]]\n" });
+    const hit: BlockDto = { id: "page-preamble:Page:source", raw: "Prose [[Target]]", collapsed: false, page_preamble: true, children: [] };
+    const [blocks, setBlocks] = createSignal([hit]);
+    adoptResults(hit, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={blocks()} surface={surface} eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      expect(root.textContent).toContain("Prose");
+      const content = root.querySelector<HTMLElement>(".block-content")!;
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        content.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+      }
+      const editor = await vi.waitFor(() => { expect(maybeEditorIn(root)).not.toBeNull(); return editorIn(root); });
+      expect(editor.value()).toBe("Prose [[Target]]");
+      replaceValue(editor, "Edited [[Target]]");
+      editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
+      await vi.waitFor(() => expect(editingId()).toBeNull());
+      expect(await flushAll()).toBe(true);
+      const saved = submittedPages(submit, "Source").at(-1)!;
+      expect(saved.pre_block).toContain(header.trim());
+      expect(saved.pre_block).not.toContain("Prose");
+      expect(saved.blocks[0].raw).toBe("Edited [[Target]]");
+      expect(saved.blocks[1].raw).toBe("Body block");
+      // The refreshed query carries the promoted outline identity.
+      const refreshed = await vi.waitFor(() => {
+        const answer = adoptResults([saved.blocks[0]], captureResultsTicket());
+        expect(answer).toBeDefined();
+        return answer!;
+      });
+      setBlocks(refreshed);
+      await vi.waitFor(() => expect(root.textContent).toContain("Edited"));
+      expect(root.querySelector('[data-block-id="page-preamble:Page:source"]')).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("does not promote a stale preamble answer", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(), pre_block: "Replacement [[Target]]\n" });
+    const hit: BlockDto = { id: "page-preamble:Page:source", raw: "Old [[Target]]", collapsed: false, page_preamble: true, children: [] };
+    adoptResults(hit, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface="query" eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      advanceResultsEpoch();
+      root.querySelector<HTMLElement>(".block-content")!.click();
+      await Promise.resolve();
+      expect(editingId()).toBeNull();
+      expect(pageByName("Source")!.preBlock).toBe("Replacement [[Target]]\n");
+      expect(isDirty("Source")).toBe(false);
+    } finally { dispose(); }
+  });
+});
 
 describe("page properties in Linked References (GH #486)", () => {
   it("keeps the rendered properties row when its source page is re-admitted unchanged (GH #886)", async () => {

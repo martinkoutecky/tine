@@ -6,7 +6,7 @@ import { Block, CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block"
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { blockProperty, resetStore, setRaw, undo } from "../document";
+import { blockProperty, pageByName, resetStore, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { openJournals, openPage, route } from "../router";
@@ -1414,6 +1414,51 @@ describe("QueryMacro sheet integration", () => {
 });
 
 describe("QueryMacro through query_parse + query_run", () => {
+  it.each(["md", "org"] as const)("a real pointer sequence edits the %s preamble source instead of its query host", async format => {
+    const queryRaw = "{{query [[Target]]}}";
+    loadQueryDoc(queryRaw);
+    const header = format === "md" ? "related:: [[Target]]\n" : "#+RELATED: [[Target]]\n";
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: `pages/Source.${format}`, name: "Source", kind: "page", title: "Source", format,
+      pre_block: header + "\nProse [[Target]]\n",
+      blocks: [{ id: "source-body", raw: "Body block", collapsed: false, children: [] }],
+    });
+    mockRun([{ page: "Source", kind: "page", blocks: [{
+      id: "page-property:Page:source", raw: header.trim(), collapsed: false, page_property: true, children: [],
+    }, {
+      id: "page-preamble:Page:source", raw: "Prose [[Target]]", collapsed: false, page_preamble: true, children: [],
+    }] }]);
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const content = await vi.waitFor(() => {
+        const row = root.querySelector<HTMLElement>('[data-block-id="page-preamble:Page:source"] .block-content');
+        expect(row).not.toBeNull();
+        return row!;
+      });
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        content.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+      }
+      const editor = await vi.waitFor(() => {
+        const editor = maybeEditorIn(root);
+        expect(editor?.value()).toBe("Prose [[Target]]");
+        return editor!;
+      });
+      expect(editingId()).toBe(pageByName("Source")!.roots[0]);
+      expect(doc.byId.query.raw).toBe(queryRaw);
+      expect(root.querySelector(".query-block")).not.toBeNull();
+      // Clearing the reference while replacing prose must not remove its
+      // promoted editor when an answer for the old synthetic row refreshes.
+      editor.input("", undefined, { inputType: "deleteContentBackward" });
+      mockRun([]);
+      beginResultsChange()();
+      await settleQuery();
+      expect(maybeEditorIn(root)?.value()).toBe("");
+      editor.input("Edited [[Target]]", undefined, { inputType: "insertText", data: "Edited [[Target]]" });
+      editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
+      await vi.waitFor(() => expect(maybeEditorIn(root)).toBeNull());
+    } finally { endEdit("page-navigation"); dispose(); }
+  });
+
   const emptyRun = (extra: Partial<QueryResult> = {}): QueryResult => ({ ...blockRunResult([]), ...extra } as QueryResult);
 
   it("renders a page-anchored answer as page rows, sending the host block's tine.* view properties", async () => {

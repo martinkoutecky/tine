@@ -130,26 +130,7 @@ fn preamble_range_in(
     is_org: bool,
     regions: &crate::block_regions::BlockRegions,
 ) -> Option<std::ops::Range<usize>> {
-    if !is_org {
-        return tine_outline::page_preamble::page_preamble_content_in(pre, regions)
-            .map(|r| r.0..r.1);
-    }
-    if regions.quarantined {
-        // A refused pre-block has no readable references in either part.
-        return None;
-    }
-    let mut start = 0;
-    for property in regions.page_properties() {
-        start = start.max(property.line.1);
-        if let Some(drawer) = regions.property_regions.get(property.region) {
-            start = start.max(drawer.1);
-        }
-    }
-    let start = start.min(pre.len());
-    let rest = &pre[start..];
-    let leading = rest.len() - rest.trim_start_matches('\n').len();
-    let content = rest.trim_matches('\n');
-    (!content.is_empty()).then(|| start + leading..start + leading + content.len())
+    tine_outline::page_preamble::preamble_content_range_in(pre, is_org, regions).map(|r| r.0..r.1)
 }
 
 /// The pre-block's prose as a block (see [`preamble_content_range`]): the

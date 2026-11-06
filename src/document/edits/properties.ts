@@ -327,13 +327,13 @@ export function adoptFoldedPageHeader(pageName: string, preBlock: string): void 
   setDoc("byId", first.id, "originatedFromPageHeader", true);
 }
 
-/** Turn ordinary text before the first Markdown bullet into a real first block
+/** Turn ordinary text before the first outline block into a real first block
  * only when the user chooses to edit it (GH #85). Until then the preamble stays
  * byte-preserved and an unrelated save cannot silently add an outline marker. */
 export function promotePagePreamble(pageName: string): string | null {
   const page = pageByName(pageName);
-  if (!page || page.format !== "md" || !pageWritable(pageName)) return null;
-  const { properties, content } = splitPagePreamble(page.preBlock);
+  if (!page || !pageWritable(pageName)) return null;
+  const { properties, content } = splitPagePreamble(page.preBlock, page.format);
   if (!content) return null;
   pushUndo(`promote-preamble:${pageName}`, [pageName]);
   const id = freshId();

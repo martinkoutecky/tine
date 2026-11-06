@@ -888,12 +888,16 @@ pub(crate) fn pre_blocks_with_config(
 /// header one is a page-property row, the prose one a preamble row.
 fn pre_block_dto(block: &DocBlock) -> BlockDto {
     let mut dto = block_to_shallow_dto(block);
+    mark_pre_block_dto(&mut dto, block);
+    dto
+}
+
+fn mark_pre_block_dto(dto: &mut BlockDto, block: &DocBlock) {
     if block.uuid.starts_with("page-preamble:") {
         dto.page_preamble = true;
     } else {
         dto.page_property = true;
     }
-    dto
 }
 
 /// A pre-block referencing block `uuid`, as a page-property or preamble row.
