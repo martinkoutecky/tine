@@ -11,6 +11,40 @@ pub(super) fn execute_blocks(
         return Some((Vec::new(), false));
     }
     graph.with_pages(|pages| {
+        let selected = |entry: &PageEntry| {
+            plan.page_scope
+                .as_ref()
+                .is_none_or(|scope| match scope.path.as_deref() {
+                    Some(path) => entry.rel_path_str() == path,
+                    None => {
+                        entry.kind == scope.page_kind && refs::same_page(&entry.name, &scope.name)
+                    }
+                })
+        };
+        // OG indexes its pre-block as a block. Retain these projections for the
+        // ranked pool's lifetime; graph documents and persisted indexes stay intact.
+        let config = tine_core::query::atom::ParseConfig::from_config(graph.config());
+        let pre_blocks: Vec<Vec<DocBlock>> = if plan.include_user_properties {
+            pages
+                .iter()
+                .take_while(|_| !cancelled())
+                .map(|(entry, doc)| {
+                    if !selected(entry) {
+                        return Vec::new();
+                    }
+                    doc.pre_block
+                        .as_deref()
+                        .filter(|pre| text::pre_block_may_match(plan, &branch.predicate, pre))
+                        .map(|pre| text::pre_blocks_with_config(entry, pre, &config))
+                        .unwrap_or_default()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if cancelled() {
+            return None;
+        }
         let mut heap = BinaryHeap::new();
         let mut has_more = false;
         let sort = friendly_sort_fields(plan.block_view.as_ref());
@@ -20,55 +54,56 @@ pub(super) fn execute_blocks(
             usize::MAX
         };
         let mut index = 0usize;
-        for (entry, doc) in pages {
+        for (page_index, (entry, doc)) in pages.iter().enumerate() {
             if cancelled() {
                 return None;
             }
-            if let Some(scope) = &plan.page_scope {
-                let selected = match scope.path.as_deref() {
-                    Some(path) => entry.rel_path_str() == path,
-                    None => {
-                        entry.kind == scope.page_kind && refs::same_page(&entry.name, &scope.name)
-                    }
-                };
-                if !selected {
-                    continue;
-                }
+            if !selected(entry) {
+                continue;
             }
             let mut ancestors = Vec::new();
-            walk_blocks(&doc.roots, &mut ancestors, &mut |block, path| {
-                if cancelled() {
-                    return false;
-                }
-                let candidate_index = index;
-                index = index.saturating_add(1);
-                let visible = block.visible_text();
-                let lower = block.visible_folded(plan.remove_accents);
-                if let Some(relevance) = block_relevance(plan, &branch.predicate, visible, lower) {
-                    has_more |= heap.len() >= selection_limit;
-                    let retain = heap.len() < selection_limit
-                        || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
-                            relevance.cmp_quality(&worst.relevance) == Ordering::Greater
-                                || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
-                                    && (entry.rel_path_str(), candidate_index)
-                                        < (worst.page.rel_path_str(), worst.index))
-                        });
-                    if retain {
-                        push_block(
-                            &mut heap,
-                            selection_limit,
-                            ScoredBlock {
-                                relevance,
-                                index: candidate_index,
-                                page: entry,
-                                block,
-                                ancestors: path.to_vec(),
-                            },
-                        );
+            let pre = pre_blocks.get(page_index).map(Vec::as_slice).unwrap_or(&[]);
+            for (is_pre, roots) in [(true, pre), (false, doc.roots.as_slice())] {
+                walk_blocks(roots, &mut ancestors, &mut |block, path| {
+                    if cancelled() {
+                        return false;
                     }
-                }
-                true
-            });
+                    let candidate_index = index;
+                    index = index.saturating_add(1);
+                    let text = search_text(block, plan, graph);
+                    // New synthetic headers must not consume a window with
+                    // invisible metadata. Ordinary outline behavior stays intact.
+                    if is_pre && text.original.chars().all(char::is_whitespace) {
+                        return true;
+                    }
+                    if let Some(relevance) =
+                        block_relevance(plan, &branch.predicate, &text.original, &text.folded)
+                    {
+                        has_more |= heap.len() >= selection_limit;
+                        let retain = heap.len() < selection_limit
+                            || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
+                                relevance.cmp_quality(&worst.relevance) == Ordering::Greater
+                                    || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
+                                        && (entry.rel_path_str(), candidate_index)
+                                            < (worst.page.rel_path_str(), worst.index))
+                            });
+                        if retain {
+                            push_block(
+                                &mut heap,
+                                selection_limit,
+                                ScoredBlock {
+                                    relevance,
+                                    index: candidate_index,
+                                    page: entry,
+                                    block,
+                                    ancestors: path.to_vec(),
+                                },
+                            );
+                        }
+                    }
+                    true
+                });
+            }
             if cancelled() {
                 return None;
             }
@@ -115,14 +150,20 @@ pub(super) fn execute_blocks(
             winners
                 .into_iter()
                 .map(|winner| {
-                    let visible = winner.block.visible_text();
-                    let lower = winner.block.visible_folded(plan.remove_accents);
-                    let matched = eval_ranked_block_expr(plan, &branch.predicate, visible, lower)
-                        .expect("rank and evidence evaluators must agree");
+                    let text = search_text(winner.block, plan, graph);
+                    let matched = eval_ranked_block_expr(
+                        plan,
+                        &branch.predicate,
+                        &text.original,
+                        &text.folded,
+                    )
+                    .expect("rank and evidence evaluators must agree");
                     // Search hits are result identities, not independent copies
                     // of their entire descendant trees. The source page owns the
                     // hierarchy and live consumers hydrate it once per page.
                     let mut dto = tine_core::projection::block_to_shallow_dto(winner.block);
+                    dto.page_property = winner.block.uuid.starts_with("page-property:");
+                    dto.page_preamble = winner.block.uuid.starts_with("page-preamble:");
                     dto.breadcrumb = winner
                         .ancestors
                         .iter()
@@ -133,7 +174,7 @@ pub(super) fn execute_blocks(
                         kind: winner.page.kind,
                         path: winner.page.rel_path.clone().unwrap(),
                         block: dto,
-                        display_text: visible.to_owned(),
+                        display_text: text.original.into_owned(),
                         evidence: matched.evidence,
                         score: winner.relevance.score(),
                         match_class: winner.relevance.match_class,

@@ -323,7 +323,12 @@ describe("graph-scoped UI state (I-20)", () => {
     const session = readFileSync("src/session.ts", "utf8");
     expect(session).toMatch(/const mayApply = \(\) => owner\(\) && JSON\.stringify\(buildPersistedSession\(\)\) === initialSession/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(stampedId\) => \{\s*if \(!bindingCurrent\(binding\) \|\| ac\(\) !== trigger/);
+    expect(block).toMatch(/acceptBlockRefPick\(item\.blockRef, \{\s*intended: \(\) => bindingCurrent\(binding\) && ac\(\) === trigger/);
+    // Both editors accept a block pick through one path, which rechecks the
+    // caller's intent before it inserts the stamped id (GH #798).
+    const pick = readFileSync("src/editor/blockRefPick.ts", "utf8");
+    expect(pick).toMatch(/persistBlockRefTarget\([\s\S]*?\(stampedId\) => \{\s*if \(!editor\.intended\(\)\) return null;[\s\S]*?editor\.insert\(`\(\(\$\{stampedId\}\)\)`\)/);
+    expect(readFileSync("src/editor/cm6Completions.tsx", "utf8")).toMatch(/acceptBlockRefPick\(item\.blockRef, \{\s*intended: \(\) => owner\(\) && ac\(\) === trigger/);
   });
 
   it("every module-level signal that can name graph content is graph-scoped or classified", () => {

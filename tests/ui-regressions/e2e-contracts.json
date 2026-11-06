@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-search-properties.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Typing a user property value into Ctrl+K shows highlighted property evidence; Enter reveals the owning block or page header in Markdown and Org, without changing graph files.","blocking":false,"authority":"GH #870; D-20261105-SP"}],
+      "acceptableVariations": ["Snippet wrapping, highlight geometry, result timing and page layout may vary."],
+      "nonRequirements": ["No pixels, no hidden-key boundary enumeration (Rust tests cover it), no platform other than Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pdf-area-ref.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
       "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],
@@ -60,6 +66,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"On routed pages Enter after closed standalone math creates a writable next block, and Escape from Markdown or Org code in classic and CodeMirror editors reveals editable raw source that saves durably; the next Escape selects the block and reopening restores the code view.","blocking":false,"authority":"GH #862, GH #865"}],
       "acceptableVariations": ["Editor geometry and save latency may vary."],
       "nonRequirements": ["No exact pixels, Windows certification, private graph or release burn-in."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-cm6-blockref-pick.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the CodeMirror editor, picking a block that has no id from the (( picker writes the same fresh UUID as the target's id:: and as the reference, and the reference renders the target.","blocking":false,"authority":"UI-CM6-PICKER-DANGLING-REF; GH #798"}],
+      "acceptableVariations": ["Picker geometry, ranking among other rows and save latency may vary."],
+      "nonRequirements": ["No private graph, exact pixels, textarea editor (covered by component tests on both editors), platform certification or release burn-in."],
       "stability":"burn-in"
     },
     "scripts/e2e-git-clone-init.mjs": {

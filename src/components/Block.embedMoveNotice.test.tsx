@@ -12,6 +12,8 @@ import * as router from "../router";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
 import { installKeybindings } from "../keybindings";
+import { useEditorKind } from "../tests/editorKind";
+import type { EditorKind } from "../tests/editorDriver";
 
 let keys = () => {};
 
@@ -99,7 +101,9 @@ async function editAndMoveUp(root: HTMLElement, selector: string, id: string) {
   editor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
 }
 
-describe("move notice for moves the view cannot show (GH #641)", () => {
+// UI-CM6-EMBED-ROOT-ACTS-ON-SOURCE: both editors (CM6 lacked the row host).
+describe.each<EditorKind>(["textarea", "cm6"])("move notice for moves the view cannot show (GH #641) (%s editor)", (kind) => {
+  useEditorKind(kind);
   it("Move Up on a whole-block embed's root moves the host on this page, silently (D-20261030-EMB)", async () => {
     loadFixture();
     const { root, dispose } = mount();

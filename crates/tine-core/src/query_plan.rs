@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 pub enum TextField {
     /// Decoded page title or alias.
     PageName,
-    /// Projected visible block text.
+    /// Friendly-search block text, including user properties (GH #870).
+    /// The wire name is retained for existing clients.
     VisibleContent,
 }
 

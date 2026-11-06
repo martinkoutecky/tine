@@ -442,7 +442,7 @@ fn search_cache_reflects_saves_and_deletes() {
 }
 
 #[test]
-fn search_ignores_hidden_property_metadata() {
+fn search_finds_user_properties_but_ignores_hidden_metadata() {
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
     let root = std::env::temp_dir().join(format!("tine-search-meta-{}", std::process::id()));
@@ -452,8 +452,7 @@ fn search_ignores_hidden_property_metadata() {
     let store = std::sync::Arc::new(store);
     let host_writer = crate::test_host_writer_ext::HostWriter::start(&store);
 
-    // A block whose only occurrence of "qzxmeta" is in a property line (like an
-    // id:: uuid or hl-color::) must NOT match — the user can't see it.
+    // GH #870 / D-20261105-SP: user properties count; hidden OG metadata does not.
     let page = PageDto {
         name: "Meta".into(),
         kind: PageKind::Page,
@@ -461,7 +460,7 @@ fn search_ignores_hidden_property_metadata() {
         pre_block: None,
         blocks: vec![BlockDto {
             id: "x".into(),
-            raw: "a perfectly ordinary block\nsome-prop:: qzxmeta".into(),
+            raw: "a perfectly ordinary block\nsome-prop:: qzxuser\nhl-color:: qzxmeta".into(),
             ..Default::default()
         }],
         rev: None,
@@ -482,7 +481,12 @@ fn search_ignores_hidden_property_metadata() {
     assert_eq!(
         search_count(&store, "qzxmeta"),
         0,
-        "token only in a property line should not be a search hit"
+        "token only in hidden metadata should not be a search hit"
+    );
+    assert_eq!(
+        search_count(&store, "qzxuser"),
+        1,
+        "user property values are searchable"
     );
     // But the visible body is still searchable.
     assert_eq!(
@@ -490,6 +494,22 @@ fn search_ignores_hidden_property_metadata() {
         1,
         "visible body still matches"
     );
+
+    // Property-only saves must invalidate the full search text even though
+    // the visible body is unchanged (the report's edit-then-search journey).
+    let mut read = store.page(&id).unwrap();
+    read.doc.blocks[0].raw = read.doc.blocks[0].raw.replace("qzxuser", "qzxreplacement");
+    host_writer
+        .save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc,
+        )
+        .unwrap();
+    assert_eq!(search_count(&store, "qzxuser"), 0);
+    assert_eq!(search_count(&store, "qzxreplacement"), 1);
+    assert_eq!(search_count(&store, "qzxmeta"), 0);
 
     store.close();
     std::fs::remove_dir_all(&root).ok();

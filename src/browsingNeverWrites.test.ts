@@ -196,13 +196,12 @@ describe("only reference creation may stamp an id:: (guard, I-2, I-21)", () => {
       + "Only copy-ref/embed, `((` autocomplete, Alt-drop references and Favourite block (a Favorites-page reference creator) may stamp. Navigation must open by runtime key / blockPos "
       + "like src/blockRefActions.ts openDurableBlock; do not add a stamping call to a navigation path.",
     ).toEqual([
-      "components/Block.tsx",
       "components/blockGestures.ts",
       "components/blockLinkCopy.ts",
       "document/edits/identity.ts",
       "document/index.ts",
-      // Explicit (( suggestion acceptance, with target publication before source.
-      "editor/cm6Completions.tsx",
+      // Explicit (( suggestion acceptance in both editors, with target publication before source.
+      "editor/blockRefPick.ts",
       "favorites.ts",
     ]);
   });

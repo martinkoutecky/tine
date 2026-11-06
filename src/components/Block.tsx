@@ -48,7 +48,7 @@ import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } f
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -98,6 +98,7 @@ import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAut
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { pushToast } from "../toasts";
+import { acceptBlockRefPick, blockPickItems } from "../editor/blockRefPick";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
 import { clipboardEventFlavors } from "../editor/clipboardFlavors";
@@ -140,7 +141,6 @@ import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
-import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
@@ -149,7 +149,7 @@ import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, rendered
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -962,17 +962,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       }
       if (result.kind === "stale") return;
       setAcBlockState("ready");
-      const items: AcItem[] = [];
-      for (const g of result.value) {
-        for (const b of g.blocks) {
-          items.push({
-            label: blockFirstLine(b.raw, pageByName(g.page)?.format === "org" ? "org" : "md") || g.page,
-            sub: g.page,
-            blockRef: { uuid: b.id, externalId: blockDtoExternalId(b), page: g.page, kind: g.kind },
-          });
-        }
-      }
-      setAcItems(items);
+      setAcItems(blockPickItems(result.value, props.id));
       return;
     }
     // OG leaves blank page/tag search active but renders no rows and does not
@@ -1219,23 +1209,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       return;
     }
     if (item.blockRef) {
-      const { uuid, externalId, page, kind } = item.blockRef;
-      const binding = captureBinding();
-      const trigger = ac();
-      const editorValue = ref.value;
-      let inserted = false;
-      const intended = () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue;
-      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, (stampedId) => {
-        if (!bindingCurrent(binding) || ac() !== trigger || ref.value !== editorValue) return null;
-        const sourcePage = docNode(props.id)?.page;
-        if (!sourcePage) return null;
-        replaceTrigger(`((${stampedId}))`);
-        inserted = true;
-        return sourcePage;
-      }, intended).then((saved) => {
-        if (!saved && bindingCurrent(binding) && (inserted || ac() === trigger))
-          pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
-      }).catch((error) => { if (bindingCurrent(binding)) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error"); });
+      const binding = captureBinding(), trigger = ac(), editorValue = ref.value;
+      acceptBlockRefPick(item.blockRef, {
+        intended: () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue,
+        current: () => bindingCurrent(binding),
+        triggerOpen: () => ac() === trigger,
+        sourcePage: () => docNode(props.id)?.page,
+        insert: (text) => replaceTrigger(text),
+      });
       return;
     }
     if (item.plugin) {
