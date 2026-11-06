@@ -48,14 +48,14 @@ describe("pageHasComment is structural", () => {
     const w = watch();
     expect(w.has()).toBe(false);
     const child = insertEmptyChildBlock("a", 0)!;
-    setRaw(child, "\nquote:: first");
+    setRaw(child, "\ntine.quote:: first");
     commentsWritten();
     expect(w.has()).toBe(true);
     w.dispose();
   });
 
   it("still finds a comment already on the page when it loads", () => {
-    loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks: [block("a", "first words", [block("k", "\nquote:: first")])] });
+    loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks: [block("a", "first words", [block("k", "\ntine.quote:: first")])] });
     const w = watch();
     expect(w.has()).toBe(true);
     w.dispose();
@@ -81,7 +81,7 @@ describe("pageHasComment at open (BIGLOAD-090b)", () => {
   });
 
   it("re-asks when the page's structure changes", () => {
-    loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks: [block("a", "first"), block("k", "\nquote:: first")] });
+    loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks: [block("a", "first"), block("k", "\ntine.quote:: first")] });
     const w = watch();
     expect(w.has()).toBe(false);
     indentBlock("k", 0);

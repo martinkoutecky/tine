@@ -103,6 +103,9 @@ pub(super) fn delete_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             "page deletion needs --yes (or --force); nothing changed",
         ));
     }
+    // A delete expects the bytes it read, like a write, and its name resolves
+    // after the commands ahead of it have landed (GH #842).
+    let _turn = write::graph_turn(slot)?;
     let page = unique_page(slot, &args.name)?;
     if run.is_some() {
         super::git_run::check_page(slot, &page)?;
@@ -240,6 +243,9 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             "page rename does not support --rev or --run; nothing changed",
         ));
     }
+    // It rewrites referrers too, so no command writes the graph meanwhile, and
+    // its name resolves after the commands ahead of it have landed (GH #842).
+    let _turn = write::graph_turn(slot)?;
     let page = unique_source(slot, &args.old)?;
     flush_window(slot, None)?;
     let parsed = page

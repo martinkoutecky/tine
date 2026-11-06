@@ -131,6 +131,7 @@ pageVisibleOrder
 pasteClipboardPayload
 pendingDataRevision  # why: query and reference membership waits for the ordinary final save revision without changing autosave; batchog-w5-refs
 persistBlockRefTarget
+pinPageNearViewport  # why: a page a live reference row shows near the viewport is not evicted, or rows evict each other for ever (GH #849); batch-fix-beta-scroll-848-849
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble

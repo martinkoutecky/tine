@@ -5,8 +5,8 @@
 use super::*;
 
 /// The app went to the background (ADR 0078 §3, slice 3; Android and iOS):
-/// every worker commits its pending changes at once, unless it committed
-/// less than an interval ago (the cap on autocommits, D-20261026-GC), and,
+/// every worker commits its pending changes at once, without an interval
+/// limit (D-20261101-GB), and,
 /// when it syncs automatically, pushes the commits its last fetch shows the
 /// remote lacks. Until [`foregrounded`] no automatic cycle starts, so no
 /// fetch and no pull start in the background, also in a worker that starts

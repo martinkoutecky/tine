@@ -290,9 +290,9 @@ fn referrer(
 
 fn definition(name: &str, original: &str, org: bool) -> String {
     if org {
-        format!("* {{{{tine-query @page name = '{name}'}}}}\n:PROPERTIES:\n:export: site\n:END:\n* {{{{tine-query @page name = '{original}'}}}}\n")
+        format!("* {{{{tine-query @page name = '{name}'}}}}\n:PROPERTIES:\n:tine.export: site\n:END:\n* {{{{tine-query @page name = '{original}'}}}}\n")
     } else {
-        format!("- {{{{tine-query @page name = '{name}'}}}}\n  export:: site\n- {{{{tine-query @page name = '{original}'}}}}\n")
+        format!("- {{{{tine-query @page name = '{name}'}}}}\n  tine.export:: site\n- {{{{tine-query @page name = '{original}'}}}}\n")
     }
 }
 

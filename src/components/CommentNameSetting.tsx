@@ -4,7 +4,7 @@ import { Rich } from "../i18n/Rich";
 import { commentAuthorName, setCommentAuthorName } from "../commentIdentity";
 import { Field } from "./settingsField";
 
-/** Settings → Editing: "Your name", the `author::` your margin comments and
+/** Settings → Editing: "Your name", the `tine.author::` your margin comments and
  * replies carry (commentIdentity.ts). Saved when the field loses focus or on
  * Enter, not per keystroke; empty writes no author. */
 export function CommentNameSetting(): JSX.Element {

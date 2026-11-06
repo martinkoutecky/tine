@@ -4,7 +4,7 @@ beforeAll(initParser);
 import { render } from "solid-js/web";
 import type { BlockDto, PageDto } from "../types";
 
-// GH #605: a page marked `tine/journal-sections:: true` decides what shows under
+// GH #605: a page marked `tine.journal-sections:: true` (or the stable `tine/journal-sections::`) decides what shows under
 // today's journal; with none, config.edn `:default-queries` and the agenda show
 // as before. The query renderers and the block-macro detection are stubbed:
 // this pins which sections are chosen and in what order, not query execution.
@@ -35,7 +35,8 @@ vi.mock("../backend", () => ({
   }),
 }));
 vi.mock("./Macro", () => ({
-  QueryMacro: (props: { body: string; title?: string }) => <div class="q" data-body={props.body} data-title={props.title ?? ""} />,
+  QueryMacro: (props: { body: string; title?: string; hostRaw?: { raw: string; format: string } }) =>
+    <div class="q" data-body={props.body} data-title={props.title ?? ""} data-host-raw={props.hostRaw?.raw ?? ""} />,
 }));
 vi.mock("./BeginQuery", () => ({
   inspectBeginQuery: (raw: string) => raw.startsWith("#+BEGIN_QUERY") ? { kind: "query", query: raw } : null,
@@ -43,7 +44,7 @@ vi.mock("./BeginQuery", () => ({
 }));
 vi.mock("./Rendered", () => ({
   detectMacro: (raw: string) => {
-    const m = /^\{\{((?:tine-)?query .*)\}\}$/.exec(raw);
+    const m = /^\{\{((?:tine-)?query .*)\}\}(?:\n[\s\S]*)?$/.exec(raw);
     return m ? { kind: "query", inner: m[1] } : null;
   },
 }));
@@ -123,6 +124,38 @@ describe("today's sections (GH #605)", () => {
       expect(h.queryRuns).toBe(2);
       rev += 2; publish([]); await settle(); await settle();
       expect(h.queryRuns).toBe(3);
+    } finally { dispose(); }
+  });
+  it("GH #834: a full refresh re-reads the sections page without remounting its unchanged query sections", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (pages: string[], full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages, props: {}, full, blocks: [], linksTo: [], inventoryChanged: false });
+      bumpDataRev(true);
+    };
+    publish([]);
+    h.marked = ["Sections"];
+    h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null,
+      blocks: [block("{{query (task TODO)}}"), block("{{query (task DOING)}}")] });
+    const { div, dispose } = await mount();
+    try {
+      const before = [...div.querySelectorAll(".q")];
+      expect(before.map((e) => e.getAttribute("data-body"))).toEqual(["query (task TODO)", "query (task DOING)"]);
+      h.pageReads = 0;
+      publish([], true); await settle(); await settle();
+      expect(h.pageReads).toBeGreaterThan(0);
+      // A remount discards the query's adopted answer; hideWhenEmpty then hides the section until a
+      // new answer lands, and the journal page below it shifts (the reported disappearing queries).
+      const after = [...div.querySelectorAll(".q")];
+      expect(after).toHaveLength(2);
+      expect(after[0]).toBe(before[0]);
+      expect(after[1]).toBe(before[1]);
+      // An edit that changes a section's text still shows the new text.
+      h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null,
+        blocks: [block("{{query (task TODO)}}"), block("{{query (task DONE)}}")] });
+      publish(["sections"]); await settle(); await settle();
+      expect(bodies(div)).toEqual(["query (task TODO)", "query (task DONE)"]);
+      expect(div.querySelectorAll(".q")[0]).toBe(before[0]);
     } finally { dispose(); }
   });
   it("GH #710: explains sections and opens the scheduling Guide in the sidebar", async () => {
@@ -263,6 +296,17 @@ describe("today's sections (GH #605)", () => {
     dispose();
   });
 
+  it("GH #855: each query section gets its block's text, so its View properties (sort, group) apply on the feed", async () => {
+    h.marked = ["My sections"];
+    const viewed = "{{tine-query task = 'TODO'}}\ntine.group-field:: tags\ntine.sort:: priority asc";
+    h.pages.set("My sections", { name: "My sections", kind: "page", title: "My sections", pre_block: "tine.journal-sections:: true", format: "md",
+      blocks: [block(viewed), block("{{query (task LATER)}}")] });
+    const { div, dispose } = await mount();
+    expect(bodies(div)).toEqual(["tine-query task = 'TODO'", "query (task LATER)"]);
+    expect([...div.querySelectorAll(".q")].map((e) => e.getAttribute("data-host-raw"))).toEqual([viewed, "{{query (task LATER)}}"]);
+    dispose();
+  });
+
   it("an empty marked page shows no sections at all (the user removed them)", async () => {
     h.marked = ["Empty"];
     h.pages.set("Empty", { name: "Empty", kind: "page", title: "Empty", pre_block: "tine/journal-sections:: true", blocks: [] });
@@ -293,7 +337,7 @@ describe("today's sections (GH #605)", () => {
     h.pages.set("Journal sections", { name: "Journal sections", kind: "page", title: "Journal sections", pre_block: null, blocks: [block("mine")] });
     await customizeTodaySections();
     expect(h.created.map((p) => p.name)).toEqual(["Journal sections 2"]);
-    expect(h.created[0].pre_block).toBe("tine/journal-sections:: true");
+    expect(h.created[0].pre_block).toBe("tine.journal-sections:: true");
     expect(h.created[0].blocks.slice(1).map((b) => b.raw)).toEqual(["#+BEGIN_QUERY\n{:query (task NOW)}\n#+END_QUERY", "{{tine-query agenda tql}}"]);
     expect(h.opened).toEqual(["Journal sections 2"]);
   });
@@ -301,7 +345,7 @@ describe("today's sections (GH #605)", () => {
   it("Customize in an Org graph writes the Org marker and omits a disabled agenda", async () => {
     setGraphMeta(meta({ preferred_format: "org", disable_scheduled_and_deadline_query: true } as Partial<GraphMeta>));
     await customizeTodaySections();
-    expect(h.created[0].pre_block).toBe("#+tine/journal-sections: true");
+    expect(h.created[0].pre_block).toBe("#+tine.journal-sections: true");
     expect(h.created[0].blocks.slice(1).map((b) => b.raw)).toEqual(["#+BEGIN_QUERY\n{:query (task NOW)}\n#+END_QUERY"]);
   });
 });

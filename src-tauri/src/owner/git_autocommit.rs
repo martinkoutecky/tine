@@ -13,7 +13,8 @@
 //!
 //! When (G9): when nothing was published for [`IDLE`] and the interval
 //! (a setting, default 10 min) has passed since the last autocommit; at once
-//! when the binding ends or the app exits; and around a structural
+//! when the binding ends, the app exits or mobile goes to the background;
+//! and around a structural
 //! operation ([`around`]). One worker thread per graph root does the timed
 //! commits; libgit2 never runs on an async worker. Autocommits take the CLI
 //! runs' lock ([`RUN_LOCK`]), so they never fall between a run write's
@@ -1224,14 +1225,10 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             && rev.is_some()
             && started.elapsed() >= IDLE;
         // Backgrounded: commit what is pending (nothing committed yet this
-        // binding counts as pending), but no more often than the interval
-        // (D-20261026-GC: at most one autocommit per interval, the lever on
-        // its unit cost). Edits the interval holds back are already saved;
-        // they commit when the interval allows, or at the next launch.
-        let background_commit = background
-            && (last_commit.is_none()
-                || (changed_at.is_some()
-                    && last_commit.is_some_and(|at| at.elapsed() >= settings.interval)));
+        // binding counts as pending), without waiting for the interval
+        // (D-20261101-GB). After a successful commit, an unchanged app switch
+        // skips the commit attempt; commit_now also creates no empty commit.
+        let background_commit = background && (last_commit.is_none() || changed_at.is_some());
         let mut committed = false;
         if commit && (flush || ending || due || first || sync_now || background_commit || retry) {
             let outcome = commit_now(&root, MESSAGE);

@@ -36,6 +36,8 @@ pub(crate) struct GraphSlot {
     /// it so an IPC queued before an in-place graph switch cannot execute against
     /// the replacement graph after the window label is rebound.
     pub(crate) binding_generation: u64,
+    /// How long an owner write waits for its turn (`owner::write`); tests shorten it.
+    pub(crate) turn_wait: std::time::Duration,
     startup_idle: Mutex<Option<Instant>>,
     startup_changed: Condvar,
     pub(crate) warm_done: AtomicBool,
@@ -180,6 +182,7 @@ impl GraphSlot {
             query_runs: QueryRuns::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            turn_wait: crate::owner::write::TURN_WAIT,
             startup_idle: Mutex::new(None),
             startup_changed: Condvar::new(),
             warm_done: AtomicBool::new(false),
@@ -724,16 +727,19 @@ pub(crate) fn slot_for_bound_window(
     Ok(slot)
 }
 
-/// Resolve the only graph capability granted to the capture WebView: a bounded
-/// page/tag quick-switch query. This is deliberately not a GraphContext route;
+/// Resolve the graph capabilities granted to the capture WebView. Each is a
+/// narrow command of its own (a bounded page/tag quick-switch query, and the
+/// import of a pasted file as an asset); none is a GraphContext route, so
 /// capture retains no generic read or write access to the selected graph.
-pub(crate) fn capture_quick_switch_slot(
+/// `what` names the capability in the refusal of a non-capture caller.
+fn capture_scoped_slot(
     state: &AppState,
     caller: &str,
     binding_generation: Option<u64>,
+    what: &str,
 ) -> Result<Arc<GraphSlot>, String> {
     if caller != "capture" {
-        return Err("capture quick switch is only available to quick capture".into());
+        return Err(format!("{what} is only available to quick capture"));
     }
     let capture = state
         .capture_graph_binding()
@@ -747,6 +753,26 @@ pub(crate) fn capture_quick_switch_slot(
         return Err(STALE_BINDING.into());
     }
     Ok(slot)
+}
+
+/// The bounded page/tag quick-switch query (read only).
+pub(crate) fn capture_quick_switch_slot(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    capture_scoped_slot(state, caller, binding_generation, "capture quick switch")
+}
+
+/// Importing a file the user pasted into Quick Capture as an asset of the
+/// selected capture graph (GH #835). It writes only through the audited asset
+/// transaction; the capture window still never writes a page.
+pub(crate) fn capture_asset_slot(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    capture_scoped_slot(state, caller, binding_generation, "capture asset import")
 }
 
 #[cfg(test)]

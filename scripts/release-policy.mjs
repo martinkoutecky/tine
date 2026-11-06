@@ -42,16 +42,13 @@ export function releaseChannel(conf) {
 
 /**
  * AppImage update information for an AppImage asset name. Stable reads GitHub's
- * latest release; Beta reads the fixed per-architecture zsync file on tine.page,
- * selected by the same release choice as the Beta manifest.
+ * latest release, Beta its latest prerelease, so this path trusts GitHub alone
+ * on both lines (d682). tine.page keeps serving the zsync files for Betas
+ * already installed with the old address (pages-beta-manifest.mjs).
  */
 export function appImageUpdateInformation(conf, repository, appimage) {
-  if (releaseChannel(conf) !== BETA_TAG) {
-    return `gh-releases-zsync|${repository.replace("/", "|")}|latest|${appimage.replace(conf.version, "*")}.zsync`;
-  }
-  const arch = /_(amd64|aarch64)\.AppImage$/.exec(appimage)?.[1];
-  if (!arch) throw new Error(`cannot tell the architecture of ${appimage}`);
-  return `zsync|${BETA_UPDATES}${arch}.AppImage.zsync`;
+  const release = releaseChannel(conf) === BETA_TAG ? "latest-pre" : "latest";
+  return `gh-releases-zsync|${repository.replace("/", "|")}|${release}|${appimage.replace(conf.version, "*")}.zsync`;
 }
 
 /** The GitHub release a build publishes to: always `v<version>` (Betas as prereleases). */

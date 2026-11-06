@@ -56,7 +56,7 @@ describe("inline comments sit right under their block (MARGIN-POS, GH #110)", ()
       block("a", "456"),
       block("b", "789"),
       block("c", "abc", [block("d", "def")]),
-      block("k", "Which source?\nquote:: needs a source", [block("kr", "This one.\nauthor:: claude")]),
+      block("k", "Which source?\ntine.quote:: needs a source", [block("kr", "This one.\ntine.author:: claude")]),
     ]),
     block("after", "next"),
   ];
@@ -83,16 +83,16 @@ describe("which blocks belong in the margin", () => {
     load([block("p", "plain"), block("q", "parent", [block("r", "reply-less child")])]);
     expect(pageHasComment(pageByName("M")!.roots, "md")).toBe(false);
     resetStore();
-    load([block("p", "plain"), block("q", "parent text", [block("c", "a comment\nquote:: parent")])]);
+    load([block("p", "plain"), block("q", "parent text", [block("c", "a comment\ntine.quote:: parent")])]);
     expect(pageHasComment(pageByName("M")!.roots, "md")).toBe(true);
     expect(isCommentId("c", "md")).toBe(true);
     expect(isCommentId("q", "md")).toBe(false);
   });
 
-  it("a top-level quote:: is not a comment; a reply belongs to its comment's thread", () => {
+  it("a top-level tine.quote:: is not a comment; a reply belongs to its comment's thread", () => {
     load([
-      block("top", "a root\nquote:: something"),
-      block("p", "parent text", [block("c", "comment\nquote:: parent", [block("r", "reply", [block("rr", "deeper")])])]),
+      block("top", "a root\ntine.quote:: something"),
+      block("p", "parent text", [block("c", "comment\ntine.quote:: parent", [block("r", "reply", [block("rr", "deeper")])])]),
     ]);
     expect(pageHasComment(["top"], "md")).toBe(false);
     expect(threadRootOf("rr", "md")).toBe("c");
@@ -105,8 +105,8 @@ describe("arrow keys with comments in the margin", () => {
   const outline = () => load([
     block("p", "parent text here", [
       block("kid", "an ordinary child"),
-      block("c1", "first comment\nquote:: parent", [block("r1", "reply")]),
-      block("c2", "second comment\nquote:: text"),
+      block("c1", "first comment\ntine.quote:: parent", [block("r1", "reply")]),
+      block("c2", "second comment\ntine.quote:: text"),
     ]),
     block("after", "the next block"),
   ]);

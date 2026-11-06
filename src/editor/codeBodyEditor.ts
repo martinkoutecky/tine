@@ -22,8 +22,9 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     return sourceProjection ? { visible: p, source: sourceProjection } : null;
   };
   const [region, setRegion] = createSignal<ReturnType<typeof capture>>(null);
+  const [rawMode, setRawMode] = createSignal(false);
   const shown = createMemo(() => {
-    if (!enabled()) return null;
+    if (!enabled() || rawMode()) return null;
     const text = visibleRaw(), pair = region(), p = pair?.visible;
     const original = source();
     if (p && pair && original.startsWith(pair.source.open) && original.endsWith(pair.source.close) && text.startsWith(p.open) && text.endsWith(p.close) && text.length >= p.open.length + p.close.length) {
@@ -38,7 +39,7 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
   });
   const mixed = () => shown() !== null && codeBodyProjection(visibleRaw(), format()) === null;
   const enter = (caret: number, end = caret) => {
-    if (!enabled()) return;
+    if (!enabled() || rawMode()) return;
     const p = codeBodyProjection(visibleRaw(), format(), caret);
     setRegion(p && end <= p.open.length + p.body.length ? capture(p) : null);
   };
@@ -78,6 +79,16 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     return true;
   };
   return { shown, mixed, enter, syncSelection, leaveOnKey,
+    // OG extensions/code.cljs render!: Esc saves the code editor and calls
+    // edit-block! with :max. Stay raw for this editing session so native
+    // selection cannot immediately hide the delimiters again (GH #865).
+    revealRaw: (ta: HTMLTextAreaElement) => {
+      setRawMode(true);
+      setRegion(null);
+      ta.value = visibleRaw();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.focus();
+    },
     join: (body: string) => {
       const p = shown();
       const captured = p && (region() ?? capture(p));

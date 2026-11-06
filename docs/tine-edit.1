@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH tine-edit 1  "edit " 
 .SH NAME
-tine\-edit \- Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
+tine\-edit \- Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one
 .SH SYNOPSIS
 \fBtine edit\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fITEXT\fR> 
 .SH DESCRIPTION
-Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
+Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one
 .SH OPTIONS
 .TP
 \fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
@@ -28,7 +28,7 @@ May also be specified with the \fBTINE_RUN\fR environment variable.
 .RE
 .TP
 \fB\-\-author\fR \fI<AUTHOR>\fR
-Author on created blocks and on the run\*(Aqs commits (default: agent)
+Author on created blocks and on the run\*(Aqs commits (default: agent). With `edit`, the flag (not the variable) also sets the block\*(Aqs tine.author::
 .RS
 May also be specified with the \fBTINE_AUTHOR\fR environment variable. 
 .RE

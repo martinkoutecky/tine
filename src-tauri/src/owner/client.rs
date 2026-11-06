@@ -23,6 +23,9 @@ const START_WAIT: Duration = Duration::from_secs(10);
 /// never cancels admitted work, retries a write, or grants the owner lease.
 const REPLY_WAIT: Duration = Duration::from_secs(60);
 
+// A write that spends its wait in line reaches its caller as `page-busy`.
+const _: () = assert!(crate::owner::write::TURN_WAIT.as_secs() < REPLY_WAIT.as_secs());
+
 /// Why a call got no answer from the owner.
 #[derive(Debug)]
 pub(crate) enum Failure {
