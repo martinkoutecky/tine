@@ -49,6 +49,19 @@ beforeEach(() => {
 // old test file pinned two IPCs (list_pages, referenced_page_names); each test
 // keeps its outcome, now over the single page_inventory.
 describe("GH #229 complete page-name inventory", () => {
+  it("lists an unwritten journal with the kind and day the store supplies", async () => {
+    backendMock.pageInventory.mockResolvedValue(inventory(1, {
+      key: "oct 26th, 2026", name: "Oct 26th, 2026", is_journal: true,
+      day: 20261026, target: { kind: "absent", id: "journals/2026_10_26.md" },
+    }, referenced("Ordinary")));
+    await loadInventory();
+    const { referenceOnlyPages } = await import("./pageIndex");
+    await vi.waitFor(() => expect(referenceOnlyPages()).toEqual([
+      { name: "Oct 26th, 2026", kind: "journal", date_key: 20261026, path: "" },
+      { name: "Ordinary", kind: "page", date_key: null, path: "" },
+    ]));
+  });
+
   it("keeps All Pages physical-only while physical spelling wins its reference-only fold", async () => {
     backendMock.pageInventory.mockResolvedValue(inventory(1,
       physical("Test"), referenced("test"), referenced("test/testy test")));

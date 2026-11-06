@@ -19,16 +19,12 @@
     ],
     "inventory": [
       {
-        "day": null,
-        "is_journal": false,
+        "day": 20261110,
+        "is_journal": true,
         "key": "2026_10_11",
-        "link": {
-          "kind": "journal",
-          "name": "2026_10_11"
-        },
         "name": "2026_10_11",
         "target": {
-          "id": "pages/2026_10_11.md",
+          "id": "journals/10.11.2026.md",
           "kind": "absent"
         }
       },

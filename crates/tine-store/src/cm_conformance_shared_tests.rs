@@ -1899,13 +1899,9 @@ pub fn compare_queries(ctx: &Ctx, queries: &[QuerySpec]) -> Vec<Diff> {
     diffs
 }
 
-/// Census Q3 item 2: the query evaluator's "does this referenced name
-/// denote a journal day" (`query/eval.rs reference_day`, which leaves the
-/// configured file-name format out of its list) against the harness's date
-/// fold (the native list, the model's `dateKey`). The model has no `journal`
-/// leaf, so this compares Tine's query answer with the blocks that hold a
-/// date-shaped occurrence under the native list. Fixtures only: random
-/// graphs use the default formats, where the two lists coincide.
+/// Census Q3 item 2: query reference-day facts against the supplied native
+/// date parser. Direct refs include namespace prefixes (eval.rs Rel::DirectRefs),
+/// so the test oracle includes those too. The model has no `journal` leaf.
 pub fn compare_reference_days(ctx: &Ctx) -> Vec<Diff> {
     let mut diffs = Vec::new();
     let text = "any(direct_refs, journal = true)";
@@ -1942,8 +1938,11 @@ pub fn compare_reference_days(ctx: &Ctx) -> Vec<Diff> {
         for (i, (_, occ)) in f.blocks.iter().enumerate() {
             let dated: Vec<String> = occ
                 .iter()
-                .filter(|(_, s)| ctx.journal.parse(s.trim()).is_some())
-                .map(|(_, s)| s.clone())
+                .flat_map(|(_, s)| {
+                    std::iter::once(s.as_str()).chain(tine_core::refs::namespace_refs(s))
+                })
+                .filter(|s| ctx.journal.parse(s.trim()).is_some())
+                .map(str::to_owned)
                 .collect();
             if !dated.is_empty() {
                 native.insert((path.clone(), i), dated);

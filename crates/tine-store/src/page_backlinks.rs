@@ -41,9 +41,12 @@ impl WholeGraph {
         }
         let references = self
             .graph
-            .reference_only_page_names()
+            .reference_only_pages()
             .into_iter()
-            .map(|name| (name.to_owned(), count(name)))
+            .map(|answer| {
+                let value = count(&answer.name);
+                (answer.name, value)
+            })
             .collect();
         (files, references)
     }

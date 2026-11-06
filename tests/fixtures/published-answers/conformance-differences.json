@@ -2,6 +2,9 @@
   "d1-file-format-links": [
     "published navigate [[25-10-2026]]: live (\"journal\", \"oct 25th, 2026\"), published (\"journal\", \"25-10-2026\")"
   ],
+  "d6-fileless-date-parent": [
+    "published navigate [[23.10.2026]]: live (\"journal\", \"2026_23_10\"), published (\"journal\", \"23.10.2026\")"
+  ],
   "o1-twin-journal-day": [
     "published getPage journal [[2026-10-26]]: live journals/2026_10_26.md, published null"
   ]

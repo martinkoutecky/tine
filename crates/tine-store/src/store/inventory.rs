@@ -45,6 +45,21 @@ pub struct LinkTarget {
     pub is_journal: bool,
 }
 
+fn fileless_entry(
+    answer: crate::model::fileless_names::FilelessName,
+    target: Resolved,
+) -> InventoryEntry {
+    InventoryEntry {
+        name: answer.name,
+        target,
+        is_journal: answer.day.is_some(),
+        day: answer.day.map(|day| Day(day.ordinal_key())),
+        link: None,
+        namespace_parent: answer.namespace_parent,
+        empty_alias: false,
+    }
+}
+
 /// Whether a parsed page file has no real content: the one test for
 /// EMPTY-ALIAS (D-20261103-CMA), OG's `page-empty-or-dummy?`
 /// (`src/main/frontend/db/model.cljs`, `page-empty?` or exactly one block
@@ -153,9 +168,9 @@ pub(crate) fn link_target_in(
             is_journal,
         })
     };
-    if let Some(day) = format.parse(name) {
-        let title = format.title(day);
-        if let Some(journals) = claimed(true, tine_core::refs::page_key(&title)) {
+    let fallback = crate::model::fileless_names::FilelessName::new(format, name);
+    if fallback.day.is_some() {
+        if let Some(journals) = claimed(true, tine_core::refs::page_key(&fallback.name)) {
             return opens(journals, true);
         }
         if let Some(pages) = claimed(false, key.clone()) {
@@ -165,16 +180,16 @@ pub(crate) fn link_target_in(
             return owner;
         }
         return LinkTarget {
-            name: title,
-            is_journal: format.absent_link_is_journal(name),
+            name: fallback.name,
+            is_journal: true,
         };
     }
     if let Some(pages) = claimed(false, key.clone()) {
         return opens(pages, false);
     }
     owner().unwrap_or_else(|| LinkTarget {
-        name: name.to_owned(),
-        is_journal: format.absent_link_is_journal(name),
+        name: fallback.name,
+        is_journal: false,
     })
 }
 
@@ -251,6 +266,10 @@ pub enum InventoryScope<'a> {
     File(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
+    /// Frozen published `answers` v1 lookup rows for referenced spelling keys
+    /// absent from this `All` inventory. These retain the old ordinary-row
+    /// shape; their `link` uses the shared link answer. Not a live entity list.
+    PublishedV1Spellings(&'a Inventory),
     /// Referenced journal dates, including dates without a file, once per day.
     /// Uses the explicit-reference index; excludes ordinary date-page identity.
     ReferencedJournals,
@@ -371,6 +390,38 @@ impl WholeGraph {
                     .collect(),
             )),
             InventoryScope::All => self.full_inventory(),
+            InventoryScope::PublishedV1Spellings(inventory) => {
+                let listed: HashSet<_> = inventory
+                    .0
+                    .iter()
+                    .map(|entry| tine_core::refs::page_key(&entry.name))
+                    .collect();
+                Arc::new(Inventory(
+                    self.graph
+                        .referenced_name_table()
+                        .iter()
+                        .filter(|(key, _)| !listed.contains(*key))
+                        .map(|(_, referrers)| {
+                            let name = referrers.spelling.clone();
+                            with_link(
+                                &self.claimants,
+                                &self.graph,
+                                &self.journal_format,
+                                InventoryEntry {
+                                    target: self.resolve(&name, false),
+                                    name,
+                                    is_journal: false,
+                                    day: None,
+                                    link: None,
+                                    namespace_parent: false,
+                                    empty_alias: false,
+                                },
+                                None,
+                            )
+                        })
+                        .collect(),
+                ))
+            }
             InventoryScope::ReferencedJournals => {
                 let mut entries: Vec<_> = self
                     .referenced_journal_days()
@@ -429,7 +480,6 @@ impl WholeGraph {
     fn full_inventory(&self) -> Arc<Inventory> {
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
-        let mut claimed_names = HashSet::new();
         let mut page_claimed_names = HashSet::new();
         let aliases: Vec<_> = self
             .graph
@@ -452,7 +502,6 @@ impl WholeGraph {
                     page_claimed_names.insert(key.clone());
                 }
                 claimed.push((entry, Some(declared.contains(key.as_str()))));
-                claimed_names.insert(key);
             }
         }
         let references = self.graph.referenced_name_table();
@@ -473,7 +522,6 @@ impl WholeGraph {
                 slot.1.push(owner);
             }
         }
-        let alias_names: HashSet<String> = alias_owners.keys().cloned().collect();
         for (_, (name, mut owners)) in alias_owners {
             owners.sort();
             entries.push(InventoryEntry {
@@ -486,40 +534,10 @@ impl WholeGraph {
                 empty_alias: false,
             });
         }
-        for (key, referrers) in references.iter() {
-            if claimed_names.contains(key) || alias_names.contains(key) {
-                continue;
-            }
-            let name = referrers.spelling.clone();
-            entries.push(InventoryEntry {
-                target: self.resolve(&name, false),
-                name,
-                is_journal: false,
-                day: None,
-                link: None,
-                namespace_parent: false,
-                empty_alias: false,
-            });
-        }
-        // Namespace parents: seed keys no file claims, no page declares as an
-        // alias and no reference names (`model::namespace_parents`).
-        for (key, spelling) in self.graph.namespace_seeds(references) {
-            if claimed_names.contains(&key)
-                || alias_names.contains(&key)
-                || references.get(&key).is_some()
-            {
-                continue;
-            }
-            entries.push(InventoryEntry {
-                target: self.resolve(spelling, false),
-                name: spelling.to_owned(),
-                is_journal: false,
-                day: None,
-                link: None,
-                namespace_parent: true,
-                empty_alias: false,
-            });
-        }
+        entries.extend(self.graph.reference_only_pages().into_iter().map(|answer| {
+            let target = self.resolve(&answer.name, answer.day.is_some());
+            fileless_entry(answer, target)
+        }));
         let mut entries: Vec<_> = claimed
             .into_iter()
             .chain(entries.into_iter().map(|entry| (entry, None)))
@@ -628,12 +646,14 @@ impl Snapshot {
     /// it: an alias entry unless a page file claims the key, else a
     /// reference-only entry unless any file (page or journal) claims it,
     /// else a namespace parent when a listed name lies under it.
-    /// O(log V + owners), plus the names whose key starts with `key` when no
-    /// reference names it.
+    /// Ordinary keys: O(log V + owners), plus the names starting with `key`
+    /// when no reference names it. A canonical fileless day checks the resident
+    /// reference/namespace support for that day (O(log days + its spellings)).
     pub(super) fn name_entry(
         &self,
         table: &crate::model::referenced_names::ReferencedNameTable,
         key: &str,
+        day: Option<JournalDate>,
     ) -> Option<InventoryEntry> {
         let claimed = |journal: bool| {
             self.claimants
@@ -664,23 +684,43 @@ impl Snapshot {
         if claimed(true) {
             return None;
         }
+        let fallback = crate::model::fileless_names::FilelessName::new(
+            &self.journal_format,
+            spelling.unwrap_or(key),
+        );
+        if let Some(day) = day.or(fallback.day) {
+            // Deltas remove/add the canonical entity key, never a raw date
+            // spelling. Another spelling or a namespace child can keep it
+            // alive after the edited page stops referring to it.
+            if tine_core::refs::page_key(&self.journal_format.title(day)) != key {
+                return None;
+            }
+            return self.graph.fileless_page_for_day(day).map(|answer| {
+                fileless_entry(
+                    answer,
+                    Resolved::Absent {
+                        id: proposed_journal_id(
+                            &self.config.config,
+                            self.journal_format.file_stem(day),
+                        ),
+                    },
+                )
+            });
+        }
         // A key no reference names may still be a namespace parent.
         let (name, namespace_parent) = match spelling {
             Some(spelling) => (spelling, false),
             None => (self.graph.namespace_seed(table, key)?, true),
         };
-        let name = name.to_owned();
-        Some(self.linked(InventoryEntry {
-            target: Resolved::Absent {
-                id: proposed_page_id(&self.config.config, &name),
-            },
-            name,
-            is_journal: false,
-            day: None,
-            link: None,
-            namespace_parent,
-            empty_alias: false,
-        }))
+        let mut answer = self.graph.fileless_name(&self.journal_format, name)?;
+        if answer.day.is_some() {
+            return None; // its canonical day key is handled above
+        }
+        answer.namespace_parent = namespace_parent;
+        let target = Resolved::Absent {
+            id: proposed_page_id(&self.config.config, &answer.name),
+        };
+        Some(self.linked(fileless_entry(answer, target)))
     }
 
     /// Whether these claimants of one name are all content-free files

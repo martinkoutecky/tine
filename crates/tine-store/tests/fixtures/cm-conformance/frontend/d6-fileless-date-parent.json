@@ -1,0 +1,602 @@
+{
+  "backlinks": {
+    "2026_23_10": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "[[23.10.2026/child]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "23.10.2026/child": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "[[23.10.2026/child]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": [],
+    "Owner": [],
+    "ordinary": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "3b38235a-9fae-85eb-9de9-3773ae417ef4",
+            "raw": "[[Ordinary]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Owner.md",
+        0
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
+    ],
+    [
+      [
+        "2026_23_10",
+        1
+      ],
+      [
+        "23.10.2026/child",
+        1
+      ],
+      [
+        "Ordinary",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026_22_10",
+      "link": {
+        "kind": "page",
+        "name": "Owner"
+      },
+      "name": "2026_22_10",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Owner.md"
+        ]
+      }
+    },
+    {
+      "day": 20261023,
+      "is_journal": true,
+      "key": "2026_23_10",
+      "name": "2026_23_10",
+      "namespace_parent": true,
+      "target": {
+        "id": "journals/23.10.2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "23.10.2026/child",
+      "name": "23.10.2026/child",
+      "target": {
+        "id": "pages/23%2E10%2E2026%2Fchild.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "ordinary",
+      "name": "Ordinary",
+      "target": {
+        "id": "pages/Ordinary.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "owner",
+      "name": "Owner",
+      "target": {
+        "id": "pages/Owner.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": "dd.MM.yyyy",
+  "journalTitleFormat": "yyyy_dd_MM",
+  "keyOf": {
+    "2026_22_10": "2026_22_10",
+    "2026_23_10": "2026_23_10",
+    "23.10.2026/child": "23.10.2026/child",
+    "Notes": "notes",
+    "Ordinary": "ordinary",
+    "Owner": "owner"
+  },
+  "namespaceNodes": [
+    [
+      "page",
+      "23.10.2026/child"
+    ],
+    [
+      "journal",
+      "2026_23_10"
+    ]
+  ],
+  "namespaceTree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "23.10.2026/child"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "23.10.2026/child"
+        ]
+      ],
+      "page": [
+        "journal",
+        "2026_23_10"
+      ]
+    }
+  ],
+  "open": {
+    "2026-10-22": {
+      "journal": [
+        "journal",
+        "2026_22_10"
+      ],
+      "page": [
+        "page",
+        "2026_22_10"
+      ]
+    },
+    "2026_22_10": {
+      "journal": [
+        "journal",
+        "2026_22_10"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "2026_23_10": {
+      "journal": [
+        "journal",
+        "2026_23_10"
+      ],
+      "page": [
+        "page",
+        "2026_23_10"
+      ]
+    },
+    "22.10.2026": {
+      "journal": [
+        "journal",
+        "2026_22_10"
+      ],
+      "page": [
+        "page",
+        "2026_22_10"
+      ]
+    },
+    "23.10.2026": {
+      "journal": [
+        "journal",
+        "2026_23_10"
+      ],
+      "page": [
+        "page",
+        "2026_23_10"
+      ]
+    },
+    "23.10.2026/child": {
+      "journal": [
+        "journal",
+        "23.10.2026/child"
+      ],
+      "page": [
+        "page",
+        "23.10.2026/child"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "journal": [
+        "journal",
+        "2026_22_10"
+      ],
+      "page": [
+        "page",
+        "2026_22_10"
+      ]
+    },
+    "Ordinary": {
+      "journal": [
+        "journal",
+        "ordinary"
+      ],
+      "page": [
+        "page",
+        "ordinary"
+      ]
+    },
+    "Owner": {
+      "journal": [
+        "journal",
+        "owner"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "owner": {
+    "2026-10-22": {
+      "journal": null,
+      "page": null
+    },
+    "2026_22_10": {
+      "journal": null,
+      "page": "pages/Owner.md"
+    },
+    "2026_23_10": {
+      "journal": null,
+      "page": null
+    },
+    "22.10.2026": {
+      "journal": null,
+      "page": null
+    },
+    "23.10.2026": {
+      "journal": null,
+      "page": null
+    },
+    "23.10.2026/child": {
+      "journal": null,
+      "page": null
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Oct 22nd, 2026": {
+      "journal": null,
+      "page": null
+    },
+    "Ordinary": {
+      "journal": null,
+      "page": null
+    },
+    "Owner": {
+      "journal": null,
+      "page": "pages/Owner.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "2026_23_10",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "2026_23_10",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "23.10.2026/child",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "23.10.2026/child",
+      "owner": null,
+      "parent": "2026_23_10"
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md",
+      "parent": null
+    },
+    {
+      "key": "ordinary",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "ordinary",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "owner",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Owner",
+      "owner": "pages/Owner.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "2026-10-22": {
+      "backend": [
+        "journal",
+        "2026_22_10"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "2026_22_10": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "22.10.2026": {
+      "backend": [
+        "journal",
+        "2026_22_10"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "23.10.2026": {
+      "backend": [
+        "journal",
+        "2026_23_10"
+      ],
+      "day": [
+        2026,
+        10,
+        23
+      ],
+      "model": [
+        "journal",
+        "2026_23_10"
+      ]
+    },
+    "23.10.2026/child": {
+      "backend": [
+        "page",
+        "23.10.2026/child"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "23.10.2026/child"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Oct 22nd, 2026": {
+      "backend": [
+        "journal",
+        "2026_22_10"
+      ],
+      "day": [
+        2026,
+        10,
+        22
+      ],
+      "model": [
+        "page",
+        "owner"
+      ]
+    },
+    "Ordinary": {
+      "backend": [
+        "page",
+        "ordinary"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "ordinary"
+      ]
+    },
+    "Owner": {
+      "backend": [
+        "page",
+        "owner"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "owner"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "23.10.2026/child"
+      ]
+    },
+    {
+      "children": [
+        [
+          "page",
+          "23.10.2026/child"
+        ]
+      ],
+      "page": [
+        "journal",
+        "2026_23_10"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "ordinary"
+      ]
+    }
+  ],
+  "treeNodes": [
+    [
+      "page",
+      "notes"
+    ],
+    [
+      "page",
+      "owner"
+    ],
+    [
+      "page",
+      "23.10.2026/child"
+    ],
+    [
+      "journal",
+      "2026_23_10"
+    ],
+    [
+      "page",
+      "ordinary"
+    ]
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "owner"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "23.10.2026/child"
+      ],
+      "parent": [
+        "journal",
+        "2026_23_10"
+      ]
+    },
+    {
+      "page": [
+        "journal",
+        "2026_23_10"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ordinary"
+      ],
+      "parent": null
+    }
+  ]
+}

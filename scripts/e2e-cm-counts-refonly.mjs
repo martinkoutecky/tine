@@ -14,11 +14,12 @@ import assert from "node:assert/strict";
 import { remote } from "webdriverio";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const artifacts = path.join(root, "artifacts/cm-counts-refonly");
+const artifacts = process.env.E2E_ARTIFACTS || path.join(root, "artifacts/cm-counts-refonly");
 fs.mkdirSync(artifacts, { recursive: true });
 const run = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(run, "graph");
@@ -34,17 +35,19 @@ fs.writeFileSync(path.join(graph, "pages/Notes.md"), [
   "- `[[Target]]` in code",
   "- [[Ref Only]] first",
   "- #[[Ref Only]] second",
+  "- [[Oct 26th, 2040]] and #2040-10-26 name an unwritten day",
   "- TODO a task",
   "- {{embed ((00000000-0000-4000-8000-0000000000e1))}}",
   "- embedded", "  id:: 00000000-0000-4000-8000-0000000000e1", "",
 ].join("\n"));
 // A file named like an OG built-in page: OG's All pages hides it too.
 fs.writeFileSync(path.join(graph, "pages/LATER.md"), "- a later file\n");
-fs.writeFileSync(path.join(graph, "pages/Queries.md"), '- {{query (all-page-tags) {:title "Tag pages"}}}\n');
+fs.writeFileSync(path.join(graph, "pages/Queries.md"), '- {{query (all-page-tags) {:title "Tag pages"}}}\n- {{tine-query @page and name = \'2040-10-26\'}}\n');
 fs.writeFileSync(path.join(graph, "journals", "2026_11_03.md"), "- journal\n");
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
 fs.mkdirSync(path.join(run, "data", APP_ID), { recursive: true });
 fs.writeFileSync(path.join(run, "data", APP_ID, "tine-settings.json"), JSON.stringify({ known_graphs: [{ name: "graph", path: graph }], last_graph_path: graph }));
+const accountHome = installAccountHome(run, run);
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(run, "data"),
   XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -61,6 +64,7 @@ async function start() {
     connectionRetryTimeout: 30_000, capabilities: tauriCapabilities(process.env.TINE_APP || path.join(root, "target/debug/tine"), "cm-counts-refonly") });
   await ensureMainWindow(browser);
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
+  await assertAppLease(accountHome);
 }
 /** All pages rows as { title: count text }. */
 const allPagesRows = () => browser.execute(() => Object.fromEntries([...document.querySelectorAll(".all-pages-row")].map((row) =>
@@ -115,8 +119,24 @@ try {
   await browser.waitUntil(async () => (await linkedCount()) === "2", { timeout: 20_000, timeoutMsg: `Ref Only header count ${await linkedCount()}` });
   assert.ok(!fs.existsSync(path.join(graph, "pages/Ref Only.md")), "opening a reference-only page writes no file");
 
+  stage = "All pages lists an unwritten day once as a journal when journals are shown";
+  await openAllPages();
+  assert.ok(!(await allPagesRows())["Oct 26th, 2040"], "journals are hidden by default");
+  await browser.$(".all-pages-journals input").click();
+  await browser.waitUntil(async () => (await allPagesRows())["Oct 26th, 2040"] === "1", { timeout: 20_000 });
+  assert.equal(await browser.execute(() => [...document.querySelectorAll(".all-pages-open")]
+    .filter((el) => el.textContent?.trim() === "Oct 26th, 2040").length), 1);
+  await browser.execute(() => [...document.querySelectorAll(".all-pages-open")]
+    .find((el) => el.textContent?.trim() === "Oct 26th, 2040")?.click());
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Oct 26th, 2040", { timeout: 10_000 });
+  await browser.waitUntil(async () => (await linkedCount()) === "1", { timeout: 20_000 });
+  assert.ok(!fs.existsSync(path.join(graph, "journals/2040_10_26.md")), "opening the unwritten journal creates no file");
+
   stage = "a page query lists the reference-only tag page by name (A15)";
   await openPageByName(browser, "Queries");
+  stage = "a page query lists the unwritten journal";
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".query-page-link")]
+    .some((el) => el.textContent?.trim() === "Oct 26th, 2040")), { timeout: 20_000 });
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".query-page-link")].some((el) => el.textContent?.trim() === "Ideas")),
     { timeout: 20_000, timeoutMsg: "the Tag pages query never listed Ideas" });
   assert.ok(await browser.execute(() => {
@@ -128,11 +148,11 @@ try {
   await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Ideas", { timeout: 10_000 });
   await browser.waitUntil(async () => (await linkedCount()) === "1", { timeout: 20_000, timeoutMsg: `Ideas header count ${await linkedCount()}` });
 
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "All pages counts = panel sizes, reference-only rows, built-in hidden (also with a file), no embed uuid row, open reference-only page, (all-page-tags) lists a reference-only tag page", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "All pages counts = panel sizes; reference-only page and unwritten journal rows; journal toggle; opening writes no file; page query lists the unwritten journal; built-ins hidden; no embed uuid row; (all-page-tags) lists a reference-only tag page", graph }, null, 2));
   console.log(`PASS CM counts and reference-only pages. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
-  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: ${commit} + worktree diff\nJourney: ${stage}\nExpected: the journey's counts and rows\nObserved: ${error.stack}\n`);
+  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: ${commit} + worktree diff\nJourney: ${stage}\nExpected: the journey's counts and rows\nObserved: ${error.stack}\nClassification: ambiguous pending inspection of failure.png and driver.log\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
