@@ -4,8 +4,8 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { recordFacets } from "../sheet/tableFields";
 import type { FormulaEvalRow } from "../sheet/formulaEval";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
-import { openPageAtBlock, openInNewTab } from "../router";
-import { openBlockInSidebar } from "../ui";
+import { openPageAtBlock, openPageTarget, openInNewTab } from "../router";
+import { openBlockInSidebar, openPageInSidebar } from "../ui";
 import { internalLinkDest } from "../linkGesture";
 import { openRouteInOtherPane } from "../panes";
 
@@ -18,13 +18,18 @@ export function queryResultTarget(row: FormulaEvalRow) {
 export function openQueryResult(row: FormulaEvalRow, event: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "stopPropagation">): void {
   event.stopPropagation();
   const target = queryResultTarget(row);
-  const route = { kind: "page" as const, name: target.page, pageKind: target.pageKind, block: target.uuid,
+  const page = { name: target.page, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) };
+  const route = { kind: "page" as const, ...page, ...(row.dto?.page_preamble ? {} : { block: target.uuid }),
     ...(target.path ? { path: target.path } : {}) };
   const dest = internalLinkDest(event);
-  if (dest === "sidebar") openBlockInSidebar(target);
+  if (dest === "sidebar") {
+    if (row.dto?.page_preamble) openPageInSidebar(page);
+    else openBlockInSidebar(target);
+  }
   else if (dest === "background") openInNewTab(route);
   else if (dest === "pane") void openRouteInOtherPane(route);
-  else openPageAtBlock(route);
+  else if (row.dto?.page_preamble) openPageTarget(page);
+  else openPageAtBlock({ ...route, block: target.uuid });
 }
 
 export function QueryResultTask(props: { row: FormulaEvalRow }): JSX.Element {

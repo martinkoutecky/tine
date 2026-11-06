@@ -23,9 +23,9 @@ struct FactsParts(
     Vec<(String, u64)>,
     Option<String>,
     Vec<String>,
-    /// The header page-property block as raw text, format flag and its
-    /// page-scoped identity; the projection is rebuilt on first use.
-    Option<(String, bool, String)>,
+    /// Header and prose blocks as raw text, format flag and page-scoped
+    /// identity; their projections are rebuilt on first use.
+    Vec<(String, bool, String)>,
 );
 
 #[derive(Serialize, Deserialize)]
@@ -156,9 +156,12 @@ impl Serialize for IndexState {
                         f.keys.to_vec(),
                         f.declares.clone(),
                         f.refs.to_vec(),
-                        f.page_property_block.as_ref().map(|block| {
-                            (block.raw().to_owned(), block.is_org(), block.uuid.clone())
-                        }),
+                        f.pre_blocks
+                            .iter()
+                            .map(|block| {
+                                (block.raw().to_owned(), block.is_org(), block.uuid.clone())
+                            })
+                            .collect(),
                     )
                 });
                 (path, facts)
@@ -196,15 +199,17 @@ impl<'de> Deserialize<'de> for IndexState {
             .facts
             .into_iter()
             .filter_map(|(path, facts)| {
-                let FactsParts(properties, tags, keys, declares, refs, page_property_block) =
-                    facts?;
-                let page_property_block = page_property_block.map(|(raw, is_org, uuid)| {
-                    let mut block = DocBlock::new(raw);
-                    block.set_org(is_org);
-                    block.set_property_ref_config(&parts.parse_config);
-                    block.uuid = uuid;
-                    block
-                });
+                let FactsParts(properties, tags, keys, declares, refs, pre_blocks) = facts?;
+                let pre_blocks = pre_blocks
+                    .into_iter()
+                    .map(|(raw, is_org, uuid)| {
+                        let mut block = DocBlock::new(raw);
+                        block.set_org(is_org);
+                        block.set_property_ref_config(&parts.parse_config);
+                        block.uuid = uuid;
+                        block
+                    })
+                    .collect();
                 Some((
                     path,
                     Arc::new(PageFacts {
@@ -213,7 +218,7 @@ impl<'de> Deserialize<'de> for IndexState {
                         keys: keys.into_boxed_slice(),
                         declares,
                         refs: refs.into_boxed_slice(),
-                        page_property_block,
+                        pre_blocks,
                     }),
                 ))
             })

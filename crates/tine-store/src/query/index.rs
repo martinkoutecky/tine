@@ -87,14 +87,10 @@ pub(crate) struct PageFacts {
     /// de-duplicated: the page-level half of `:block/path-refs`, which is what
     /// lets a page-ref query skip a page without walking it.
     refs: Box<[String]>,
-    /// The page's header-style property block as a block-anchored query row
-    /// (OG's `:block/pre-block?` block, which every block predicate sees):
-    /// built once per page generation, never per query. `None` when the page
-    /// has no header properties. Unit cost: one `DocBlock` of the page's
-    /// header property text (O(header bytes), the same text the backlink
-    /// path projects per query) per facts derivation, i.e. per page edit
-    /// that reaches the query index; zero extra work per query.
-    page_property_block: Option<DocBlock>,
+    /// Header properties, then prose before the outline: the same blocks
+    /// backlinks read, built once per page generation, never per query.
+    /// Neither peer is an ancestor of the other or of the outline roots.
+    pre_blocks: Vec<DocBlock>,
 }
 
 impl PageFacts {
@@ -139,11 +135,18 @@ impl PageFacts {
             }
         }
         let mut refs = Vec::new();
-        let page_property_block = doc
+        let pre_blocks: Vec<_> = doc
             .pre_block
             .as_deref()
-            .and_then(|pre| super::page_property_block_with_config(entry, pre, config));
-        if let Some(block) = &page_property_block {
+            .into_iter()
+            .flat_map(|pre| super::pre_blocks_with_config(entry, pre, config))
+            .collect();
+        for block in &pre_blocks {
+            if block.uuid.starts_with("page-preamble:") {
+                for (ordinal, (key, value)) in block.projection().properties().iter().enumerate() {
+                    note(&block.uuid, ordinal, key, value, false);
+                }
+            }
             refs.extend(
                 block
                     .projection()
@@ -165,7 +168,7 @@ impl PageFacts {
                 .collect(),
             declares: declares.then(|| tine_core::refs::page_key(&entry.name)),
             refs: refs.into_boxed_slice(),
-            page_property_block,
+            pre_blocks,
         }
     }
 
@@ -195,10 +198,9 @@ impl PageFacts {
         &self.properties
     }
 
-    /// The header page-property block, the synthetic first block of the page
-    /// for block-anchored queries (see the field).
-    pub(crate) fn page_property_block(&self) -> Option<&DocBlock> {
-        self.page_property_block.as_ref()
+    /// Parser-owned pre-blocks in page order (see the field).
+    pub(crate) fn pre_blocks(&self) -> &[DocBlock] {
+        &self.pre_blocks
     }
 
     /// The page's own tags (the preamble's `tags::` values).
@@ -698,6 +700,13 @@ fn owner_rows(
             }
             walk(&block.children, page_id, push);
         }
+    }
+    for block in facts
+        .pre_blocks()
+        .iter()
+        .filter(|b| b.uuid.starts_with("page-preamble:"))
+    {
+        walk(std::slice::from_ref(block), page_id, &mut push);
     }
     walk(&doc.roots, page_id, &mut push);
 }

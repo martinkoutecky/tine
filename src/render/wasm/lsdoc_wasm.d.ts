@@ -197,12 +197,12 @@ export function page_header_json(raw: string): string;
 export function page_identity_key(name: string): string;
 
 /**
- * The prose of a Markdown page preamble after its page header, as UTF-8 byte
+ * The prose of a page preamble after its page header, as UTF-8 byte
  * offsets `[start, end]`, or `null` (I-12: the one answerer,
- * `page_preamble::page_preamble_content`, which the store's reference answer
+ * `page_properties::preamble_content_range`, which the store's reference answer
  * reads too).
  */
-export function page_preamble_content_json(raw: string): string;
+export function page_preamble_content_json(raw: string, is_org: boolean): string;
 
 /**
  * Whole-preamble property ownership, with parser-owned literals excluded.
@@ -397,7 +397,7 @@ export interface InitOutput {
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
-    readonly page_preamble_content_json: (a: number, b: number) => [number, number];
+    readonly page_preamble_content_json: (a: number, b: number, c: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];

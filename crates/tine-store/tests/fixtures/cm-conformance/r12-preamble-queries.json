@@ -1,0 +1,14 @@
+{
+  "files": {
+    "pages/Target.md": "- target body\n",
+    "pages/Markdown.md": "Prose [[Target]]\n\n- ordinary body\n",
+    "pages/Org.org": "Prose [[Target]]\n* ordinary body\n",
+    "pages/Mixed.md": "related:: [[Target]]\n\nProse [[Target]]\n\n- ordinary body\n",
+    "pages/Mixed Org.org": "#+RELATED: [[Target]]\n\nProse [[Target]]\n* ordinary body\n"
+  },
+  "queries": [
+    { "anchor": "block", "q": { "refs": "Target" } },
+    { "anchor": "block", "q": { "page": { "name": "Mixed" } } },
+    { "anchor": "block", "q": { "not": { "refs": "Unrelated" } } }
+  ]
+}

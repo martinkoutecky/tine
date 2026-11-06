@@ -1,8 +1,8 @@
 import { bindingCurrent, captureBinding, graphScopedSignal } from "./binding";
 
-// Open sheet property inputs are DOM drafts, unlike ordinary block editors
-// whose keystrokes already live in the document. Keep their owning result
-// surface mounted until commit/cancel; provenance still guards every action.
+// Property inputs and promoted preambles can own an editor whose identity is
+// absent from the original answer. Keep that result surface mounted until the
+// draft finishes; provenance still guards every source action.
 const [drafts, setDrafts] = graphScopedSignal<readonly { id: string }[]>();
 export const resultDrafts = () => drafts() ?? [];
 export function retainResultDraft(id: string): () => void {
