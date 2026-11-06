@@ -8,8 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-- Renaming a page now also updates bare `alias::` and `aliases::` values naming it, so aliases stay attached after a reload. You can rename a name that exists only as an alias: its declaring lines and references change without renaming the declaring pages or creating a file for the alias. Such a name can merge into an existing page or alias owner, with no “make it its own page” choice.
-
 ### Fixed
 
 - References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
@@ -39,6 +37,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Renaming a page now also updates bare `alias::` and `aliases::` values naming it, so aliases stay attached after a reload. You can rename a name that exists only as an alias: its declaring lines and references change without renaming the declaring pages or creating a file for the alias. Such a name can merge into an existing page or alias owner, with no “make it its own page” choice.
 - PDF viewer updated to pdf.js 6.5.438 (#867). Its compatible image decoder also removes the Emscripten SDK requirement for building Tine.
 - Renaming a page to a name that is only another page's alias now asks three ways, in Tine's own dialog: **Merge into** that page, **Make it its own page** (the name stays an alias of the other page, so links to it still show in that page's Linked References), or **Cancel**. Before, a merge was the only choice (D-20261102-MC5, UI-CM-ALIAS-RENAME-DIALOG).
 - A link to an alias opens its owner while the alias's own page is empty, as in Logseq ([discussion #825](https://github.com/martinkoutecky/tine/discussions/825)): with `alias:: ML` on Machine Learning and an `ML` page with no real content (no text, no properties, at most one empty bullet), `[[ML]]` opens Machine Learning, and so does opening `ML` from the sidebar, a favorite or the keyboard. Once `ML` has content, `[[ML]]` opens it; this follows edits at once. The empty page stays in All pages, and the alias group's **Related pages** row opens it (UI-CM-EMPTY-ALIAS-LINK-OPENS-EMPTY-PAGE).
