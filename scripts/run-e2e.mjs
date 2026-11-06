@@ -141,6 +141,13 @@ const suites = {
     ["host-saves", "scripts/e2e-host-saves.mjs", {}],
   ],
   "windows-smoke": [
+    // GH #863 reopened on Beta 7: opt-in diagnostic probes, selected by name
+    // through ui-e2e.yml windows_scenario, outside its default fan-out.
+    ["beta-journal-863", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863" }],
+    ["beta-journal-863-edit", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-edit" }],
+    ["beta-journal-863-directory-case", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-directory-case" }],
+    ["beta-journal-863-crlf", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-crlf" }],
+    ["beta-journal-863-upper-extension", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "863-upper-extension" }],
     // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
     ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot
