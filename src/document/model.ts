@@ -1,5 +1,5 @@
 import { type PageKind, type Format } from "../types";
-import { createStore, produce, unwrap } from "solid-js/store";
+import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
@@ -287,23 +287,27 @@ export function docHasBlockIdentity(id: string): boolean {
 // per-block render hot path and ~7×/page render — into an O(1) lookup. We map to
 // the index (not the proxy) and read `doc.pages[idx]` live, so a property change
 // (roots/preBlock/format) stays fine-grained-reactive and the index never goes
-// stale: the memo re-derives whenever any page's `name` or the array length moves.
-const pageIndexByName = createRoot(() =>
-  createMemo(() => {
-    const m = new Map<string, number>();
-    doc.pages.forEach((p, i) => m.set(p.name, i));
-    return m;
-  })
-);
+// stale: the index re-derives whenever any page's `name` or the array length moves.
+// Publish positions by name: a source load must not invalidate every retained
+// property link just because its target is absent from the working set (GH #886).
+// Prefix keys so Solid's reserved property keys remain ordinary page names.
+const [pageIndexByName, setPageIndexByName] = createStore<Record<string, number | undefined>>({});
+const updatePageIndex = createRoot(() => createMemo(() => {
+  const next: Record<string, number> = {};
+  doc.pages.forEach((page, i) => { next[`page:${page.name}`] = i; });
+  untrack(() => setPageIndexByName(reconcile(next)));
+  return next;
+}));
 
 /** The pages shown in the main content area, in feed order. Memoized: the O(feed)
  *  resolve runs once per structural change, not on each of its ~7 calls per render. */
 export const mainPages = createRoot(() =>
   createMemo((): readonly ReadonlyFeedPage[] => {
-    const idx = pageIndexByName();
+    untrack(updatePageIndex);
+    const idx = pageIndexByName;
     return doc.feed
       .map((n) => {
-        const i = idx.get(n);
+        const i = idx[`page:${n}`];
         return i === undefined ? undefined : doc.pages[i];
       })
       .filter(Boolean) as FeedPage[];
@@ -312,13 +316,17 @@ export const mainPages = createRoot(() =>
 
 /** A loaded page record by name (anywhere in the working set), or undefined. */
 export function pageByName(name: string): ReadonlyFeedPage | undefined {
-  const i = pageIndexByName().get(name);
+  // Refresh a stale index even inside an enclosing batch, without subscribing
+  // the caller to its other names. The keyed position below owns that dependency.
+  untrack(updatePageIndex);
+  const i = pageIndexByName[`page:${name}`];
   return i === undefined ? undefined : doc.pages[i];
 }
 
 /** Record the identity chosen for a new page after its first successful save. */
 export function setPageId(name: string, id: string): void {
-  const i = pageIndexByName().get(name);
+  untrack(updatePageIndex);
+  const i = pageIndexByName[`page:${name}`];
   if (i !== undefined) setDoc("pages", i, "id", id);
 }
 
