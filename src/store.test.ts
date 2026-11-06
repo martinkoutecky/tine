@@ -879,7 +879,7 @@ describe("property splitting is fence-aware", () => {
 
 describe("trailing space: kept in the editor buffer, trimmed only on save", () => {
   it("editing a comment body leaves the final hidden metadata line byte-exact on save", () => {
-    const hidden = "quote:: selected words\nauthor:: Ada Test  \t";
+    const hidden = "tine.quote:: selected words\ntine.author:: Ada Test  \t";
     const dto = load([blk(`My view\n${hidden}`)]);
     setRaw(dto.blocks[0].id, `My revised view\n${hidden}`);
     expect(pageToDto("Test")!.blocks[0].raw).toBe(`My revised view\n${hidden}`);
@@ -1877,7 +1877,7 @@ describe("save engine (persistence)", () => {
     const exportsPage = (format: "md" | "org"): PageRead => ({
       name: "Exports", kind: "page", title: "Exports", id: `pages/Exports.${format}`, rev: "r0", format,
       pre_block: format === "org" ? "#+tine/exports: true\n#+public: false" : "tine/exports:: true\npublic:: false",
-      blocks: [blk("{{tine-query (or (property export) (property tine.share))}}")],
+      blocks: [blk("{{tine-query (or (property tine.export) (property tine.share))}}")],
     } as PageRead);
 
     /** The page read that admits the named file answers from the in-memory disk. */
@@ -1888,21 +1888,21 @@ describe("save engine (persistence)", () => {
     it("appends the definition as a root block with its property, once, and writes it to disk", async () => {
       const disk = await bindMemoryDisk([exportsPage("md")]);
       readsFrom(disk);
-      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site"]])).toBe(true);
       expect(await flushAll()).toBe(true);
       const roots = () => disk.files.get("pages/Exports.md")!.blocks.map((b) => b.raw);
       expect(roots()).toEqual([
-        "{{tine-query (or (property export) (property tine.share))}}",
-        "{{tine-query @page and name = 'A'}}\nexport:: a-site",
+        "{{tine-query (or (property tine.export) (property tine.share))}}",
+        "{{tine-query @page and name = 'A'}}\ntine.export:: a-site",
       ]);
       // The identical definition is not appended twice.
       const writes = disk.writes.length;
-      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site"]])).toBe(true);
       expect(await flushAll()).toBe(true);
       expect(roots()).toHaveLength(2);
       expect(disk.writes).toHaveLength(writes);
       // A different folder is a different definition.
-      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site-2"]])).toBe(true);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site-2"]])).toBe(true);
       expect(await flushAll()).toBe(true);
       expect(roots()).toHaveLength(3);
     });
@@ -1910,18 +1910,18 @@ describe("save engine (persistence)", () => {
     it("spells the property for an Org page", async () => {
       const disk = await bindMemoryDisk([exportsPage("org")]);
       readsFrom(disk);
-      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site"]])).toBe(true);
       expect(await flushAll()).toBe(true);
       const raw = disk.files.get("pages/Exports.org")!.blocks[1].raw;
       expect(raw).toContain("{{tine-query @page and name = 'A'}}");
-      expect(raw).toContain(":export: a-site");
-      expect(raw).not.toContain("export:: a-site");
+      expect(raw).toContain(":tine.export: a-site");
+      expect(raw).not.toContain("tine.export:: a-site");
     });
 
     it("refuses an empty query or page name without touching anything", async () => {
       const disk = await bindMemoryDisk([exportsPage("md")]);
       readsFrom(disk);
-      expect(await appendQueryBlock("Exports", "  ", [["export", "x"]])).toBe(false);
+      expect(await appendQueryBlock("Exports", "  ", [["tine.export", "x"]])).toBe(false);
       expect(await appendQueryBlock(" ", "{{tine-query @page}}", [])).toBe(false);
       expect(await flushAll()).toBe(true);
       expect(disk.writes).toEqual([]);

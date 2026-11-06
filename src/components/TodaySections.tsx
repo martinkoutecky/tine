@@ -1,12 +1,13 @@
 // What shows under today's journal (OG page/today-queries, GH #605): the
-// sections page when one is marked `tine/journal-sections:: true`, else
+// sections page when one is marked `tine.journal-sections:: true`, else
 // config.edn `:default-queries` followed by the built-in agenda.
 // Policy: src/journalSections.ts.
 import { For, Match, Show, Switch, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingCurrent, captureBinding } from "../binding";
 import { graphMeta } from "../graphSession";
-import { changed, pageChangeKey } from "../changeKeys";
+import { changed, changedAny, pageChangeKey } from "../changeKeys";
+import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { bindingOwner, graphOwner, readOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { macroNameForDialect } from "../editor/queryMacroName";
@@ -32,6 +33,25 @@ const classify = (raw: string, format: Format): SectionItem["kind"] | null => {
 };
 
 type Sections = { page: string; items: SectionItem[]; ambiguous: string[] } | null;
+
+/** GH #834: a re-read (any full refresh re-reads the sections page) hands back
+ * fresh item objects, and `<For>` keys by identity: every unchanged section
+ * would unmount and drop its adopted answer, so `hideWhenEmpty` hid it until a
+ * new answer landed and the page below shifted. Keep the previous object for
+ * every item whose kind, text and format are unchanged. */
+function reuseUnchanged(previous: Sections | undefined, next: Sections): Sections {
+  if (!previous || !next) return next;
+  const pool = [...previous.items];
+  const items = next.items.map(item => {
+    const at = pool.findIndex(old => old.kind === item.kind && old.raw === item.raw && old.format === item.format);
+    return at < 0 ? item : pool.splice(at, 1)[0];
+  });
+  const same = previous.page === next.page && items.length === previous.items.length
+    && items.every((item, i) => item === previous.items[i])
+    && previous.ambiguous.length === next.ambiguous.length
+    && previous.ambiguous.every((name, i) => name === next.ambiguous[i]);
+  return same ? previous : { ...next, items };
+}
 
 export function JournalSectionsHeader(): JSX.Element {
   const openGuide = async () => {
@@ -86,11 +106,11 @@ export async function customizeTodaySections(): Promise<void> {
 }
 
 export function TodaySections(props: { today: string; upcoming?: JSX.Element }): JSX.Element {
-  const [pages, { refetch: refetchPages }] = createResource(() => changed("prop:tine/journal-sections"), locateSectionsPages);
+  const [pages, { refetch: refetchPages }] = createResource(() => changedAny(markerChangeKeys(JOURNAL_SECTIONS_MARKER)), locateSectionsPages);
   const [sections, { refetch }] = createResource(() => {
     const names = readOr(pages, undefined, "sections pages");
     return names && { names, revision: names.map(name => changed(pageChangeKey(name))).join("\0") };
-  }, source => readSections(source.names));
+  }, async (source, info): Promise<Sections> => reuseUnchanged(info.value as Sections | undefined, await readSections(source.names)));
   const current = () => readOr(sections, null, "today sections");
   const [busy, setBusy] = createSignal(false);
   const customize = () => {
@@ -125,7 +145,10 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
                 <Switch>
                   <Match when={item.kind === "upcoming"}>{props.upcoming}</Match>
                   <Match when={item.kind === "query" && detectMacro(item.raw, item.format)}>
-                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty />}
+                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty
+                      // GH #855: the section block's View properties (sort, group) apply here
+                      // too; the feed is read-only, View edits happen on the sections page.
+                      hostRaw={{ raw: item.raw, format: item.format }} />}
                   </Match>
                   <Match when={item.kind === "begin-query" && inspectBeginQuery(item.raw, item.format)}>
                     {(match) => <BeginQuery match={match()} currentPage={props.today} hideWhenEmpty />}

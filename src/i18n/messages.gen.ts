@@ -290,6 +290,12 @@ export interface MessageArgs {
   "comment-name-hint": {};
   "comment-name-label": {};
   "comment-name-placeholder": {};
+  "comment-name-prompt-body": {};
+  "comment-name-prompt-dismiss": {};
+  "comment-name-prompt-graph-changed": {};
+  "comment-name-prompt-save": {};
+  "comment-name-prompt-scope": {};
+  "comment-name-prompt-title": {};
   "comment-on-whole-block": {};
   "comment-quote-changed": {};
   "comment-reply": {};

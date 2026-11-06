@@ -4,6 +4,8 @@
 // workspace popup has in the real app.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { createSignal, Show } from "solid-js";
+import { createNearBlockMount } from "./createNearBlockMount";
 import {
   MAIN_WINDOW_ID,
   WindowContext,
@@ -231,6 +233,75 @@ describe("window realm helpers with a second document", () => {
     next.doc.body.append(e);
     observeNear(e, () => {});
     expect(made.map((m) => m.realm)).toEqual(["main", "popup", "popup2"]);
+  });
+
+  it("shares near observers inside each scroller and releases a retired pane's observer (GH #810)", () => {
+    const made: { root: Element | Document | null | undefined; margin: string | undefined; disconnect: ReturnType<typeof vi.fn> }[] = [];
+    vi.stubGlobal("IntersectionObserver", class {
+      disconnect = vi.fn();
+      constructor(_cb: IntersectionObserverCallback, options: IntersectionObserverInit) {
+        made.push({ root: options.root, margin: options.rootMargin, disconnect: this.disconnect });
+      }
+      observe() {}
+      unobserve() {}
+    });
+    cleanups.push(() => vi.unstubAllGlobals());
+    for (const name of ["main-content", "pane-main-content", "right-sidebar", "mobile-drawer"]) {
+      const pane = document.createElement("div");
+      pane.className = name;
+      pane.style.overflowY = "auto";
+      const a = document.createElement("div"), b = document.createElement("div");
+      pane.append(a, b);
+      document.body.append(pane);
+      const before = made.length;
+      observeNear(a, () => {});
+      observeNear(b, () => {});
+      expect(made.length).toBe(before + 1);
+      expect(made[before].root).toBe(pane);
+      expect(made[before].margin).toBe("1200px 0px");
+      unobserveNear(a);
+      expect(made[before].disconnect).not.toHaveBeenCalled();
+      unobserveNear(b);
+      expect(made[before].disconnect).toHaveBeenCalledOnce();
+      pane.remove();
+    }
+  });
+
+  it("resolves a block body's scroller after its JSX ref is inserted (GH #810)", () => {
+    let root: Element | Document | null | undefined;
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(_callback: IntersectionObserverCallback, options: IntersectionObserverInit) { root = options.root; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    cleanups.push(() => vi.unstubAllGlobals());
+    const pane = document.createElement("div");
+    pane.style.overflowY = "auto";
+    document.body.append(pane);
+    const Body = () => { const observe = createNearBlockMount({ blockId: "gh810-unseen-body" }); return <div><span ref={observe}>body</span></div>; };
+    cleanups.push(render(() => <Body />, pane));
+    expect(root).toBe(pane);
+  });
+
+  it("observes a body placeholder that first appears after mount", async () => {
+    const observed: Element[] = [];
+    vi.stubGlobal("IntersectionObserver", class {
+      observe(el: Element) { observed.push(el); }
+      unobserve() {}
+      disconnect() {}
+    });
+    cleanups.push(() => vi.unstubAllGlobals());
+    const pane = document.createElement("div");
+    pane.style.overflowY = "auto";
+    document.body.append(pane);
+    const [late, setLate] = createSignal(false);
+    const Body = () => { const observe = createNearBlockMount({ blockId: "gh810-late-body" }); return <Show when={late()}><span ref={observe}>body</span></Show>; };
+    cleanups.push(render(() => <Body />, pane));
+    expect(observed).toHaveLength(0);
+    setLate(true);
+    await Promise.resolve();
+    expect(observed).toEqual([pane.firstElementChild]);
   });
 
   it("useOwnerWindow resolves the WindowContext's registered window", () => {

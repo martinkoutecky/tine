@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tine 1  "tine 0.9.0-beta.4" 
+.TH tine 1  "tine 0.9.0-beta.7" 
 .SH NAME
 tine \- A fast, local\-first outliner for Logseq\-compatible graphs
 .SH SYNOPSIS
@@ -74,7 +74,7 @@ tine\-pages(1)
 List pages, or the pages at or under a namespace
 .TP
 tine\-edit(1)
-Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
+Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one
 .TP
 tine\-add(1)
 Insert a page fragment, attributing every new block to its author
@@ -91,4 +91,4 @@ Set or remove one property of a block
 tine\-run(1)
 Group writes into a git run: each write made with `\-\-run ID` is committed (after a snapshot of your own pending edits), and the run can be squashed or reverted as one
 .SH VERSION
-v0.9.0\-beta.4
+v0.9.0\-beta.7

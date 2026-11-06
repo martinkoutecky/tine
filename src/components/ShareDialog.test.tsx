@@ -131,7 +131,7 @@ it("hands the reviewed request to the folder export, with the query text only wh
   // The folder export reports the folder it wrote; only then is the definition saved.
   expect(doc.appended).toEqual([]);
   await queryExportAfter(queryExportRequest()!)!({ folder: "project-site" });
-  expect(doc.appended).toEqual([["Exports", "{{tine-query @page and name = 'Project'}}", [["export", "project-site"]]]]);
+  expect(doc.appended).toEqual([["Exports", "{{tine-query @page and name = 'Project'}}", [["tine.export", "project-site"]]]]);
   expect(toasts().map((toast) => String(JSON.stringify(toast)))).toEqual([expect.stringContaining("Saved the export on")]);
 });
 
@@ -143,7 +143,7 @@ it("seeds a query block's own text, preselects the query, and puts the folder on
   exportButton(root).click(); await settle();
   expect(queryExportRequest()).toMatchObject({ hostBlockId: "block-1", currentPage: "Notes" });
   await queryExportAfter(queryExportRequest()!)!({ folder: "todo-site" });
-  expect(doc.set).toEqual([["block-1", "export", "todo-site"]]);
+  expect(doc.set).toEqual([["block-1", "tine.export", "todo-site"]]);
   expect(doc.appended, "no second block is written").toEqual([]);
 });
 
@@ -155,11 +155,11 @@ it("treats an edited query as a new definition on the exports page, not a change
   expect(queryExportRequest()).toMatchObject({ argument: "@page", hostBlockId: null, properties: [] });
   await queryExportAfter(queryExportRequest()!)!({ folder: "edited" });
   expect(doc.set).toEqual([]);
-  expect(doc.appended).toEqual([["Exports", "{{tine-query @page}}", [["export", "edited"]]]]);
+  expect(doc.appended).toEqual([["Exports", "{{tine-query @page}}", [["tine.export", "edited"]]]]);
 });
 
 it("re-opening a definition shows the same selection: a page's selector opens as This page, and already-exported shows", async () => {
-  doc.properties.set("block-1\0export", "project-site");
+  doc.properties.set("block-1\0tine.export", "project-site");
   const root = await open(blockTarget("{{tine-query @page and name = 'Project'}}"));
   const [page, , query] = radios(root, "share-what");
   expect([page.checked, query.checked]).toEqual([true, false]);
@@ -169,7 +169,7 @@ it("re-opening a definition shows the same selection: a page's selector opens as
   // Unchanged, so the destination still goes onto the definition block itself.
   exportButton(root).click(); await settle();
   await queryExportAfter(queryExportRequest()!)!({ folder: "project-site-2" });
-  expect(doc.set).toEqual([["block-1", "export", "project-site-2"]]);
+  expect(doc.set).toEqual([["block-1", "tine.export", "project-site-2"]]);
 });
 
 it("refuses to export a selection with no pages, and shows the plan's refusal", async () => {

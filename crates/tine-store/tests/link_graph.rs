@@ -292,7 +292,7 @@ fn links_near_seeds_survive_a_rename_inside_a_definition() {
     let dir = tempfile::tempdir().unwrap();
     hand_graph(dir.path());
     let definition =
-        "- {{tine-query @page and near(name = 'hub', 1, 'in')}}\n  export:: hub-site\n";
+        "- {{tine-query @page and near(name = 'hub', 1, 'in')}}\n  tine.export:: hub-site\n";
     write(dir.path(), "pages/sites.md", definition);
     let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
     let app_data = tempfile::tempdir().unwrap();

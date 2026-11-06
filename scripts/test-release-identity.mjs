@@ -64,7 +64,7 @@ try {
       }
       if (lane.startsWith("linux")) {
         assert.equal(inputs.UPDATE_INFORMATION,
-          `zsync|https://tine.page/updates/beta/${lane === "linux-x64" ? "amd64" : "aarch64"}.AppImage.zsync`);
+          `gh-releases-zsync|owner|repo|latest-pre|${identity.productName.replace(/\s+/g, "-")}_*_${lane === "linux-x64" ? "amd64" : "aarch64"}.AppImage.zsync`);
         assert.equal(inputs.LDAI_UPDATE_INFORMATION, inputs.UPDATE_INFORMATION);
         assert.ok(!/\s/.test(inputs.UPDATE_INFORMATION));
         assert.equal(inputs.RELEASE_APPIMAGE, spec.sourceAssets[spec.assets[0]]);

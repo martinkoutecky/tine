@@ -25,7 +25,7 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
 }
 const load = () => loadSingle({
   name: PAGE, kind: "page", title: PAGE, pre_block: null,
-  blocks: [block("p", "Discuss these words", [block("kid", "plain"), block("c", "My view\nquote:: words", [block("r", "Earlier")])])],
+  blocks: [block("p", "Discuss these words", [block("kid", "plain"), block("c", "My view\ntine.quote:: words", [block("r", "Earlier")])])],
 });
 
 beforeAll(async () => { await initParser(); });

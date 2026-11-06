@@ -29,6 +29,7 @@ pub mod pdf;
 pub mod projection;
 pub use tine_outline::property_line;
 pub use tine_outline::property_refs;
+pub use tine_outline::tine_keys;
 pub mod query;
 pub mod query_edn;
 pub mod query_plan;

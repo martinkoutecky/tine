@@ -313,3 +313,64 @@ fn run_commit_index_is_durable_before_the_branch_moves() {
         "`.git`'s entry sync (no directory flush on Windows) runs before the ref move"
     );
 }
+
+/// GH #842: run writes and plain writes to one page, in parallel. Every write
+/// lands; each commit's file is its parent's plus what that commit wrote, so
+/// no commit took another writer's bytes under its own name or the user's.
+#[test]
+fn gh842_parallel_run_and_plain_writes_commit_in_save_order() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    let start = std::sync::Barrier::new(12);
+    let results: Vec<(usize, Result<Value, crate::owner::wire::ErrorBody>)> =
+        std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..12)
+                .map(|i| {
+                    let (slot, start, run) = (&slot, &start, &run);
+                    scope.spawn(move || {
+                        start.wait();
+                        let mut args = json!({ "page": "a", "content": format!("- w{i}") });
+                        if i % 2 == 0 {
+                            args["run"] = json!(run);
+                        }
+                        (i, verb(slot, "block.add", args))
+                    })
+                })
+                .collect();
+            threads.into_iter().map(|t| t.join().unwrap()).collect()
+        });
+    for (i, result) in &results {
+        let reply = result.as_ref().unwrap_or_else(|e| panic!("w{i}: {e:?}"));
+        if i % 2 == 0 {
+            assert_eq!(reply["git"]["committed"], true, "{reply}");
+        }
+    }
+    let text = disk(&graph, "pages/a.md");
+    for i in 0..12 {
+        assert_eq!(text.matches(&format!("- w{i}\n")).count(), 1, "{text}");
+    }
+    // Walk from the tip: each commit's page grows by whole lines at its end,
+    // and an agent commit by exactly its own block.
+    let mut commit = head(&repo);
+    let mut agent_commits = 0;
+    while commit.parent_count() > 0 {
+        let parent = commit.parent(0).unwrap();
+        let (now, before) = (
+            file_at(&repo, &commit, "pages/a.md"),
+            file_at(&repo, &parent, "pages/a.md"),
+        );
+        assert!(now.starts_with(&before), "{before}\n--\n{now}");
+        if commit.message().unwrap().starts_with("tine add") {
+            agent_commits += 1;
+            let grew = &now[before.len()..];
+            assert!(
+                grew.starts_with("- w") && grew.matches("\n- ").count() == 0,
+                "an agent commit holds one block, got {grew:?}"
+            );
+        }
+        commit = parent;
+    }
+    assert_eq!(agent_commits, 6);
+}

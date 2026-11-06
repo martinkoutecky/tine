@@ -4,7 +4,7 @@ import { msg, render } from "./i18n";
 // resolver. The host keeps that draft's crash-recovery copy until the conflict
 // is resolved, so the only draft is the open page's text, which the resolver
 // reads at each review. Derived on every read; nothing here is stored.
-import { untrack } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { conflicts, liveConflictDraft, pageByName } from "./document";
 import { conflictForPage, conflictQueue, syncConflicts } from "./conflictQueue";
 import type { ConflictObject, LiveConflictDraft, PageKind } from "./types";
@@ -63,4 +63,23 @@ export function liveConflictObjects(): ConflictObject[] {
  *  O(conflicts + records). */
 export function pendingConflictCount(): number {
   return conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length + liveConflictObjects().length;
+}
+
+/** GH #858: the conflict banner's Review asks the page's resolver to come
+ *  into view. Review on the page already open used to do nothing, so on a long
+ *  page scrolled down the resolver stayed above the viewport. Keyed by the
+ *  page's file path; `at` lets a resolver that mounts just after the click
+ *  (Review on another page opens it first) still answer it. */
+const [reviewRequest, setReviewRequest] = createSignal<{ path: string; at: number } | null>(null);
+export const conflictReviewRequest = reviewRequest;
+export function requestConflictReview(path: string): void {
+  setReviewRequest({ path, at: Date.now() });
+}
+let claimedReview = 0;
+/** The first resolver to answer a request claims it; a later mount of the
+ *  same page (another visit, another pane) does not jump again. */
+export function claimConflictReview(request: { at: number }): boolean {
+  if (request.at <= claimedReview) return false;
+  claimedReview = request.at;
+  return true;
 }

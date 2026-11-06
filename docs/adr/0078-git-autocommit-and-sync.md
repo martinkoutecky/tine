@@ -25,7 +25,7 @@ DESIGN (rev 0 + §8–§9) and the seen design (rev 1). Dossier with line number
 | D-20261018-G6 | lands in whatever release the timing gives; no release waits for it | follow (card hBpb2k's "after model v0" is stale) |
 | D-20261018-G7 | libgit2 (git2-rs, `default-features = false`) on all five platforms; HTTPS through Tine's own Rust HTTP/TLS stack as a registered smart transport; no OpenSSL | follow |
 | D-20261019-G8 | Android TLS through the OS trust store (rustls-platform-verifier); Tine owns repack; batched cadence; libgit2 fsync on; SSH later, pure Rust, only when asked (supersedes G7's libssh2) | follow |
-| D-20261019-G9 | autocommit when no page saved for 60 s and ≥ 10 min (a setting) since the last one; at once on background/quit, before a pull, and around structural operations; repack at 50 loose commits on the git thread, skipped while a `git gc` lock exists | follow, except background on Android/iOS: capped at one autocommit per interval (D-20261026-GC, manager 2026-10-28; deviation to confirm with Martin) |
+| D-20261019-G9 | autocommit when no page saved for 60 s and ≥ 10 min (a setting) since the last one; at once on background/quit, before a pull, and around structural operations; repack at 50 loose commits on the git thread, skipped while a `git gc` lock exists | follow; D-20261101-GB restores the immediate Android/iOS background commit, reversing the D-20261026-GC cap on that edge |
 | D-20261017-SB2, LD1, C13 | seen reads git; only commits by others count; "me" = the repository's `user.email`, "Your name" as fallback | follow: autocommits use exactly that identity |
 | D-17, D-10, I-25, trust model | Direct Files only; a new mode is specified with budgets and approved before code; every refusal names its in-scope threat | follow: this record, the refusal table, the unit-cost line |
 
@@ -179,8 +179,8 @@ write is reported uncommitted (L7s5-02). Concurrent commits on the same branch r
 
 ### 3. When
 Per G9: when no page has saved for 60 s and the interval (default 10 min) has passed since the last autocommit;
-at once when the last window closes or the app goes to the background (on Android and iOS at most once per interval,
-slice 3, D-20261026-GC), before every pull, and around a
+at once when the last window closes or the app goes to the background (on Android and iOS without an interval limit,
+slice 3, D-20261101-GB), before every pull, and around a
 structural operation (rename, merge, delete or move of a page, restore from backup): commit pending changes
 first, run the operation, then commit its files with its verb (`Rename page "A" to "B"`). A failed operation
 leaves only the first commit. Autocommits take the CLI runs' lock, so they never fall between a run write's
@@ -299,16 +299,17 @@ Slice 3 (D-20261028-GM) removed the mobile "Git is not available on this device 
 one implementation on all five targets, pinned by `git_has_no_platform_arm`; the HTTPS transport names its TLS
 stack per target and refuses to compile for any other (AGENTS §2). Lifecycle on Android and iOS: at open the
 worker starts as on desktop; going to the background flushes the pages, then each worker commits what is
-pending (at most one autocommit per interval, D-20261026-GC: backgrounding is no exemption from §Unit cost's rate; held-back edits
-are saved and commit at the next allowed moment or the next launch) and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
+pending at once, without an interval limit (D-20261101-GB), and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
 fetch or pull (a push writes nothing to the local repository); coming back to the foreground runs a full cycle at
 once under that policy, without forcing a commit (unlike **Sync now**). Until then no automatic cycle runs, however
 long the app stays away: the background edge sets an away state that only the foreground edge clears, a worker that
 starts meanwhile (a bind ending after the switch) starts away, the frontend reports an app already hidden when it
 mounts, a **Sync now** asked for meanwhile waits for the foreground, and the frontend drops a background edge that
 a newer foreground edge overtook during its page flush (review F1, F4; round 2 B1, FU1). The
-pull's own pre-pull autocommit (§3) is outside the cap, so a foreground cycle can add one commit after a background
-one (review F7, a follow-up). Limit: a commit holds `index.lock` (and briefly the branch's ref lock); a push takes it
+pull's own pre-pull autocommit (§3) can add a commit when the foreground cycle brings in remote changes.
+A background edge with no edits since the last successful commit skips the commit attempt; the first background
+edge of a binding still checks for changes made while Tine was closed. A clean tree creates no empty commit.
+Limit: a commit holds `index.lock` (and briefly the branch's ref lock); a push takes it
 only for its local checks, not during the network transfer (review F3). The OS ending the app midway can leave either, and
 §1's busy-then-name rule applies (measured in `git_mobile_tests.rs`, which CI also runs on an Android emulator with
 the graph on shared storage). Android's shared storage (MediaProvider FUSE) reports another owner for every file,
@@ -320,15 +321,17 @@ by capitalization alone stays `pull-incomplete` and writes nothing (a stated lim
 
 Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, caman, libgit2 1.9 via git2 0.21).
 
-- **Per edit:** nothing. Edits are never committed one by one.
+- **Per edit:** no extra history write until an autocommit trigger runs.
 - **Per autocommit:** one zlib blob per changed file (a 543 B page: 342 B on disk; 60 changed pages ≈ 32 KB), the
   rewritten trees on the changed paths, one commit (160 B). The trees dominate: Logseq keeps all pages in one
   flat `pages/` folder, so its tree object is rewritten whole on every commit: **247 KB loose at 10 000 pages**,
   25 KB at 1 000. Files: one loose object per new object (blobs + 2 trees + commit), plus ref and reflog, and the
   index rewritten whole (880 KB at 10 000 pages). Index install: one fsync of the index copy and one of `.git`
   (Windows: none, identity checks only) per commit (s3.7 P1b; counted from the code, `IndexLock::install`).
-- **Rate:** at most one autocommit per interval of editing (default 10 min) plus one per structural operation:
-  ≤ 6 per editing hour, ≤ 1.5 MB loose per editing hour at 10 000 pages. The incremental repack at 50 commits
+- **Rate:** timed autocommits remain at most once per interval of editing (default 10 min, ≤ 6 per editing hour).
+  Background on Android/iOS commits pending edits immediately without a rate cap (D-20261101-GB); quit,
+  pre-pull and structural-operation commits also run outside the timed cadence. An unchanged app switch creates
+  no commit, and nothing rewrites or coalesces history or force-pushes. The incremental repack at 50 commits
   deltifies the trees: on 10 000 flat pages, 50 one-page autocommits (200 loose objects) pack to 265 KB in
   0.33 s, ≈ 5.3 KB per commit, and the pack written before is untouched, so `.git` grows linearly
   (`measure_incremental_repack`, an ignored test in `git_autocommit_tests.rs`; caman, 2026-10-21). The spike's
@@ -339,11 +342,25 @@ Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, c
   with fsync, 2 s without; 42 MB `.git` before repack).
 - **Memory:** no history walk (seen bounds its own reads to 200 commits per page).
 
+Background-edge check (D-20261101-GB, 2026-11-01, Linux, real `autocommit_worker` → `commit_now` and
+`push_pending` → libgit2 against a disposable `file://` bare remote): a small edit to a 1-block / 60-block
+page (37 / 3,282 bytes, four-page graph) changed eight persistent `.git` files: four loose objects,
+the index, the branch ref and two reflogs. New objects totalled 422 / 619 bytes; net `.git` growth was
+789 / 986 bytes and the received push pack was 431 / 627 bytes (pack payload only, no network framing).
+Across 50 edits and background commits, `.git` grew 37,924 / 38,471 bytes without external `git gc`
+(including Tine's incremental repack at commit 50), or 38,774 / 38,232 bytes after `git gc --prune=now`.
+These are sums of regular-file lengths against a GC-normalized baseline; snapshots after each completed
+push identify changed paths and new remote `.pack` files. They exclude transient locks and index copies,
+filesystem allocation and directory metadata. The repeatable ignored test is
+`git_mobile_tests.rs::measure_background_commit_unit_cost`; the lane evidence is
+`artifacts/og-git-close-push/measurements.json`. These small fixtures do not replace the flat-tree costs above.
+
 ## Consequences
 
 - Git graphs gain history and sync without a terminal; graphs that are not repositories see nothing.
 - A pull can be held by one unsaved page. That is the price of never overwriting an edit.
-- History grows with the flat `pages/` tree; the 10-minute interval is the lever, and it is a setting.
+- History grows with the flat `pages/` tree; the 10-minute setting limits timed commits, while mobile background
+  commits prioritize keeping the remote current after each edit and app switch (D-20261101-GB).
 - A user's own commits on another device count as "mine" for seen (OJ4b); an autocommit's interval delays what
   seen shows across devices by up to the interval.
 - A second external writer (Tine's pull) joins the storage model; the write-protocol census and the contract's

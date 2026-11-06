@@ -1,5 +1,5 @@
 // "Your name" (D-20261017-LD1): comments and replies the user writes carry
-// `author:: <name>` when a name is set; unset keeps today's behaviour (no author
+// `tine.author:: <name>` when a name is set; unset keeps today's behaviour (no author
 // written, rendered "you"); an author equal to the name renders as "you".
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
@@ -78,32 +78,32 @@ describe("the name", () => {
 });
 
 describe("what is written", () => {
-  it("writes author:: after the quote lines in both formats, and none when unset", () => {
+  it("writes tine.author:: after the quote lines in both formats, and none when unset", () => {
     const sel = { quote: "a passage", prefix: null, suffix: null };
-    expect(commentRaw(sel, "md")).toBe("\nquote:: a passage");
-    expect(commentRaw(sel, "md", "Ada")).toBe("\nquote:: a passage\nauthor:: Ada");
-    expect(commentRaw(sel, "org", "Ada")).toBe("\n:PROPERTIES:\n:quote: a passage\n:author: Ada\n:END:");
-    expect(replyRaw("md", "Ada")).toBe("\nauthor:: Ada");
+    expect(commentRaw(sel, "md")).toBe("\ntine.quote:: a passage");
+    expect(commentRaw(sel, "md", "Ada")).toBe("\ntine.quote:: a passage\ntine.author:: Ada");
+    expect(commentRaw(sel, "org", "Ada")).toBe("\n:PROPERTIES:\n:tine.quote: a passage\n:tine.author: Ada\n:END:");
+    expect(replyRaw("md", "Ada")).toBe("\ntine.author:: Ada");
   });
 
   it("a new comment carries the name as one undo unit; a reply too", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     resetCommentAuthorNameForTests("Ada");
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.\nauthor:: Ada");
+    expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.\ntine.author:: Ada");
     expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
     const reply = doc.byId[comment].children[0];
-    expect(doc.byId[reply].raw).toBe("\nauthor:: Ada");
+    expect(doc.byId[reply].raw).toBe("\ntine.author:: Ada");
     undo();
     expect(doc.byId[comment].children).toHaveLength(0);
     undo();
     expect(doc.byId["p"].children).toHaveLength(0);
   });
 
-  it("without a name nothing changes: no author:: on the comment or the reply", () => {
+  it("without a name nothing changes: no tine.author:: on the comment or the reply", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.");
+    expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
     expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
     expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("");
   });
@@ -112,9 +112,9 @@ describe("what is written", () => {
 describe("what is shown", () => {
   const chips = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(".author-chip")].map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
   const fixture = () => [block("p", "A passage to discuss.", [
-    block("c", "Mine.\nquote:: passage\nauthor:: Ada"),
-    block("d", "Theirs.\nquote:: discuss\nauthor:: claude"),
-    block("e", "Unsigned.\nquote:: A"),
+    block("c", "Mine.\ntine.quote:: passage\ntine.author:: Ada"),
+    block("d", "Theirs.\ntine.quote:: discuss\ntine.author:: claude"),
+    block("e", "Unsigned.\ntine.quote:: A"),
   ])];
 
   it("shows an author equal to the name as you, and others as before", () => {
@@ -127,7 +127,7 @@ describe("what is shown", () => {
     ]);
   });
 
-  it("with no name set an author:: of your name shows as written", () => {
+  it("with no name set an tine.author:: of your name shows as written", () => {
     const root = mount(fixture());
     expect(chips(root)[0]).toEqual({ text: "Ada", agent: true });
   });
