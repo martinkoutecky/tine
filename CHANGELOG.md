@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886, partly addressed; keep it open).
 - Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).
 - A rename or merge is now refused, naming the journal, when it would break a link that reaches a journal through the old name (for example `[[old/sub]]` where a journal declares `alias:: old/sub`, and `old` is renamed). Journals keep their names. A journal no such link reaches does not block the rename (REG-CM-JOURNAL-REFERENCE-LOSS, UI-CM-JOURNAL-REFERENCE-LOSS).
 - Keyboard follow-link on Org pages uses the current graph filename format after a format change, including links whose parsed text is already cached (UI-CM-ORG-FOLLOW-CODEC).
