@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { createComputed, createRoot } from "solid-js";
 import { produce } from "solid-js/store";
 import { doc, setDoc } from "./model";
-import { loadSingle, resetStore } from "./workingSet";
+import { ensurePageLoaded, forgetPage, loadSingle, reloadPage, resetStore } from "./workingSet";
 import { resolveBlockRef } from "./edits/identity";
 
 afterEach(resetStore);
@@ -44,5 +44,39 @@ it.each(["md", "org"] as const)("keeps %s zoom/reference identities live across 
     loadSingle({ ...page, blocks: [{ ...page.blocks[1], raw: raw("claimed") }] });
     expect(observed.at(-1)).toBe("two");
     expect(doc.byId.one).toBeUndefined();
+  } finally { dispose(); }
+});
+
+it("loading, forgetting or evicting other pages leaves a page's identity answer alone (GH #886)", () => {
+  const page = (name: string, raw = "Body") => ({
+    name, title: name, kind: "page" as const, pre_block: null, format: "md" as const, id: `pages/${name}.md`,
+    blocks: [{ id: `${name}-b`, raw, collapsed: false, children: [] }],
+  });
+  for (let i = 0; i < 79; i++) expect(ensurePageLoaded(page(`Other ${i}`))).toBeNull();
+  expect(ensurePageLoaded(page("Source", "Body\nid:: claimed"))).toBeNull();
+  const ref = { uuid: "claimed", page: "Source", pageKind: "page" as const, path: "pages/Source.md" };
+  let runs = 0;
+  const observed: (string | null)[] = [];
+  const dispose = createRoot(dispose => {
+    createComputed(() => { runs++; observed.push(resolveBlockRef(ref)); });
+    return dispose;
+  });
+  try {
+    expect(observed.at(-1)).toBe("Source-b");
+    const before = runs;
+    // Each of these used to clear every page's index and re-run every
+    // mounted reference group's resolver: N loads x N groups while scrolling.
+    expect(ensurePageLoaded(page("Extra"))).toBeNull(); // 81 pages: evicts "Other 0"
+    expect(doc.pages.some(p => p.name === "Other 0")).toBe(false);
+    forgetPage("Extra");
+    expect(ensurePageLoaded(page("Other 0"))).toBeNull();
+    expect(runs).toBe(before);
+    // The page's own reload still re-answers.
+    reloadPage(page("Source", "Body"));
+    expect(observed.at(-1)).toBeNull();
+    reloadPage(page("Source", "Body\nid:: claimed"));
+    expect(observed.at(-1)).toBe("Source-b");
+    forgetPage("Source");
+    expect(observed.at(-1)).toBeNull();
   } finally { dispose(); }
 });

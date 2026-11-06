@@ -60,7 +60,8 @@ const CLASSIFIED: Record<string, string> = {
   "src/ui.ts#shortcutOverrides": "device preference",
   // Found once named types were expanded (og 15a follow-up):
   "src/document/model.ts#doc": "the document store itself; resetStore replaces it on every switch",
-  "src/document/model.ts#pageIndexByName": "derived page positions; the index memo reconciles removals when resetStore replaces doc.pages on a graph switch",
+  "src/document/model.ts#pageRecordByName": "derived record tokens by page name; the index memo reconciles removals when resetStore replaces doc.pages on a graph switch",
+  "src/document/model.ts#pageStructureRevisions": "dependency counters keyed by page name, no content; a name reused in another graph only re-runs a reader once",
   "src/editorCommandBridge.ts#focusedEditorBridge": "the focused editor's command bridge; unregistered when that editor unmounts, and resetStore ends the edit",
   "src/editorController.ts#pendingHistoryEditorRestore": "caret selection hint consumed by the mounting editor; never written back",
   "src/favorites.ts#layout": "graph preference reseeded on open; its writes capture bindingOwner (writeGraphSignal)",

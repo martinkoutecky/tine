@@ -1,7 +1,7 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
 import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, pageFrozen, rekeyPage, releaseHolds, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
-import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, writeWholePages, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
@@ -96,7 +96,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
   setBaseRev(dto.name, dto.rev ?? null);
   batch(() => {
     if (carried) endEdit("external-reload");
-    const write = () => setDoc(
+    const write = () => writeWholePages([dto.name], () => setDoc(
       produce((s) => {
         purgePageNodes(s, dto.name);
         const fp = toFeedPage(dto, s.byId);
@@ -104,7 +104,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
         if (i >= 0) s.pages[i] = fp;
         else s.pages.push(fp);
       })
-    );
+    ));
     if (replacing) write(); else hydrateWorkingSet(write);
     if (carried) reopenEditor(dto.name, carried);
   });
@@ -323,7 +323,7 @@ export function forgetPage(name: string) {
   // The page is leaving the working set; a stale undo snapshot must not be able to
   // re-add it (and, with baseRev gone, recreate an externally-deleted file).
   invalidateUndoForPage(name);
-  setDoc(
+  writeWholePages([name], () => setDoc(
     produce((s) => {
       purgePageNodes(s, name);
       const pi = s.pages.findIndex((p) => p.name === name);
@@ -331,7 +331,7 @@ export function forgetPage(name: string) {
       const fi = s.feed.indexOf(name);
       if (fi >= 0) s.feed.splice(fi, 1);
     })
-  );
+  ));
   retirePageInstance(name);
   invalidateAllMatrixDimensions();
 }
@@ -520,7 +520,7 @@ export function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
   const evicted: string[] = [];
-  hydrateWorkingSet(() => setDoc(
+  hydrateWorkingSet(() => writeWholePages(evicted, () => setDoc(
     produce((s) => {
       // Oldest first (insertion order); stop once at the cap or only pinned left.
       for (let i = 0; i < s.pages.length && s.pages.length > WORKING_SET_CAP; ) {
@@ -534,7 +534,7 @@ export function evictIfNeeded() {
         evicted.push(name);
       }
     })
-  ));
+  )));
   for (const name of evicted) retirePageInstance(name);
   invalidateAllMatrixDimensions();
 }
