@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).
 - Ctrl+F highlights matching text in table and grid cells and brings the active cell into view (#876).
 - Author indicators on embed blocks preserve the embedded bullets' alignment (#873).
 - Merging two pages (or renaming a page onto another) keeps every alias of both pages. Before, an `aliases::` line on both pages (Org: `#+ALIASES:`), or aliases written in a page's first bullet instead of above it, ended up as an ordinary block, so links to those aliases no longer opened the merged page. Nothing was deleted; the alias lines were moved into the page body (REG-CM-MERGE-LOSES-ALIASES).
