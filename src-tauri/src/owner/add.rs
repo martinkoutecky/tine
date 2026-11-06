@@ -159,7 +159,7 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                             &block.raw,
                             org,
                             Edit::Property {
-                                key: "author".into(),
+                                key: tine_core::tine_keys::AUTHOR.into(),
                                 value: Some(author.into()),
                             },
                         )

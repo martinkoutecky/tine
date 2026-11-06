@@ -836,11 +836,8 @@ pub(crate) fn open_graph_window_blocking(
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let builder = builder.decorations(crate::settings::native_frame_active());
         #[cfg(target_os = "windows")]
-        let builder = if let Some(arguments) = crate::windows_webdriver_args_from_env(None) {
-            builder.additional_browser_args(&arguments)
-        } else {
-            builder
-        };
+        let builder =
+            builder.additional_browser_args(&crate::webview2_args::windows_browser_args_from_env());
         #[cfg(target_os = "linux")]
         let builder = crate::youtube_identity::configure(builder, app);
         let builder = crate::workspace_windows::attach(builder, app, &label);

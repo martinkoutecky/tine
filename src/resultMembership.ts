@@ -14,8 +14,17 @@ export function blocksContainEdit(blocks: BlockDto[], id: string): boolean {
   return blocks.some((block) => block.id === id || blocksContainEdit(block.children, id));
 }
 
+/** Whether editing `id` is editing these results. A run's rows are shallow DTOs, and the rows an expanded
+ * result shows beneath a hit are its live source blocks, so a block below a listed row counts too (GH #851):
+ * walking up from it, the first listed ancestor makes it part of the answer being held. */
 export function groupsContainEdit(groups: RefGroup[], id: string): boolean {
-  return groups.some((group) => blocksContainEdit(group.blocks, id));
+  if (groups.some((group) => blocksContainEdit(group.blocks, id))) return true;
+  const seen = new Set<string>([id]);
+  for (let parent = docNode(id)?.parent; parent && !seen.has(parent); parent = docNode(parent)?.parent) {
+    seen.add(parent);
+    if (groups.some((group) => blocksContainEdit(group.blocks, parent))) return true;
+  }
+  return false;
 }
 
 /** One read lifecycle for derived result surfaces. Ordinary autosave is untouched.

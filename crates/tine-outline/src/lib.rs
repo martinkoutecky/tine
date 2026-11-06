@@ -21,6 +21,7 @@ pub mod property_refs;
 pub mod property_visibility;
 pub mod removal_refs;
 mod swallowed_rows;
+pub mod tine_keys;
 
 /// The parse entry `block_regions` asks through (`crate::render::…`), the same
 /// names `tine-core`'s render bridge exposes.

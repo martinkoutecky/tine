@@ -18,7 +18,8 @@ import { commentMarginHidden } from "../commentMarginPref";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { setJournalTemplate, graphMeta } from "../graphSession";
-import { changed } from "../changeKeys";
+import { changedAny } from "../changeKeys";
+import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -1047,7 +1048,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
 function SectionsPageNote(): JSX.Element {
   // Keep the optional note empty while loading: an undefined first value must
   // neither crash its index lookup nor suspend the entire Settings dialog.
-  const [pages] = createResource(() => changed("prop:tine/journal-sections"), () => locateSectionsPages(), { initialValue: [] as string[] });
+  const [pages] = createResource(() => changedAny(markerChangeKeys(JOURNAL_SECTIONS_MARKER)), () => locateSectionsPages(), { initialValue: [] as string[] });
   const page = () => readOr(pages, [] as string[], "sections page note")[0];
   return (
     <Show when={page()}>

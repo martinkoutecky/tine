@@ -13,6 +13,7 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { watchErrorToasts } from "./lib/e2e-toasts.mjs";
 
 ensurePrivateSessionBus();
 
@@ -41,6 +42,9 @@ const settingsPath = `${appData}/tine-settings.json`;
 // Capture is an independent WebView: begin with a persisted non-default mode
 // so its cold start cannot accidentally inherit the main WebView's default.
 fs.writeFileSync(settingsPath, '{"link_autocomplete_policy":"existing","space_after_ref_completion":true}\n');
+// The one-time Guide announcement is a sticky toast in the main window's
+// bottom-right corner; it is not this journey's subject and can cover the
+// Settings controls below (other journeys set the same key).
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{:preferred-workflow :todo :tine/guide-announced? true}\n");
 fs.writeFileSync(`${GRAPH}/pages/Home.md`, "- capture focus fixture\n");
 fs.writeFileSync(`${GRAPH}/pages/Fuzzy Existing.md`, "- completion target\n");
@@ -356,6 +360,11 @@ try {
   await browser.keys([...PROOF]);
   await sleep(150);
   await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-typed.png"));
+  // UI-CAPTURE-NO-PAGE-INVENTORY: completing page references in the capture
+  // window must not raise an error (it once asked for the page inventory the
+  // capture WebView is refused, and showed "Couldn't refresh the page list").
+  const captureErrors = await watchErrorToasts(browser, 1_000);
+  if (captureErrors.length) throw new Error(`Quick Capture showed error toasts: ${JSON.stringify(captureErrors)}`);
   if (process.env.E2E_CAPTURE_REFUSAL === "1") {
     // Rebind the native graph slot while leaving the shown capture WebView on
     // its original generation. Reload only the receiver so it takes the new
@@ -400,6 +409,16 @@ try {
   // window is hidden. Reopening that exact WebView must refresh before Enter can
   // choose a completion; otherwise it would retain the cold existing-first signal.
   await browser.switchToWindow(mainHandle);
+  // The graph window confirms the save with a transient toast in its
+  // bottom-right corner, which is where the Settings modal's Advanced policy
+  // select lands once WebDriver scrolls it into view: a click there while the
+  // toast lives is intercepted (seen on develop, 2026-11-02). Assert the
+  // confirmation, then close it as a user would before going on.
+  const confirmation = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' toast ')][contains(., \"Captured to today's journal\")]");
+  await confirmation.waitForExist({ timeout: 5_000, timeoutMsg: "the graph window did not confirm the capture" });
+  // It may expire on its own (3.2 s) between these two commands; either way it must be gone.
+  try { await confirmation.$(".toast-close").click(); } catch (error) { if (await confirmation.isExisting()) throw error; }
+  await confirmation.waitForExist({ timeout: 5_000, reverse: true, timeoutMsg: "the capture confirmation did not close" });
   await browser.$('button[title^="Settings"]').click();
   // The settings launcher opens its default tab, while this policy deliberately
   // lives under Editor → Advanced. Follow that visible flow rather than reaching

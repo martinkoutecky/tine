@@ -82,12 +82,12 @@ for (const [caseIndex, format] of ["md", "org"].entries()) {
 
     mark("the Exports page was created with its marker and lists the definition");
     const file = path.join(graph, "pages", `Exports.${format}`);
-    const marker = format === "org" ? "#+tine/exports: true" : "tine/exports:: true";
+    const marker = format === "org" ? "#+tine.exports: true" : "tine.exports:: true";
     const privateLine = format === "org" ? "#+public: false" : "public:: false";
     const text = await waitForFileText(file, value => value.includes("{{tine-query @page and name = 'Project'}}") && value.includes("project"), { timeoutMs: 30_000 });
     check(text.includes(marker) && text.includes(privateLine), `the Exports page lost its marker or public:: false:\n${text}`);
-    check(text.includes("(or (property export) (property tine.share))"), "the Exports page has no overview block");
-    check(format === "org" ? /:export:\s+project/.test(text) : text.includes("export:: project"), `the definition lacks its export folder:\n${text}`);
+    check(text.includes("(or (property tine.export) (property tine.share))"), "the Exports page has no overview block");
+    check(format === "org" ? /:tine.export:\s+project/.test(text) : text.includes("tine.export:: project"), `the definition lacks its export folder:\n${text}`);
     check(fs.readFileSync(path.join(graph, "logseq/config.edn"), "utf8") === config, "sharing changed config.edn");
     proof.steps.push(journey);
 
@@ -95,7 +95,7 @@ for (const [caseIndex, format] of ["md", "org"].entries()) {
     await openPageByName(browser, "Exports");
     await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Exports", { timeout: 15_000 });
     await browser.waitUntil(() => browser.execute(() => document.querySelector(".main-content")?.textContent?.includes("Project")), { timeout: 15_000, timeoutMsg: "the Exports page does not list the shared page" });
-    check(!await browser.execute(() => document.querySelector(".main-content .page-properties, .main-content")?.textContent?.includes("tine/exports")), "the exports marker shows in the page");
+    check(!await browser.execute(() => document.querySelector(".main-content .page-properties, .main-content")?.textContent?.includes("tine.exports")), "the exports marker shows in the page");
     proof.steps.push(journey);
     console.log(`PASS ${format}`);
   } catch (error) {

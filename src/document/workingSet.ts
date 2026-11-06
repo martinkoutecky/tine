@@ -115,7 +115,8 @@ function upsertPage(dto: PageDto & { id?: string }) {
 
 /** Install the page host's text (or, for null, its "no file") as loaded page
  * `name`'s content: the slot keeps its name, kind and title; `path` names the
- * file when the page had none. Only `host/wiring.ts` calls this. */
+ * file when the page had none and the host supplies file content. A no-file
+ * reply's path is only a creation proposal. Only `host/wiring.ts` calls this. */
 export function installPageContent(name: string, dto: PageDto | null, path?: string | null): void {
   const page = pageByName(name);
   // "No file" is held in the format of the file it will be written to, as a
@@ -124,7 +125,7 @@ export function installPageContent(name: string, dto: PageDto | null, path?: str
   const file = page?.id ?? path ?? null;
   const text = dto ?? emptyPage(name, page?.kind ?? "page", file ? formatOfFile(file) : page?.format);
   upsertPage({ ...text, name, kind: page?.kind ?? text.kind, title: page?.title ?? text.title,
-    id: page?.id ?? path ?? undefined, rev: dto ? dto.rev : null });
+    id: page?.id ?? (dto ? path ?? undefined : undefined), rev: dto ? dto.rev : null });
 }
 
 type CarriedEditor = { context: ReturnType<typeof captureHistoryEditorContext>; ownId: string | null; path: number[] };
@@ -181,6 +182,7 @@ function reopenEditor(pageName: string, carried: CarriedEditor): void {
  *  undo history for content we already hold. */
 function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boolean {
   if ((dto.id ?? "") !== (page.id ?? "")) return false;
+  if ((dto.format ?? "md") !== page.format) return false;
   // An open page-header editor is the pre-block shown as a root (J5): compare
   // the file's form, or the host's answer to the editor's own Open reads as
   // a change and the reload moves the editor off the header.
@@ -411,6 +413,17 @@ export function pinPageWhileDrafting(page: () => string | null | undefined): () 
     replayDeferredExternalReloads(); // a watcher change declined for this draft (GH #337)
   };
 }
+const viewportPins = new Set<() => string | null | undefined>();
+/** Keep a page that a live surface is showing near the viewport from being
+ * evicted (GH #849). Without this, more source pages near the view than the
+ * working set holds evict each other and reload for ever on an idle page. It only
+ * answers eviction: a clean page still takes reloads. The set can exceed the cap
+ * by what the viewport shows, as other pins do. O(1) to register; each eviction
+ * check calls every registered accessor. Call the returned unpin from `onCleanup`. */
+export function pinPageNearViewport(page: () => string | null | undefined): () => void {
+  viewportPins.add(page);
+  return () => { viewportPins.delete(page); };
+}
 export function draftPinned(name: string): boolean {
   for (const draft of draftPins) if (draft() === name) return true;
   return false;
@@ -418,6 +431,7 @@ export function draftPinned(name: string): boolean {
 function pinnedPages(includeFeed = true): Set<string> {
   const pin = new Set<string>(includeFeed ? doc.feed : []);
   for (const draft of draftPins) { const name = draft(); if (name) pin.add(name); }
+  for (const shown of viewportPins) { const name = shown(); if (name) pin.add(name); }
   for (const r of paneRouteProvider()) {
     if (r.kind === "page") pin.add(r.name);
   }
@@ -613,6 +627,15 @@ export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boo
   return null;
 }
 
+// GH #863: a virtual day's id is a save proposal, not a file we read. Keeping
+// it pins every header gesture and the loader's cached-path fallback to a
+// nonexistent file when an external editor creates another accepted filename.
+function feedPageOwner(dto: PageDto & { id?: string }): PageDto & { id?: string } {
+  if (dto.kind !== "journal" || dto.rev !== null) return dto;
+  const { id: _proposal, ...virtual } = dto;
+  return virtual;
+}
+
 /** Load the journals feed as the main view. Normal refresh replaces safe pages;
  * a calendar rollover can add the returned days while retaining every existing
  * feed page and its mounted editor. `mergeByDay` orders that retained union
@@ -627,7 +650,8 @@ export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boo
  * cap); no disk write or failure is exposed here. */
 export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; mergeByDay?: boolean; isRequestLive?: () => boolean } = {}): "published" | "stale" | PageLoadRefusal {
   if (opts.isRequestLive?.() === false) return "stale";
-  for (const d of dtos) {
+  for (const input of dtos) {
+    const d = feedPageOwner(input);
     // A calendar rollover adds the new day while keeping every mounted older
     // feed page, including its editor and any unsaved text, as the same object.
     if (opts.preserveExisting && doc.feed.includes(d.name)) continue;
@@ -652,7 +676,8 @@ export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: 
  * (publication follows installation, as in `loadFeed`). */
 export function appendFeed(dtos: (PageDto & { id?: string })[]): PageLoadRefusal[] {
   const refused: PageLoadRefusal[] = [];
-  for (const d of dtos) {
+  for (const input of dtos) {
+    const d = feedPageOwner(input);
     if (doc.feed.includes(d.name)) continue;
     const refusal = upsertUnlessDirty(d);
     if (refusal) refused.push(refusal);

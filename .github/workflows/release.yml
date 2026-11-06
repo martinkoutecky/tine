@@ -396,9 +396,8 @@ jobs:
             echo "::error::AppImage or update metadata is not staged beside the bundle"
             exit 1
           fi
-          # Stable reads GitHub's latest release (gh-releases-zsync); Beta reads
-          # zsync|https://tine.page/updates/beta/<arch>.AppImage.zsync
-          if ! readelf --string-dump=.upd_info "$appimage" | grep -Eq 'gh-releases-zsync\||zsync\|https://tine\.page/updates/beta/'; then
+          # Stable reads GitHub's latest release, Beta its latest prerelease.
+          if ! readelf --string-dump=.upd_info "$appimage" | grep -Eq 'gh-releases-zsync\|'; then
             echo "::error::AppImage is missing embedded update information"
             exit 1
           fi

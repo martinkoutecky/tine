@@ -104,7 +104,11 @@ function displayMathOpenBefore(raw: string, limit: number, format: Format): bool
   // lsdoc's literal ranges include math itself, whose own delimiters sit at a range's edges, so a
   // delimiter counts as literal text only when it lies strictly inside a range (code span or
   // container that opens before it and closes after it).
-  const literals = literalSpans(raw, format);
+  // Parser block ranges include trailing line whitespace. It is outside the
+  // math delimiter: counting it made a closing $$ look strictly interior to
+  // its own literal range and left math open for the following prose (GH #862).
+  const literals = literalSpans(raw, format).map(([a, b]) =>
+    [a, a + raw.slice(a, b).trimEnd().length] as const);
   const fences = codeFences(raw, format);
   const literalAt = (p: number) =>
     literals.some(([a, b]) => a < p && p + MATH_DELIM.length < b) || fences.some((f) => f.start <= p && p < f.end);

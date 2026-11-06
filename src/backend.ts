@@ -757,6 +757,13 @@ class TauriBackend implements Backend {
   importAsset(path: string, name: string | undefined, bindingGeneration: number) {
     return this.assetCall<string>("import_asset", { path, name }, bindingGeneration);
   }
+  captureImportAsset(path: string, name: string | undefined, bindingGeneration: number) {
+    return this.assetCall<string>("capture_import_asset", { path, name }, bindingGeneration);
+  }
+  captureSaveAsset(name: string, bytes: Uint8Array, bindingGeneration: number) {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("asset exceeds 64 MiB ingress limit"));
+    return this.assetCall<string>("capture_save_asset", { name, bytesB64: bytesToBase64(bytes) }, bindingGeneration);
+  }
   importNativeCapture(path: string, name: string, bindingGeneration: number, graphRoot?: string) {
     return this.assetCall<string>("import_native_capture", { path, name, graphRoot }, bindingGeneration);
   }

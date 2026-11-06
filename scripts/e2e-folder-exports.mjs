@@ -16,7 +16,7 @@ const graph = path.join(out, "graph");
 for (const dir of ["graph/pages", "graph/journals", "graph/logseq", "graph/published-queries/saved-leaf/app", "data", "config", "cache"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
 fs.writeFileSync(path.join(graph, "pages/Project.md"), "- Updated folder sentinel\n");
-fs.writeFileSync(path.join(graph, "pages/Exports.md"), "tine/exports:: true\npublic:: false\n\n- {{query (or (property export) (property tine.share))}}\n- {{tine-query @page and name = 'Project'}}\n  export:: saved-leaf\n");
+fs.writeFileSync(path.join(graph, "pages/Exports.md"), "tine.exports:: true\npublic:: false\n\n- {{query (or (property tine.export) (property tine.share))}}\n- {{tine-query @page and name = 'Project'}}\n  tine.export:: saved-leaf\n");
 const leaf = path.join(graph, "published-queries/saved-leaf");
 fs.writeFileSync(path.join(leaf, "previous.txt"), "Previous folder sentinel");
 fs.writeFileSync(path.join(leaf, "app/snapshot.json"), JSON.stringify({ pages: [{ name: "Old", path: "pages/Old.md" }] }));

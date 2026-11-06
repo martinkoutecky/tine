@@ -148,7 +148,7 @@ fn guide_explains_favorites_groups_nesting_and_page_storage() {
         .expect("tips guide is bundled");
     assert!(tips.markdown.contains("+ New group"));
     assert!(tips.markdown.contains("to any depth"));
-    assert!(tips.markdown.contains("tine/favorites:: true"));
+    assert!(tips.markdown.contains("tine.favorites:: true"));
     assert!(tips.markdown.contains("config.edn :favorites"));
 }
 
@@ -189,7 +189,7 @@ fn guide_explains_following_the_link_at_the_caret() {
 #[test]
 fn guide_explains_margin_comments() {
     // Margin dialogue slice 1 (vision 2026-10 §3.7): Ctrl/Cmd+R comments on a
-    // selection as a `quote::` child; a stale quote is kept, never dropped.
+    // selection as a `tine.quote::` child; a stale quote is kept, never dropped.
     let tips = bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Features/Tips & shortcuts")
@@ -217,7 +217,7 @@ fn guide_explains_margin_comments() {
         .contains("select a few words and press **Ctrl/Cmd+R**"));
     assert!(tips
         .markdown
-        .contains("an ordinary child bullet carrying a `quote::` property"));
+        .contains("an ordinary child bullet carrying a `tine.quote::` property"));
     assert!(tips
         .markdown
         .contains("**Comment on selection** in the command palette"));
@@ -229,10 +229,17 @@ fn guide_explains_margin_comments() {
         .contains("struck through with **quoted text changed**"));
     assert!(tips
         .markdown
-        .contains("A bullet with an `author::` property"));
+        .contains("A bullet with an `tine.author::` property"));
     // Comment identity (D-20261017-LD1): the "Your name" setting.
     assert!(tips.markdown.contains("**Settings > Editor > Your name**"));
-    assert!(tips.markdown.contains("saved with `author:: <your name>`"));
+    assert!(tips
+        .markdown
+        .contains("saved with `tine.author:: <your name>`"));
+    // tine#841: the one-time question in a git graph, and what Skip does.
+    assert!(tips.markdown.contains("In a graph that is under git, the first comment or reply you write without a name asks for one once"));
+    assert!(tips
+        .markdown
+        .contains("**Skip** writes the comment without it and Tine does not ask again"));
     // Slice 2b: comments draw no bullets; the author chip is their handle.
     assert!(tips.markdown.contains("draw no bullet of their own"));
     assert!(tips.markdown.contains("the name chip is the handle"));

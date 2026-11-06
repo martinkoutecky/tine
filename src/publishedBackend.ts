@@ -1185,6 +1185,8 @@ export const PUBLISHED_REFUSED_METHODS = [
   "trashSyncConflict",
   "saveAsset",
   "importAsset",
+  "captureImportAsset",
+  "captureSaveAsset",
   "importNativeCapture",
   "readTextFile",
   "pickFolder",

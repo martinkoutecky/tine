@@ -46,12 +46,16 @@ async function setup() {
   return { scroller, editor, ime, done: () => { unregister(); dispose(); } };
 }
 
-it("brings a tapped line that sits above the top back into view after the keyboard resizes the view (GH #783)", async () => {
+// GH #783, beta.4 report: the line came back at the top edge, under the pinned parents, where the pins could
+// still hide it. It now goes back as low as it can: its bottom 8px above the toolbar (y 480), 0.7.4's place.
+const ABOVE_TOOLBAR = 480 - 8;
+it("brings a tapped line that sits above the top back to just above the keyboard toolbar (GH #783)", async () => {
   const f = await setup();
   f.ime(true);
   flush();
-  // visible top is the scroller top 100 + 8: the line (y 40) moves up the page by 68px
-  expect(f.scroller.scrollTop).toBe(1000 - 68);
+  // the line (y 40..70) moves down the screen until its bottom is at 472: scrollTop 1000 - 402
+  expect(f.editor.getBoundingClientRect().bottom).toBe(ABOVE_TOOLBAR);
+  expect(f.scroller.scrollTop).toBe(598);
   f.done();
 });
 
@@ -68,11 +72,10 @@ it("keeps the edited line visible when native scrolling follows the last keyboar
   f.ime(true);
   window.dispatchEvent(new Event("resize"));
   flush(); // beta.2's one-shot reveal has finished
-  f.scroller.scrollTop += 200;
+  f.scroller.scrollTop += 600; // the line leaves over the top
   f.scroller.dispatchEvent(new Event("scroll"));
   flush();
-  expect(f.editor.getBoundingClientRect().top).toBeGreaterThanOrEqual(108);
-  expect(f.scroller.scrollTop).toBe(932); // minimum correction, no centring
+  expect(f.editor.getBoundingClientRect().bottom).toBe(ABOVE_TOOLBAR);
   f.done();
 });
 
@@ -85,7 +88,7 @@ it("rechecks the caret when focus arrives after the keyboard's last resize (GH #
   f.editor.focus();
   await new Promise(resolve => setTimeout(resolve, 0));
   flush();
-  expect(f.editor.getBoundingClientRect().top).toBeGreaterThanOrEqual(108);
+  expect(f.editor.getBoundingClientRect().bottom).toBe(ABOVE_TOOLBAR);
   f.done();
 });
 
@@ -93,10 +96,10 @@ it.each(["visual", "window"])("follows a late %s viewport pan without another re
   const f = await setup();
   f.ime(true);
   flush();
-  f.scroller.scrollTop += 200;
+  f.scroller.scrollTop += 600;
   (target === "visual" ? window.visualViewport! : window).dispatchEvent(new Event("scroll"));
   flush();
-  expect(f.editor.getBoundingClientRect().top).toBeGreaterThanOrEqual(108);
+  expect(f.editor.getBoundingClientRect().bottom).toBe(ABOVE_TOOLBAR);
   f.done();
 });
 
@@ -104,11 +107,12 @@ it.each(["wheel", "touchstart", "pointerdown", "keydown"])("yields to deliberate
   const f = await setup();
   f.ime(true);
   flush();
+  const settled = f.scroller.scrollTop;
   f.scroller.dispatchEvent(new Event(type));
-  f.scroller.scrollTop += 200;
+  f.scroller.scrollTop += 600;
   f.scroller.dispatchEvent(new Event("scroll"));
   flush();
-  expect(f.scroller.scrollTop).toBe(1132);
+  expect(f.scroller.scrollTop).toBe(settled + 600);
   f.done();
 });
 
@@ -116,10 +120,11 @@ it("stops following native scroll when the keyboard closes (GH #783)", async () 
   const f = await setup();
   f.ime(true);
   flush();
+  const settled = f.scroller.scrollTop;
   f.ime(false);
-  f.scroller.scrollTop += 200;
+  f.scroller.scrollTop += 600;
   f.scroller.dispatchEvent(new Event("scroll"));
   flush();
-  expect(f.scroller.scrollTop).toBe(1132);
+  expect(f.scroller.scrollTop).toBe(settled + 600);
   f.done();
 });
