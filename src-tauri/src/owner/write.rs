@@ -1181,17 +1181,55 @@ struct DeleteArgs {
     handle: String,
     #[serde(default)]
     rev: Option<String>,
+    #[serde(default)]
+    yes: bool,
+}
+
+/// Maximum UTF-8 bytes of recovery text in a delete reply. Disclose any
+/// omitted suffix; calculate this before admitting the guarded save.
+const REMOVED_TEXT_BYTES: usize = 65_536;
+
+fn removed_fragment(root: &BlockDto, org: bool) -> (String, usize) {
+    fn block(dto: &BlockDto) -> tine_core::DocBlock {
+        let mut out = tine_core::DocBlock::new(dto.raw.clone());
+        out.children = dto.children.iter().map(block).collect();
+        out
+    }
+    let doc = tine_core::Document {
+        pre_block: None,
+        roots: vec![block(root)],
+    };
+    // Reuse the graph serializers so properties, multiline bodies and child
+    // structure can be pasted back as a standalone fragment of the same format.
+    let mut text = if org {
+        tine_core::org::serialize_org(&doc)
+    } else {
+        tine_core::doc::serialize(&doc)
+    };
+    let total = text.len();
+    let mut end = total.min(REMOVED_TEXT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    (text, total - end)
 }
 
 /// `delete <handle>`: the block and its subtree, with the number of
-/// references the deletion leaves broken (the app's notice rule).
+/// references the deletion leaves broken (the app's notice rule). Incoming
+/// references require explicit confirmation; every success carries recovery text.
 pub(crate) fn delete_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     use tine_core::outline_kernel::{apply, Verb};
-    let DeleteArgs { handle: text, rev } = super::verbs::parse(args)?;
+    let DeleteArgs {
+        handle: text,
+        rev,
+        yes,
+    } = super::verbs::parse(args)?;
     let handle = parse_handle(&text)?;
     let page = handle_page(slot, &handle)?;
-    let counts = whole_graph(slot)?.block_ref_counts();
     let mut deleted = (String::new(), 0usize);
+    let mut removed = (String::new(), 0usize);
+    let mut format = Format::Md;
     let mut reply = write_page(
         slot,
         &page,
@@ -1207,14 +1245,35 @@ pub(crate) fn delete_block(slot: &GraphSlot, args: &Value) -> Result<Value, Erro
                 &mut Vec::new(),
                 &mut |_, block| raws.push(block.raw.clone()),
             );
-            let removed: Vec<(&str, bool)> = raws.iter().map(|raw| (raw.as_str(), org)).collect();
+            let removed_raws: Vec<(&str, bool)> =
+                raws.iter().map(|raw| (raw.as_str(), org)).collect();
+            // Read the graph counts after the write path has flushed window
+            // input, and again if a changed page makes it retry the plan.
+            let counts = whole_graph(slot)?.block_ref_counts();
+            let broken =
+                tine_core::page_properties::refs_broken_by_removing(&counts, &removed_raws);
+            if broken > 0 && !yes {
+                let mut error = refused(
+                    "confirmation",
+                    Some(page),
+                    format!(
+                        "{} {broken}; {}",
+                        crate::i18n_shell::shell_text("en", "shell-cli-delete-broken-count"),
+                        crate::i18n_shell::shell_text("en", "shell-cli-delete-confirmation"),
+                    ),
+                );
+                error.detail.as_mut().expect("refusal detail")["broken_refs"] = json!(broken);
+                return Err(error);
+            }
+            removed = removed_fragment(root, org);
+            format = doc.format;
             deleted = (
                 format!(
                     "{}/{}",
                     doc.name,
                     handle_of(doc, &path).expect("resolved path")
                 ),
-                tine_core::page_properties::refs_broken_by_removing(&counts, &removed),
+                broken,
             );
             let arena = super::arena::Arena::of(doc);
             let key = arena.key_at(&path).expect("resolved path");
@@ -1233,6 +1292,9 @@ pub(crate) fn delete_block(slot: &GraphSlot, args: &Value) -> Result<Value, Erro
     reply["kind"] = json!("deleted");
     reply["deleted"] = json!(deleted.0);
     reply["broken_refs"] = json!(deleted.1);
+    reply["removed_text"] = json!(removed.0);
+    reply["removed_text_omitted_bytes"] = json!(removed.1);
+    reply["format"] = json!(format);
     Ok(reply)
 }
 

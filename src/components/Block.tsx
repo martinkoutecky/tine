@@ -436,10 +436,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   owner={instanceId}
                   outlineScope={outlineScope}
                   refCountBadge={<>
-                    <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
+                    {/* The first right float takes the outer edge. Anchor the
+                        author there, then place the optional count beside it
+                        so referenced blocks keep the same author position (#883). */}
                     <Show when={showsAuthor() && !bulletless()}>
                       <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
                     </Show>
+                    <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
                   </>}
                 />}
               </QuoteHighlightProvider>
