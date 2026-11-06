@@ -12,6 +12,7 @@ command-editor-open-link-in-sidebar = Open the link at the caret in the sidebar
 command-command-palette-toggle = Command palette
 command-ui-toggle-devtools = Toggle developer tools
 command-ui-toggle-custom-css = Toggle custom CSS (safe mode, this session)
+command-ui-toggle-embed-breadcrumbs = Toggle embed breadcrumbs
 command-go-journals = Go to journals
 command-go-home = Go to home page
 command-go-journal-next = Go to next journal day

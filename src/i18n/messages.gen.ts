@@ -266,6 +266,7 @@ export interface MessageArgs {
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};
   "command-ui-toggle-document-mode": {};
+  "command-ui-toggle-embed-breadcrumbs": {};
   "command-ui-toggle-focus-mode": {};
   "command-ui-toggle-help": {};
   "command-ui-toggle-left-sidebar": {};

@@ -21,6 +21,7 @@ command-command-palette-toggle = 命令面板
 command-ui-toggle-devtools = 切换开发者工具
 
 command-ui-toggle-custom-css = 切换自定义 CSS（安全模式，仅本次会话）
+command-ui-toggle-embed-breadcrumbs = 切换块嵌入面包屑的显示
 
 command-go-journals = 前往日记
 

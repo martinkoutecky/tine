@@ -23,6 +23,7 @@ import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTh
 import { pushToast } from "./toasts";
 import { msg, render, renderEnglish, type UiText, type Msg } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
+import { KNOBS, setKnob, styleKnobValues } from "./styleKnobs";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { isTauri } from "./backend";
 import { zoomReset } from "./zoom";
@@ -330,6 +331,7 @@ const COMMANDS: CommandDef[] = [
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: msg("command-ui-toggle-devtools"), scope: "global", run: openDevtools, global: true },
   { id: "ui/toggle-custom-css", binding: "", label: msg("command-ui-toggle-custom-css"), scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
+  { id: "ui/toggle-embed-breadcrumbs", binding: "", label: msg("command-ui-toggle-embed-breadcrumbs"), scope: "global", run: () => setKnob(KNOBS.find(knob => knob.id === "embed-breadcrumbs")!, styleKnobValues()["embed-breadcrumbs"] !== true), global: true },
   // "Changed since you last looked" (ADR 0079): offered only once a git read answered for this graph.
   { id: "seen/mark-page", binding: "", label: msg("command-seen-mark-page"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true && seenRoutedPage() !== null; }, run: () => { const name = seenRoutedPage(); if (name) void markPageSeenNow(name); } },
   { id: "seen/next-change", binding: "", label: msg("command-seen-next-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), 1) },
