@@ -305,6 +305,28 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
     }
   });
 
+  it("never offers the edited block or its ancestors as a (( target (OG get-matched-blocks)", async () => {
+    // Once autosaved, the edited block always matches its own `((query`; picking
+    // it, or a block containing it, makes a reference cycle.
+    const hit = (id: string, raw: string): BlockDto => ({ id, raw, collapsed: false, children: [] });
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Reference authoring", kind: "page", evidence: [],
+      blocks: [hit("outer", "outer zebracorn"), hit("reference-authoring", "((zebracorn"), hit("target", "pick me zebracorn")],
+    }]);
+    const child: BlockDto = { id: "reference-authoring", raw: "((zebracorn", collapsed: false, children: [] };
+    loadSingle({ name: "Reference authoring", kind: "page", title: "Reference authoring", pre_block: null,
+      blocks: [{ id: "outer", raw: "outer zebracorn", collapsed: false, children: [child] }, hit("target", "pick me zebracorn")] });
+    startEditing("reference-authoring", 11);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const editor = maybeEditorIn(root) as EditorDriver;
+      inputAt(editor, "((zebracorn", 11);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")).not.toBeNull());
+      const labels = [...document.body.querySelectorAll(".autocomplete .ac-label")].map((label) => label.textContent);
+      expect(labels).toEqual(["pick me zebracorn"]);
+    } finally { dispose(); }
+  });
+
   // An id-less target gets a fresh random UUID, never its runtime locator, even
   // a UUID-shaped one (GH #373, GH #798): `null` means "freshly minted".
   const blockReferenceCases: Array<[string, [string, string][] | undefined, string | null]> = [

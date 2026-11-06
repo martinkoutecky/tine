@@ -3,16 +3,15 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { backend } from "../backend";
 import { propertyCompletionSession } from "./propertyCompletionSession";
-import { acceptBlockRefPick } from "./blockRefPick";
+import { acceptBlockRefPick, blockPickItems } from "./blockRefPick";
 import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, propertyValueKeyAfterBoundary, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
-import { node, pageByName, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
+import { node, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
 import { pinyinMatchingEnabled } from "../launcherRanking";
 import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
 import { navigationName } from "../pageIndex";
-import { blockDtoExternalId } from "../blockIdentity";
-import { blockFirstLine, formatForBlockId, timeStamp } from "../components/blockParts";
+import { formatForBlockId, timeStamp } from "../components/blockParts";
 import { isMobilePlatform } from "../nativeChrome";
 import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
@@ -234,17 +233,7 @@ export function cm6Completions(props: {
       }
       if (result.kind === "stale") return;
       setAcBlockState("ready");
-      const items: AcItem[] = [];
-      for (const g of result.value) {
-        for (const b of g.blocks) {
-          items.push({
-            label: blockFirstLine(b.raw, pageByName(g.page)?.format === "org" ? "org" : "md") || g.page,
-            sub: g.page,
-            blockRef: { uuid: b.id, externalId: blockDtoExternalId(b), page: g.page, kind: g.kind },
-          });
-        }
-      }
-      setAcItems(items);
+      setAcItems(blockPickItems(result.value, props.id));
       return;
     }
     // OG leaves blank page/tag search active but renders no rows and does not

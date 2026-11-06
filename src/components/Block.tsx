@@ -97,7 +97,7 @@ import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAut
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { pushToast } from "../toasts";
-import { acceptBlockRefPick } from "../editor/blockRefPick";
+import { acceptBlockRefPick, blockPickItems } from "../editor/blockRefPick";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
 import { clipboardEventFlavors } from "../editor/clipboardFlavors";
@@ -139,7 +139,6 @@ import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
-import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
@@ -148,7 +147,7 @@ import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, rendered
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -968,17 +967,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       }
       if (result.kind === "stale") return;
       setAcBlockState("ready");
-      const items: AcItem[] = [];
-      for (const g of result.value) {
-        for (const b of g.blocks) {
-          items.push({
-            label: blockFirstLine(b.raw, pageByName(g.page)?.format === "org" ? "org" : "md") || g.page,
-            sub: g.page,
-            blockRef: { uuid: b.id, externalId: blockDtoExternalId(b), page: g.page, kind: g.kind },
-          });
-        }
-      }
-      setAcItems(items);
+      setAcItems(blockPickItems(result.value, props.id));
       return;
     }
     // OG leaves blank page/tag search active but renders no rows and does not

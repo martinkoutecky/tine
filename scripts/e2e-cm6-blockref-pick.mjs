@@ -70,7 +70,8 @@ try {
   await browser.$('.main-content [data-block-editor="cm6"]').waitForDisplayed();
   await browser.keys(["Control", "End"]);
   await browser.releaseActions();
-  await browser.keys(" ((zebracorn");
+  // Human pace: WebDriver's burst delivers both "(" in one frame, and CM6's autopair sees only one (not seen at 60 ms per key; card follows).
+  for (const ch of " ((zebracorn") { await browser.keys(ch); await sleep(60); }
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")]
     .some(label => label.textContent.includes("pick me zebracorn"))), { timeout: 10000, timeoutMsg: "the picker never offered the target" });
   shot("picker.png");
@@ -80,7 +81,8 @@ try {
   const targetText = await waitForFileText(targetFile, text => new RegExp(`id:: ${UUID}`).test(text));
   const stamped = new RegExp(`id:: (${UUID})`).exec(targetText)[1];
   await browser.keys("Escape");
-  const sourceText = await waitForFileText(sourceFile, text => text.includes("(("));
+  // Autosave can land mid-typing ("((zebra))"); wait for the inserted id reference, then compare it with the stamp.
+  const sourceText = await waitForFileText(sourceFile, text => new RegExp(`\\(\\(${UUID}\\)\\)`).test(text));
   const inserted = /\(\(([^)]+)\)\)/.exec(sourceText)?.[1];
   proof.stamped = stamped; proof.inserted = inserted;
   assert.equal(inserted, stamped, `Source references ((${inserted})) but Target was stamped id:: ${stamped}`);
