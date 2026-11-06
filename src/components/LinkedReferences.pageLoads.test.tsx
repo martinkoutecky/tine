@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { ensurePageLoaded, resetStore, setRaw } from "../document";
+import { ensurePageLoaded, pageByName, resetStore, setRaw } from "../document";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import type { BlockDto, PageRead, RefGroup } from "../types";
@@ -22,7 +22,7 @@ const page = (name: string, blocks: BlockDto[]): PageRead => ({
   id: `pages/${name}.md`, name, title: name, kind: "page", format: "md", pre_block: "", blocks,
 });
 
-it.each([null, 'filters:: {"Hub" true}'])("loading one source page leaves every other Linked References group's DOM untouched (filters=%s)", async (filters) => {
+it.each([null, 'filters:: {"Hub" true}'].flatMap(filters => [false, true].map(routed => [filters, routed] as const)))("loading one source page leaves every other Linked References group's DOM untouched (filters=%s, routed=%s)", async (filters, routed) => {
   const groups: RefGroup[] = Array.from({ length: 6 }, (_, n) => ({
     page: `Source ${n}`, kind: "page", blocks: [{ ...block(`row-${n}`), tags: ["Hub"], breadcrumb: ["Parent"] }],
   }));
@@ -44,7 +44,9 @@ it.each([null, 'filters:: {"Hub" true}'])("loading one source page leaves every 
   });
   const root = document.createElement("div");
   document.body.append(root);
-  const dispose = render(() => <LinkedReferences name="Hub" />, root);
+  // Page.tsx passes its name through pagesToRender(), whose pageByName lookup
+  // also observes unrelated source loads (GH #886). The visible name stays Hub.
+  const dispose = render(() => <LinkedReferences name={routed ? pageByName("Hub")!.name : "Hub"} />, root);
   try {
     await vi.waitFor(() => expect(pending.size).toBe(groups.length));
     await new Promise(resolve => setTimeout(resolve, 0));

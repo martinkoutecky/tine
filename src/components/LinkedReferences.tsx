@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, mergeProps, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -116,7 +116,12 @@ export function LinkedReferences(props: { name: string; journalFeed?: boolean })
 }
 
 /** Shared filter and rendering owner for linked and plain-text references. */
-export function ReferenceSection(props: { name: string; unlinked?: boolean; journalFeed?: boolean }): JSX.Element {
+export function ReferenceSection(input: { name: string; unlinked?: boolean; journalFeed?: boolean }): JSX.Element {
+  // The routed caller resolves its page through the working-set index. A source
+  // load invalidates that getter even when the target name is unchanged. Keep
+  // section resets, subscriptions and group props behind the consumed value.
+  const name = createMemo(() => input.name);
+  const props = mergeProps(input, { get name() { return name(); } });
   const section = props.unlinked ? "unlinked" : "linked";
   const heading = () => t(props.unlinked ? "references-unlinked" : "references-linked");
   const savedFilterKey = () => props.unlinked ? `unlinked\0${props.name}` : props.name;
