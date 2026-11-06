@@ -83,6 +83,207 @@ fn backlink_pages(store: &Store, name: &str) -> Vec<String> {
     pages
 }
 
+#[test]
+fn journal_reference_loss_refuses_every_source_and_answer_without_writing() {
+    let _guard = crate::integration_lock();
+    for source in ["real", "reference-only", "alias-only"] {
+        for target in ["free", "page", "alias"] {
+            let mut files = vec![
+                ("journals/2026_10_26.md", "alias:: old/sub\n\n- day\n"),
+                ("pages/p.md", "- [[old/sub]] and [[old/sub]]\n"),
+            ];
+            match source {
+                "real" => files.push(("pages/old.md", "- source\n")),
+                "alias-only" => files.push(("pages/owner.md", "alias:: old\n\n- owner\n")),
+                _ => {}
+            }
+            match target {
+                "page" => files.push(("pages/new.md", "- target\n")),
+                "alias" => files.push(("pages/target.md", "alias:: new\n\n- target\n")),
+                _ => {}
+            }
+            let (root, store) = fixture(&format!("journal-{source}-{target}"), &files);
+            let before = snapshot(&root);
+            let offer = rename_offer(&store, "old", "new", None).unwrap();
+            assert!(
+                matches!(offer, RenameOffer::Refused { .. }),
+                "{source}/{target}: {offer:?}"
+            );
+            let wire = serde_json::to_value(&offer).unwrap();
+            assert_eq!(wire["reason"]["kind"], "journalReferenceLoss");
+            assert_eq!(
+                wire["reason"]["journals"],
+                serde_json::json!(["Oct 26th, 2026"])
+            );
+            assert!(wire["message"].as_str().unwrap().contains("Oct 26th, 2026"));
+            for choice in [
+                RenameChoice::Rename,
+                RenameChoice::OwnPage,
+                RenameChoice::MergeInto(if target == "page" {
+                    "pages/new.md"
+                } else {
+                    "pages/target.md"
+                }),
+            ] {
+                let error = rename(&store, "old", "new", choice).unwrap_err();
+                assert!(
+                    RenameBlocked::of(&error).is_some(),
+                    "{source}/{target}: {error}"
+                );
+                assert_eq!(
+                    snapshot(&root),
+                    before,
+                    "{source}/{target}: refusal wrote files"
+                );
+            }
+            drop(store);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+}
+
+#[test]
+fn journal_reference_loss_checks_each_owner_occurrence_and_direct_ownership() {
+    let _guard = crate::integration_lock();
+    for (label, journal_name, referring, old, new, blocked) in [
+        ("unused", "ns/yyyy-MM-dd", "- [[ns]]\n", "ns", "new", false),
+        (
+            "retained-prefix",
+            "ns",
+            "- [[ns/sub]]\n",
+            "ns/sub",
+            "ns/other",
+            false,
+        ),
+        (
+            "lost-prefix-outside-subtree",
+            "ns",
+            "- [[ns/sub]]\n",
+            "ns/sub",
+            "new",
+            true,
+        ),
+        (
+            "per-occurrence",
+            "ns",
+            "- [[ns/sub]] [[ns]]\n",
+            "ns/sub",
+            "new",
+            true,
+        ),
+        (
+            "fixed-marker",
+            "TODO",
+            "- TODO fixed\n",
+            "TODO",
+            "new",
+            false,
+        ),
+        ("fixed-priority", "A", "- [#A] fixed\n", "A", "new", false),
+        (
+            "query-only",
+            "ns/yyyy-MM-dd",
+            "- {{query (page ns/2026-10-26)}}\n",
+            "ns",
+            "new",
+            false,
+        ),
+    ] {
+        let config = format!("{{:journal/page-title-format \"{journal_name}\"}}\n");
+        let (root, store) = fixture(
+            label,
+            &[
+                ("journals/2026_10_26.md", "- day\n"),
+                ("pages/p.md", referring),
+                ("logseq/config.edn", &config),
+            ],
+        );
+        let offer = rename_offer(&store, old, new, None).unwrap();
+        assert_eq!(
+            matches!(offer, RenameOffer::Refused { .. }),
+            blocked,
+            "{label}: {offer:?}"
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+    // The owner file is p.md; an ignored twin's occurrence must not refuse.
+    let (root, store) = fixture(
+        "non-owner",
+        &[
+            ("journals/2026_10_26.md", "- day\n"),
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"ns/yyyy-MM-dd\"}\n",
+            ),
+            ("pages/p.md", "- owner\n"),
+            ("pages/twin.md", "title:: p\n\n- [[ns/2026-10-26]]\n"),
+            ("pages/q.md", "- [[ns]]\n"),
+        ],
+    );
+    assert_eq!(
+        rename_offer(&store, "ns", "new", None).unwrap(),
+        RenameOffer::Rename
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn journal_reference_loss_includes_headers_but_not_transitive_alias_ownership() {
+    let _guard = crate::integration_lock();
+    for files in [
+        vec![("journals/2026_10_26.md", "alias:: old\n\n- day\n")],
+        vec![("journals/2026_10_26.org", "#+ALIASES: old\n\n* day\n")],
+        vec![("journals/2026_10_26.md", "- aliases:: old\n- day\n")],
+    ] {
+        let (root, store) = fixture("declaration-only", &files);
+        assert!(matches!(
+            rename_offer(&store, "old", "new", None).unwrap(),
+            RenameOffer::Refused { .. }
+        ));
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+    let (root, store) = fixture(
+        "transitive-alias",
+        &[
+            ("journals/2026_10_26.md", "alias:: stable\n\n- day\n"),
+            ("pages/owner.md", "alias:: stable, old/sub\n\n- owner\n"),
+            ("pages/p.md", "- [[old/sub]]\n"),
+        ],
+    );
+    assert_eq!(
+        rename_offer(&store, "old", "new", None).unwrap(),
+        RenameOffer::Rename
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+    for (disabled, expected) in [(false, true), (true, false)] {
+        let config = format!(
+            "{{:journal/page-title-format \"ns\" :property-pages/enabled? {}}}\n",
+            !disabled
+        );
+        let (root, store) = fixture(
+            "property-gate",
+            &[
+                ("journals/2026_10_26.md", "- day\n"),
+                ("pages/p.md", "- ns:: value\n"),
+                ("logseq/config.edn", &config),
+            ],
+        );
+        assert_eq!(
+            matches!(
+                rename_offer(&store, "ns", "new", None).unwrap(),
+                RenameOffer::Refused { .. }
+            ),
+            expected
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 const ML: &[(&str, &str)] = &[
     ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n"),
     ("pages/ML notes.md", "- notes\n"),

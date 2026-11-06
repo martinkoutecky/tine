@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A rename or merge is now refused, naming the journal, when it would break a link that reaches a journal through the old name (for example `[[old/sub]]` where a journal declares `alias:: old/sub`, and `old` is renamed). Journals keep their names. A journal no such link reaches does not block the rename (REG-CM-JOURNAL-REFERENCE-LOSS, UI-CM-JOURNAL-REFERENCE-LOSS).
+- Keyboard follow-link on Org pages uses the current graph filename format after a format change, including links whose parsed text is already cached (UI-CM-ORG-FOLLOW-CODEC).
+
 - Dates named only by links or tags now appear once as journals in All Pages and page queries, using the graph's journal formats. Creating the journal no longer leaves an extra ordinary date page. Published sites keep their date spelling rows so existing viewers can still open every linked spelling (UI-CM-FILELESS-DATES).
 - References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
 - Advanced Logseq queries recognise `sort-by` with a `juxt` of `get` functions on priority, scheduled, deadline and content, including scheduled-else-deadline. Later keys break ties, missing values follow the supplied defaults, and content sorts by the full raw text. Single-key forms work too; an unsupported key still refuses the whole query (GH #852).
@@ -22,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - On macOS, Cmd+Shift+V pastes plain text without depending on a native paste event; Option+Shift+Cmd+V and Edit → Paste and Match Style run the same action in both block editors (#857).
 - The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).
 - Development: picking a block without an id in the CodeMirror editor's `((` picker wrote a reference to an id the block never got, so the reference showed nothing; it now references the id it stamps, as the classic editor does (internal: UI-CM6-PICKER-DANGLING-REF).
+- Development: in the CodeMirror editor, Tab, Shift+Tab, Move up/down and Escape on the text of a whole-block embed now act on the embedding block on this page, as in the default editor; they used to move or select the embedded block in its own page (UI-CM6-EMBED-ROOT-ACTS-ON-SOURCE).
 - A page named like a relative path or a web address, such as `./notes/x`, `../x/y` or `https://example.com/a`, is no longer shown as a namespace: the sidebar's Namespaces tree and the Namespaces view no longer list it, and its page shows no Hierarchy section and no namespace path above the title. Renaming a page named `.` (or `https:`) no longer moves `./x` (or `https://example.com/a`) along with it, and renaming `.` onto an existing `./x` is offered as a merge instead of being refused as "its own child". Logseq treats these names the same way. Published sites keep showing such names as before (REG-CM-RENAME-RELATIVE-NAME-SUBTREE, UI-CM-NS-VIEWS-RELATIVE-URL-NAMES).
 
 - Clicking a virtual journal's title opens the file created since the feed was read, including a file created externally under a different accepted date filename while editing delays the feed refresh. Before, the title could target the proposed filename and report that the physical page was no longer available (GH #863).
@@ -45,6 +49,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Block and page embed toolbars use compact icons for **Edit link** and **Open source**, with translated tooltips and accessible names. **Remove** keeps its text beside an icon, and touch screens keep all labels (#847).
 - Renaming a page now also updates bare `alias::` and `aliases::` values naming it, so aliases stay attached after a reload. You can rename a name that exists only as an alias: its declaring lines and references change without renaming the declaring pages or creating a file for the alias. Such a name can merge into an existing page or alias owner, with no “make it its own page” choice.
 - PDF viewer updated to pdf.js 6.5.438 (#867). Its compatible image decoder also removes the Emscripten SDK requirement for building Tine.
 - Ctrl+K finds user property keys and values on blocks and pages, in Markdown and Org, with the matching property highlighted in the result. Hidden built-in properties and `tine.*` metadata stay out (#870).
@@ -54,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Settings → Editor → Auto-embed pasted video links** can be turned off to keep YouTube, Vimeo, Loom and Bilibili URLs as plain links in both editors, including Quick Capture. Automatic embedding stays on by default; no video titles are fetched on paste (#861).
+- **Toggle embed breadcrumbs** in the command palette switches the saved Block embed breadcrumbs setting. Assign a shortcut under Settings → Keyboard shortcuts; it has no default key (GH #860).
 - The prompt before opening another app's link offers **Always open <scheme> links** (#503). The choice applies to that exact scheme on this device, across graphs. **Settings → Editor → Remembered app links** lets you forget each choice and ask again.
 - Indent guides take a muted color by nesting level, six colors repeating down the page, so you can follow one level of a long nested outline by its color (#856). Nothing else is drawn. It is on by default; **Settings → Appearance → Advanced → Fine-tuning → Color indent guides by level** returns to the single guide color. Levels count from the outline you are looking at (a zoomed-in block's children are level 1; an embed or Linked References entry starts again at level 1), and a theme's own guide color tints the colors. Restyle them with `--guide-hue-1` to `--guide-hue-6` in `custom.css`.
 - Quick Capture honours Logseq's `:quick-capture-options` in `config.edn` (#832): `:default-page "Inbox"` files a capture with no typed page on that page instead of today's journal, `:insert-today? true` keeps it in today's journal ahead of the default page, and `:redirect-page? true` opens the page afterwards. A page typed in the window still wins, and a value of the wrong kind is ignored. With journals turned off, an untitled capture goes to a page named `quick capture`, as in Logseq. Shares from the Android and iOS share sheet still go to today's journal.

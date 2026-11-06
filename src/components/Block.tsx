@@ -1,5 +1,6 @@
 import { shortcutKey } from "../shortcutKey";
 import { plainTextPaste } from "../editor/plainTextPaste";
+import { autoEmbedVideoLinks } from "../pasteSettings";
 import { bindCollapseCommandSurface } from "../collapseCommandSurface";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
@@ -2798,7 +2799,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     }
     // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:49-57,164-166 wraps
     // recognized bare video URLs only after selected-URL handling has declined.
-    const videoMacro = videoPasteMacro(text);
+    const videoMacro = autoEmbedVideoLinks() ? videoPasteMacro(text) : null;
     if (videoMacro && ref.selectionStart === ref.selectionEnd) {
       e.preventDefault();
       const start = ref.selectionStart;

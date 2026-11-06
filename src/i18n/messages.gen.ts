@@ -266,6 +266,7 @@ export interface MessageArgs {
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};
   "command-ui-toggle-document-mode": {};
+  "command-ui-toggle-embed-breadcrumbs": {};
   "command-ui-toggle-focus-mode": {};
   "command-ui-toggle-help": {};
   "command-ui-toggle-left-sidebar": {};
@@ -2333,6 +2334,7 @@ export interface MessageArgs {
   "rename-alias-choice-stale-what": {};
   "rename-alias-choice-title": { "to": string | number };
   "rename-refused-file-taken": { "file": string | number; "page": string | number };
+  "rename-refused-journal-reference-loss": { "journals": string | number };
   "rename-refused-own-child": { "new": string | number; "old": string | number };
   "render-asset-moved-to-trash": {};
   "render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more": {};
@@ -2447,6 +2449,8 @@ export interface MessageArgs {
   "settings-appearance": {};
   "settings-asset-trash-confirmation": { "count": number; "size": string | number };
   "settings-asset-trash-emptied": { "count": number };
+  "settings-auto-embed-video-links": {};
+  "settings-auto-embed-video-links-hint": {};
   "settings-autodetect": {};
   "settings-available-snapshots": {};
   "settings-backup-load-failed": { "error": string | number };

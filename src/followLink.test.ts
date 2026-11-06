@@ -4,6 +4,7 @@ import * as router from "./router";
 import * as ui from "./ui";
 import { backend } from "./backend";
 import { setToasts, toasts } from "./toasts";
+import { setFileNameFormat } from "./render/pageRefs";
 
 const read = (text: string, caret: number, format: "md" | "org" = "md") => () => ({ text, caret, format });
 
@@ -12,6 +13,23 @@ afterEach(() => { vi.restoreAllMocks(); setToasts([]); });
 // GH #274. OG parity: :editor/follow-link (mod+o) and
 // :editor/open-link-in-sidebar (mod+shift+o).
 describe("follow the link at the caret", () => {
+  it("routes cached Org file links with the current graph filename format in the page and sidebar", () => {
+    const openPage = vi.spyOn(router, "openPage").mockImplementation(() => {});
+    const sidebar = vi.spyOn(ui, "openPageInSidebar").mockImplementation(() => {});
+    const deps = { read: read("see [[file:./Ten___Child.org][ten]]", 12, "org") };
+    try {
+      for (const [codec, target] of [["legacy", "Ten___Child"], ["triple-lowbar", "Ten/Child"], ["legacy", "Ten___Child"]]) {
+        setFileNameFormat(codec);
+        expect(followLinkUnderCaret(deps)).toBe(true);
+        expect(openPage).toHaveBeenLastCalledWith(target);
+        expect(openLinkUnderCaretInSidebar(deps)).toBe(true);
+        expect(sidebar).toHaveBeenLastCalledWith(target);
+      }
+    } finally {
+      setFileNameFormat("legacy");
+    }
+  });
+
   it("navigates to a page ref", () => {
     const openPage = vi.spyOn(router, "openPage").mockImplementation(() => {});
     expect(followLinkUnderCaret({ read: read("see [[Some Page]] here", 8) })).toBe(true);

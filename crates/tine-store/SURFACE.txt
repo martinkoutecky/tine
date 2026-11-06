@@ -417,7 +417,11 @@ struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
 
-## WholeGraph: References (ceiling: 4)
+## WholeGraph: References (ceiling: 5)
+# CM3-1: explicit_referrers returns files, not per-occurrence lost closure
+# keys or direct journal ownership. This read-only rename guard needs both;
+# corpus exposes physical documents but not the shared claimant/owner rule.
+fn store::WholeGraph::journal_rewrite_risks
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
 fn store::WholeGraph::explicit_referrers

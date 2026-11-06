@@ -22,6 +22,8 @@ import { EmbedMacro } from "./Macro";
 import { removeOccurrence } from "../refOccurrence";
 import { toasts } from "../toasts";
 import { bumpDataRev } from "../graphSession";
+import { useEditorKind } from "../tests/editorKind";
+import { setActiveLocale, t } from "../i18n";
 
 const T = "41700000-0000-4000-8000-000000000001";
 const TARGET_RAW = `target text\nid:: ${T}`;
@@ -59,6 +61,41 @@ function mountHost(raw: string, format: "md" | "org" = "md") {
 }
 
 const actions = (root: HTMLElement, cls: string) => [...root.querySelectorAll<HTMLButtonElement>(`.embed-actions .${cls}`)];
+
+describe.each(["textarea", "cm6"] as const)("embed action icons (%s, GH #847)", (kind) => {
+  useEditorKind(kind);
+  afterEach(async () => { await setActiveLocale("en"); });
+
+  it("block and page embeds keep named icons, tooltips and touch labels, including after a language switch", async () => {
+    const { root, dispose } = mountHost(`{{embed ((${T}))}} {{embed [[Elsewhere]]}}`);
+    try {
+      await tick();
+      const bars = root.querySelectorAll<HTMLElement>(".embed-actions");
+      expect(bars).toHaveLength(2);
+      for (const locale of ["en", "zh-CN"] as const) {
+        await setActiveLocale(locale);
+        for (const bar of bars) {
+          for (const [action, label] of [["edit", t("ref-occurrence-edit")], ["source", t("preview-open-source")]] as const) {
+            const button = bar.querySelector<HTMLButtonElement>(`.embed-action-${action}`)!;
+            expect(button.getAttribute("aria-label")).toBe(label);
+            expect(button.title).toBe(label);
+            expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+            expect(button.querySelector(".embed-action-label")?.textContent).toBe(label);
+          }
+          const remove = bar.querySelector<HTMLButtonElement>(".embed-action-remove")!;
+          expect(remove.textContent).toBe(t("ref-occurrence-remove"));
+          expect(remove.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+          expect(remove.title).toBe(t("ref-occurrence-remove-embed-title"));
+        }
+      }
+      // The compact control still edits the occurrence in the active engine.
+      actions(root, "embed-action-edit")[0].click();
+      await tick();
+      const editor = editorIn(root, "host");
+      expect(editor.value().slice(...editor.selection())).toBe(`{{embed ((${T}))}}`);
+    } finally { dispose(); }
+  });
+});
 
 describe("embed actions (GH #417/#418)", () => {
   for (const format of ["md", "org"] as const) {

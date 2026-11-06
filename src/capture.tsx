@@ -30,6 +30,7 @@ import { latestOwner, readOwned } from "./owned";
 import { installBackendClock } from "./journal";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
+import { initPasteSettings } from "./pasteSettings";
 import { createCaptureBlurGate, resettleIfVisible } from "./captureVisibility";
 import {
   QUICK_CAPTURE_ACK_TIMEOUT_MS,
@@ -603,6 +604,7 @@ function Capture() {
     // Mirror the main window's spellcheck pref in this separate webview context.
     void initSpellcheckSettings();
     void initRefCompletionSettings();
+    void initPasteSettings();
     seed();
 
     const root = document.getElementById("capture-root");

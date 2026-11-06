@@ -857,7 +857,7 @@ fn page_property_block_with_config(
 /// 2 batch 8; identity `page-preamble:…`), both from one parse of the
 /// pre-block (`page_properties::pre_block_parts`). The ordinal of both in the
 /// reference candidate signatures is 0 (`model.rs reference_signatures`).
-fn pre_blocks_with_config(
+pub(crate) fn pre_blocks_with_config(
     entry: &PageEntry,
     pre: &str,
     config: &tine_core::query::atom::ParseConfig,

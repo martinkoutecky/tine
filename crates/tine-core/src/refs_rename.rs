@@ -82,17 +82,7 @@ impl<'a> Renames<'a> {
     }
 
     fn page(&self, name: &str) -> Option<Cow<'a, str>> {
-        if let Some(to) = self.pages.get(&page_key(name)) {
-            return Some(Cow::Borrowed(to));
-        }
-        // The typed-name map also covers unclaimed namespace members, e.g.
-        // alias:: old/sub. Use the shared namespace predicate and original
-        // byte suffix, including when folding changes the prefix's length.
-        crate::refs::namespace_refs(name)
-            .filter(|prefix| prefix.len() < name.len())
-            .filter_map(|prefix| self.pages.get(&page_key(prefix)).map(|to| (prefix, to)))
-            .last()
-            .map(|(prefix, to)| Cow::Owned(format!("{to}{}", &name[prefix.len()..])))
+        crate::refs::renamed_page_name(name, self.pages)
     }
 
     /// The new name of a query's page-name argument.

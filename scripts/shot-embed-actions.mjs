@@ -10,7 +10,7 @@ import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5209;
-const OUT = "screenshots/embed-actions";
+const OUT = process.argv[2] ?? "screenshots/embed-actions";
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 let browser;
 let failed = false;
@@ -41,7 +41,13 @@ const toolbars = (page) => page.evaluate(() => [...document.querySelectorAll(".e
   .filter((bar) => getComputedStyle(bar).opacity === "1" && getComputedStyle(bar).pointerEvents !== "none")
   .map((bar) => {
     const embed = bar.parentElement.getBoundingClientRect(), r = bar.getBoundingClientRect();
-    return { labels: [...bar.querySelectorAll("button")].map((b) => b.textContent), clearOfContent: r.bottom <= embed.top + 1, rightAligned: Math.abs(r.right - embed.right) <= 1 };
+    return { labels: [...bar.querySelectorAll("button")].map((b) => b.textContent.trim()),
+      actions: [...bar.querySelectorAll("button")].map((b) => ({
+        name: b.getAttribute("aria-label") ?? b.textContent.trim(), title: b.title,
+        icon: !!b.querySelector('svg[aria-hidden="true"]'),
+        textVisible: !b.querySelector(".embed-action-label") || getComputedStyle(b.querySelector(".embed-action-label")).display !== "none",
+      })),
+      clearOfContent: r.bottom <= embed.top + 1, rightAligned: Math.abs(r.right - embed.right) <= 1 };
   }));
 
 try {
@@ -70,6 +76,9 @@ try {
     if (bars.length !== 1) throw new Error(`${file}: expected exactly one visible toolbar, saw ${bars.length}`);
     if (!bars[0].clearOfContent || !bars[0].rightAligned) throw new Error(`${file}: toolbar is not above the embed's top-right corner`);
     if (bars[0].labels.join("|") !== "Edit link|Open source|Remove") throw new Error(`${file}: unexpected actions ${bars[0].labels}`);
+    if (bars[0].actions.some((a, i) => !a.icon || a.textVisible !== (i === 2) || (i < 2 && a.title !== a.name))) {
+      throw new Error(`${file}: desktop icons, tooltips or labels incorrect: ${JSON.stringify(bars[0].actions)}`);
+    }
     await desktop.screenshot({ path: `${OUT}/${file}-desktop.png` });
     await desktop.mouse.move(5, 5);
     await sleep(100);
@@ -109,6 +118,7 @@ try {
   const bars = await toolbars(phone);
   console.log("phone-editing", JSON.stringify(bars));
   if (bars.length !== 1) throw new Error(`phone: expected the toolbar while editing inside the embed, saw ${bars.length}`);
+  if (bars[0].actions.some((a) => !a.icon || !a.textVisible)) throw new Error("phone: all actions must keep their icons and labels");
   await phone.screenshot({ path: `${OUT}/block-embed-editing-phone.png` });
   if (errors.length) throw new Error(`browser errors:\n${errors.join("\n")}`);
 } catch (error) {

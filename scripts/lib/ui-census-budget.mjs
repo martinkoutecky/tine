@@ -33,9 +33,10 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 /** @type {Readonly<Record<string, Surface>>} */
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
-  "commands.registry": { env: "desktop", budget: 147, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
+  // GH #860 / roadmap AG (2026-11-03): one explicitly approved, unbound breadcrumb toggle.
+  "commands.registry": { env: "desktop", budget: 148, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 27, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 89, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
+  "commands.palette": { env: "desktop", budget: 90, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
@@ -45,7 +46,8 @@ export const SURFACES = Object.freeze({
   "settings.appearance.open": settingsOpen("appearance", 29),
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
   "settings.appearance.advanced": settingsAdvanced("appearance", 16),
-  "settings.editor.open": settingsOpen("editor", 9),
+  // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
+  "settings.editor.open": settingsOpen("editor", 10),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
   // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting.
   "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 13 : 12),

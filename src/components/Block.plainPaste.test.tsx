@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { maybeEditorIn, type EditorKind } from "../tests/editorDriver";
-import { setCm6EditorEnabled } from "../editor/cm6Setting";
+import { useEditorKind } from "../tests/editorKind";
 import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
@@ -12,17 +12,6 @@ import * as clipboard from "../clipboard";
 import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 import { toasts, setToasts } from "../toasts";
 import { Block } from "./Block";
-
-// Same helper as batch/og-cm6-twins, kept local until that lane lands.
-function useEditorKind(kind: EditorKind): void {
-  beforeEach(async () => {
-    if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
-    if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = () => new DOMRect();
-    setCm6EditorEnabled(kind === "cm6");
-    await Promise.resolve();
-  });
-  afterEach(() => setCm6EditorEnabled(false));
-}
 
 beforeAll(() => initParser());
 afterEach(() => { vi.restoreAllMocks(); Reflect.deleteProperty(navigator, "platform"); resetStore(); setToasts([]); document.body.innerHTML = ""; });

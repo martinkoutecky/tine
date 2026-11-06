@@ -1,6 +1,48 @@
 //! Read-only rename planning, shared by the single-page and namespace paths.
 use super::*;
 
+#[cfg(test)]
+mod planning_probe {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a generated realistic-10k graph in TINE_RENAME_PROBE_ROOT"]
+    fn realistic_10k() {
+        let root = std::env::var("TINE_RENAME_PROBE_ROOT").unwrap();
+        let old = std::env::var("TINE_RENAME_PROBE_OLD").unwrap();
+        let store = Store::open(std::path::Path::new(&root), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let mut samples = Vec::new();
+        for _ in 0..21 {
+            let start = std::time::Instant::now();
+            let plan = plan_rename(
+                &store,
+                &old,
+                "Rename probe destination",
+                None,
+                RenameChoice::Rename,
+                &|| {},
+            )
+            .unwrap();
+            samples.push(start.elapsed().as_micros());
+            std::hint::black_box(plan);
+        }
+        samples.sort_unstable();
+        println!("planning_us median={} samples={samples:?}", samples[10]);
+        let graph = store.whole_graph().unwrap();
+        let mut guard = Vec::new();
+        for _ in 0..21 {
+            let start = std::time::Instant::now();
+            std::hint::black_box(graph.journal_rewrite_risks(&old, "Rename probe destination"));
+            guard.push(start.elapsed().as_micros());
+        }
+        guard.sort_unstable();
+        println!("journal_guard_us median={}", guard[10]);
+    }
+}
+
 /// What one rename attempt writes, planned from one published view (the
 /// attempt's walk, `refreshed_view`, decides reuse) and the config captured with it;
 /// commit and the host admit it only while both are current (A-W1, B2).
@@ -310,6 +352,8 @@ pub enum RenameBlocked {
     OwnChild { old: String, new: String },
     /// The destination file `file` exists and is the page `page`'s (R14).
     FileTaken { file: String, page: String },
+    /// CM3-1: an owner occurrence loses a key a stationary journal owns.
+    JournalReferenceLoss { journals: Vec<String> },
 }
 
 impl std::fmt::Display for RenameBlocked {
@@ -326,6 +370,11 @@ impl std::fmt::Display for RenameBlocked {
                 f,
                 "cannot rename: the file {file} belongs to the page “{page}”; rename or merge that page first"
             ),
+            RenameBlocked::JournalReferenceLoss { journals } => write!(
+                f,
+                "cannot rename: some links reach the journal {} through this name; journals keep their names, so renaming would break those links",
+                journals.join(", ")
+            ),
         }
     }
 }
@@ -335,7 +384,9 @@ impl std::error::Error for RenameBlocked {}
 impl RenameBlocked {
     fn error(self) -> io::Error {
         let kind = match self {
-            RenameBlocked::OwnChild { .. } => io::ErrorKind::InvalidInput,
+            RenameBlocked::OwnChild { .. } | RenameBlocked::JournalReferenceLoss { .. } => {
+                io::ErrorKind::InvalidInput
+            }
             _ => io::ErrorKind::AlreadyExists,
         };
         io::Error::new(kind, self)
@@ -387,6 +438,12 @@ pub(super) fn plan_rename(
     after_inventory();
     let source = existing(graph.resolve(old, false));
     validate_target(&source, expected_path)?;
+    // One guard for every source and every answer, before target offers:
+    // confirmation cannot bypass a stationary journal's reference protection.
+    let journals = graph.journal_rewrite_risks(old, new);
+    if !journals.is_empty() {
+        return Err(RenameBlocked::JournalReferenceLoss { journals }.error());
+    }
     // CM-OWN-CHILD, M-Q6: refused for a rename and a merge alike, before
     // anything else is decided (D-20261103-CMA).
     if own_child_used(&graph, &journal_format, &old_key, new) {

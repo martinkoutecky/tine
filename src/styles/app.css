@@ -7903,6 +7903,9 @@ img.emoji {
   white-space: nowrap;
 }
 .embed-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 8px;
   border: 0;
   border-radius: 4px;
@@ -7920,6 +7923,9 @@ img.emoji {
    the first block, so above-the-corner would cover ✕: sit inside the corner. */
 .right-sidebar .embed-actions { bottom: auto; top: 2px; inset-inline-end: 2px; }
 @media (hover: hover) {
+  /* GH #847: familiar actions are compact; destructive Remove keeps its text.
+     No-hover devices keep all labels, including at narrow mobile widths. */
+  .embed-action-label { display: none; }
   .embed-block:hover > .embed-actions { opacity: 1; pointer-events: auto; }
   .embed-block:has(.embed-block:hover) > .embed-actions { opacity: 0; pointer-events: none; }
 }

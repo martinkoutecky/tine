@@ -61,6 +61,23 @@ pub fn namespace_refs(name: &str) -> impl Iterator<Item = &str> {
         .filter(|name| !name.is_empty())
 }
 
+/// The renamed spelling of a page name, including unclaimed namespace
+/// members. `pages` maps old page keys to new display names. Shared by the
+/// text rewriter and the journal-reference-loss guard; O(namespace depth).
+pub fn renamed_page_name<'a>(
+    name: &str,
+    pages: &'a std::collections::HashMap<String, String>,
+) -> Option<std::borrow::Cow<'a, str>> {
+    if let Some(to) = pages.get(&page_key(name)) {
+        return Some(std::borrow::Cow::Borrowed(to));
+    }
+    namespace_refs(name)
+        .filter(|prefix| prefix.len() < name.len())
+        .filter_map(|prefix| pages.get(&page_key(prefix)).map(|to| (prefix, to)))
+        .last()
+        .map(|(prefix, to)| std::borrow::Cow::Owned(format!("{to}{}", &name[prefix.len()..])))
+}
+
 /// Pages whose text is never a reference source: the target page itself (OG
 /// excludes a page from its own references) and Tine's Favorites arrangement
 /// page (`:tine/favorites-page`), whose `[[links]]` are a sidebar layout, not a

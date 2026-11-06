@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide explains compact embed icons and visible touch labels (GH #847)", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  for (const outcome of ["chain icon for **Edit link**", "box-with-arrow icon for **Open source**", "**Remove** keeps its text beside a trash icon", "touch screen, all three keep their text labels"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches calendar sidebar gestures and retained tagged-page folds", () => {
   const journals = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
   const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
