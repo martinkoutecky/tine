@@ -578,10 +578,8 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     binding: "mod+c",
     label: msg("command-builtin-editor-copy-block-ref"),
   },
-  // GH #513 / #81. OG: `:editor/paste-text-in-one-block-at-point` (mod+shift+v,
-  // handler/paste.cljs editor-on-paste-raw!). Not a remappable command: the key
-  // has to reach the platform's own paste so the clipboard can be read (Block.tsx
-  // keeps a one-shot latch between the keydown and the paste event).
+  // GH #857 / #513 / #81. macOS reads plain text explicitly; other desktop
+  // platforms use the native paste event with the shared one-shot latch.
   {
     id: "builtin/editor/paste-plain",
     scope: "editor",
