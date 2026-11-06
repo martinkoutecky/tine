@@ -65,13 +65,12 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
       || e.key === "ArrowUp" && !ta.value.slice(0, start).includes("\n");
     const after = e.key === "ArrowRight" && end === ta.value.length
       || e.key === "ArrowDown" && !ta.value.slice(end).includes("\n");
-    const escape = e.key === "Escape";
-    if ((!before && !after && !escape) || (!escape && !e.shiftKey && start !== end)) return false;
+    // Escape is the editor's: it commits, then revealRaw keeps the source (GH #865).
+    if ((!before && !after) || (!e.shiftKey && start !== end)) return false;
     e.preventDefault();
     const anchor = p.open.length + (before ? end : start);
-    // OG code.cljs render!: Esc saves the code editor and edit-block! opens
-    // the raw block at :max. Boundary arrows also expose the adjacent fence.
-    const caret = escape ? visibleRaw().length : before ? p.open.length - 1 : p.open.length + p.body.length + 1;
+    // Boundary arrows expose the adjacent fence.
+    const caret = before ? p.open.length - 1 : p.open.length + p.body.length + 1;
     setRegion(null);
     ta.value = visibleRaw();
     ta.setSelectionRange(e.shiftKey ? Math.min(anchor, caret) : caret,
