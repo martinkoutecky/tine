@@ -119,16 +119,31 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
           onClick={(e) => e.stopPropagation()}>
           {/* keyed: each shown host text gets fresh buttons bound to it. */}
           <Show when={editable()} keyed>
-            {(o) => <button type="button" class="embed-action-edit" title={t("ref-occurrence-edit-title")}
-              onClick={() => editOccurrence(o, owner())}>{t("ref-occurrence-edit")}</button>}
+            {(o) => <button type="button" class="embed-action-edit" title={t("ref-occurrence-edit")} aria-label={t("ref-occurrence-edit")}
+              onClick={() => editOccurrence(o, owner())}>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <path d="M9 15l6-6M10 6l1-1a4 4 0 015.7 5.7l-1 1M14 18l-1 1a4 4 0 01-5.7-5.7l1-1" />
+              </svg>
+              <span class="embed-action-label">{t("ref-occurrence-edit")}</span>
+            </button>}
           </Show>
           <Show when={source()}>
-            <button type="button" class="embed-action-source"
-              onClick={(e) => openRefTarget(source()!, internalLinkDest(e), pane?.paneId ?? focusedPaneId())}>{t("preview-open-source")}</button>
+            <button type="button" class="embed-action-source" title={t("preview-open-source")} aria-label={t("preview-open-source")}
+              onClick={(e) => openRefTarget(source()!, internalLinkDest(e), pane?.paneId ?? focusedPaneId())}>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" />
+              </svg>
+              <span class="embed-action-label">{t("preview-open-source")}</span>
+            </button>
           </Show>
           <Show when={editable()} keyed>
             {(o) => <button type="button" class="embed-action-remove" title={t("ref-occurrence-remove-embed-title")}
-              onClick={() => removeOccurrence(o)}>{t("ref-occurrence-remove")}</button>}
+              onClick={() => removeOccurrence(o)}>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              </svg>
+              {t("ref-occurrence-remove")}
+            </button>}
           </Show>
         </div>
       </Show>
