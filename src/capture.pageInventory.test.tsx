@@ -9,6 +9,7 @@ import { backend } from "./backend";
 import { allPageNames, navigationName, resolvedTarget } from "./pageIndex";
 import { toasts } from "./toasts";
 import { initParser } from "./render/parse";
+import type { GraphMeta } from "./types";
 
 vi.mock("./components/Block", () => ({ Block: () => null,
   CaptureCtx: { Provider: (p: { children: unknown }) => p.children },
@@ -24,7 +25,7 @@ const inventory = vi.fn(async () => { throw new Error("no graph loaded for windo
 
 beforeAll(async () => {
   await initParser();
-  vi.spyOn(backend(), "bindCaptureGraph").mockResolvedValue(undefined);
+  vi.spyOn(backend(), "bindCaptureGraph").mockResolvedValue({ root: "/capture-graph", preferred_workflow: "now" } as GraphMeta);
   vi.spyOn(backend(), "getCaptureEnterFiles").mockResolvedValue(false);
   vi.spyOn(backend(), "captureTarget").mockResolvedValue("main");
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(17);
