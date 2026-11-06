@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Opening Quick Capture before the main window no longer shows a block reference count error (internal: UI-COLD-CAPTURE-REFCOUNTS).
+- Author tags stay aligned when a block has a references button beside its tag (GH #883).
+- The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).
+- On macOS, Cmd+Shift+V pastes plain text without depending on a native paste event (#857).
 - Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886, partly addressed; keep it open).
 - Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).
 - A rename or merge is now refused, naming the journal, when it would break a link that reaches a journal through the old name (for example `[[old/sub]]` where a journal declares `alias:: old/sub`, and `old` is renamed). Journals keep their names. A journal no such link reaches does not block the rename (REG-CM-JOURNAL-REFERENCE-LOSS, UI-CM-JOURNAL-REFERENCE-LOSS).
@@ -17,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Dates named only by links or tags now appear once as journals in All Pages and page queries, using the graph's journal formats. Creating the journal no longer leaves an extra ordinary date page. Published sites keep their date spelling rows so existing viewers can still open every linked spelling (UI-CM-FILELESS-DATES).
 - `tine delete` refuses before removing a block with incoming references unless confirmed with `--yes` (or `--force`). Every successful reply includes the removed block and its children for recovery, with an explicit notice if the text exceeds 65,536 bytes (GH #844).
+- Standalone code blocks in the classic editor expose their Markdown fences when entered from a neighboring block. The language and text before or after the code can be edited; Escape or moving out of code editing also reveals the source (GH #879).
 - Linked References no longer rebuilds every page-properties row when a source page is loaded again, which more than doubled memory on pages with many references (GH #886).
 - References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).
 - Advanced Logseq queries recognise `sort-by` with a `juxt` of `get` functions on priority, scheduled, deadline and content, including scheduled-else-deadline. Later keys break ties, missing values follow the supplied defaults, and content sorts by the full raw text. Single-key forms work too; an unsupported key still refuses the whole query (GH #852).
