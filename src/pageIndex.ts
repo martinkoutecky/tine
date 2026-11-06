@@ -6,6 +6,7 @@ import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import { journalTitle, parseJournalTitle } from "./journal";
 import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
+import { isQuickCaptureWindow } from "./windowRole";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
 // the backend's `refs::page_key`. It answers a name by looking up
@@ -61,6 +62,7 @@ function build(inventory: PageInventory, rev: bigint): Held {
 /** Fetch the inventory now and keep it unless a newer one is already held or
  *  the graph was rebound meanwhile. */
 export async function refreshPageIndex(): Promise<void> {
+  if (isQuickCaptureWindow()) return;
   const requested = generation;
   const owner = latestOwner(refreshScope, "inventory", graphOwner(() => requested === generation));
   let inventory: PageInventory;
