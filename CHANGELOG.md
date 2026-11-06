@@ -10,8 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+<<<<<<< HEAD
 - Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886).
 - Linked References no longer rebuilds every page-properties row when a source page is loaded again, which more than doubled memory on pages with many references (GH #886).
+=======
+- Opening Quick Capture before the main window no longer shows a block reference count error (internal: UI-COLD-CAPTURE-REFCOUNTS).
+- Author tags stay aligned when a block has a references button beside its tag (GH #883).
+>>>>>>> origin/release/0.9
 - Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).
 - `tine delete` refuses before removing a block with incoming references unless confirmed with `--yes` (or `--force`). Every successful reply includes the removed block and its children for recovery, with an explicit notice if the text exceeds 65,536 bytes (GH #844).
 - The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).
