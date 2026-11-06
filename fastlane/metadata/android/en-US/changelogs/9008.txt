@@ -1,0 +1,1 @@
+Eighth Tine 0.9 Beta. Long Linked References sections load and scroll faster and use less memory. Quick Capture follows the graph's TODO/DOING or LATER/NOW workflow. Code blocks show their fences when you enter them, author tags stay aligned, and PDF rectangle highlights show their image region. tine delete asks before removing a block that others reference.

@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.8] - 2026-11-06
+
 ### Fixed
 
 - Quick Capture uses the graph's preferred TODO/DOING or LATER/NOW task workflow, including Settings changes without restarting (GH #884).
