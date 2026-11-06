@@ -1,8 +1,10 @@
 //! GH #605: the today-sections page is found by its marker page property
-//! `tine/journal-sections:: true` (Org: `#+tine/journal-sections: true`)
+//! `tine.journal-sections:: true` (Org: `#+tine.journal-sections: true`), or the
+//! stable spelling `tine/journal-sections` (D-20261102-PNS, one alias table),
 //! through the query engine, the way `src/journalSections.ts`
-//! `locateSectionsPages` asks: `(page-property tine/journal-sections true)`,
-//! page-anchored rows. A block-level property or `false` is not the marker.
+//! `locateSectionsPages` asks (`markerQuery` in `src/tineKeys.ts`): one
+//! `(page-property KEY true)` per accepted spelling under `or`, page-anchored
+//! rows. A block-level property or `false` is not the marker.
 
 use std::collections::BTreeSet;
 
@@ -27,12 +29,30 @@ fn the_sections_marker_locates_markdown_and_org_pages_only() {
         "Org sections.org",
         "#+tine/journal-sections: true\n\n* {{query (task LATER)}}\n",
     );
+    w(
+        "New sections.md",
+        "tine.journal-sections:: true\n\n- {{query (task NOW)}}\n",
+    );
+    w(
+        "New org.org",
+        "#+tine.journal-sections: true\n\n* {{query (task NOW)}}\n",
+    );
     w("Off.md", "tine/journal-sections:: false\n\n- body\n");
+    w("New off.md", "tine.journal-sections:: false\n\n- body\n");
     w("Block level.md", "- body\n  tine/journal-sections:: true\n");
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     let graph = store.whole_graph().unwrap();
+    let spellings = tine_core::tine_keys::spellings(tine_core::tine_keys::JOURNAL_SECTIONS_MARKER);
+    assert_eq!(
+        spellings,
+        ["tine.journal-sections", "tine/journal-sections"]
+    );
+    let terms: Vec<String> = spellings
+        .iter()
+        .map(|key| format!("(page-property {key} true)"))
+        .collect();
     let (query, view) = parse_query_input(
-        "(page-property tine/journal-sections true)",
+        &format!("(or {})", terms.join(" ")),
         QueryInput::MacroQuery,
         tine_core::date::JournalDate::today(),
         Registry::none(),
@@ -57,6 +77,11 @@ fn the_sections_marker_locates_markdown_and_org_pages_only() {
     let names: BTreeSet<String> = pages.into_iter().map(|p| p.name.to_lowercase()).collect();
     assert_eq!(
         names,
-        BTreeSet::from(["journal sections".to_string(), "org sections".to_string()])
+        BTreeSet::from([
+            "journal sections".to_string(),
+            "org sections".to_string(),
+            "new sections".to_string(),
+            "new org".to_string(),
+        ])
     );
 }

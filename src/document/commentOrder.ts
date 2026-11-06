@@ -12,9 +12,9 @@ import { quoteSelectorOf } from "../comments";
 import { facetsOf } from "../render/facets";
 import { commentMarginHidden } from "../commentMarginPref";
 
-// A cheap screen before the property parse: a comment carries `quote::` (md)
-// or `:quote:` (org drawers).
-const MAY_QUOTE = /quote::|:quote:/i;
+// A cheap screen before the property parse: a comment carries `tine.quote::`
+// (md) or `:tine.quote:` (org drawers).
+const MAY_QUOTE = /tine\.quote::|:tine\.quote:/i;
 
 function isCommentChild(id: string): boolean {
   const n = doc.byId[id];

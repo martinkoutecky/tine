@@ -34,7 +34,7 @@ if (process.env.E2E_MARGIN_TMP) {
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
-fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  author:: claude\n- A second block stays as it is.\n`);
+fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n`);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- open [[${PAGE_NAME}]]\n`);
@@ -121,7 +121,7 @@ try {
   await browser.keys(REPLY);
   await browser.keys(["Escape"]);
 
-  // On disk: block > comment (quote::) > reply.
+  // On disk: block > comment (tine.quote::) > reply.
   const saved = await waitForFileText(PAGE_FILE, (text) => text.includes(REPLY) && text.includes(COMMENT), { timeoutMs: 20_000 });
   const lines = saved.split("\n");
   const indent = (line) => line.length - line.trimStart().length;
@@ -133,8 +133,8 @@ try {
   if (!(indent(lines[commentLine]) > indent(lines[agentLine]) && indent(lines[replyLine]) > indent(lines[commentLine]))) {
     throw new Error(`the reply is not nested under the comment under the block: ${JSON.stringify(saved)}`);
   }
-  if (lines[commentLine + 1]?.trim() !== `quote:: ${PHRASE}`) throw new Error(`the comment lost its quote: ${JSON.stringify(saved)}`);
-  if (!saved.includes(`- An agent wrote ${PHRASE} in this paragraph.\n  author:: claude\n`)) {
+  if (lines[commentLine + 1]?.trim() !== `tine.quote:: ${PHRASE}`) throw new Error(`the comment lost its quote: ${JSON.stringify(saved)}`);
+  if (!saved.includes(`- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n`)) {
     throw new Error(`the commented block changed on disk: ${JSON.stringify(saved)}`);
   }
   // The reply is drawn in the same margin thread.

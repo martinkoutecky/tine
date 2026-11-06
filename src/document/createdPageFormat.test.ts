@@ -81,7 +81,7 @@ describe("a page created on an Org graph edits as Org", () => {
     await flushPage("Journal sections");
     const saved = lastSubmitted(submit, "Journal sections");
     expect(saved.blocks[0]!.raw).toContain(":PROPERTIES:\n:id: abc\n:END:");
-    expect(saved.pre_block).toBe("#+foo: bar\n#+tine/journal-sections: true");
+    expect(saved.pre_block).toBe("#+foo: bar\n#+tine.journal-sections: true");
   });
 
   it("a page already shown as an empty placeholder (a link to a page with no file) is created as Org", async () => {
@@ -103,9 +103,10 @@ describe("a page created on an Org graph edits as Org", () => {
 describe("a page with no file on an Org graph edits as Org", () => {
   it("a routed page that has no file yet, once its block is edited, takes the format of the file the host resolved", async () => {
     loadSingle(emptyPage("Ghost", "page"));
-    // Entering editing opens the page on the host; its "no file" answer names the file.
+    // Entering editing opens the page on the host; its "no file" answer
+    // supplies the proposed file's format, without claiming that file exists.
     startEditing(pageByName("Ghost")!.roots[0]!, 0);
-    await vi.waitFor(() => expect(pageByName("Ghost")!.id).toBe("pages/Ghost.org"));
+    await vi.waitFor(() => expect(pageByName("Ghost")!.format).toBe("org"));
     endEdit("blur");
     const root = pageByName("Ghost")!.roots[0]!;
     setBlockProperty(root, "id", "abc");

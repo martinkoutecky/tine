@@ -47,7 +47,7 @@ export function propertyEditorSession() {
         && splitProps(raw, hide, format).visible !== visible;
       if (typedHidden || typedDrawer || regrouped) {
         // A property typed by hand must finish in this active buffer. Stripping
-        // `quote:: ` as soon as the parser accepts it would put the remaining
+        // `tine.quote:: ` as soon as the parser accepts it would put the remaining
         // keystrokes in the body. Reentry uses the ordinary split and hides it.
         // Saving may also gather later Markdown properties into the first group
         // OG reads. Keep that saved layout out of the live text and caret, as OG

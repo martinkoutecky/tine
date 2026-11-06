@@ -16,6 +16,7 @@ import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js
 import { backend } from "./backend";
 import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage, reloadHlsIfLoaded } from "./document";
 import { graphMeta } from "./graphSession";
+import { hasMarker } from "./tineKeys";
 import { changed, pageChangeKey } from "./changeKeys";
 import { seedGraphSignal, writeGraphSignal } from "./graphPreferences";
 import { bindingOwner, readOwned, writeOwned } from "./owned";
@@ -82,7 +83,7 @@ let generation = 0;
  *  mistaken for an outside edit. */
 let ownWrites = 0;
 /** The marker pre-block in the page's own format: a Markdown page property,
- *  or an Org `#+` file property (og reads `tine/favorites:: true` in an .org
+ *  or an Org `#+` file property (og reads `tine.favorites:: true` in an .org
  *  file as body text, not a property). */
 const markerFor = (format: Format) =>
   format === "org" ? `#+${FAVORITES_PAGE_PROPERTY}: true` : `${FAVORITES_PAGE_PROPERTY}:: true`;
@@ -283,8 +284,7 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
       // initialization. Read the DTO preamble through the page-property owner.
       const { pageHeaderProperties } = await import("./document");
       if (!owner()) throw new Error("graph changed before the Favorites marker read");
-      if (!pageHeaderProperties(disk).some(([key, value]) =>
-        key.toLowerCase() === FAVORITES_PAGE_PROPERTY && value.trim().toLowerCase() === "true")) continue;
+      if (!hasMarker(pageHeaderProperties(disk), FAVORITES_PAGE_PROPERTY)) continue;
     }
     if (disk && !arrangementPage) {
       // An arrangement page config never recorded: the only copy of an

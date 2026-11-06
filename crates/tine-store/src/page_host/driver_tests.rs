@@ -104,6 +104,53 @@ fn settle(d: &Test) {
 }
 
 #[test]
+fn gh875_a_conflicted_submit_rechecks_exact_current_disk_bytes() {
+    for (disk, submitted, conflicted) in [
+        ("theirs", "theirs", false),
+        ("theirs", "theirs ", true),
+        ("theirs\r\n", "theirs\n", true),
+        // The last observation is not proof: another delivery may have arrived.
+        ("new delivery", "theirs", true),
+    ] {
+        let mut h = host();
+        h.test.submits_wait = true;
+        open(&mut h, "a.md");
+        edit(&mut h, "a.md", "mine");
+        h.fs.external("a.md", text("theirs"), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+        assert!(h.pages["a.md"].conflict);
+        h.fs.external("a.md", text(disk), true);
+        let version = h.pages["a.md"].version;
+        let (mut d, _, receive) = spawn(h);
+        let id = admit(
+            &d,
+            "a.md",
+            RequestKind::Submit {
+                bytes: text(submitted),
+                version,
+                resolve: None,
+            },
+        );
+        answered(&receive, id);
+        settle(&d);
+        d.shared.with_state_for_tests(|s| {
+            let page = &s.progress.host.pages["a.md"];
+            assert_eq!(
+                page.conflict, conflicted,
+                "disk={disk:?}, input={submitted:?}"
+            );
+            assert_eq!(page.buf, text(submitted), "never replace unsaved text");
+            assert_eq!(
+                page.obs,
+                Some(text(disk)),
+                "fresh observation, without a watcher event"
+            );
+        });
+        d.join();
+    }
+}
+
+#[test]
 fn plan_lock_revalidate_never_holds_state_while_waiting_for_a_path_lock() {
     let h = host();
     let lock_a = h.locks["a.md"].clone();

@@ -127,7 +127,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setStartOfWeek", "editAssetExternal", "editCustomCss", "editGlobalCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
-  "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
+  "importAsset", "captureImportAsset", "captureSaveAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setGitAutocommit", "gitSyncNow", "gitDisableLineEndings", "gitRemoveStaleLock", "gitSignIn", "gitSignOut", "gitAppLifecycle", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",

@@ -11,13 +11,15 @@ import { bumpDataRev } from "../graphSession";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { resetReferenceSectionState } from "../referenceSectionState";
+import { resetStore } from "../document";
+import { setDoc } from "../document/model";
 import type { BlockDto } from "../types";
 
 vi.mock("./LiveRefGroup", () => ({
   LiveRefGroup: (props: { blocks: BlockDto[] }) => <div data-probe-row>{props.blocks.map((block) => block.raw).join(",")}</div>,
 }));
 beforeAll(initParser);
-afterEach(() => { endEdit("blur"); vi.restoreAllMocks(); resetSharedQueryResultsForTests(); resetReferenceSectionState(); document.body.innerHTML = ""; });
+afterEach(() => { endEdit("blur"); resetStore(); vi.restoreAllMocks(); resetSharedQueryResultsForTests(); resetReferenceSectionState(); document.body.innerHTML = ""; });
 const groups = [{ page: "Source", kind: "page" as const, blocks: [{ id: "task", raw: "TODO my task [[Target]]", children: [], collapsed: false }] }];
 
 it("GH #659 intentional difference from OG: retain the query result until editing ends", async () => {
@@ -84,5 +86,31 @@ it("embed shares retention and refreshes after the editing session ends", async 
     endEdit("blur");
     await vi.waitFor(() => expect(root.querySelector("[data-probe-row]")).toBeNull());
     expect(read).toHaveBeenCalledTimes(2);
+  } finally { dispose(); }
+});
+
+// GH #851: a run's rows are shallow (`children: []`); the rows an expanded result shows under a hit are the
+// live source blocks. Editing one of those is editing the result, so it holds the answer like editing the hit.
+it("GH #851: editing a live block shown under a result holds the answer until editing ends", async () => {
+  setDoc({ byId: {
+    task: { id: "task", raw: "TODO my task [[Target]]", collapsed: false, parent: null, page: "Source", children: ["kid"] },
+    kid: { id: "kid", raw: "Kid", collapsed: false, parent: "task", page: "Source", children: ["grand"] },
+    grand: { id: "grand", raw: "Grand", collapsed: false, parent: "kid", page: "Source", children: [] },
+  }, pages: [{ id: "pages/Source.md", name: "Source", kind: "page", title: "Source", preBlock: null, roots: ["task"], format: "md", readOnly: false, guide: false }],
+  feed: ["Source"], loaded: true });
+  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups));
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <QueryMacro body="tine-query @block AND task = 'TODO'" />, root);
+  try {
+    await vi.waitFor(() => expect(root.querySelector("[data-probe-row]")?.textContent).toContain("TODO my task"));
+    startEditing("grand");
+    run.mockResolvedValue(blockRunResult([]));
+    bumpDataRev();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(root.querySelector("[data-probe-row]")?.textContent).toContain("TODO my task");
+    endEdit("blur");
+    await vi.waitFor(() => expect(root.querySelector("[data-probe-row]")).toBeNull());
+    expect(run).toHaveBeenCalledTimes(2);
   } finally { dispose(); }
 });

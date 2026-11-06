@@ -36,7 +36,7 @@ const blk = (raw: string, children: BlockDto[] = []): BlockDto => ({
 const page = (name: string, blocks: BlockDto[], format: "md" | "org" = "md", preBlock: string | null = null): PageRead => ({
   name, kind: "page", title: name, id: `pages/${name}.${format}`, rev: "r0", format, pre_block: preBlock, blocks,
 } as PageRead);
-const EXPORTS = () => page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "md", "tine/exports:: true\npublic:: false");
+const EXPORTS = () => page("Exports", [blk("{{query (or (property tine.export) (property tine.share))}}")], "md", "tine/exports:: true\npublic:: false");
 
 async function bindDisk(initial: PageRead[], failing: { path?: string } = {}, retryFailed = false) {
   const files = new Map<string, PageRead>(initial.map((dto) => [dto.id, structuredClone(dto)]));
@@ -99,18 +99,18 @@ describe("markSharePending", () => {
     expect(await markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, ID)).toBe("Exports");
     expect(await flushAll()).toBe(true);
     expect(disk.raws("pages/Exports.md")).toEqual([
-      "{{query (or (property export) (property tine.share))}}",
+      "{{query (or (property tine.export) (property tine.share))}}",
       `{{tine-query @page and name = 'Project'}}\ntine.share:: ${PENDING}`,
     ]);
   });
 
-  it("from an unchanged query block: puts tine.share:: on that block (beside an export:: it has)", async () => {
-    const notes = page("Notes", [blk("intro"), blk("{{query (task TODO)}}\nexport:: site")]);
+  it("from an unchanged query block: puts tine.share:: on that block (beside an tine.export:: it has)", async () => {
+    const notes = page("Notes", [blk("intro"), blk("{{query (task TODO)}}\ntine.export:: site")]);
     const disk = await bindDisk([notes, EXPORTS()]);
     load(notes);
-    const host = idOf("Notes", "{{query (task TODO)}}\nexport:: site");
+    const host = idOf("Notes", "{{query (task TODO)}}\ntine.export:: site");
     expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Notes");
-    expect(disk.raws("pages/Notes.md")).toEqual(["intro", `{{query (task TODO)}}\nexport:: site\ntine.share:: ${PENDING}`]);
+    expect(disk.raws("pages/Notes.md")).toEqual(["intro", `{{query (task TODO)}}\ntine.export:: site\ntine.share:: ${PENDING}`]);
     expect(disk.raws("pages/Exports.md")).toHaveLength(1);
   });
 
@@ -156,7 +156,7 @@ describe("markSharePending", () => {
   });
 
   it("spells the property for an Org exports page", async () => {
-    const org = page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "org", "#+tine/exports: true\n#+public: false");
+    const org = page("Exports", [blk("{{query (or (property tine.export) (property tine.share))}}")], "org", "#+tine/exports: true\n#+public: false");
     const disk = await bindDisk([org]);
     load(org);
     await markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'A'}}" }, ID);
@@ -175,7 +175,7 @@ describe("markSharePending", () => {
     expect(Object.values(doc.byId).some((n) => n.raw.includes(PENDING))).toBe(false);
     failing.path = undefined;
     expect(await flushAll()).toBe(true);
-    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
+    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property tine.export) (property tine.share))}}"]);
   });
 });
 
@@ -204,13 +204,13 @@ describe("finishSharePending", () => {
   });
 
   it("a share that was not created takes the definition it appended to the Exports page with it", async () => {
-    const exportsPage = page("Exports", [blk("{{query (or (property export) (property tine.share))}}"),
+    const exportsPage = page("Exports", [blk("{{query (or (property tine.export) (property tine.share))}}"),
       blk(`{{tine-query @page and name = 'A'}}\ntine.share:: ${PENDING}`)], "md", "tine/exports:: true\npublic:: false");
     const disk = await bindDisk([exportsPage]);
     answerShareQuery(disk, ["Exports"]);
     expect(await finishSharePending(ID, null)).toEqual(["Exports"]);
     expect(await flushAll()).toBe(true);
-    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
+    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property tine.export) (property tine.share))}}"]);
   });
 
   it("lists the graph's pending markers by record id with their pages", async () => {
@@ -233,11 +233,11 @@ describe("finishSharePending", () => {
 describe("removeShareProperty", () => {
   it("removes exactly that share's property wherever it is, loading pages that are not open, and leaves the rest", async () => {
     const exportsPage = page("Exports", [
-      blk("{{query (or (property export) (property tine.share))}}"),
+      blk("{{query (or (property tine.export) (property tine.share))}}"),
       blk("{{tine-query @page and name = 'A'}}\ntine.share:: octo/abc"),
       blk("{{tine-query @page and name = 'B'}}\ntine.share:: octo/abcd"),
     ], "md", "tine/exports:: true\npublic:: false");
-    const notes = page("Notes", [blk("parent", [blk("{{query (task TODO)}}\nexport:: site\ntine.share:: octo/abc")])]);
+    const notes = page("Notes", [blk("parent", [blk("{{query (task TODO)}}\ntine.export:: site\ntine.share:: octo/abc")])]);
     const disk = await bindDisk([exportsPage, notes]);
     answerShareQuery(disk, ["Exports", "Notes"]);
     // Neither page is open: both are loaded into the working set first.
@@ -246,16 +246,16 @@ describe("removeShareProperty", () => {
     expect(await flushAll()).toBe(true);
     // D-20261026-QSD: the definition the share appended to Exports goes whole; elsewhere only the property goes.
     expect(disk.raws("pages/Exports.md")).toEqual([
-      "{{query (or (property export) (property tine.share))}}",
+      "{{query (or (property tine.export) (property tine.share))}}",
       "{{tine-query @page and name = 'B'}}\ntine.share:: octo/abcd",
     ]);
-    expect(disk.raws("pages/Notes.md")).toEqual(["parent", "{{query (task TODO)}}\nexport:: site"]);
+    expect(disk.raws("pages/Notes.md")).toEqual(["parent", "{{query (task TODO)}}\ntine.export:: site"]);
   });
 
   // D-20261026-QSD (Martin's test 10/26: Delete left the share's bullet on the Exports page).
   it("deletes a definition only while it is exactly what the share appended to the Exports page", async () => {
     const exportsPage = page("Exports", [
-      blk("{{query (or (property export) (property tine.share))}}"),
+      blk("{{query (or (property tine.export) (property tine.share))}}"),
       blk("{{tine-query @page and name = 'A'}}\ntine.share:: octo/g1"),
       blk("{{tine-query @page and name = 'B'}} my note\ntine.share:: octo/g1"),
       blk("{{tine-query @page and name = 'C'}}\nowner:: me\ntine.share:: octo/g1"),
@@ -268,7 +268,7 @@ describe("removeShareProperty", () => {
     expect((await removeShareProperty("g1")).sort()).toEqual(["Exports", "Notes"]);
     expect(await flushAll()).toBe(true);
     expect(disk.raws("pages/Exports.md")).toEqual([
-      "{{query (or (property export) (property tine.share))}}",
+      "{{query (or (property tine.export) (property tine.share))}}",
       "{{tine-query @page and name = 'B'}} my note",
       "{{tine-query @page and name = 'C'}}\nowner:: me",
       "{{tine-query @page and name = 'D'}}", "a child",
@@ -280,7 +280,7 @@ describe("removeShareProperty", () => {
 
   it("deletes an appended definition on an Org exports page too", async () => {
     const raw = queryBlockRaw("{{tine-query @page and name = 'A'}}", [["tine.share", "octo/g1"]], "org");
-    const exportsPage = page("Exports", [blk("{{query (or (property export) (property tine.share))}}"),
+    const exportsPage = page("Exports", [blk("{{query (or (property tine.export) (property tine.share))}}"),
       { ...blk(raw), properties: [["tine.share", "octo/g1"]] }], "org",
       "#+tine/exports: true\n#+public: false");
     const disk = await bindDisk([exportsPage]);
@@ -291,7 +291,7 @@ describe("removeShareProperty", () => {
     expect(raw).toContain(":tine.share: octo/g1");
     expect(await removeShareProperty("g1")).toEqual(["Exports"]);
     expect(await flushAll()).toBe(true);
-    expect(disk.raws("pages/Exports.org")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
+    expect(disk.raws("pages/Exports.org")).toEqual(["{{query (or (property tine.export) (property tine.share))}}"]);
   });
 
   it("a share no block names changes nothing", async () => {

@@ -5,6 +5,12 @@
 //! store's own serializer, and refused before admission when the planned
 //! bytes would not parse back to what the command meant.
 
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tine_core::editor_text::{set_text_with_policy, split, HidePolicy};
@@ -401,9 +407,175 @@ fn same_tree(meant: &[BlockDto], parsed: &[BlockDto]) -> bool {
         })
 }
 
-/// One write: flush, read through the host, compute, plan through the
-/// store's serializer, reparse, apply (design §1). A page that changed
-/// between the read and the operation is read and resolved once more; a
+/// How long a write waits in line before it refuses, untouched. In-scope
+/// scenario: concurrent honest writers behind one wedged or very slow write (a
+/// window that does not answer, a stalled disk). Below the client's reply wait
+/// (`client::REPLY_WAIT`, pinned there), so a write that spends its wait only here
+/// reaches its caller as this refusal. Time spent elsewhere is not bounded by it:
+/// a `--run` write first waits for `RUN_LOCK`, and a write that gets its turn late
+/// may still outlast the client, which then says `uncertain`.
+pub(crate) const TURN_WAIT: Duration = Duration::from_secs(45);
+
+/// What a write verb reaches: one page, or (`page rename`, which rewrites every
+/// referrer) any page of the graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TurnScope {
+    Page(PageId),
+    Graph,
+}
+
+impl TurnScope {
+    fn overlaps(&self, other: &TurnScope) -> bool {
+        match (self, other) {
+            (TurnScope::Page(a), TurnScope::Page(b)) => a == b,
+            _ => true,
+        }
+    }
+}
+
+/// The owner's writers per graph, in arrival order (GH #842). Each write plans
+/// against the bytes it read, so writers that overlap on a page would all plan
+/// from one base and all but one would lose: taking turns means commands never
+/// race each other, and what still moves a page under a write (typing, an
+/// editor, Syncthing) meets the host's guard as before. A writer goes once no
+/// earlier one overlaps it. A line rather than a mutex, whose wakeups favour no
+/// one, so a writer in it cannot be starved by later ones. Keyed by graph, so slots of
+/// one graph share it across a host adoption, as [`super::git_run::RUN_LOCK`]
+/// is shared.
+///
+/// Lock order: `RUN_LOCK`, then a turn, then the page host. Nothing holding a
+/// turn takes `RUN_LOCK`, and a verb holds one turn at a time. So a `--run` write
+/// joins the line only once it holds `RUN_LOCK`, whose own order is unfair, and
+/// other `RUN_LOCK` users (autocommit, sync, app page operations) wait while it
+/// stands in line.
+pub(super) struct PageTurns {
+    lines: Mutex<HashMap<PathBuf, VecDeque<(u64, TurnScope)>>>,
+    moved: Condvar,
+    next: AtomicU64,
+}
+
+static PAGE_TURNS: LazyLock<PageTurns> = LazyLock::new(PageTurns::new);
+
+/// A verb's turn; dropping it, panics included, passes the turn on.
+pub(super) struct PageTurn<'a> {
+    turns: &'a PageTurns,
+    graph: PathBuf,
+    ticket: u64,
+}
+
+impl PageTurns {
+    fn new() -> Self {
+        Self {
+            lines: Mutex::new(HashMap::new()),
+            moved: Condvar::new(),
+            next: AtomicU64::new(0),
+        }
+    }
+
+    /// Wait until no earlier writer overlaps `scope`; `None` past `wait`, out
+    /// of the line.
+    fn wait_turn(&self, graph: PathBuf, scope: TurnScope, wait: Duration) -> Option<PageTurn<'_>> {
+        let ticket = self.next.fetch_add(1, Ordering::Relaxed);
+        let deadline = Instant::now() + wait;
+        let mut lines = self.lines.lock().unwrap_or_else(|e| e.into_inner());
+        lines
+            .entry(graph.clone())
+            .or_default()
+            .push_back((ticket, scope.clone()));
+        while lines[&graph]
+            .iter()
+            .take_while(|(earlier, _)| *earlier != ticket)
+            .any(|(_, earlier)| earlier.overlaps(&scope))
+        {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                self.leave_line(&mut lines, &graph, ticket);
+                return None;
+            }
+            lines = self
+                .moved
+                .wait_timeout(lines, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        Some(PageTurn {
+            turns: self,
+            graph,
+            ticket,
+        })
+    }
+
+    fn leave_line(
+        &self,
+        lines: &mut HashMap<PathBuf, VecDeque<(u64, TurnScope)>>,
+        graph: &PathBuf,
+        ticket: u64,
+    ) {
+        if let Some(line) = lines.get_mut(graph) {
+            line.retain(|(t, _)| *t != ticket);
+            if line.is_empty() {
+                lines.remove(graph);
+            }
+        }
+        self.moved.notify_all();
+    }
+}
+
+impl Drop for PageTurn<'_> {
+    fn drop(&mut self) {
+        let mut lines = self.turns.lines.lock().unwrap_or_else(|e| e.into_inner());
+        self.turns.leave_line(&mut lines, &self.graph, self.ticket);
+    }
+}
+
+/// How many verbs stand in `slot`'s graph's line, the holders included.
+#[cfg(test)]
+pub(super) fn tests_line_len(slot: &GraphSlot) -> usize {
+    PAGE_TURNS
+        .lines
+        .lock()
+        .unwrap()
+        .get(&slot.root_key)
+        .map_or(0, VecDeque::len)
+}
+
+/// `page`'s turn for one write verb, held across its read, save and commit.
+pub(super) fn page_turn(slot: &GraphSlot, page: &PageId) -> Result<PageTurn<'static>, ErrorBody> {
+    PAGE_TURNS
+        .wait_turn(
+            slot.root_key.clone(),
+            TurnScope::Page(page.clone()),
+            slot.turn_wait,
+        )
+        .ok_or_else(|| {
+            refused(
+                "page-busy",
+                Some(page),
+                "other commands writing to this page took too long; nothing changed, try again",
+            )
+        })
+}
+
+/// The whole graph's turn. `page rename` rewrites referrers it finds as it goes,
+/// so a command writing one must not race it. It and `page delete` resolve their
+/// name under this turn, so an earlier command's new page is seen; a page's turn
+/// could only be taken after the name it needs is resolved.
+pub(super) fn graph_turn(slot: &GraphSlot) -> Result<PageTurn<'static>, ErrorBody> {
+    PAGE_TURNS
+        .wait_turn(slot.root_key.clone(), TurnScope::Graph, slot.turn_wait)
+        .ok_or_else(|| {
+            refused(
+                "page-busy",
+                None,
+                "other commands writing to this graph took too long; nothing changed, try again",
+            )
+        })
+}
+
+/// One write: wait for the page's turn, flush, read through the host, compute,
+/// plan through the store's serializer, reparse, apply (design §1). Another
+/// command cannot move the page meanwhile; a page that an outside writer changed
+/// between the read and the operation is read and resolved once more, and a
 /// second change is `stale`.
 pub(crate) fn write_page(
     slot: &GraphSlot,
@@ -488,6 +660,7 @@ pub(super) fn write_page_from_bytes(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
+    let _turn = page_turn(slot, page)?;
     if RUN.with(|r| r.borrow().is_some()) {
         super::git_run::check_page(slot, page)?;
     }
@@ -707,6 +880,10 @@ struct EditArgs {
     text: String,
     #[serde(default)]
     rev: Option<String>,
+    /// An explicit `--author` on `tine edit`. The `author` argument every write
+    /// carries also takes `TINE_AUTHOR` and names only the run's commits.
+    #[serde(default)]
+    author_property: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -750,14 +927,17 @@ fn kernel_refused(page: &PageId, message: String) -> ErrorBody {
     refused("kernel", Some(page), message)
 }
 
-/// `block.edit`: the text replaces the block's editor text, as typing it
-/// would (hidden properties kept, children kept), then the marker
-/// transition the window's `setRaw` runs.
+/// `block.edit`: the text replaces the block's text and every accepted property
+/// not named in it stays (children kept), then the marker transition the
+/// window's `setRaw` runs. Intentional difference from OG and from the app's
+/// editor, whose buffer owns visible properties (#840, D-20261101-CLIE): OG has
+/// no command line, and a caller naming new text has not asked to drop `src::`.
 pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     let EditArgs {
         handle: text,
         text: new_text,
         rev,
+        author_property,
     } = super::verbs::parse(args)?;
     let handle = parse_handle(&text)?;
     let page = handle_page(slot, &handle)?;
@@ -777,6 +957,14 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             // another block must not silently replace this block's identity.
             // Use accepted properties so fenced examples remain plain text.
             let current = tine_core::block_regions::parse(&old, org);
+            // A parser failure leaves no way to tell retained properties from
+            // text, so replacing it could lose them. `block.prop` refuses too.
+            if current.quarantined {
+                return Err(kernel_refused(
+                    page,
+                    "block.edit refuses a block its parser could not read".into(),
+                ));
+            }
             if let Some(id) = current.id {
                 let submitted = tine_core::block_regions::parse(&new_text, org);
                 if let Some(other) = submitted.properties.iter().find(|p| {
@@ -794,13 +982,11 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                     ));
                 }
             }
-            let hide = HidePolicy::Configured {
-                keys: config.block_hidden_properties.clone(),
-                sheet_cell: false,
-            };
-            let joined = set_text_with_policy(&old, org, &new_text, &hide)
+            // Every accepted property and the LOGBOOK are outside the replaced
+            // text; a key the text names replaces its retained row in the join.
+            let joined = set_text_with_policy(&old, org, &new_text, &HidePolicy::All)
                 .map_err(|e| kernel_refused(page, e))?;
-            block.raw = tine_core::logbook::apply_edit_transition_at(
+            let transitioned = tine_core::logbook::apply_edit_transition_at(
                 &old,
                 &joined,
                 if org {
@@ -812,6 +998,26 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 config.logbook.with_second_support,
                 now_parts(),
             );
+            block.raw =
+                match author_property.as_deref().map(str::trim) {
+                    None => transitioned,
+                    // Malformed input: an empty name would write `tine.author:: ` over
+                    // the real one, and removal has its own verb.
+                    Some("") => return Err(kernel_refused(
+                        page,
+                        "--author needs a name; `tine prop remove BLOCK tine.author` removes one"
+                            .into(),
+                    )),
+                    Some(name) => tine_core::block_regions::edit(
+                        &transitioned,
+                        org,
+                        tine_core::block_regions::Edit::Property {
+                            key: tine_core::tine_keys::AUTHOR.into(),
+                            value: Some(name.into()),
+                        },
+                    )
+                    .map_err(|e| kernel_refused(page, e))?,
+                };
             Ok(Planned {
                 doc: next,
                 changed: vec![path],
@@ -988,6 +1194,110 @@ pub(crate) fn delete_block(slot: &GraphSlot, args: &Value) -> Result<Value, Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn on(name: &str) -> TurnScope {
+        TurnScope::Page(PageId::from(name))
+    }
+
+    fn graph() -> PathBuf {
+        PathBuf::from("/graph")
+    }
+
+    /// Writers take a page in arrival order, whoever wakes first.
+    #[test]
+    fn page_turns_are_first_come_first_served() {
+        let turns = PageTurns::new();
+        let first = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+        let order = Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let (turns, order) = (&turns, &order);
+                scope.spawn(move || {
+                    let _turn = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+                    order.lock().unwrap().push(i);
+                });
+                // Each is in the line before the next one starts.
+                while turns.lines.lock().unwrap()[&graph()].len() < i + 2 {
+                    std::thread::yield_now();
+                }
+            }
+            drop(first);
+        });
+        assert_eq!(*order.lock().unwrap(), (0..8).collect::<Vec<_>>());
+        assert!(
+            turns.lines.lock().unwrap().is_empty(),
+            "no entry outlives its line"
+        );
+    }
+
+    #[test]
+    fn a_turn_is_per_page_and_per_graph() {
+        let turns = PageTurns::new();
+        let _held = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+        let now = Duration::ZERO;
+        assert!(turns.wait_turn(graph(), on("q"), now).is_some());
+        assert!(turns
+            .wait_turn(PathBuf::from("/other"), on("p"), now)
+            .is_some());
+        assert!(turns.wait_turn(graph(), on("p"), now).is_none());
+    }
+
+    /// A rename waits for every earlier writer and every later one waits for it,
+    /// so it can be neither raced nor starved.
+    #[test]
+    fn a_graph_turn_excludes_every_page_in_arrival_order() {
+        let turns = PageTurns::new();
+        let now = Duration::ZERO;
+        let page = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+        assert!(turns.wait_turn(graph(), TurnScope::Graph, now).is_none());
+        drop(page);
+        let whole = turns.wait_turn(graph(), TurnScope::Graph, now).unwrap();
+        assert!(turns.wait_turn(graph(), on("q"), now).is_none());
+        drop(whole);
+        std::thread::scope(|scope| {
+            let held = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+            let waiting = scope.spawn(|| {
+                turns
+                    .wait_turn(graph(), TurnScope::Graph, TURN_WAIT)
+                    .map(|_| ())
+                    .unwrap()
+            });
+            while turns.lines.lock().unwrap()[&graph()].len() < 2 {
+                std::thread::yield_now();
+            }
+            assert!(
+                turns.wait_turn(graph(), on("q"), now).is_none(),
+                "a later writer to another page does not pass the waiting rename"
+            );
+            drop(held);
+            waiting.join().unwrap();
+        });
+    }
+
+    /// A writer that gives up leaves the line, and those behind it still get theirs.
+    #[test]
+    fn a_turn_that_timed_out_leaves_the_line() {
+        let turns = PageTurns::new();
+        let held = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+        assert!(turns
+            .wait_turn(graph(), on("p"), Duration::from_millis(20))
+            .is_none());
+        assert_eq!(turns.lines.lock().unwrap()[&graph()].len(), 1);
+        drop(held);
+        assert!(turns.wait_turn(graph(), on("p"), Duration::ZERO).is_some());
+    }
+
+    /// A write that panics passes its turn on instead of wedging the page.
+    #[test]
+    fn a_panicking_writer_passes_its_turn_on() {
+        let turns = PageTurns::new();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _turn = turns.wait_turn(graph(), on("p"), TURN_WAIT).unwrap();
+            panic!("a write failed");
+        }));
+        assert!(panicked.is_err());
+        assert!(turns.wait_turn(graph(), on("p"), Duration::ZERO).is_some());
+    }
 
     #[test]
     fn handles_parse_page_names_with_slashes() {
