@@ -396,7 +396,7 @@ export interface MessageArgs {
   "conflict-resolution-show-unchanged": {};
   "conflict-resolution-still-has-unresolved-conflicts": { "page": string | number };
   "conflict-resolution-suggested-summary": { "suggested": string | number; "total": string | number };
-  "conflict-resolution-the-copy-is-safe-to-discard-from-the": {};
+  "conflict-resolution-the-copy-holds-nothing-the-page-lacks": {};
   "conflict-resolution-the-copy-moves-to-the-recoverable-trash-once": {};
   "conflict-resolution-the-file-changed-on-disk-re-reading-it": {};
   "conflict-resolution-the-other-file-is-safe-to-trash-above": {};

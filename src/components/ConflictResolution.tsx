@@ -270,6 +270,35 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     window.setTimeout(() => el?.classList.remove("page-conflict-row-focus"), 900);
   };
 
+  // GH #875: an identical copy holds nothing to decide; the native side trashes
+  // byte-identical ones itself, and this discards one that differs only where
+  // the comparison cannot see (recoverable trash, like the overview's Discard).
+  const discardIdenticalCopy = async () => {
+    const c = conflict();
+    const copy = c.source === "sync-copy" ? c.sides.find((s) => s.role === "theirs")?.path ?? null : null;
+    if (!copy || busy()) return;
+    const { id } = c;
+    const owner = bindingOwner(() => mounted);
+    const name = copy.split("/").pop() ?? copy;
+    setBusy(true);
+    try {
+      const result = await writeOwned(owner, backend().trashSyncConflict(copy, "delete-page"));
+      if (result.kind === "stale" || !owner()) return;
+      settleArtifactConflict(id);
+      pushToast(msg("conflict-overview-discarded", { name }), "success");
+      void refreshSyncConflicts();
+    } catch (e) {
+      if (!owner()) return;
+      if (errorFamily(e) === "conflict-copy-gone") {
+        settleArtifactConflict(id);
+        pushToast(msg("conflict-resolution-copy-gone"), "info");
+        void refreshSyncConflicts();
+      } else pushToast(msg("conflict-overview-couldn-t-discard-it", { error: String(errorDetail(e)) }), "error");
+    } finally {
+      if (owner()) setBusy(false);
+    }
+  };
+
   const apply = async () => {
     const current = diffValue();
     if (!current || readResource.loading || busy()) return;
@@ -469,7 +498,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           <Show
             when={!d().blocks_identical || d().pre_differs}
             fallback={
-              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-is-safe-to-discard-from-the")}</Show>
+              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-holds-nothing-the-page-lacks")}{" "}
+                  <button class="settings-btn page-conflict-discard-copy" disabled={busy()} onClick={() => void discardIdenticalCopy()}>{t("confirm-discard-copy")}</button>
+                </Show>
                 <Show when={conflict().source === "duplicate-journal"}>{t("conflict-resolution-the-other-file-is-safe-to-trash-above")}</Show>
                 <Show when={conflict().source === "live-save"}>
                   {t("conflict-resolution-use-disk-version-above-loses-nothing")}

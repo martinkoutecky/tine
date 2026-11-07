@@ -115,6 +115,24 @@ describe("in-page conflict resolution", () => {
     dispose();
   });
 
+  // GH #875: an identical copy used to say "nothing to decide" with no way to
+  // act from the page; it now offers Discard copy, which trashes the copy.
+  it("discards an identical sync copy from the page", async () => {
+    setConflictInventory(inventoryWith({ ...copyConflict, block_conflicts: 0 }));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([{ id: "0", kind: "unchanged", mine: view("same"), theirs: view("same"), children: [] }]), blocks_identical: true });
+    const trash = vi.spyOn(backend(), "trashSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount({ ...copyConflict, block_conflicts: 0 });
+    await settle();
+    expect(host.textContent).toContain("nothing to decide");
+    button(host, "Discard copy").click();
+    await settle();
+    expect(trash).toHaveBeenCalledWith(copyConflict.sides[1].path, "delete-page");
+    expect(conflictQueue()).toEqual([]);
+    expect(toasts().some((t) => t.message.includes("Discarded"))).toBe(true);
+    dispose();
+  });
+
   it("settles a vanished sync copy without replacing or reloading the page", async () => {
     setConflictInventory(inventoryWith(copyConflict));
     vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]]));

@@ -42,7 +42,7 @@ conflict-resolution-conflict-unavailable = 无法读取此冲突。
 
 conflict-resolution-the-two-versions-are-identical-nothing-to-decide = 两个版本完全相同，无需选择。
 
-conflict-resolution-the-copy-is-safe-to-discard-from-the = { " " }可在冲突概览中安全丢弃副本。
+conflict-resolution-the-copy-holds-nothing-the-page-lacks = { " " }副本没有页面所缺的内容。
 
 conflict-resolution-the-other-file-is-safe-to-trash-above = { " " }可在上方安全地将另一文件移入回收站。
 

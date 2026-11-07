@@ -45,7 +45,7 @@ conflict-resolution-conflict-unavailable = Couldn’t read this conflict.
 
 conflict-resolution-the-two-versions-are-identical-nothing-to-decide = The two versions are identical — nothing to decide.
 
-conflict-resolution-the-copy-is-safe-to-discard-from-the = { " " }The copy is safe to discard from the Conflicts overview.
+conflict-resolution-the-copy-holds-nothing-the-page-lacks = { " " }The copy holds nothing the page lacks.
 
 conflict-resolution-the-other-file-is-safe-to-trash-above = { " " }The other file is safe to trash above.
 
