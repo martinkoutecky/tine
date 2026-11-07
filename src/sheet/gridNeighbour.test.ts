@@ -94,6 +94,12 @@ function walk(start: string, move: GridMove): string[] {
 }
 
 describe("gridNeighbour (GH #874 reading order)", () => {
+  it("walks only visible descendants of a collapsed nested block", () => {
+    setDoc("byId", "b1", "collapsed", true);
+    expect(gridNeighbour("b1", outer(0, 1), "down")?.blockId).toBe("b2");
+    expect(gridNeighbour("b2", outer(0, 1), "up")?.blockId).toBe("b1");
+    expect(gridNeighbour("b1", outer(0, 1), "right")?.blockId).toBe("b2");
+  });
   it("Right walks rows, cells, cell outlines and sub-grids in reading order, then leaves the grid", () => {
     expect(walk("a", "right")).toEqual(["b", "b1", "b1a", "b2", "c", "cg", "s1", "s2", "s3", "cz", "d", "t", "e", "e1", "after"]);
   });
@@ -143,6 +149,9 @@ describe("gridNeighbour (GH #874 reading order)", () => {
     expect(gridEntry("grid", "above", 4, S)).toEqual({ blockId: "a", cell: outer(0, 0), caret: { col: 4, edge: "first" } });
     expect(gridEntry("grid", "below", 1, S)).toEqual({ blockId: "e1", cell: outer(2, 0), caret: { col: 1, edge: "last" } });
     expect(gridEntry("before", "above")).toBeNull();
+    setDoc("byId", "grid", "collapsed", true);
+    expect(gridEntry("grid", "above", 0, S)).toBeNull();
+    expect(gridEntry("grid", "below", 0, S)).toBeNull();
   });
 
   it("finds the cell that holds a block, and refuses blocks inside a table", () => {

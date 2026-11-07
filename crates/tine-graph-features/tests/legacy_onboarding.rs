@@ -140,6 +140,28 @@ fn guide_explains_page_title_identity_and_files_outside_page_directory() {
 }
 
 #[test]
+fn guide_explains_grid_edit_first() {
+    let _integration_guard = crate::integration_lock();
+    let sheets = bundled_guide_pages()
+        .into_iter()
+        .find(|p| p.title == "Features/Sheets")
+        .expect("sheets guide is bundled");
+    for instruction in [
+        "Editing a grid",
+        "Single-click",
+        "reading order",
+        "first child",
+        "Tab",
+        "Shift+Tab",
+        "Esc",
+        "keeps your text",
+        "ruling",
+    ] {
+        assert!(sheets.markdown.contains(instruction), "missing {instruction}");
+    }
+}
+
+#[test]
 fn guide_explains_favorites_groups_nesting_and_page_storage() {
     let _integration_guard = crate::integration_lock();
     let tips = bundled_guide_pages()

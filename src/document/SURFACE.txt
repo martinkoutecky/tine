@@ -27,6 +27,7 @@ blockHasFoldableBody  # why: the bullet arrow, keyboard folds and setCollapsed s
 blockHasPageEmbed  # why: host disclosure and keyboard folds share parser-owned page-embed eligibility (GH #694); batch-embed-find
 blockHasQueryBody  # why: the bullet arrow folds a query host's results (OG custom-query* collapsable?) while margin comments stay out of the outline body, so Block asks for the query case apart from its outline children (GH #619); batch-og-gh619-query
 blockIsGridView
+blockIsOpaqueSheetView  # why: grid caret reading order treats hosted table and board views as opaque (GH #874); batch-og-grid-edit-first-874
 blockPageReadOnly
 blockPositionRef  # why: a saved session names an ID-less zoomed block by position, so navigation never writes id:: (GH #623); batch-nav
 blockProperty

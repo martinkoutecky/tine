@@ -160,8 +160,8 @@ import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, 
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
-import { editsLikeOutline, openGridTarget } from "../sheet/gridEditMove";
-import { gridNeighbour } from "../sheet/gridNeighbour";
+import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
 import { applySheetViewSlashAction } from "./block/sheetViewSlash";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -544,7 +544,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // Which surface (main pane / a specific sidebar item) this editor lives in —
   // drives edit-focus arbitration when the same block renders in several surfaces.
   const surfaceKey = useContext(SurfaceContext);
-  const outlineScope = useContext(OutlineScopeContext);
+  const inheritedScope = useContext(OutlineScopeContext);
+  const outlineScope = sheetCell && editsLikeOutline(sheetCell) ? gridOutlineScope(sheetCell) : inheritedScope;
   const embedNavExit = useContext(EmbedNavExitContext);
   // Inside query results, the editor's pickers write only if no result changed meanwhile (GH #433 review).
   const inResults = useContext(ResultWriteTargetContext);
@@ -1942,7 +1943,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     "editor/copy-embed": (e) => { if (ref.selectionStart !== ref.selectionEnd) return false; e.preventDefault(); commit(ref.value); void copyBlockLink(props.id, "embed"); return true; },
     // Margin dialogue (vision §3.7). Always consumed: Ctrl/Cmd+R must not reach
     // the webview, whose default is reload. The capture window shows one block.
-    "editor/comment": (e) => { e.preventDefault(); e.stopPropagation(); if (!cap) commentFromEditor(props.id, ref, commit, editSurface()); return true; },
+    "editor/comment": (e) => { e.preventDefault(); e.stopPropagation(); if (!cap) commentFromEditor(props.id, ref, commit, editSurface(), sheetCell && editsLikeOutline(sheetCell) ? cellOwner(sheetCell) : null); return true; },
     "editor/move-block-up": (e) => moveBlockCmd(e, -1),
     "editor/move-block-down": (e) => moveBlockCmd(e, 1),
     "editor/collapse": (e) => { e.preventDefault(); setOccurrenceCollapsed(true); return true; },
@@ -1975,7 +1976,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       const ll = listLine(ref.value, ref.selectionStart);
       if (ll && (pageFmt() === "org" || ll.lineStart > 0)) { nudgeListItem(ll, +2); return true; }
       const { id, scope } = position();
-      if (!scope?.navOnly && scope?.roots.includes(id)) return true;
+      if (!gridNestedBlock(props.id, sheetCell) && !scope?.navOnly && scope?.roots.includes(id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection, codeBodyStart: codeShown()?.open.length };
       commit(ref.value);
       if (indentBlock(id, selection, editSurface(), props.id) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
@@ -1992,8 +1993,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     },
   };
   const mobileKeyEvent = { preventDefault() {} } as KeyboardEvent;
-  const dispatchMobileEditorCommand = (command: MobileEditorCommandId): boolean => {
+  const dispatchMobileEditorCommand = (command: MobileEditorCommandId): boolean => runGridOutline(sheetCell, () => {
     if (!ref || !ref.isConnected) return false;
+    if (sheetCell && editsLikeOutline(sheetCell) && gridBlocksCommand(props.id, sheetCell, command)) return true;
     ref.focus();
     switch (command) {
       case "editor/outdent":
@@ -2034,7 +2036,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         plainPaste.request(capturePlainPaste);
         return true;
     }
-  };
+  });
   let unregisterFocusedEditorBridge: (() => void) | undefined;
   const registerFocusedEditorBridge = () => {
     unregisterFocusedEditorBridge?.();
@@ -2097,6 +2099,18 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
 
   const handleSheetCellKey = (e: KeyboardEvent, start: number, end: number, raw: string): boolean => {
     if (!sheetCell) return false;
+    if (editsLikeOutline(sheetCell)) {
+      const leave = arrowLeave(e.key, ref, start, end, raw.length);
+      const up = e.key === "ArrowUp" && !raw.slice(0, start).includes("\n") && caretAtFirstRow(ref, start);
+      const down = e.key === "ArrowDown" && !raw.slice(start).includes("\n") && caretAtLastRow(ref, start);
+      const sourceCol = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
+      const handled = gridEditKey(e, { id: props.id, cell: sheetCell, raw, start, end, commit,
+        softNewline: softNewlineCmd,
+        edge: leave ? (leave === "forward" ? "right" : "left") : up ? "up" : down ? "down" : null,
+        col: up || down ? caretColumnOnVisualRow(ref, start) ?? sourceCol : 0 });
+      if (handled) e.preventDefault();
+      return handled;
+    }
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     const commitAndSelect = () => {
       commit(raw);
@@ -2175,22 +2189,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       e.preventDefault();
       return true;
     }
-    // A grid edits like an outline (GH #874): the same reading-order routing as the CM6
-    // editor (src/sheet/gridEditMove.ts). Table title cells and board cards keep the
-    // selection-mode moves below.
-    if (plain && !e.shiftKey && start === end && editsLikeOutline(sheetCell)) {
-      const leave = arrowLeave(e.key, ref, start, end, raw.length);
-      const up = e.key === "ArrowUp" && !raw.slice(0, start).includes("\n") && caretAtFirstRow(ref, start);
-      const down = e.key === "ArrowDown" && !raw.slice(start).includes("\n") && caretAtLastRow(ref, start);
-      if (leave || up || down) {
-        e.preventDefault();
-        const move = leave ? (leave === "forward" ? "right" : "left") : up ? "up" : "down";
-        const sourceCol = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
-        const target = gridNeighbour(props.id, sheetCell, move, caretColumnOnVisualRow(ref, start) ?? sourceCol);
-        if (target) { commit(raw); openGridTarget(target, sheetCell.surfaceId); }
-        return true;
-      }
-    }
     if (plain && !e.shiftKey && arrowLeave(e.key, ref, start, end, raw.length)) {
       e.preventDefault();
       commitAndMove(e.key === "ArrowLeft" ? "left" : "right");
@@ -2215,7 +2213,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     return false;
   };
 
-  const onKeyDown = (e: KeyboardEvent) => {
+  const onKeyDown = (e: KeyboardEvent) => runGridOutline(sheetCell, () => handleOutlineKey(e));
+  const handleOutlineKey = (e: KeyboardEvent) => {
     // IME owns its key events until compositionend commits the finalized value.
     if (compositionActive || e.isComposing || e.keyCode === 229) return;
 
@@ -2328,7 +2327,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // (runEditorCmd) instead of ~20 sequential matchesCommand checks. A handler
     // returns false to fall through — select-block does this off the block edge
     // so the textarea extends the selection by a wrapped line.
-    if (sheetCell && cmd && SHEET_CELL_BLOCKED_EDITOR_COMMANDS.has(cmd)) {
+    if (sheetCell && cmd && (editsLikeOutline(sheetCell) ? gridBlocksCommand(props.id, sheetCell, cmd) : SHEET_CELL_BLOCKED_EDITOR_COMMANDS.has(cmd))) {
       e.preventDefault();
       return;
     }
@@ -2465,7 +2464,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         if (newId) startEditing(newId, 0, null, editSurface());
       } else {
         const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
-        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface());
+        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface(), hideFn());
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
@@ -2587,6 +2586,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           e.preventDefault();
           // Keep the caret's column on the previous block's bottom visual row.
           // Resolution happens after its textarea mounts, when wrapping is known.
+          const entry = !exitingEmbed ? gridEntry(prev, "below", caretColumnOnVisualRow(ref, start) ?? start - (before.lastIndexOf("\n") + 1), surfaceKey) : null;
+          if (entry) { commit(raw); openGridTarget(entry, navigationSurface() ?? undefined); return; }
           startEditing(prev, { col: start - (before.lastIndexOf("\n") + 1), edge: "last" }, null, exitingEmbed ? null : navigationSurface());
         }
       }
@@ -2599,6 +2600,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         // here would jump to the end of the next block.
         const sourceCol = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
         const col = caretColumnOnVisualRow(ref, start) ?? sourceCol;
+        const entry = gridEntry(props.id, "above", col, surfaceKey);
+        if (entry) { e.preventDefault(); commit(raw); openGridTarget(entry, navigationSurface() ?? undefined); return; }
         const next = viewNext();
         if (next) {
           e.preventDefault();
@@ -2752,7 +2755,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
 
   const pasteTextClipboard = (e: ClipboardEvent, text: string, html: string, insertPlain = false) => {
     const start = ref.selectionStart;
-    const syntaxSensitive = sheetCell || isCalc() || codeShown() !== null || caretInFence(ref.value, start, pageFmt())
+    const syntaxSensitive = sheetCell && !gridNestedBlock(props.id, sheetCell) || isCalc() || codeShown() !== null || caretInFence(ref.value, start, pageFmt())
       || caretOnOpeningFence(ref.value, start, pageFmt()) || caretInDisplayMath(ref.value, start, pageFmt());
     const slot = peekClipboardPayload();
     if (!syntaxSensitive) {
@@ -2764,7 +2767,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         void readOwned(graphOwner(() => editorMounted), pasteClipboardPayload(props.id, slot))
           .then((result) => {
             if (result.kind === "stale") return; const lastId = result.value;
-            if (lastId && docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
+            if (lastId && docNode(lastId)) runGridOutline(sheetCell, () => startEditing(lastId, docNode(lastId).raw.length));
           })
           .catch((error) => reportUiFailure("clipboard-association", error));
         return;
@@ -2883,7 +2886,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           : insertOutlineAfter(props.id, prepared)) ?? false;
       });
       if (!lastId) { pushToast(msg("editor-block-pasted-outline-was-refused"), "error"); return; }
-      if (docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
+      if (docNode(lastId)) runGridOutline(sheetCell, () => startEditing(lastId, docNode(lastId).raw.length));
     };
     const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);
     if (prepared instanceof Promise) void prepared.then(insert);
@@ -2976,7 +2979,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           >…</button>
           <Show when={!cap}>
             <button type="button" data-selection-action="comment" title={translate("comment-toolbar-shortcut")} aria-label={translate("comment-toolbar")}
-              onClick={() => commentFromEditor(props.id, ref, commit, editSurface())}>
+              onClick={() => commentFromEditor(props.id, ref, commit, editSurface(), sheetCell && editsLikeOutline(sheetCell) ? cellOwner(sheetCell) : null)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>
             </button>
           </Show>

@@ -26,10 +26,14 @@ import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { caretInFence, caretInDisplayMath, caretOnOpeningFence } from "./fences";
 import { codeBodyExitTrim } from "./codeFence";
+import type { SheetCellCtx } from "../sheet/context";
+import { gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
+import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
-import { BUILTIN_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
+import { BUILTIN_HIDE, SHEET_CELL_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
 
 interface StructureContext {
+  cell?: SheetCellCtx | null;
   id: string;
   surface: string;
   scope: OutlineScope | null;
@@ -83,7 +87,7 @@ export function cm6Structure(ctx: StructureContext) {
       return true;
     }
     const { id, scope } = position();
-    if (out ? scope?.forceExpandedRoot === node(id)?.parent : !scope?.navOnly && scope?.roots.includes(id)) return true;
+    if (out ? scope?.forceExpandedRoot === node(id)?.parent : !gridNestedBlock(ctx.id, ctx.cell) && !scope?.navOnly && scope?.roots.includes(id)) return true;
     ctx.commit(text);
     if (out) outdentBlock(id, s, editSurface(), ctx.id);
     else if (indentBlock(id, s, editSurface(), ctx.id) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
@@ -206,19 +210,23 @@ export function cm6Structure(ctx: StructureContext) {
     ctx.commit(v.state.doc.toString());
     if (s.empty && replyOnEnter(ctx.id, raw, s.from, editSurface())) return true;
     const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
-    splitBlock(ctx.id, s.from, zoom, zoom, editSurface());
+    splitBlock(ctx.id, s.from, zoom, zoom, editSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE);
     return true;
   };
   const vertical = (v: EditorView, forward: boolean) => {
     if (!v.state.selection.main.empty || !atEdge(v, forward)) return false;
     const s = v.state.selection.main;
     const col = s.head - v.moveToLineBoundary(s, false).head;
+    const entry = forward ? gridEntry(ctx.id, "above", col, ctx.surface) : null;
+    if (entry) { ctx.commit(v.state.doc.toString()); openGridTarget(entry, navSurface() ?? undefined); return true; }
     let target = forward ? ctx.viewNext() : ctx.viewPrev();
     const exiting = !forward && ctx.embedExit !== null && (!target || ctx.embedExit.firstRoot() === ctx.id);
     if (exiting) target = prevVisible(ctx.embedExit!.hostBlockId);
     if (!forward && !target && !ctx.scope && (ctx.surface === "main" || ctx.surface.startsWith("pane:"))
       && pageByName(node(ctx.id).page)?.roots[0] === ctx.id) target = beginPageHeaderEdit(node(ctx.id).page);
-    if (target) startEditing(target, { col, edge: forward ? "first" : "last" }, null, exiting ? null : navSurface());
+    const fromBelow = !forward && !exiting && target ? gridEntry(target, "below", col, ctx.surface) : null;
+    if (fromBelow) { ctx.commit(v.state.doc.toString()); openGridTarget(fromBelow, navSurface() ?? undefined); }
+    else if (target) startEditing(target, { col, edge: forward ? "first" : "last" }, null, exiting ? null : navSurface());
     else if (forward && !ctx.scope) {
       void navigateJournalDown({ id: ctx.id, col, surface: navSurface(), editor: v.contentDOM,
         current: editor => ctx.current() && editor === v.contentDOM });

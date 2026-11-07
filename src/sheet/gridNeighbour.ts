@@ -114,6 +114,7 @@ function verticalCell(cell: SheetCellCtx, step: 1 | -1): SheetCellCtx | null {
 
 /** The last position inside `id`'s content (its own text, sub-grid or child outline). */
 function lastPos(id: string, cell: SheetCellCtx, column: "reading" | "first"): Pos {
+  if (node(id)?.collapsed) return { blockId: id, cell };
   if (blockIsGridView(id)) {
     const inner = edgeCell(id, "last", column, cell.surfaceId);
     const innerBlock = inner && cellBlock(inner);
@@ -127,6 +128,7 @@ function lastPos(id: string, cell: SheetCellCtx, column: "reading" | "first"): P
 
 /** The first position inside `id`'s content after its own text, if any. */
 function firstInside(id: string, cell: SheetCellCtx): Pos | null {
+  if (node(id)?.collapsed) return null;
   if (blockIsGridView(id)) {
     const inner = edgeCell(id, "first", "first", cell.surfaceId);
     const innerBlock = inner && cellBlock(inner);
@@ -214,7 +216,8 @@ export function gridNeighbour(blockId: string, cell: SheetCellCtx, move: GridMov
  * block of the bottom-left cell.
  */
 export function gridEntry(gridId: string, from: "above" | "below", col = 0, surfaceId?: string): GridTarget | null {
-  if (!blockIsGridView(gridId)) return null;
+  // A collapsed grid shows no cells: the caret stays on the grid block's own text.
+  if (!blockIsGridView(gridId) || node(gridId)?.collapsed) return null;
   const cell = edgeCell(gridId, from === "above" ? "first" : "last", "first", surfaceId);
   const block = cell && cellBlock(cell);
   if (!cell || !block) return null;

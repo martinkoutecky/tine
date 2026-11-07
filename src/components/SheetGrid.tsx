@@ -3,7 +3,7 @@ import { registerFindSheet, sheetFindChild } from "../sheet/find";
 import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, childIds, depthOf, formatForBlock, node as docNode } from "../document";
+import { blockPageReadOnly, childIds, depthOf, formatForBlock, isSelected, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
@@ -386,12 +386,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   };
 
   const onPointerDown = (e: PointerEvent) => {
-    if (sheetGridIdFromEventTarget(e.target) !== props.id || isSheetPointerInteractive(e.target)) return;
-    // A click inside a nested outline (a cell shown in outline mode, or a cell's
-    // rendered children) belongs to that block's own click-to-edit handler. The
-    // parent grid must not begin a cell selection here — doing so preventDefaults
-    // the pointerdown and the nested block can never be clicked into edit.
-    if (isElementNode(e.target) && e.target.closest(".sheet-nested-lines")) return;
+    if (sheetGridIdFromEventTarget(e.target) !== props.id || isSheetPointerInteractive(e.target) || forbidsEditEntry(e)) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     const grid = e.currentTarget as HTMLDivElement;
     const hit = e.shiftKey ? null : hitRuling(
@@ -401,7 +396,19 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       e.clientY,
     );
     if (!hit) {
-      beginCellPointerSelection(e, props.id);
+      beginCellPointerSelection(e, props.id, (cell) => {
+        const el = cellInGrid(grid, cell.row, cell.col);
+        const clickedBody = isElementNode(e.target) ? e.target.closest<HTMLDivElement>(".sheet-cell-body[data-sheet-block-id]") : null;
+        const blockId = clickedBody?.dataset.sheetBlockId ?? el?.dataset.blockId;
+        if (!blockId || blockPageReadOnly(blockId)) return;
+        const n = docNode(blockId);
+        if (!n) return;
+        const body = clickedBody ?? el?.querySelector<HTMLDivElement>(".sheet-cell-body") ?? undefined;
+        captureStableColumns();
+        const offset = sheetClickOffset(e, body, n.raw, SHEET_CELL_HIDE) ?? splitProps(n.raw, SHEET_CELL_HIDE).visible.length;
+        setCellSel(cell);
+        startEditing(blockId, offset, cellOwner(cell));
+      });
       return;
     }
 
@@ -745,7 +752,10 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
       data-row={props.cell.row}
       data-col={props.cell.col}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onDblClick={onDoubleClick}
+      onDblClick={(e) => {
+        // Once editing, let the editor's native double-click select a word.
+        if (!e.target || !(e.target as Element).closest("textarea, [contenteditable='true']")) onDoubleClick(e);
+      }}
       onContextMenu={openCellMenu}
     >
       <Show when={props.cell.blockId}>
@@ -828,7 +838,7 @@ function SheetBlock(props: {
     <Show when={node()}>
       {(n) => (
         <>
-          <div class="sheet-cell-line">
+          <div class="sheet-cell-line" classList={{ selected: !!props.nested && isSelected(props.id) }}>
             <Show when={props.nested}>
               {/* The page's bullet: a block inside a cell is an ordinary child block (ADR 0031). */}
               <span
@@ -842,6 +852,7 @@ function SheetBlock(props: {
             </Show>
             <div
               class="sheet-cell-body"
+              data-sheet-block-id={props.id}
               ref={bodyRef}
               onMouseDown={onNestedMouseDown}
             >
@@ -872,7 +883,7 @@ function SheetBlock(props: {
               </Show>
             </div>
           </div>
-          <Show when={children().length > 0 || config()?.view === "grid" || config()?.view === "table" || config()?.view === "board"}>
+          <Show when={!node()?.collapsed && (children().length > 0 || config()?.view === "grid" || config()?.view === "table" || config()?.view === "board")}>
             <SheetContainerOverlayContext.Provider value={null}>
               <Switch>
                 <Match when={config()?.view === "grid"}>
