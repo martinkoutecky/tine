@@ -29,6 +29,7 @@ import type { editorAssets } from "./editorAssets";
 import { msg, t as translate } from "../i18n";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
+import { coalescedRead } from "../coalescedRead";
 
 /** The buffer, selection and projected-region transitions belong to the editor.
  * All suggestion sessions and acceptance decisions belong to this core. */
@@ -77,6 +78,7 @@ export function editorCompletions(props: CompletionAdapter) {
   const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
   const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
   const propertyCompletion = propertyCompletionSession();
+  const pageReads = coalescedRead<import("../owned").Owned<PageEntry[]>>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pluginInvocation = 0;
   let completionOriginalRaw: string | null = null;
@@ -91,6 +93,7 @@ export function editorCompletions(props: CompletionAdapter) {
   };
   const closeAc = () => {
     clearTimeout(timer); releaseCompletionLease(); completionOriginalRaw = null;
+    latestOwner(autocompleteScope, "suggestions"); pageReads.cancel();
     setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0); setPropertyValueKey(null);
     propertyCompletion.end();
     props.closed();
@@ -265,13 +268,14 @@ export function editorCompletions(props: CompletionAdapter) {
     const lease = completionLease;
     // Closing can overtake a blocking native query. Release again after its
     // reply (including failure) so it cannot retain obsolete baseline keys.
-    let result: import("../owned").Owned<import("../types").PageEntry[]>;
+    let result: import("../owned").Owned<PageEntry[]> | undefined;
     try {
-      result = await readOwned(requestOwner, props.quickSwitch ? props.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
+      result = await pageReads.run(requestOwner, () => readOwned(requestOwner,
+        props.quickSwitch ? props.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled())));
     } finally {
       if (lease && lease !== completionLease) releaseLease(lease);
     }
-    if (result.kind === "stale") return;
+    if (!result || result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
         ? { label: name, insert: pageInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }
@@ -439,7 +443,9 @@ export function editorCompletions(props: CompletionAdapter) {
     if (next.kind === "block" || !previous || previous.kind !== next.kind || previous.start !== next.start
       || ((next.kind === "page" || next.kind === "tag") && !next.query.trim())) setAcItems([]);
     clearTimeout(timer);
-    timer = setTimeout(() => { void updateAutocomplete().catch(error => dbg(`autocomplete: ${String(error)}`)); }, 90);
+    const update = () => { void updateAutocomplete().catch(error => dbg(`autocomplete: ${String(error)}`)); };
+    if (next.kind === "page" || next.kind === "tag") update();
+    else timer = setTimeout(update, 90);
   };
   const selectionChanged = () => {
     const open = ac();
@@ -469,8 +475,11 @@ export function editorCompletions(props: CompletionAdapter) {
     const key = propertyValueKeyAfterBoundary(text(), caret(), inserted);
     if (key) setPropertyValueKey(key);
   };
-  onCleanup(() => { pluginInvocation++; clearTimeout(timer); releaseCompletionLease(); propertyCompletion.end(); });
+  onCleanup(() => {
+    pluginInvocation++; clearTimeout(timer); latestOwner(autocompleteScope, "suggestions"); pageReads.cancel();
+    releaseCompletionLease(); propertyCompletion.end();
+  });
   return { ac, acItems, acBlockState, acIndex, setAcIndex, acVisible, closeAc, selectAc,
     updateAutocomplete, refresh, selectionChanged, noteInput, openLanguagePicker,
-    pause: () => clearTimeout(timer) };
+    pause: () => { clearTimeout(timer); latestOwner(autocompleteScope, "suggestions"); pageReads.cancel(); } };
 }

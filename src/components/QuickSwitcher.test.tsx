@@ -680,7 +680,7 @@ describe("QuickSwitcher search syntax help", () => {
     await vi.waitFor(() => expect(search).toHaveBeenCalled());
 
     expect(search).toHaveBeenLastCalledWith(
-      "needle", 0, 100, "quick-switch:current-page", false,
+      "needle", 0, 100, "quick-switch:current-page:blocks", false,
       { name: "Twin", pageKind: "page", path: "pages/second/Twin.md" }, undefined, undefined, false,
     );
     await vi.waitFor(() => expect([...root.querySelectorAll(".switcher-group-header")].map((node) => node.textContent)).toEqual(["Current page1"]));
@@ -702,7 +702,8 @@ describe("QuickSwitcher search syntax help", () => {
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await vi.waitFor(() => expect(search.mock.calls.at(-1)?.[0]).toBe("global"));
 
-    expect(search).toHaveBeenLastCalledWith("global", 100, 100, "quick-switch", false, undefined, undefined, undefined, false);
+    await vi.waitFor(() => expect(search).toHaveBeenCalledWith("global", 100, 0, "quick-switch:pages", false, undefined, undefined, undefined, false));
+    await vi.waitFor(() => expect(search).toHaveBeenCalledWith("global", 0, 100, "quick-switch:blocks", false, undefined, undefined, undefined, false));
     expect(root.textContent).toContain("Create page: global");
     expect(root.querySelector("[data-open-search-tab]")).not.toBeNull();
     dispose();
