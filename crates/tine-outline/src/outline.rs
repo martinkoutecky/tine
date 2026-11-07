@@ -21,6 +21,7 @@ mod apply;
 mod header;
 pub use apply::apply_with_policy;
 mod insert;
+mod outdent;
 use header::header_root_kept;
 use insert::insert_outline;
 
@@ -260,6 +261,9 @@ pub enum Verb {
         keys: Vec<Key>,
         #[serde(default)]
         logical: bool,
+        /// Annotation siblings stay with their owner in the editor (GH #891).
+        #[serde(default)]
+        retain: Vec<Key>,
     },
     /// Remove blocks with their subtrees, on any of the pages given.
     Delete { keys: Vec<Key> },
@@ -1035,50 +1039,6 @@ fn indent(cx: &mut Cx, keys: &[Key]) -> Result<(), Reason> {
     np.raw = expanded;
     tx.collapsed.insert(new_parent, false);
     tx.kind(&[EditKind::MoveBlocks, EditKind::SaveBlock]);
-    cx.focus = keep_editing(keys);
-    Ok(())
-}
-
-/// Shift+Tab: the window's `outdentBlock` (`edits/blocks.ts:363`) and
-/// `outdentSelection` (`edits/selection.ts:372`); OG `indent-outdent-blocks`
-/// (`outliner/core.cljs:835-852`). `keys` (all on one page) land after the
-/// first key's parent, in order. Traditional outdenting of one block takes its
-/// following siblings along as its last children; logical outdenting and a
-/// selection move the blocks alone.
-fn outdent(cx: &mut Cx, keys: &[Key], logical: bool) -> Result<(), Reason> {
-    let t = one_page(cx, keys)?;
-    cx.writable(t)?;
-    let tx = &mut cx.txs[t];
-    let first = &keys[0];
-    let parent = tx.parent_of(first).ok_or(Reason::NoOutlineStep)?;
-    let grand = tx.parent_of(parent);
-    if keys.iter().any(|k| tx.in_subtree(k, parent)) {
-        return Err(Reason::Cycle);
-    }
-    if !all_fit(keys, |k| tx.subtree_fits(k, grand))? {
-        return Err(Reason::DepthCap);
-    }
-    if let ([key], false) = (keys, logical) {
-        let children = &mut tx.block_mut(parent)?.children;
-        let idx = children
-            .iter()
-            .position(|k| k == key)
-            .ok_or(Reason::Incomplete)?;
-        let following = children.split_off(idx + 1);
-        children.pop();
-        tx.block_mut(key)?.children.extend(following);
-    } else {
-        for k in keys {
-            tx.detach(k)?;
-        }
-    }
-    let g = tx.siblings_mut(grand)?;
-    let at = g
-        .iter()
-        .position(|k| k == parent)
-        .ok_or(Reason::Incomplete)?;
-    g.splice(at + 1..at + 1, keys.iter().cloned());
-    tx.kind(&[EditKind::MoveBlocks]);
     cx.focus = keep_editing(keys);
     Ok(())
 }
@@ -2136,6 +2096,7 @@ mod tests {
             Verb::Outdent {
                 keys: vec!["c".into()],
                 logical: false,
+                retain: Vec::new(),
             },
             Verb::MoveTo {
                 keys: vec!["c".into()],

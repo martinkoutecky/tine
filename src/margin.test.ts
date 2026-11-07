@@ -74,12 +74,13 @@ describe("inline comments sit right under their block (MARGIN-POS, GH #110)", ()
     expect(commentsFirst(plain)).toBe(plain);
   });
 
-  it("the arrow keys walk the order shown: block, its comment thread, then its children", () => {
+  it("body arrow order skips inline threads while thread navigation remains available (GH #891)", () => {
     load(ellis());
     const order: string[] = [];
     for (let at: string | null = "p"; at !== null; at = nextVisible(at)) order.push(at);
-    expect(order).toEqual(["p", "k", "kr", "a", "b", "c", "d", "after"]);
-    expect(prevVisible("a")).toBe("kr");
+    expect(order).toEqual(["p", "a", "b", "c", "d", "after"]);
+    expect(prevVisible("a")).toBe("p");
+    expect(nextVisible("k")).toBe("kr");
     expect(prevVisible("k")).toBe("p");
   });
 });

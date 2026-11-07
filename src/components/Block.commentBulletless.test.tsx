@@ -1,5 +1,5 @@
 // Margin dialogue, slice 2b: a comment and its replies draw no bullet and no
-// fold arrow; the author chip is their handle (drag, block menu on long press).
+// fold arrow; the author chip keeps the block menu on long press (DESIGN §1).
 // Blocks without the comment marker, and agent-written blocks that are not
 // comments, keep their bullets exactly as before.
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -79,7 +79,7 @@ describe("comment blocks have no bullet", () => {
       for (const id of ["agent", "plain", "other"]) {
         expect(row(root, id).querySelector(":scope > .block-main > .block-controls > .bullet-container .bullet"), id).not.toBeNull();
       }
-      // The agent's chip is a mark, not a handle: only comments take over the bullet's gestures.
+      // Only a comment's chip also offers its block menu.
       expect(row(root, "agent").querySelector(":scope > .block-main .author-chip")).not.toBeNull();
       expect(row(root, "agent").querySelector(":scope > .block-main .comment-handle")).toBeNull();
       expect(row(root, "plain").className).toBe("ls-block");
@@ -92,17 +92,18 @@ describe("comment blocks have no bullet", () => {
 describe("the author chip is the comment's handle", () => {
   const chip = (root: HTMLElement, id: string) => row(root, id).querySelector(":scope > .comment-header .comment-handle") as HTMLElement;
 
-  it.each(["c1", "r1"])("starts the %s block drag, as the bullet does, without entering the editor", (id) => {
+  it.each(["c1", "r1"])("keeps the %s chip from starting a drag or entering the editor (GH #891)", (id) => {
     const { root, dispose } = fixture();
     try {
       const handle = chip(root, id);
-      // jsdom has no layout: the drag's hit test finds nothing, which is enough to start it.
+      // A real pointer move must still leave this comment or reply in place.
       (document as { elementFromPoint: unknown }).elementFromPoint = () => null;
       handle.dispatchEvent(new MouseEvent("mousedown", { button: 0, clientX: 10, clientY: 10, bubbles: true, cancelable: true }));
       expect(editingId()).toBeNull();
       document.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 10, bubbles: true }));
-      expect(dragId()).toBe(id);
+      const moving = dragId();
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(moving).toBeNull();
       delete (document as { elementFromPoint?: unknown }).elementFromPoint;
     } finally {
       dispose();

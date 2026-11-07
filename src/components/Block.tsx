@@ -48,7 +48,7 @@ import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } f
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -169,6 +169,7 @@ import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenu
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, type RowHost } from "./block/embedRowHost";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { bodyNeighbor, threadRootOf } from "../document";
 import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
@@ -2583,9 +2584,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const end = ref.selectionEnd;
     const raw = ref.value;
     // Empty code payloads can leave their wrapper through the existing delete door.
-    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0) {
+    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0 && threadRootOf(props.id) === null) {
       e.preventDefault();
-      const adjacent = [prevVisible(props.id, structuralScope), nextVisible(props.id, structuralScope)].find(id => id && docNode(id)?.page === node().page);
+      const adjacent = [bodyNeighbor(props.id, -1, structuralScope), bodyNeighbor(props.id, 1, structuralScope)].find(id => id && docNode(id)?.page === node().page);
       if (adjacent) {
         deleteBlock(props.id);
         startEditing(adjacent, 0, null, editSurface());
@@ -2870,7 +2871,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         // Never merge a highlight, calc, or body-only code block away (their
         // structure must stay; a merge would smuggle raw wrapper bytes into the
         // previous block's text).
-        if (isAnnot() || isCalc() || codeShown()) return;
+        if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
         // Own-numbered state is a block property, never an in-block `1.` marker.
         // At offset zero OG removes only that property and preserves the text
         // (`src/main/frontend/handler/editor.cljs:2752-2764`, 6e7afa8eb).
@@ -2886,7 +2887,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           return;
         }
         const n = docNode(props.id);
-        const next = nextVisible(props.id, structuralScope);
+        const next = bodyNeighbor(props.id, 1, structuralScope);
         if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
@@ -2894,12 +2895,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         }
       }
     } else if (e.key === "Delete" && end === start && start === raw.length) {
-      // GH #213: forward-delete merges with the NEXT block — the mirror of
-      // Backspace's merge with the previous one. Never merge a highlight, calc,
-      // or body-only code block itself (same rule as Backspace), and never
-      // absorb an annotation/calc block's raw text into this one.
-      if (isAnnot() || isCalc() || codeShown()) return;
-      const next = nextVisible(props.id, structuralScope);
+      // Delete merges with the next body block (GH #213, #891); annotations,
+      // calc and code wrappers keep their structure, as on Backspace.
+      if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
+      const next = bodyNeighbor(props.id, 1, structuralScope);
       if (next) {
         const nextRaw = docNode(next)?.raw ?? "";
         if (isAnnotationBlock(nextRaw, pageFmt()) || calcSource(nextRaw) !== null) return;
@@ -2948,7 +2947,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         // og has no embed-scoped outline (master GH #341), so the source page's
         // predecessor of the embed root is not "none": the root itself is the test.
         const exitingEmbed = embedNavExit !== null && (!prev || embedNavExit.firstRoot() === props.id);
-        if (exitingEmbed) prev = prevVisible(embedNavExit!.hostBlockId);
+        if (exitingEmbed) prev = bodyNeighbor(embedNavExit!.hostBlockId, -1);
         // A canonical page header is not normally an outline node. Materialize
         // its transient ordinary-editor representation only when the primary
         // page/pane caret crosses the first-body boundary; reference, embed and

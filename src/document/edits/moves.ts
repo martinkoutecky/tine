@@ -4,7 +4,7 @@ import { refuseConflictedMove } from "../host/wiring";
 import { captureBinding, bindingCurrent } from "../../binding";
 import { pushMoveSelectionUndo, pushUndo } from "../history";
 import { createSignal } from "solid-js";
-import { nextVisible } from "../tree";
+import { bodyNeighbor } from "../bodyNavigation";
 import { topSelected } from "./selection";
 import { pushToast } from "../../toasts";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange, type OutlineRefusal, type OutlinePlace } from "../kernel";
@@ -221,12 +221,12 @@ async function crossDayMove(
  *  dead-ended at the last loaded bullet. Resolves to null when there's genuinely
  *  nothing below (a non-feed page, or the feed is exhausted). */
 export async function nextVisibleOrExtend(id: string): Promise<string | null> {
-  const direct = nextVisible(id);
+  const direct = bodyNeighbor(id, 1);
   if (direct) return direct;
   const node = doc.byId[id];
   if (!node || doc.feed.indexOf(node.page) < 0) return null; // not a feed day → nothing to load
   if (!feedExtender || !(await feedExtender())) return null; // feed exhausted / no extender
-  return nextVisible(id); // the newly-appended day's first block is now loaded
+  return bodyNeighbor(id, 1); // the newly-appended day's first body block is loaded
 }
 
 /** Pull in the next journal-feed day if there is one; resolves to whether the feed
