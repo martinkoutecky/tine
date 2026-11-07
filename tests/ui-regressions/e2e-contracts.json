@@ -8,6 +8,13 @@
       "nonRequirements": ["Exact pixels; automatic retargeting of an explicitly pinned missing sidebar file; reporter attachments, real Syncthing or macOS/Windows runtime certification. Malformed checkpoint coverage is tested at the store layer."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh868-embed-outline.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed host page, expand a page embed, open a nested task's references, enter and leave the preceding TODO, then edit embedded siblings: the source outline retains its order, depth, folded branches and editable rows.","blocking":false,"authority":"GH #868 comments 4 and 5; UI-GH868-EMBED-OUTLINE"}],
+      "acceptableVariations": ["Theme, spacing, window size, reference panel placement and rendering latency may vary."],
+      "nonRequirements": ["No exact pixel coordinates, reporter attachments, macOS certification or final release acceptance."],
+      "variants": ["EMBED_KIND=page|block", "E2E_SURFACE=main|sidebar|references", "E2E_STRUCTURAL=1 additionally proves reparenting and Undo", "E2E_CORPUS supplies a read-only corpus that is copied before use; CSS, window size, reference placement and click timing are configurable"],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pdf-area-ref.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
       "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],
