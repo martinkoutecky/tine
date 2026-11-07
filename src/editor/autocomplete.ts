@@ -4,11 +4,11 @@ import { activeLocale, msg, render, t, type Msg } from "../i18n";
 
 import { TEMPLATE_VARS } from "./templateVars";
 import { isBareTagPrefix, tagRef } from "../tags";
-import { propertyKeyNorm } from "../render/block";
+import { propertyKeyNorm } from "../propertyKey";
 import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
-import { isEditablePropertyKey } from "./properties";
+import { isEditablePropertyKey, propertyValuePosition } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
 import type { Format } from "../render/ast";
 import type { ObjectiveMatchClass } from "../types";
@@ -178,7 +178,6 @@ export const propertyKeyFold = propertyKeyNorm;
 export function detectTrigger(
   raw: string,
   caret: number,
-  propertyValueKey?: string | null,
   format: Format = "md",
 ): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
@@ -190,45 +189,29 @@ export function detectTrigger(
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
 
-  // Property completion is line syntax, never inline prose/reference/fence
-  // syntax. A value lifecycle exists only after this editor selected its key;
-  // merely moving into an existing `key:: value` line must not pop a menu.
-  // OG parity: handler/editor.cljs:1907-1924 (name trigger) and :2211-2226
-  // (chosen key immediately transitions to value search), checkout 6e7afa8eb.
+  // Property completion is line syntax, never inline prose/reference/fence.
+  // Unlike OG's chosen-name-only lifecycle, any parser-accepted Markdown
+  // value position offers values, regardless of how the key was entered.
   const propertyTrigger = ((): Trigger | null => {
-    if (propertyValueKey) {
-      const delimiter = before.indexOf("::");
-      if (delimiter > 0) {
-        const sourceKey = before.slice(0, delimiter);
-        if (
-          isEditablePropertyKey(sourceKey) &&
-          propertyKeyFold(sourceKey) === propertyKeyFold(propertyValueKey)
-        ) {
-          const afterDelimiter = delimiter + 2;
-          const valueOffset = afterDelimiter + (before[afterDelimiter] === " " ? 1 : 0);
-          const authored = before.slice(valueOffset);
-          const comma = authored.lastIndexOf(",");
-          const segmentOffset = comma === -1 ? 0 : comma + 1;
-          const segment = authored.slice(segmentOffset);
-          const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
-          const query = segment.slice(leading);
-          const propertyValues = comma === -1
-            ? []
-            : authored
-                .slice(0, comma)
-                .split(",")
-                .map((value) => value.trim())
-                .filter(Boolean);
-          return {
-            kind: "property-value",
-            query,
-            start: lineStart + valueOffset + segmentOffset + leading,
-            end: caret,
-            property: propertyKeyFold(propertyValueKey),
-            ...(propertyValues.length ? { propertyValues } : {}),
-          };
-        }
-      }
+    const valuePosition = propertyValuePosition(raw, caret, format);
+    if (valuePosition) {
+      const authored = raw.slice(valuePosition.start, caret);
+      const comma = authored.lastIndexOf(",");
+      const segmentOffset = comma === -1 ? 0 : comma + 1;
+      const segment = authored.slice(segmentOffset);
+      const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
+      const query = segment.slice(leading);
+      const propertyValues = comma === -1
+        ? []
+        : authored.slice(0, comma).split(",").map(value => value.trim()).filter(Boolean);
+      return {
+        kind: "property-value",
+        query,
+        start: valuePosition.start + segmentOffset + leading,
+        end: caret,
+        property: propertyKeyFold(valuePosition.key),
+        ...(propertyValues.length ? { propertyValues } : {}),
+      };
     }
 
     // The persisted parser's property-key alphabet (`isEditablePropertyKey`, the
@@ -321,26 +304,6 @@ export function detectTrigger(
   }
 
   return null;
-}
-
-/** Property key when a just-typed boundary should enter/re-enter value search.
- * This is input-event scoped so merely moving the caret through an existing
- * property line never opens autocomplete. A space immediately after `key::`
- * starts values; a comma starts the next value in a multi-value property. */
-export function propertyValueKeyAfterBoundary(
-  raw: string,
-  caret: number,
-  typed: string,
-): string | null {
-  if (typed !== " " && typed !== ",") return null;
-  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
-  const before = raw.slice(lineStart, caret);
-  const delimiter = before.indexOf("::");
-  if (delimiter <= 0 || !isEditablePropertyKey(before.slice(0, delimiter))) return null;
-  const rest = before.slice(delimiter + 2);
-  if (typed === " " && rest !== " ") return null;
-  if (typed === "," && !rest.endsWith(",")) return null;
-  return propertyKeyFold(before.slice(0, delimiter));
 }
 
 /** OG-style bracket auto-pairing for page refs, run AFTER the browser has

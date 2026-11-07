@@ -28,6 +28,7 @@ fs.writeFileSync(typingFile,"- user\n- agent\n");
 // #840: an edit keeps the properties its text does not name, under either owner.
 const propsFile = path.join(GRAPH,"pages/Props.md");
 fs.writeFileSync(propsFile,"- serve\n  status:: done\n- app\n  status:: done\n");
+for (const owner of ["serve", "app"]) fs.writeFileSync(path.join(GRAPH, `pages/Org ${owner}.org`), "#+TITLE: Org " + owner + "\n* body\n");
 // #842: parallel appends to one page against the app, with it open and closed.
 const parallelFiles = { "Parallel Open": path.join(GRAPH,"pages/Parallel Open.md"), "Parallel Closed": path.join(GRAPH,"pages/Parallel Closed.md") };
 for (const f of Object.values(parallelFiles)) fs.writeFileSync(f,"- existing one\n- existing two\n");
@@ -40,12 +41,13 @@ const native = Number(process.env.E2E_NATIVE_PORT || 4711);
 let driver, browser, serve;
 const steps = [];
 const failures = [];
-function cli(args, expected = 0) {
+function cli(args, expected = 0, input = "") {
   return new Promise((resolve, reject) => {
     const child = spawn(APP, [...args, "--graph", GRAPH, "--json"], { env, timeout:60_000 });
     let out = "", err = "";
     child.stdout.on("data", d => out += d);
     child.stderr.on("data", d => err += d);
+    child.stdin.end(input);
     child.on("error", reject);
     child.on("exit", code => {
       try {
@@ -58,12 +60,37 @@ function cli(args, expected = 0) {
   });
 }
 const handle = (page, i) => `${page.page.name}/${page.page.blocks[i].handle}`;
+async function pageProperties(owner) {
+  const shapes = ["tags:: technical\n- block\n", "title:: Nice " + owner + "\n- block\n", "- tags:: technical\n", "- status:: done\n- block\n"];
+  for (const [i, input] of shapes.entries()) {
+    const result = await cli(["add", "--page", `Header ${owner} ${i}`, "-"], 0, input);
+    const read = await cli(["page", "show", result.name]);
+    assert(read.page.pre_block.includes(":: "));
+    assert(!read.page.pre_block.includes("tine.author"));
+    assert(read.page.blocks.every(b => b.raw.includes("tine.author:: agent")));
+  }
+  const name = `Empty ${owner}`;
+  await cli(["page", "create", name]);
+  const refusal = await cli(["add", "--page", name, "-"], 6, "- tags:: technical\n");
+  assert.equal(refusal.error.detail.reason, "page-properties");
+  assert(refusal.error.message.includes("tine prop set --page"));
+  for (const page of [name, `Org ${owner}`]) {
+    await cli(["prop", "set", "--page", page, "tags", "technical"]);
+    await cli(["prop", "set", "--page", page, "alias", `Shortcut ${page}`]);
+    const read = await cli(["page", "show", `Shortcut ${page}`]);
+    assert(read.page.pre_block.toLowerCase().includes("technical"));
+    await cli(["prop", "remove", "--page", page, "tags", "--rev", read.rev]);
+    assert(!(await cli(["page", "show", page])).page.pre_block.includes("technical"));
+  }
+  steps.push(`${owner}: page headers import, page properties edit and remove, aliases resolve, and refusals explain recovery in Markdown and Org`);
+}
 try {
   const log = fs.openSync(path.join(TMP,"serve.log"), "w");
   serve = spawn(APP, ["serve", GRAPH], { env, stdio: ["ignore",log,log] });
   fs.closeSync(log);
   await sleep(1000);
   assert.equal((await cli(["status"])).owner, "serve");
+  await pageProperties("serve");
   const page = await cli(["page", "show", "CLI"]);
   await cli(["edit", handle(page,1), "agent before handover"]);
   await cli(["edit", handle(await cli(["page","show","Props"]),0), "serve edited"]);
@@ -80,6 +107,11 @@ try {
   await openPageByName(browser,"CLI");
   assert.equal((await cli(["status"])).owner, "app");
   await assertAppLease(ownerFixture);
+  await pageProperties("app");
+  await openPageByName(browser,"Nice app");
+  await cli(["prop", "set", "--page", "Nice app", "title", "Visible page title"]);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-title")?.textContent.includes("Visible page title")), {timeout:15_000});
+  await openPageByName(browser,"CLI");
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".page")?.textContent.includes("agent before handover")), {timeout:15_000});
   assert.equal(fs.readFileSync(file,"utf8"), "- user\n- agent before handover\n");
   steps.push("handover: app owns graph and displays durable serve edit");

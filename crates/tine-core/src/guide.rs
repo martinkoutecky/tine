@@ -966,6 +966,15 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn multiple_shortcuts_are_taught_in_the_onboarding_guide() {
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("**Add keybinding**"));
+        assert!(tips.contains("remove one binding while keeping the others"));
+        assert!(tips.contains("saved on this device"));
+        assert!(tips.contains(r#":shortcuts {:go/search ["mod+k" "mod+shift+k"]}"#));
+    }
+
+    #[test]
     fn concord_conflict_queue_and_resolver_are_documented_in_the_bundled_guide() {
         // og family 8c: the badge, the Conflicts page, the in-page resolver and
         // the marker save refusal are user-visible and named in the Guide.
@@ -2312,6 +2321,15 @@ mod og_20d_guide_tests {
             vec!["tine.author::", "agent", "--author", "tine_author"],
             // #840: an edit keeps properties; removal has its own verb.
             vec!["tine edit", "properties stay", "tine prop remove"],
+            vec![
+                "tine prop set --page",
+                "tine prop remove --page",
+                "--journal",
+                "alias",
+                "title",
+                "--rev",
+                "no author property",
+            ],
             vec!["app open", "typed", "saved first", "window", "stale"],
             vec!["--journal", "creating", "standard input"],
             vec!["broken", "references", "delete"],

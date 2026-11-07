@@ -916,6 +916,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     queueMicrotask(() => {
       syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
+      refreshAutocompleteAfterInput();
     });
   };
 
@@ -1147,7 +1148,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           ref.setSelectionRange(r.caret, r.caret);
         }
       }
-      completion.noteInput(ch);
       // Only a whole visible block `1. ` becomes own numbered-list state.
       // Projected code/calc bodies are literal; their hidden wrappers must survive.
       // OG: src/main/frontend/handler/editor.cljs:1888-1892 (6e7afa8eb).
@@ -2276,6 +2276,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
+        <Show when={codeShown() ?? codeBodyProjection(editorValue(), pageFmt())}>
+          {code => <CopyButton text={code().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
+        </Show>
         <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
       </Show>
       <Show when={isCalc()}>

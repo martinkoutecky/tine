@@ -1143,6 +1143,7 @@ export interface MessageArgs {
   "guide-new-in-app-guide-learn-sheets-formulas-queries": {};
   "guide-open-guide": {};
   "help-action": {};
+  "help-add-keybinding": {};
   "help-available-across-the-app-modifier-chords-can": {};
   "help-available-when-no-text-editor-is-focused": {};
   "help-available-while-editing-a-block": {};
@@ -1195,6 +1196,7 @@ export interface MessageArgs {
   "help-search-or-create-pages-while-typing-a": {};
   "help-search-quick-switch": {};
   "help-select-mode": {};
+  "help-shortcut-conflicts": { "commands": string | number };
   "help-show-first-run-onboarding-again": {};
   "help-slash-commands": {};
   "help-strikethrough": {};
@@ -2998,6 +3000,7 @@ export interface MessageArgs {
   "shell-cli-delete-help": {};
   "shell-cli-delete-removed": {};
   "shell-cli-delete-truncated": {};
+  "shell-cli-page-properties-refusal": {};
   "shell-edit-paste-match-style": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
@@ -3155,6 +3158,7 @@ export interface MessageArgs {
   "ui-failure-marker-read": {};
   "ui-failure-page-header-read": {};
   "ui-failure-page-inventory": {};
+  "ui-failure-page-property-edit": {};
   "ui-failure-page-refresh": {};
   "ui-failure-pdf-find": {};
   "ui-failure-query-hydration": {};
