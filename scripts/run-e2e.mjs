@@ -86,6 +86,8 @@ const suites = {
     ["sheets", "scripts/e2e-sheets.mjs", {}],
   ],
   "linux-release": [
+    ["cm6-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "cm6" }],
+    ["textarea-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "textarea" }],
     ["wayland-app-id", "scripts/e2e-wayland-app-id.mjs", {}],
     ["caret-agenda", "scripts/e2e-caret.mjs", { CARET_MODE: "agenda", CARET_LABEL: "runner" }],
     ["caret-page", "scripts/e2e-caret.mjs", { CARET_MODE: "page", CARET_LABEL: "runner" }],
@@ -141,6 +143,8 @@ const suites = {
     ["host-saves", "scripts/e2e-host-saves.mjs", {}],
   ],
   "windows-smoke": [
+    ["cm6-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "cm6" }],
+    ["textarea-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "textarea" }],
     // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
     ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot

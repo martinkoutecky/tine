@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.resolve(process.env.MW_OUT || path.join(root, "test-results/hosted-multiwindow"));
@@ -22,6 +23,21 @@ fs.mkdirSync(path.join(graph, "journals"), { recursive: true });
 const PAGE = path.join(graph, "pages", "Alpha.md");
 fs.writeFileSync(PAGE, "- alpha one\n- alpha two\n- alpha three\n");
 const env = { ...process.env, TINE_GRAPH: graph, TINE_GPU: "0" };
+const editorMode = process.platform === "darwin" ? process.env.MW_EDITOR || "" : "";
+if (editorMode && !["cm6", "textarea"].includes(editorMode)) throw new Error(`Unknown MW_EDITOR ${editorMode}`);
+if (editorMode) {
+  // The focused macOS run uses the existing System Events driver and a scratch
+  // home. It proves typing/save/window lifecycle, not the WebDriver journey's
+  // pointer, clipboard or synthetic composition cases.
+  env.HOME = path.join(out, "home");
+  // Seed the device preference the Settings switch writes (tine-settings.json
+  // under the app data dir). The switch itself is driven through Settings by
+  // the Linux/Windows WebDriver journey (e2e-editor-native.mjs).
+  const identifier = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).identifier;
+  const appData = path.join(env.HOME, "Library/Application Support", identifier);
+  fs.mkdirSync(appData, { recursive: true });
+  fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({ experimental_cm6_editor: editorMode === "cm6" }) + "\n");
+}
 if (process.platform === "linux") {
   for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
   Object.assign(env, { XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state") });
@@ -305,7 +321,11 @@ await check("open", async () => {
 
 // Each check asserts the whole page file, so text landing in the wrong block
 // (or a key that split one) fails instead of passing on a substring.
-const expectPage = (lines, what, ms = 15_000) => until(() => disk() === lines.map((l) => `- ${l}\n`).join(""), ms, `${what}: ${JSON.stringify(disk())}`);
+const expectPage = async (lines, what, ms = 15_000) => {
+  const bytes = lines.map((line) => `- ${line}\n`).join("");
+  try { return await waitForFileText(PAGE, text => text === bytes, { timeoutMs: ms }); }
+  catch (error) { throw new Error(`${what}: ${error.message}`); }
+};
 
 await check("type-save", async () => {
   if (!popup) throw new Error("no new window");
@@ -374,6 +394,6 @@ await check("close", async () => {
 if (alive()) child.kill();
 await sleep(500);
 fs.writeFileSync(path.join(out, "page-final.md"), disk());
-fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ platform: process.platform, results }, null, 2));
+fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ platform: process.platform, editorMode, results }, null, 2));
 console.log(JSON.stringify(results, null, 2));
 if (Object.values(results).some((r) => r.status !== "pass")) process.exitCode = 1;

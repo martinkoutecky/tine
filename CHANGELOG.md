@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
 - Long Linked and Unlinked References sections stay responsive while scrolling: groups far from view are set aside and redrawn when you come back, keeping their folds, edits and selection, and memory no longer grows with every group you scroll past (GH #886).
@@ -66,6 +67,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Settings > Appearance shows the first few theme packages with **Show all**, so the settings below the list are no longer far down (#882).
 - Grids edit like an outline: click or arrow into a cell, keep editing across cells, and use Enter and Tab to build its child outline; Esc keeps your text and selects the cell (GH #874).
 - Block and page embed toolbars use compact icons for **Edit link** and **Open source**, with translated tooltips and accessible names. **Remove** keeps its text beside an icon, and touch screens keep all labels (#847).
 - Renaming a page now also updates bare `alias::` and `aliases::` values naming it, so aliases stay attached after a reload. You can rename a name that exists only as an alias: its declaring lines and references change without renaming the declaring pages or creating a file for the alias. Such a name can merge into an existing page or alias owner, with no “make it its own page” choice.

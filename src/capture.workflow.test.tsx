@@ -1,4 +1,4 @@
-import { beforeAll, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { backend, type GraphConfigChange } from "./backend";
 import { cycleMarkerSmart } from "./editor/repeat";
 import { setWorkflow, workflow } from "./ui";
@@ -37,6 +37,12 @@ beforeAll(async () => {
   await vi.waitFor(() => expect(h.listeners.has("capture-shown")).toBe(true));
   await vi.waitFor(() => expect(backend().bindCaptureGraph).toHaveBeenCalled());
 });
+
+// The capture app mounts at import and is never disposed, so its re-fit timers
+// (resettle: 80 and 220 ms) can fire after jsdom is torn down and throw
+// "document is not defined" as an unhandled error that fails the whole run.
+// Let them drain before the environment goes.
+afterAll(() => new Promise<void>((resolve) => setTimeout(resolve, 300)));
 
 function sequence() {
   let raw = "buy milk";

@@ -78,7 +78,7 @@ jobs:
       matrix:
         # og-parity-references stays a hard Linux gate; dropped from the advisory Windows
         # suite only (unclassified WebView2 trailing-space, AGENTS.md §2b E2E stop-loss).
-        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && '["windows-core","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"]' || format('["{0}"]', inputs.windows_scenario)) }}
+        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && '["windows-core","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow","cm6-native","textarea-native"]' || format('["{0}"]', inputs.windows_scenario)) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

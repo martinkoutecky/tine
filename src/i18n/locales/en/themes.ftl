@@ -24,6 +24,8 @@ themes-default = Default
 themes-color-scheme = Color scheme
 themes-style-and-colors-are-independent-theme-packages = Style, colors and typography are independent. Theme packages use validated colors, local font names and Tine-owned presentation styles; your <code>logseq/custom.css</code> still takes priority.
 themes-theme-packages = Theme packages
+themes-show-all-theme-packages = Show all { $count } theme packages
+themes-show-fewer-theme-packages = Show fewer theme packages
 themes-signed-community-themes-inert-token-manifests = Signed community themes · inert token manifests · immutable audit digests.
 
 themes-revoked-by-the-signed-registry = Revoked by the signed registry

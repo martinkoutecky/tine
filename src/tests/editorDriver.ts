@@ -18,6 +18,7 @@
 
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { cm6InputData } from "../editor/cm6InputIntent";
 
 export type EditorKind = "textarea" | "cm6";
 export type SelectionDirection = "forward" | "backward" | "none";
@@ -214,7 +215,11 @@ function cm6Driver(root: Element): EditorDriver {
     while (oldEnd > from && newEnd > from && old[oldEnd - 1] === value[newEnd - 1]) { oldEnd--; newEnd--; }
     // One minimal replacement preserves mapped ranges/history, including IME edits.
     view.dispatch({ changes: { from, to: oldEnd, insert: value.slice(from, newEnd) },
-      selection: { anchor: Math.max(0, Math.min(caret, value.length)) }, userEvent: cm6UserEvent(init) });
+      selection: { anchor: Math.max(0, Math.min(caret, value.length)) }, userEvent: cm6UserEvent(init),
+      // Match the textarea's declared InputEvent.data even when the fixture
+      // supplies the whole browser draft rather than each preceding keystroke.
+      annotations: cm6InputData.of(init.data !== undefined ? init.data
+        : (init.inputType ?? "insertText").startsWith("insert") ? value[caret - 1] ?? null : null) });
     // CM owns the buffer in state; retain the platform signal after reporting
     // the edit through its transaction, without inventing a detached draft.
     if (init.eventKind === "plain") element.dispatchEvent(new Event("input", { bubbles: true }));

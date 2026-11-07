@@ -39,6 +39,10 @@ on:
         options:
           - release
           - development
+      macos_editor:
+        description: Optional multiwindow macOS editor preference (cm6 or textarea); seeded as the device preference
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -831,6 +835,7 @@ jobs:
         if: runner.os != 'Linux'
         env:
           MW_DEBUG: "1"
+          MW_EDITOR: ${{ inputs.macos_editor }}
           # P5: stay minimized past hidden-page timer throttling, then time a save.
           MW_SOAK_MS: "330000"
         run: node scripts/hosted-multiwindow.mjs
