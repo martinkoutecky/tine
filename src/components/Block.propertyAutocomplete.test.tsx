@@ -45,6 +45,74 @@ function enter(textarea: EditorDriver) {
 }
 
 describe("property name/value autocomplete", () => {
+  // Intentional OG difference: value search also starts without choosing a name
+  // (OG 6e7afa8eb editor.cljs:2211-2226), for every Markdown entry method.
+  it.each(["typed", "pasted", "existing"])("offers values on a %s property without a prior name session", async method => {
+    const facets = vi.spyOn(backend(), "queryFacets").mockResolvedValue([["alpha", ["one", "two"]]]);
+    const raw = method === "existing" ? "Body\nalpha:: o" : "Body\n";
+    loadSingle(page(raw));
+    startEditing("property-authoring", raw.length);
+    const { root, dispose } = mount(() => <Block id="property-authoring" />);
+    try {
+      const editor = editorIn(root);
+      editor.focus();
+      if (method === "typed") {
+        for (const ch of "alpha:: ") editor.type(ch);
+      } else if (method === "pasted") {
+        const event = editor.paste({ text: "alpha:: " });
+        // jsdom has no browser paste default; report its resulting input when
+        // the editor deliberately leaves a plain single-line paste to it.
+        if (!event.defaultPrevented) editor.input("Body\nalpha:: ", 13, { inputType: "insertFromPaste", data: null });
+      } else {
+        editor.type("n");
+      }
+      await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe("one"));
+      enter(editor);
+      await vi.waitFor(() => expect(editor.value()).toBe("Body\nalpha:: one"));
+      expect(facets).toHaveBeenCalledWith(true, { key: "alpha" });
+    } finally { dispose(); }
+  });
+
+  it("does not open value suggestions when the caret only moves onto an existing value", async () => {
+    const facets = vi.spyOn(backend(), "queryFacets").mockResolvedValue([["alpha", ["one", "two"]]]);
+    const raw = "Body\nalpha:: o";
+    loadSingle(page(raw));
+    startEditing("property-authoring", 0);
+    const { root, dispose } = mount(() => <Block id="property-authoring" />);
+    try {
+      const editor = editorIn(root);
+      editor.focus();
+      editor.selectByUser(raw.length);
+      await new Promise(resolve => setTimeout(resolve, 250));
+      expect(document.querySelector(".autocomplete .ac-label")).toBeNull();
+      expect(facets).not.toHaveBeenCalledWith(true, { key: "alpha" });
+    } finally { dispose(); }
+  });
+
+  it("updates the current value query when pending values arrive, without another keystroke", async () => {
+    let finish!: (values: [string, string[]][]) => void;
+    const facets = vi.spyOn(backend(), "queryFacets").mockImplementation((_autocomplete, scope) => {
+      if (scope && "keys" in scope) return Promise.resolve([["alpha", []]]);
+      return new Promise(resolve => { finish = resolve; });
+    });
+    loadSingle(page("Body\n")); startEditing("property-authoring", 5);
+    const { root, dispose } = mount(() => <Block id="property-authoring" />);
+    try {
+      const editor = editorIn(root);
+      // Start with the formerly working name -> value path to isolate arrival
+      // from the separate missing-name-session bug.
+      inputAt(editor, "Body\nalpha::", 10);
+      await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
+      enter(editor);
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      editor.type("t");
+      await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe('Create "t"'));
+      finish([["alpha", ["one", "two"]]]);
+      await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe("two"));
+      expect(facets.mock.calls.filter(([, scope]) => scope && "key" in scope)).toHaveLength(1);
+    } finally { dispose(); }
+  });
+
   it("keeps the OG line-opening :: workflow live through name and comma-separated values (GH #306)", async () => {
     vi.spyOn(backend(), "queryFacets").mockResolvedValue([
       ["alpha", ["one", "two"]],

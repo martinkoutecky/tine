@@ -28,19 +28,14 @@ describe("property completion session (cost-model audit 2026-11-02 row 2b)", () 
     expect(facets.mock.calls).toEqual([[true, { keys: true }], [true, { keys: true }]]);
   });
 
-  it("offers values only after a property-name session, one request per key", async () => {
+  it("offers values without a property-name session, sharing one request per key", async () => {
     const facets = serve();
     const session = propertyCompletionSession();
-    // As before: no name session in this editor yet, no values offered.
-    expect(await session.load("alpha")).toBe(false);
-    expect(session.values("alpha")).toEqual([]);
-    expect(facets).not.toHaveBeenCalled();
-    await session.keys();
     const [first, second] = await Promise.all([session.load("alpha"), session.load("alpha")]);
-    expect([first, second]).toEqual([true, false]);
+    expect([first, second]).toEqual([true, true]);
     expect(session.values("alpha")).toEqual(["one", "two"]);
     expect(await session.load("alpha")).toBe(false);
-    expect(facets.mock.calls).toEqual([[true, { keys: true }], [true, { key: "alpha" }]]);
+    expect(facets.mock.calls).toEqual([[true, { key: "alpha" }]]);
   });
 
   it("drops an answer that lands after its session ended", async () => {

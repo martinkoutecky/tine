@@ -1143,6 +1143,7 @@ export interface MessageArgs {
   "guide-new-in-app-guide-learn-sheets-formulas-queries": {};
   "guide-open-guide": {};
   "help-action": {};
+  "help-add-keybinding": {};
   "help-available-across-the-app-modifier-chords-can": {};
   "help-available-when-no-text-editor-is-focused": {};
   "help-available-while-editing-a-block": {};
@@ -1195,6 +1196,7 @@ export interface MessageArgs {
   "help-search-or-create-pages-while-typing-a": {};
   "help-search-quick-switch": {};
   "help-select-mode": {};
+  "help-shortcut-conflicts": { "commands": string | number };
   "help-show-first-run-onboarding-again": {};
   "help-slash-commands": {};
   "help-strikethrough": {};
