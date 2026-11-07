@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, untrack, type Accessor, type JS
 import { Rich } from "../i18n/Rich";
 import { t, msg } from "../i18n";
 import { changed, pageChangeKey } from "../changeKeys";
-import { readOwned, type Owner } from "../owned";
+import { graphOwner, readOwned, type Owner } from "../owned";
 import { backend } from "../backend";
 import type { Route } from "../router";
 
@@ -32,7 +32,8 @@ export type PinnedPathRefusal = "missing" | "mismatch";
  *
  * `begin` starts a load attempt and returns its publication snapshot; `refuse`
  * records a refused attempt and returns the cancel for its probe, if any. The
- * caller owns cancellation (route/graph change, surface retirement, success).
+ * caller owns cancellation (route/graph change, surface retirement, success);
+ * `live` is the attempt's route predicate, bound to the current graph here.
  * Cost: one memo per mounted route; at most one exact-path read in flight.
  */
 export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => void) {
@@ -50,9 +51,10 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
       setRefusedAt(null);
       return untrack(publication);
     },
-    refuse(at: string | null, refusal: PinnedPathRefusal, r: Route, owner: Owner): (() => void) | undefined {
+    refuse(at: string | null, refusal: PinnedPathRefusal, r: Route, live: Owner): (() => void) | undefined {
       setRefusedAt(at);
-      if (refusal !== "missing" || r.kind !== "page" || !r.path || !owner()) return undefined;
+      if (refusal !== "missing" || r.kind !== "page" || !r.path || !live()) return undefined;
+      const owner = graphOwner(live);
       const path = r.path;
       let delay = 3000;
       let cancel = () => {};
