@@ -55,6 +55,10 @@ async function nativeInvoke<T = unknown>(command: string, args: Record<string, u
 type OpenStage = "prepare-done" | "open-called" | "open-returned" | "document-ready"
   | "bootstrap-done" | "focus-called" | "focus-done" | "failed";
 
+// A lost open-stage diagnostic is harmless: it only annotates the flight record,
+// and diagnostics must never stop a window from opening.
+function ignoreOpenStageDiagnosticFailure(_error: unknown): void {}
+
 function recordOpenStage(label: string | null, stage: OpenStage, started: number): void {
   // Only the native-generated trailing counter crosses the privacy boundary.
   // Invoke directly: awaiting even a resolved module promise would defer the
@@ -64,7 +68,7 @@ function recordOpenStage(label: string | null, stage: OpenStage, started: number
   try {
     void flightInvoke?.("diagnostic_workspace_open", {
       sequence, stage, openElapsedMs: Math.max(0, Math.round(performance.now() - started)),
-    }).catch(() => {});
+    }).catch(ignoreOpenStageDiagnosticFailure);
   } catch { /* Diagnostics cannot prevent a window opening. */ }
 }
 
