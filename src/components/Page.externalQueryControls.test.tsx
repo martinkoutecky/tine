@@ -14,6 +14,7 @@ import { BlockList } from "./BlockList";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { baseRevFor } from "../document/host/wiring";
 import type { Filter } from "../editor/queryIr";
+import { toasts, setToasts } from "../toasts";
 
 const todoFilter: Filter = { kind: "leaf", leaf: { kind: "attr", attr: "task", op: "in", value: { kind: "list", items: [{ kind: "text", text: "TODO" }] } } };
 
@@ -119,4 +120,45 @@ it("an edited query sample draft of the older value is refused, not written over
   expect(baseRevFor("Review")).toBe("r19");
   expect(blockProperty("q", "tine.sample")).toBe("19");
   expect(root.querySelector<HTMLInputElement>('[aria-label="Sample size"]')?.value).toBe("19");
+});
+
+const mountSampleQuery = async () => {
+  setToasts([]);
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async (_text, _dialect, properties) => ({
+    query: { anchor: "block", filter: todoFilter, source: { kind: "og", original: "(task TODO)", og_options: "" } },
+    view: { sample: Number(properties?.find(([key]) => key === "tine.sample")?.[1] ?? 0) },
+  }));
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
+  vi.spyOn(backend(), "printQuery").mockResolvedValue("(task TODO)");
+  vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+  loadSingle(dto(7));
+  const mounted = mount(() => <For each={pageByName("Review") ? [pageByName("Review")!] : []}>{p => <div class="page-blocks"><BlockList ids={p.roots} /></div>}</For>);
+  dispose = mounted.dispose;
+  await openCalmQuery(mounted.root, "View");
+  return mounted.root.querySelector<HTMLInputElement>('[aria-label="Sample size"]')!;
+};
+const type = (input: HTMLInputElement, value: string) => {
+  input.value = value; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+};
+const errors = () => toasts().filter(t => t.kind === "error");
+
+it("a draft that already matches an external sample does not refuse the next edit", async () => {
+  const input = await mountSampleQuery();
+  input.focus(); type(input, "11");
+  installPageContent("Review", dto(11));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  input.blur();
+  expect(blockProperty("q", "tine.sample")).toBe("11");
+  input.focus(); type(input, "13"); input.blur();
+  await vi.waitFor(() => expect(blockProperty("q", "tine.sample")).toBe("13"));
+  expect(errors()).toEqual([]);
+});
+
+it("Enter in the focused sample field saves without a false changed-block error", async () => {
+  const input = await mountSampleQuery();
+  input.focus(); type(input, "11");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await vi.waitFor(() => expect(blockProperty("q", "tine.sample")).toBe("11"));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  expect(errors()).toEqual([]);
 });
