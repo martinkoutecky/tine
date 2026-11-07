@@ -1,40 +1,22 @@
-import { createEffect, createSignal, createUniqueId, on, onCleanup, Show, untrack, useContext } from "solid-js";
+import { createEffect, createSignal, createUniqueId, onCleanup, Show, useContext } from "solid-js";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
-import { backend } from "../backend";
-import { propertyCompletionSession } from "./propertyCompletionSession";
-import { acceptBlockRefPick, blockPickItems } from "./blockRefPick";
-import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, propertyValueKeyAfterBoundary, type Trigger } from "./autocomplete";
-import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
-import { node, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
-import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
-import { pinyinMatchingEnabled } from "../launcherRanking";
-import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
-import { navigationName } from "../pageIndex";
-import { formatForBlockId, timeStamp } from "../components/blockParts";
-import { isMobilePlatform } from "../nativeChrome";
-import { pluginManager } from "../plugins/manager";
-import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
-import { linkAutocompletePolicy } from "./linkDefault";
-import { spaceAfterRefCompletion } from "../refCompletionSettings";
+import { editorCompletions, propertyNameInputCaret } from "./editorCompletions";
+import { cm6InputData } from "./cm6InputIntent";
+import { applyCompletion, pageInsert, withRefCompletionSpace } from "./autocomplete";
+import { graphOwner } from "../owned";
 import { calcSource } from "./calc";
-import { codeFences } from "./fences";
-import { setMarker } from "./marker";
-import { insertLink, setPriority } from "./format";
-import { runJournalSlash } from "../journalSlash";
+import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { youtubeTimestampMacroFor } from "../components/youtubeTimestampEdit";
-import { openDatePicker, openPageProps, setQueryBuilderAutoOpen, searchRemoveAccents } from "../ui";
+import { openDatePicker } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "../components/queryResultIdentity";
-import { QUERY_MACRO_SCAFFOLD } from "./queryMacro";
-import { applySheetViewSlashAction } from "../components/block/sheetViewSlash";
 import { CaptureCtx } from "../components/Block";
 import { registerTransientLayer } from "../transientLayers";
 import { EditorAutocomplete } from "../components/EditorAutocomplete";
 import { editorAssets } from "./editorAssets";
 import { isPermittedTabGesture } from "../keybindings";
 import { guardedCommands } from "./cm6Commands";
-import { msg, t as translate } from "../i18n";
-import { dbg } from "../debug";
+import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 
 /** CM transactions own the buffer and selection; completion never writes files.
@@ -55,224 +37,8 @@ export function cm6Completions(props: {
   const text = () => view().state.doc.toString();
   const caret = () => view().state.selection.main.head;
   const current = () => props.current() && !!props.view()?.dom.isConnected;
-  const [ac, setAc] = createSignal<Trigger | null>(null);
-  const [acItems, setAcItems] = createSignal<AcItem[]>([]);
-  const [acBlockState, setAcBlockState] = createSignal<"pending" | "error" | "ready" | null>(null);
-  const [acIndex, setAcIndex] = createSignal(0);
-  const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
-  const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
-  const propertyCompletion = propertyCompletionSession();
+  let applying = false;
   let acListRef: HTMLDivElement | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let applying = false, pluginInvocation = 0;
-  let completionOriginalRaw: string | null = null;
-  let completionLease: { pageName: string; blockId: string; originalRaw: string; session: string } | null = null;
-  const releaseLease = (lease: NonNullable<typeof completionLease>) => {
-    void readOwned(ownedWhen(() => true), backend().quickSwitch("", 0, lease, false))
-      .catch(error => dbg(`completion baseline release: ${String(error)}`));
-  };
-  const releaseCompletionLease = () => {
-    const lease = completionLease; completionLease = null;
-    if (lease) releaseLease(lease);
-  };
-  const closeAc = () => {
-    clearTimeout(timer); releaseCompletionLease(); completionOriginalRaw = null;
-    setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0); setPropertyValueKey(null);
-    propertyCompletion.end();
-    props.languagePicker(false);
-  };
-  const sameAcTrigger = (left: Trigger | null, right: Trigger) => left !== null
-    && left.kind === right.kind && left.query === right.query && left.start === right.start
-    && left.end === right.end && left.property === right.property
-    && (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
-  const detectEditorTrigger = () => {
-    if (props.literal() || props.sheet || props.annotation() || calcSource(text()) !== null) return null;
-    const trigger = detectTrigger(text(), caret(), propertyValueKey(), props.format);
-    if (trigger) return trigger;
-    // The explicit scaffold picker also accepts an empty query on its opener.
-    const open = ac();
-    return open?.kind === "code-language" && caret() === open.start
-      && codeFences(text(), props.format).some(f => f.delimEnd === caret() && caret() < f.openEnd)
-      ? { ...open, query: "", end: caret() } : null;
-  };
-  const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
-    const values = propertyCompletion.values(key);
-    const q = query.trim(), excluded = new Set(used.map(value => value.toLocaleLowerCase()));
-    const ranked: AcItem[] = values.map((value, index) => ({ value, index, score: q ? fuzzyScore(q, value) : 1 }))
-      .filter(({ value, score }) => score > 0 && !excluded.has(value.toLocaleLowerCase()))
-      .sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 100)
-      .map(({ value }) => ({ label: value, propertyValue: value }));
-    if (q && !values.some(value => value.toLowerCase() === q.toLowerCase()))
-      ranked.push({ get label() { return translate("editor-block-create", { name: String(q) }); }, propertyValue: q });
-    return ranked;
-  };
-  const autocompleteScope = {};
-  const updateAutocomplete = async () => {
-    if (!current()) return;
-    const t = detectEditorTrigger();
-    if (!t) {
-      closeAc();
-      return;
-    }
-    setAc(t);
-    setAcBlockState(null);
-    setAcIndex(0);
-    const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => current() && sameAcTrigger(ac(), t)));
-    if (t.kind === "property-name") {
-      let keys: string[] | null;
-      try {
-        keys = await propertyCompletion.keys();
-      } catch (error) {
-        // Completion is an optional aid: a transient facet-query failure must
-        // never reject the editor input event or pile up global error toasts.
-        dbg(`property-autocomplete: ${String(error)}`);
-        if (requestOwner()) setAcItems([]);
-        return;
-      }
-      if (!keys || !requestOwner()) return;
-      const q = t.query.trim();
-      const ranked = keys
-        .map((key, index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
-        .filter(({ score }) => score > 0)
-        .sort((left, right) => right.score - left.score || left.index - right.index)
-        .slice(0, 100)
-        .map(({ key }) => ({ label: key, propertyName: key }));
-      const created = propertyKeyFold(t.query);
-      if (created && !keys.includes(created)) {
-        ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
-      }
-      setAcItems(ranked);
-      return;
-    }
-    if (t.kind === "property-value") {
-      setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
-      void propertyCompletion.load(t.property!).then((loaded) => {
-        if (loaded && sameAcTrigger(ac(), t)) setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
-      });
-      return;
-    }
-    if (t.kind === "code-language") {
-      setAcItems(codeLanguageItems(t.query).map((language) => ({
-        get label() { return language.label; },
-        sub: [language.id, ...language.aliases].join(" · "),
-        insert: language.id,
-        // If a completed fence scaffold already follows, land on its code line;
-        // a hand-typed one-line fence stays at the end and Enter behaves normally.
-        caret: language.id.length + (text()[t.end] === "\n" ? 1 : 0),
-      })));
-      return;
-    }
-    if (t.kind === "advanced-command") {
-      const fmt = formatForBlockId(props.id);
-      setAcItems(filterAdvancedBlockCommands(t.query).map((command) => {
-        const insertion = advancedBlockInsertion(command, fmt);
-        return { get label() { return command.label; }, insert: insertion.insert, caret: insertion.caret };
-      }));
-      return;
-    }
-    if (t.kind === "command") {
-      const q = t.query;
-      const tmpls = await getTemplates();
-      if (!requestOwner()) return;
-      // Commands AND templates in one fuzzy-ranked list, so a strong template
-      // match can outrank a weak command (and vice-versa). Empty query (bare `/`)
-      // lists all commands in defined order, no templates. `idx` preserves the
-      // defined order — commands before templates — as the stable tiebreaker.
-      const showAllTemplates = !!q && "template".startsWith(q.toLowerCase()); // /t…/template lists them all
-      const scored: { item: AcItem; s: number; idx: number }[] = [];
-      COMMANDS.forEach((c) => {
-        // /drawio launches an external editor — desktop only (GH #38).
-        if (c.action === "drawio" && isMobilePlatform) return;
-        const s = q ? commandScore(q, c) : 1;
-        if (s > 0)
-          scored.push({ item: { get label() { return c.label; }, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
-      });
-      pluginManager.slashCommands().forEach(({ pluginId, contribution }, i) => {
-        const s = q ? fuzzyScore(q, contribution.title) : 1;
-        if (s > 0) {
-          scored.push({
-            item: {
-              label: contribution.title,
-              sub: "Plugin",
-              plugin: { pluginId, contributionId: contribution.id, insertText: contribution.insertText },
-            },
-            s,
-            idx: COMMANDS.length + i,
-          });
-        }
-      });
-      if (q) {
-        tmpls.forEach((tp, j) => {
-          const s = showAllTemplates ? 1 : fuzzyScore(q, tp.name);
-          if (s > 0)
-            scored.push({
-              item: { get label() { return translate("editor-block-template", { name: String(tp.name) }); }, templateNodes: tp.blocks },
-              s,
-              idx: COMMANDS.length + pluginManager.slashCommands().length + j,
-            });
-        });
-      }
-      scored.sort((a, b) => b.s - a.s || a.idx - b.idx);
-      setAcItems(scored.map((x) => x.item));
-      return;
-    }
-    if (t.kind === "block") {
-      // `((` searches blocks by page; bare `((` stays hidden. Selection inserts
-      // the target's durable external ID (see selectAc).
-      setAcItems([]);
-      setAcBlockState("pending");
-      let result: import("../owned").Owned<import("../types").RefGroup[]>;
-      try {
-        result = await readOwned(requestOwner, backend().search(t.query, 20, "block-picker"));
-      } catch (error) {
-        if (requestOwner()) {
-          dbg(`block-picker: ${String(error)}`);
-          setAcBlockState("error");
-        }
-        return;
-      }
-      if (result.kind === "stale") return;
-      setAcBlockState("ready");
-      setAcItems(blockPickItems(result.value, props.id));
-      return;
-    }
-    // OG leaves blank page/tag search active but renders no rows and does not
-    // ask the backend for its legacy all-pages result.
-    const q = t.query.trim();
-    if (!q) {
-      setAcItems([]);
-      return;
-    }
-    completionOriginalRaw ??= node(props.id).raw;
-    const editor = { pageName: node(props.id).page, blockId: props.id, originalRaw: completionOriginalRaw };
-    if (!cap && pinyinMatchingEnabled() && !completionLease) {
-      completionLease = { ...editor, session: crypto.randomUUID() };
-    }
-    const lease = completionLease;
-    // Closing can overtake a blocking native query. Release again after its
-    // reply (including failure) so it cannot retain obsolete baseline keys.
-    let result: import("../owned").Owned<import("../types").PageEntry[]>;
-    try {
-      result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
-    } finally {
-      if (lease && lease !== completionLease) releaseLease(lease);
-    }
-    if (result.kind === "stale") return;
-    const pageItem = (name: string): AcItem =>
-      t.kind === "page"
-        ? { label: name, insert: pageInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }
-        : { label: `#${name}`, insert: tagInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }; // tag context reads "#name"
-    const createItem: AcItem =
-      t.kind === "page"
-        ? { get label() { return translate("editor-block-create", { name: String(q) }); }, insert: pageInsert(q) }
-        : { get label() { return translate("editor-block-create-tag", { name: String(q) }); }, insert: tagInsert(q) };
-    setAcItems(orderAcItems(
-      result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
-      { name: q, item: createItem },
-      { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
-    ));
-  };
-
   // Completion edits are a single CM transaction, with the caret restored before
   // any picker takes focus. The document update listener uses the ordinary commit.
   const apply = (raw: string, start: number, end = start, focus = true) => {
@@ -284,15 +50,26 @@ export function cm6Completions(props: {
     } finally { applying = false; }
     if (focus) view().focus();
   };
-  const replaceTrigger = (insert: string, caretOffset?: number) => {
-    const trigger = ac(); if (!trigger || !current()) return;
-    const result = applyCompletion(text(), trigger.start, refCompletionEnd(text(), trigger.end, insert), insert, caretOffset);
-    const spaced = caretOffset === undefined
-      ? withRefCompletionSpace(result.raw, result.caret, insert, spaceAfterRefCompletion()) : result;
-    // Keep the raw view until the completion edit is committed, then map its
-    // source caret into the parser-owned code/calc body.
-    apply(spaced.raw, spaced.caret); closeAc(); props.completeRegion(spaced.raw, spaced.caret);
-  };
+  const completion = editorCompletions({
+    id: props.id, format: () => props.format, current, text, caret,
+    composing: () => view().compositionStarted,
+    // Census D9: projected code bodies retain the existing CM6 literal policy.
+    suppressTriggers: () => props.literal() || props.sheet || props.annotation() || calcSource(text()) !== null,
+    keepEmptyLanguagePicker: true,
+    selection: () => { const s = view().state.selection.main; return [s.anchor, s.head]; },
+    rawBeforeCommit: props.rawBeforeCommit, visible: props.visible,
+    apply, afterEdit: callback => { callback(); reanchor(); },
+    replace: (raw, position, close) => {
+      apply(raw, position); close(); props.completeRegion(raw, position);
+    },
+    languagePicker: props.languagePicker, closed: () => props.languagePicker(false),
+    element: () => view().contentDOM,
+    resultTarget: () => inResults(props.id) ? liveWriteTarget(props.id) : undefined,
+    openJournal: () => openJournal(), assets: props.assets,
+    quickSwitch: cap ? (query, limit) => cap.quickSwitch(query, limit) : undefined,
+  });
+  const { ac, acItems, acBlockState, acIndex, setAcIndex, acVisible, closeAc,
+    selectAc, updateAutocomplete, refresh, selectionChanged } = completion;
   const openPlanning = (kind: "scheduled" | "deadline") => {
     const rect = view().contentDOM.getBoundingClientRect();
     openDatePicker(props.id, kind, rect.left, rect.bottom + 4, inResults(props.id) ? liveWriteTarget(props.id) : undefined);
@@ -310,160 +87,12 @@ export function cm6Completions(props: {
       apply(result.raw, result.caret, result.caret, false);
     } }, rect.left, rect.bottom + 4);
   };
-  const selectAc = (item: AcItem) => {
-    const t = ac(); if (!t || !current() || view().compositionStarted) return;
-    if (item.propertyName) {
-      const key = propertyKeyFold(item.propertyName);
-      const result = applyCompletion(text(), t.start, t.end, `${key}:: `);
-      apply(result.raw, result.caret);
-      setPropertyValueKey(key);
-      const valueTrigger: Trigger = { kind: "property-value", query: "", start: result.caret, end: result.caret, property: key };
-      setAc(valueTrigger);
-      setAcIndex(0); setAcItems(propertyValueItems(key, ""));
-      void propertyCompletion.load(key).then((loaded) => {
-        if (loaded && sameAcTrigger(ac(), valueTrigger)) setAcItems(propertyValueItems(key, ""));
-      });
-      return;
-    }
-    if (item.propertyValue !== undefined) { replaceTrigger(item.propertyValue); return; }
-    if (item.blockRef) {
-      const owner = graphOwner(current), trigger = ac(), before = text();
-      acceptBlockRefPick(item.blockRef, {
-        intended: () => owner() && ac() === trigger && text() === before, current: () => owner(),
-        triggerOpen: () => ac() === trigger, sourcePage: () => node(props.id)?.page, insert: (ref) => replaceTrigger(ref),
-      });
-      return;
-    }
-    if (item.plugin) {
-      const before = text(), selection = view().state.selection.main;
-      const n = node(props.id); let depth = 0, parent = n.parent;
-      while (parent && node(parent) && depth < 1_000) { depth++; parent = node(parent).parent; }
-      const snapshot = bindPluginBlockSnapshot({ id: n.id, raw: n.raw, parentId: n.parent, depth, format: props.format });
-      if (!snapshot) return;
-      const token = ++pluginInvocation, ownerId = editingOwner(), surface = editingSurface(), block = editingId();
-      const plugin = item.plugin;
-      const intended = () => {
-        if (!current() || token !== pluginInvocation || !isPluginGraphOwnerCurrent(snapshot.owner)
-          || editingId() !== block || editingOwner() !== ownerId || editingSurface() !== surface
-          || text() !== before || node(props.id).raw !== snapshot.block.raw) return false;
-        const s = view().state.selection.main;
-        return s.anchor === selection.anchor && s.head === selection.head
-          && sameAcTrigger(detectTrigger(text(), caret(), propertyValueKey(), props.format), t);
-      };
-      closeAc();
-      void pluginManager.invokeSlashCommand(plugin.pluginId, plugin.contributionId, snapshot).then(effects => {
-        if (!intended()) {
-          if (current() && isPluginGraphOwnerCurrent(snapshot.owner) && text() !== before)
-            pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
-          return;
-        }
-        const effect = effects.find(candidate => candidate.kind === "insert-at-caret");
-        const insert = effect?.kind === "insert-at-caret" ? effect.text : plugin.insertText;
-        if (insert === undefined) return;
-        const result = applyCompletion(before, t.start, t.end, insert);
-        apply(result.raw, result.caret);
-      }).catch(error => pushToast(msg("editor-block-plugin-slash-command-failed", { detail: String(error) }), "error"));
-      return;
-    }
-    if (item.templateNodes) {
-      const result = applyCompletion(text(), t.start, t.end, "");
-      closeAc(); apply(result.raw, result.caret);
-      const nodes = item.templateNodes.map(n => templateToOutline(n, node(props.id).page));
-      const wasEmpty = node(props.id).raw.trim() === "" && node(props.id).children.length === 0;
-      const last = insertOutlineAfter(props.id, nodes);
-      if (!last) { pushToast(msg("editor-block-outline-is-too-deep-to-insert"), "error"); return; }
-      if (wasEmpty) deleteBlock(props.id);
-      startEditing(last, node(last).raw.length); return;
-    }
-    switch (item.action) {
-      case "task-marker": {
-        if (!item.taskMarker) return;
-        const removed = applyCompletion(text(), t.start, t.end, "");
-        const raw = setMarker(removed.raw, item.taskMarker);
-        closeAc(); apply(raw, raw.length); return;
-      }
-      case "heading-auto": case "heading-1": case "heading-2": case "heading-3": case "heading-4": {
-        const state = item.action === "heading-auto" ? true : Number(item.action.slice("heading-".length)) as 1 | 2 | 3 | 4;
-        const removed = applyCompletion(text(), t.start, t.end, "");
-        closeAc();
-        withUndoUnit(`heading:${props.id}`, [node(props.id).page], () => {
-          apply(removed.raw, removed.caret); setHeading(props.id, state);
-        });
-        const raw = props.visible();
-        apply(raw, Math.min(raw.length, removed.caret + (state === true ? 0 : state + 1))); return;
-      }
-      case "scheduled": case "deadline":
-        replaceTrigger(""); openPlanning(item.action); return;
-      case "now-time": replaceTrigger(timeStamp()); return;
-      case "youtube-timestamp": replaceTrigger(youtubeTimestampMacroFor(view().contentDOM) ?? ""); return;
-      case "page-reference":
-        replaceTrigger("[[]]", 2); void updateAutocomplete(); return;
-      case "insert-link": {
-        const removed = applyCompletion(text(), t.start, t.end, "", 0);
-        const edit = insertLink(removed.raw, t.start, t.start, props.format);
-        closeAc(); apply(edit.text, edit.start, edit.end); return;
-      }
-      case "query-builder":
-        replaceTrigger(QUERY_MACRO_SCAFFOLD); setQueryBuilderAutoOpen(props.id); endEdit("query-builder"); return;
-      case "code-block": {
-        const result = applyCompletion(text(), t.start, t.end, "```\n\n```", 3);
-        closeAc(); props.languagePicker(true); apply(result.raw, result.caret);
-        setAc({ kind: "code-language", query: "", start: result.caret, end: result.caret });
-        setAcItems(codeLanguageItems("").map(language => ({
-          get label() { return language.label; }, sub: [language.id, ...language.aliases].join(" · "),
-          insert: language.id, caret: language.id.length + 1,
-        }))); return;
-      }
-      case "page-props": {
-        replaceTrigger(""); const rect = view().contentDOM.getBoundingClientRect();
-        openPageProps(node(props.id).page, rect.left, rect.bottom + 4); return;
-      }
-      case "sheet-grid": case "sheet-table": case "sheet-board":
-        replaceTrigger(""); applySheetViewSlashAction(props.id, item.action === "sheet-grid" ? "grid" : item.action === "sheet-table" ? "table" : "board"); return;
-      case "date-picker": replaceTrigger(""); openJournal(); return;
-      case "tomorrow": case "yesterday": case "today": case "thatday":
-        runJournalSlash(item.action, node(props.id).page, replaceTrigger); return;
-      case "upload-asset": replaceTrigger(""); void props.assets.uploadAsset(); return;
-      case "record": replaceTrigger(""); void props.assets.desktopVoiceMemoToggle(); return;
-      case "drawio": replaceTrigger(""); void props.assets.createDrawioDiagram(); return;
-      case "priority-a": case "priority-b": case "priority-c": {
-        const lines = (text().slice(0, t.start) + text().slice(t.end)).split("\n");
-        lines[0] = setPriority(lines[0], item.action === "priority-a" ? "A" : item.action === "priority-b" ? "B" : "C") + " ";
-        closeAc(); apply(lines.join("\n"), lines[0].length); return;
-      }
-    }
-    replaceTrigger(item.insert ?? "", item.caret);
-  };
-
-  const refresh = () => {
-    if (!current() || view().compositionStarted) return;
-    const next = detectEditorTrigger();
-    if (!next) { closeAc(); return; }
-    const previous = ac();
-    if (next.kind !== "page" && next.kind !== "tag") releaseCompletionLease();
-    if ((next.kind === "page" || next.kind === "tag")
-      && (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
-      releaseCompletionLease(); completionOriginalRaw = props.rawBeforeCommit();
-    }
-    setAc(next); setAcIndex(0); setAcBlockState(next.kind === "block" ? "pending" : null);
-    if (next.kind === "block" || !previous || previous.kind !== next.kind || previous.start !== next.start
-      || ((next.kind === "page" || next.kind === "tag") && !next.query.trim())) setAcItems([]);
-    clearTimeout(timer);
-    timer = setTimeout(() => { void updateAutocomplete().catch(error => dbg(`autocomplete: ${String(error)}`)); }, 90);
-  };
-  const selectionChanged = () => {
-    const open = ac();
-    if (!open || !["page", "tag", "block"].includes(open.kind)) return;
-    const here = detectEditorTrigger();
-    if (!here || here.kind !== open.kind || here.start !== open.start) closeAc();
-  };
   const changed = (update: ViewUpdate) => {
     if (applying || !current()) return;
     if (update.transactions.some(tr => tr.isUserEvent("input") || tr.isUserEvent("delete"))) {
       if (view().compositionStarted || update.transactions.some(tr => tr.isUserEvent("input.type.compose"))) return;
       const value = text(), pos = caret();
-      const key = propertyValueKeyAfterBoundary(value, pos, value[pos - 1] ?? "");
-      if (key) setPropertyValueKey(key);
+      completion.noteInput(value[pos - 1] ?? "");
       refresh();
     } else if (update.selectionSet) selectionChanged();
   };
@@ -471,17 +100,20 @@ export function cm6Completions(props: {
     if (!current() || event.isComposing || view().compositionStarted || applying) return;
     // A platform input may describe an unchanged state (fixture/IME notification).
     // Actual native edits are reconciled by CM and handled by changed().
-    const key = propertyValueKeyAfterBoundary(text(), caret(), event.data ?? "");
-    if (key) setPropertyValueKey(key);
+    completion.noteInput(event.data ?? "");
     refresh();
   };
   // The property-name workflow authors name|::, starting with an empty ::.
   // Adjust the input transaction itself so observers never see a stale caret.
   const inputSelection = EditorState.transactionFilter.of(tr => {
     if (props.sheet || !tr.isUserEvent("input.type") || tr.isUserEvent("input.type.compose")) return tr;
-    const pos = tr.newSelection.main.head, line = tr.newDoc.lineAt(pos);
-    if (pos === line.from + 2 && line.text.startsWith("::"))
-      return [tr, { selection: { anchor: line.from }, sequential: true }];
+    let inserted = "";
+    tr.changes.iterChanges((_from, _to, _newFrom, _newTo, text) => { inserted += text.toString(); });
+    const inputData = tr.annotation(cm6InputData);
+    const position = propertyNameInputCaret(tr.newDoc.toString(), tr.newSelection.main.head,
+      inputData === undefined ? inserted : inputData ?? "");
+    if (position !== null)
+      return [tr, { selection: { anchor: position }, sequential: true }];
     return tr;
   });
   const insertTrigger = (kind: "page" | "block" | "slash") => {
@@ -542,31 +174,15 @@ export function cm6Completions(props: {
       trigger: () => props.view()?.contentDOM ?? null,
       dismiss: () => { closeAc(); if (current()) view().focus(); return true; } }));
   });
-  createEffect(on(pinyinMatchingEnabled, () => {
-    const trigger = untrack(ac);
-    if (trigger?.kind === "page" || trigger?.kind === "tag") {
-      if (!pinyinMatchingEnabled()) releaseCompletionLease();
-      void updateAutocomplete();
-    }
-  }, { defer: true }));
   const mount = () => {
     const win = view().dom.ownerDocument.defaultView!;
     win.addEventListener("scroll", reanchor, true); win.addEventListener("resize", reanchor);
     onCleanup(() => { win.removeEventListener("scroll", reanchor, true); win.removeEventListener("resize", reanchor); });
   };
-  onCleanup(() => { pluginInvocation++; clearTimeout(timer); releaseCompletionLease(); });
   const Popup = () => <Show when={acVisible()}><EditorAutocomplete items={acItems()} index={acIndex()} style={style()}
     listRef={element => { acListRef = element; }} select={selectAc}
     blockState={acBlockState()} retry={() => void updateAutocomplete()} /></Show>;
-  const scaffold = () => {
-    props.languagePicker(true);
-    setAc({ kind: "code-language", query: "", start: 3, end: 3 });
-    setAcItems(codeLanguageItems("").map(language => ({
-      get label() { return language.label; }, sub: [language.id, ...language.aliases].join(" · "),
-      insert: language.id, caret: language.id.length + 1,
-    })));
-  };
+  const scaffold = () => completion.openLanguagePicker("", 3, false);
   return { mount, inputSelection, changed, input, keydown, commands, selectionChanged, close: closeAc, scaffold,
-    pause: () => clearTimeout(timer), refresh, Popup };
+    pause: completion.pause, refresh, Popup };
 }
-

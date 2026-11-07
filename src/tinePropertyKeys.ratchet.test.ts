@@ -43,7 +43,6 @@ const OG_OWNED: Record<string, string> = {
 const PASS_THROUGH: Record<string, [number, string]> = {
   "crates/lsdoc-wasm/src/lib.rs": [1, "the wasm bridge of the one property writer: the window's key"],
   "src-tauri/src/owner/write.rs": [1, "`tine prop set BLOCK key value`: the key the CLI user names"],
-  "src/components/Block.tsx": [1, "property autocomplete inserts the key the user picked"],
   "src/components/ContextMenu.tsx": [2, "page icon: clears/sets `tine.icon` or OG `icon` (PAGE_ICON_PROPERTIES, D-20261018-IC1)"],
   "src/components/FormulaEditor.tsx": [2, "`tine.formula.<name>` for the user's formula name"],
   "src/components/Macro.tsx": [3, "query view keys from its `tine.*` writes table and displayPropertyPatch"],
@@ -56,7 +55,7 @@ const PASS_THROUGH: Record<string, [number, string]> = {
   "src/document/edits/paste.ts": [2, "paste keeps the pasted block's own properties"],
   "src/document/edits/properties.ts": [5, "the generic writers themselves (setBlockProperty, setPageProperty, toggle)"],
   "src/document/edits/propertyDeclaration.ts": [1, "property declaration page: the user's key"],
-  "src/editor/cm6Completions.tsx": [1, "property autocomplete inserts the key the user picked"],
+  "src/editor/editorCompletions.ts": [1, "both editors' property autocomplete inserts the key the user picked"],
   "src/editor/properties.ts": [5, "the editor's property line rewrite: the user's key"],
   "src/render/renderedText.ts": [1, "copy-as-text prints the block's own properties"],
   "src/sheet/conversions.ts": [1, "clears TINE_SHEET_PROPS, all `tine.*`"],

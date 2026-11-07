@@ -17,7 +17,6 @@ src/androidBack.ts platform-literal x1  # why: host-event; Android back button i
 src/components/AboutTab.tsx platform-literal x6  # why: native-api; update and store channel differ per host
 src/components/AboutTab.tsx platformKind x1  # why: native-api; update and store channel differ per host
 src/components/AllGraphs.tsx canRevealInFileManager x4  # why: native-api; desktop-only graph window and reveal actions share the sidebar's native capability gate
-src/components/Block.tsx isMobilePlatform x1  # why: native-api; /drawio launches a desktop-only external editor
 src/components/ContextMenu.tsx isMobilePlatform x1  # why: native-api; Export to PDF needs the desktop print/save pipeline
 src/components/CustomCssSettings.tsx isMac x1  # why: os-convention; the developer-tools shortcut hint names the OS chord
 src/components/CustomCssSettings.tsx platform-literal x1  # why: native-api; developer tools and CSS default-app handoff exist on desktop hosts only
@@ -50,7 +49,7 @@ src/deepLinkNavigation.ts platformKind x1  # why: native-api; asks the Android h
 src/edgeSwipe.ts platform-literal x2  # why: host-event; iOS history swipe vs Android back model
 src/editableEmoji.ts browserPlatform x1  # why: os-convention; emoji font stack differs per OS
 src/editableEmoji.ts navigator.userAgent x1  # why: os-convention; emoji font stack differs per OS
-src/editor/cm6Completions.tsx isMobilePlatform x1  # why: native-api; preserve the desktop-only /drawio external-editor command gate
+src/editor/editorCompletions.ts isMobilePlatform x1  # why: native-api; both editors' /drawio command launches a desktop-only external editor
 src/editor/plainTextPaste.ts browserPlatform x1  # why: host-event; macOS plain-text paste reads explicitly instead of waiting for a native paste event, and accepts the Option alias (GH #857)
 src/editor/plainTextPaste.ts navigator.platform x1  # why: os-convention; plain-text paste uses Cmd on macOS and Ctrl elsewhere (GH #857)
 src/graph.ts isMobile x1  # why: native-api; folder picking and graph containers differ per host
