@@ -39,6 +39,8 @@ themes-color-scheme = 配色
 themes-style-and-colors-are-independent-theme-packages = 样式、颜色和排版相互独立。主题包使用经过验证的颜色、本机字体名称和 Tine 定义的显示样式；<code>logseq/custom.css</code> 仍优先。
 
 themes-theme-packages = 主题包
+themes-show-all-theme-packages = 显示全部 { $count } 个主题包
+themes-show-fewer-theme-packages = 收起主题包
 
 themes-signed-community-themes-inert-token-manifests = 签名社区主题 · 不执行代码的样式变量清单 · 不可变审计摘要。
 

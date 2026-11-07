@@ -28,6 +28,7 @@ import {
 import { pushToast } from "../toasts";
 import { theme } from "../ui";
 import { communityThemeSetting, galleryThemeSetting, installedThemeSetting } from "./settingsDescriptor";
+import { settingMatches } from "./settingsSearch";
 
 // Settings → Appearance theme section: an independent Style (presentation)
 // selector and Color scheme gallery (master 670cf75bb), plus theme packages.
@@ -77,7 +78,15 @@ function ThemeGalleryCard(props: {
   );
 }
 
-export function ThemeSettings(): JSX.Element {
+/** Theme packages shown before "Show all" (GH #882): the catalogue would push the rest of Appearance out of view. */
+export const COMMUNITY_PREVIEW_COUNT = 4;
+
+export function ThemeSettings(props: { search?: string } = {}): JSX.Element {
+  const [showAllCommunity, setShowAllCommunity] = createSignal(false);
+  // A Settings search result naming a folded theme must still land on it.
+  const searchReveals = () => !!props.search?.trim()
+    && communityThemes().slice(COMMUNITY_PREVIEW_COUNT).some((theme) => settingMatches(communityThemeSetting(theme), props.search!));
+  const shownCommunityThemes = () => showAllCommunity() || searchReveals() ? communityThemes() : communityThemes().slice(0, COMMUNITY_PREVIEW_COUNT);
   let alive = true;
   onCleanup(() => { alive = false; });
   let themePackageInput: HTMLInputElement | undefined;
@@ -190,7 +199,7 @@ export function ThemeSettings(): JSX.Element {
 
       <Show when={COMMUNITY_REGISTRY_ENABLED}><div class="settings-section">{t("themes-theme-packages")}</div>
       <Show when={communityThemes().length > 0}><div class="settings-hint theme-gallery-hint">{t("themes-signed-community-themes-inert-token-manifests")}</div>
-        <For each={communityThemes()}>
+        <For each={shownCommunityThemes()}>
           {(themeEntry) => {
             const version = () => themeEntry.versions[themeEntry.versions.length - 1];
             const key = () => `${themeEntry.id}@${version().version}`;
@@ -217,6 +226,11 @@ export function ThemeSettings(): JSX.Element {
             );
           }}
         </For>
+        <Show when={communityThemes().length > COMMUNITY_PREVIEW_COUNT && !searchReveals()}>
+          <button type="button" class="settings-link theme-packages-more" aria-expanded={showAllCommunity()} onClick={() => setShowAllCommunity((open) => !open)}>
+            {showAllCommunity() ? t("themes-show-fewer-theme-packages") : t("themes-show-all-theme-packages", { count: communityThemes().length })}
+          </button>
+        </Show>
       </Show>
       </Show>
       <div class="settings-row" {...settingAttributes(settings["themes-install-a-token-theme"])}>
