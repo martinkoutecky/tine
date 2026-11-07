@@ -51,17 +51,17 @@ export function createComment(parentId: string, editorText: string, start: numbe
 }
 
 /** Create the comment and put the caret on its empty body line. */
-export function commentAndEdit(parentId: string, editorText: string, start: number, end: number, surface: string | null = null): string | null {
+export function commentAndEdit(parentId: string, editorText: string, start: number, end: number, surface: string | null = null, owner: string | null = null): string | null {
   return batch(() => {
     const id = createComment(parentId, editorText, start, end);
-    if (id) startEditing(id, 0, null, surface);
+    if (id) startEditing(id, 0, owner, surface);
     return id;
   });
 }
 
 /** Ctrl/Cmd+R in the block editor `ref`: commit its text, then comment on the
  * selection (the whole block when nothing is selected). */
-export function commentFromEditor(id: string, ref: Pick<HTMLTextAreaElement, "value" | "selectionStart" | "selectionEnd">, commit: (text: string) => void, surface: string | null): void {
+export function commentFromEditor(id: string, ref: Pick<HTMLTextAreaElement, "value" | "selectionStart" | "selectionEnd">, commit: (text: string) => void, surface: string | null, owner: string | null = null): void {
   const { value, selectionStart, selectionEnd } = ref;
   commit(value);
   const rawBefore = docNode(id)?.raw;
@@ -69,7 +69,7 @@ export function commentFromEditor(id: string, ref: Pick<HTMLTextAreaElement, "va
   // the block may have changed while the dialog was open.
   runWithCommentName(() => {
     if (docNode(id)?.raw !== rawBefore) return pushToast(msg("comment-block-changed"), "warn");
-    if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface)) pushToast(msg("comment-block-cannot-take"), "warn");
+    if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface, owner)) pushToast(msg("comment-block-cannot-take"), "warn");
   });
 }
 

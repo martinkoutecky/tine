@@ -32,7 +32,7 @@ export function sheetCellFromEventTarget(target: EventTarget | null, gridId: str
   };
 }
 
-export function beginCellPointerSelection(e: PointerEvent, gridId: string): boolean {
+export function beginCellPointerSelection(e: PointerEvent, gridId: string, click?: (cell: SheetCellCtx) => void): boolean {
   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return false;
   if (isSheetPointerInteractive(e.target)) return false;
   const anchor = sheetCellFromEventTarget(e.target, gridId);
@@ -92,7 +92,9 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
   const onUp = (ev: PointerEvent) => {
     if (ev.pointerId !== pointerId) return;
     removeListeners();
+    if (!owner()) return;
     if (moved) ev.preventDefault();
+    else click?.(anchor);
   };
   const onCancel = () => {
     removeListeners();

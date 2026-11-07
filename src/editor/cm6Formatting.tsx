@@ -23,6 +23,7 @@ const inlineCommands: Readonly<Record<string, InlineFormat>> = {
  * the selection, including its active end; no DOM draft or second undo stack. */
 export function cm6Formatting(ctx: {
   id: string; surface: string; format: "md" | "org";
+  owner?: string | null;
   current(): boolean; view(): EditorView | undefined; commit(text: string): void;
   closeCompletion(): void; refreshCompletion(): void;
 }) {
@@ -60,7 +61,7 @@ export function cm6Formatting(ctx: {
     const view = ctx.view()!, s = view.state.selection.main;
     ctx.closeCompletion();
     commentFromEditor(ctx.id, { value: view.state.doc.toString(), selectionStart: s.from, selectionEnd: s.to },
-      ctx.commit, ctx.surface.startsWith("embed:") ? ctx.surface : null);
+      ctx.commit, ctx.surface.startsWith("embed:") ? ctx.surface : null, ctx.owner);
   };
   const commands = guardedCommands(current, {
     ...Object.fromEntries(Object.entries(inlineCommands).map(([id, kind]) => [id, () => {

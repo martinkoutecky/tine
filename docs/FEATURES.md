@@ -230,11 +230,14 @@ coordinates, no lock-in.
   rows and grandchildren as cells (sibling order = column). Ragged rows render
   holes; empty cells are just empty bullets. Optional header row
   (`tine.header:: true`).
-- **Cells are real blocks** — click selects a cell; double-click, `Enter`, or
-  `F2` edits it like any block (links, refs, tags all live). Nested children
-  render inside the cell, and a cell can itself be a grid (recursion).
-- **Full spreadsheet keyboard** — 2-D arrow navigation with a
-  selection↔edit ladder (`Enter`/`Esc`), `Tab` cell-walk, type-to-overtype,
+- **Cells are real blocks** — single-click or keyboard entry edits a grid.
+  Arrows cross text edges into neighbouring cells; Right at a row's end continues
+  on the next row. Enter creates a cell's first child; its child outline supports
+  ordinary split, indent, outdent, move and paste within that cell. Tab on the
+  cell's own text edits the next cell. Nested children render inside the cell,
+  and a cell can itself be a grid (recursion).
+- **Cell Selection** — `Esc` keeps the edit and selects its cell; `Enter`, `F2`
+  or typing edits again. Selection retains 2-D arrows through seams, `Tab` cell-walk, type-to-overtype,
   `Shift+arrow` range select (plus row/column/grid selection),
   `Ctrl+arrow` content moves, `Ctrl+D`/`Ctrl+R` fill down/right.
 - **Seams** — the boundary between rows/columns is a first-class selection
