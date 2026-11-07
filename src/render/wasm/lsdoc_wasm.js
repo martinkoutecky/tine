@@ -754,6 +754,39 @@ function __tine_raw_page_identity_key(name) {
 }
 
 /**
+ * The same page-property edit used by the native owner and the page form.
+ * @param {string} parts_json
+ * @param {boolean} is_org
+ * @param {string} key
+ * @param {string | null} [value]
+ * @returns {string}
+ */
+function __tine_raw_page_parts_with_property(parts_json, is_org, key, value) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(parts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(value) ? 0 : passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.page_parts_with_property(ptr0, len0, is_org, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * The prose of a page preamble after its page header, as UTF-8 byte
  * offsets `[start, end]`, or `null` (I-12: the one answerer,
  * `page_properties::preamble_content_range`, which the store's reference answer
@@ -1684,6 +1717,7 @@ export const page_alias_spellings = __tineGuard("page_alias_spellings", __tine_r
 export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
+export const page_parts_with_property = __tineGuard("page_parts_with_property", __tine_raw_page_parts_with_property);
 export const page_preamble_content_json = __tineGuard("page_preamble_content_json", __tine_raw_page_preamble_content_json);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
 export const parse_block_bundle_json = __tineGuard("parse_block_bundle_json", __tine_raw_parse_block_bundle_json);

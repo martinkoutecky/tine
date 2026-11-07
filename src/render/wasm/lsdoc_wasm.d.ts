@@ -197,6 +197,11 @@ export function page_header_json(raw: string): string;
 export function page_identity_key(name: string): string;
 
 /**
+ * The same page-property edit used by the native owner and the page form.
+ */
+export function page_parts_with_property(parts_json: string, is_org: boolean, key: string, value?: string | null): string;
+
+/**
  * The prose of a page preamble after its page header, as UTF-8 byte
  * offsets `[start, end]`, or `null` (I-12: the one answerer,
  * `page_properties::preamble_content_range`, which the store's reference answer
@@ -397,6 +402,7 @@ export interface InitOutput {
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
+    readonly page_parts_with_property: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly page_preamble_content_json: (a: number, b: number, c: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];

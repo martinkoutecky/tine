@@ -361,6 +361,7 @@ ui-failure-logbook = 无法读取或更新时间跟踪记录。
 ui-failure-marker-read = 无法读取块中的任务标记，将以纯文本显示。
 
 ui-failure-page-header-read = 无法读取页面属性头部，将以普通文本显示。
+ui-failure-page-property-edit = 无法修改此页面属性，页面未作更改。
 
 ui-failure-export-preview = 无法为导出预览准备块，将显示未解析的内容。
 

@@ -9,7 +9,7 @@ import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
-import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json } from "../render/wasm/lsdoc_wasm.js";
+import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -475,40 +475,14 @@ export function pageHeaderKeys(raw: string): string[] {
  *  would otherwise detach the rest of the header. Returns the new texts, same
  *  length as `parts`. Cost O(total text). */
 export function pagePartsWithProperty(parts: string[], format: PropFormat, key: string, value: string | null): string[] {
-  const v = value?.trim() || null;
-  const lower = key.toLowerCase();
-  const hits = parts.flatMap((text, part) =>
-    pagePropertyEntries(text, format).filter((e) => e.key.toLowerCase() === lower).map((e) => ({ part, line: e.line, key: e.key })));
-  const lines = parts.map((text) => (text === "" ? [] : text.split("\n")));
-  const dropped = parts.map(() => new Set<number>());
-  hits.forEach(({ part, line, key: spelling }, i) => {
-    if (i > 0 || !v) {
-      dropped[part].add(line);
-      return;
-    }
-    const old = lines[part][line];
-    const indent = old.slice(0, old.length - old.trimStart().length);
-    lines[part][line] = format === "org"
-      ? `${indent}${old.trimStart().startsWith("#+") ? `#+${lower}: ` : `:${lower}: `}${v}`
-      : `${spelling}:: ${v}`;
-  });
-  if (!hits.length && v) lines[0].unshift(format === "org" ? `#+${lower}: ${v}` : `${key}:: ${v}`);
-  return lines.map((all, part) => {
-    if (!dropped[part].size) return all.join("\n");
-    const entryLines = new Set(pagePropertyEntries(parts[part], format).map((e) => e.line));
-    let kept = all.map((line, i) => ({ line, i })).filter(({ i }) => !dropped[part].has(i));
-    if (format === "org") {
-      // A drawer is "emptied" only when one of OUR removals lay inside it.
-      const emptied = (open?: { line: string; i: number }, end?: { line: string; i: number }) =>
-        !!open && !!end && /^:PROPERTIES:$/i.test(open.line.trim()) && /^:END:$/i.test(end.line.trim())
-        && [...dropped[part]].some((d) => open.i < d && d < end.i);
-      kept = kept.filter((_, k) => !emptied(kept[k], kept[k + 1]) && !emptied(kept[k - 1], kept[k]));
-    } else if (dropped[part].has(0)) {
-      const first = kept.findIndex(({ line }) => line.trim() !== "");
-      if (first > 0 && entryLines.has(kept[first].i)) kept = kept.slice(first);
-    }
-    return kept.map(({ line }) => line).join("\n");
-  });
+  try {
+    return JSON.parse(page_parts_with_property(JSON.stringify(parts), format === "org", key, value ?? undefined));
+  } catch (error) {
+    // The shared Rust edit refuses an invalid key/value or an unparseable header (and a parser
+    // trap lands here too): leave every part unchanged, so the caller writes nothing, and say so (I-9).
+    reportUiFailure("page-property-edit", error);
+    return parts;
+  }
 }
 
 /** The page-level properties we surface in the page-properties panel, with a

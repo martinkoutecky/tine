@@ -31,6 +31,7 @@ mod lifecycle;
 #[path = "owner_tests/proof.rs"]
 mod proof;
 
+mod page_prop_tests;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;
 
@@ -705,6 +706,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("mod", include_str!("mod.rs")),
         ("namespace", include_str!("namespace.rs")),
         ("pages", include_str!("pages.rs")),
+        ("properties", include_str!("properties.rs")),
         ("seen", include_str!("seen.rs")),
         ("seen_tests", include_str!("seen_tests.rs")),
         ("serve", include_str!("serve.rs")),
@@ -730,7 +732,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 33, "scan every owner/*.rs file");
+    assert_eq!(files, 34, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
