@@ -109,6 +109,14 @@ mod render_facets;
 #[path = "../../tine-core/src/page_header.rs"]
 mod page_header;
 
+/// The same page-property edit used by the native owner and the page form.
+#[wasm_bindgen]
+pub fn page_parts_with_property(parts_json: &str, is_org: bool, key: &str, value: Option<String>) -> Result<String, JsValue> {
+    let parts: Vec<String> = serde_json::from_str(parts_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let next = tine_outline::page_property_edit::set(&parts, is_org, key, value.as_deref()).map_err(|e| JsValue::from_str(&e))?;
+    Ok(serde_json::to_string(&next).unwrap())
+}
+
 /// The alias spellings a page declares (census Q7): the store's own answer,
 /// `tine_core::page_header::page_alias_spellings` (the pre-block, else a
 /// properties-only first root; keys `alias`/`aliases`; quoted values skipped;
