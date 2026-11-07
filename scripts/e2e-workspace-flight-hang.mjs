@@ -8,6 +8,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { APP_ID } from "./lib/app-identity.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
@@ -70,7 +71,7 @@ function stopSession() {
   driver = undefined;
   browser = undefined;
 }
-const historyFile = path.join(run, "data/page.tine.TineBeta/diagnostics/history.jsonl");
+const historyFile = path.join(run, `data/${APP_ID}/diagnostics/history.jsonl`);
 const watchdog = setTimeout(() => {
   result.status = "failed"; result.classification = "ambiguous"; result.observed = "Hang journey exceeded 150 s";
   result.logExcerpt = failureLogExcerpt();
