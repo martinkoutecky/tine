@@ -20,7 +20,10 @@ fn config_reads_only_direct_entries_at_each_map_level() {
     assert_eq!(config.favorites, ["Real"]);
     assert_eq!(config.pages_dir, "real-pages");
     assert_eq!(config.preferred_format, tine_core::model::Format::Md);
-    assert_eq!(config.shortcuts["cmd"], ShortcutBinding::Single("real".into()));
+    assert_eq!(
+        config.shortcuts["cmd"],
+        ShortcutBinding::Single("real".into())
+    );
     assert_eq!(config.macros["x"], "real");
     assert_eq!(config.hidden, ["real"]);
     assert_eq!(config.start_of_week, 3);
