@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.resolve(process.env.MW_OUT || path.join(root, "test-results/hosted-multiwindow"));
@@ -22,6 +23,15 @@ fs.mkdirSync(path.join(graph, "journals"), { recursive: true });
 const PAGE = path.join(graph, "pages", "Alpha.md");
 fs.writeFileSync(PAGE, "- alpha one\n- alpha two\n- alpha three\n");
 const env = { ...process.env, TINE_GRAPH: graph, TINE_GPU: "0" };
+const editorMode = process.platform === "darwin" ? process.env.MW_EDITOR || "" : "";
+if (editorMode && !["cm6", "textarea"].includes(editorMode)) throw new Error(`Unknown MW_EDITOR ${editorMode}`);
+if (editorMode) {
+  // The focused macOS run uses the existing System Events driver and a scratch
+  // home. It proves typing/save/window lifecycle, not the WebDriver journey's
+  // pointer, clipboard or synthetic composition cases.
+  env.HOME = path.join(out, "home");
+  fs.mkdirSync(env.HOME, { recursive: true });
+}
 if (process.platform === "linux") {
   for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
   Object.assign(env, { XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state") });
@@ -277,6 +287,64 @@ await check("launch", async () => {
   return `main window "${main.title}"`;
 });
 
+if (editorMode) await check("editor-preference", async () => {
+  activate(main);
+  chord(",");
+  const tell = body => osa(`tell application "System Events" to tell ${MAC_PROC}\n${body}\nend tell`);
+  await until(() => tell(`repeat with e in (entire contents of front window)
+    try
+      if description of e is "Search settings" then
+        set focused of e to true
+        return "focused"
+      end if
+    end try
+  end repeat
+  return "missing"`) === "focused", 15_000, "Settings search was not accessible");
+  typeText("CodeMirror");
+  await until(() => tell(`repeat with e in (entire contents of front window)
+    try
+      if role of e is "AXButton" and name of e contains "Experimental: CodeMirror editor" then
+        perform action "AXPress" of e
+        return "opened"
+      end if
+    end try
+  end repeat
+  return "missing"`) === "opened", 15_000, "CodeMirror Settings search result was not accessible");
+  // WKWebView exposes role=switch as AXCheckBox. Locate the switch beside the
+  // visible setting label, using AX positions only to choose its row. The
+  // assertion is its checked value, never a particular coordinate.
+  const switchScript = (change = false) => `set labelY to missing value
+  set elements to entire contents of front window
+  repeat with e in elements
+    try
+      if role of e is "AXStaticText" and value of e is "Experimental: CodeMirror editor" then set labelY to item 2 of position of e
+    end try
+  end repeat
+  if labelY is missing value then return "missing label"
+  set nearest to missing value
+  set best to 1000000
+  repeat with e in elements
+    try
+      if role of e is "AXCheckBox" or role of e is "AXSwitch" then
+        set distance to (item 2 of position of e) - labelY
+        if distance < 0 then set distance to -distance
+        if distance < best then
+          set best to distance
+          set nearest to contents of e
+        end if
+      end if
+    end try
+  end repeat
+  if nearest is missing value then return "missing switch"
+  ${change ? `if (value of nearest as integer) is not ${editorMode === "cm6" ? 1 : 0} then perform action "AXPress" of nearest` : ""}
+  return value of nearest as text`;
+  tell(switchScript(true));
+  await until(() => tell(switchScript()) === (editorMode === "cm6" ? "1" : "0"), 10_000, "CodeMirror preference did not reach the requested checked state");
+  screenshot(`editor-${editorMode}`);
+  press("escape");
+  return `Selected ${editorMode} through ordinary Settings; following native window/edit/save checks use this preference`;
+});
+
 await check("open", async () => {
   if (!main) throw new Error("no main window");
   const before = new Set(windows().map((w) => w.id));
@@ -305,7 +373,11 @@ await check("open", async () => {
 
 // Each check asserts the whole page file, so text landing in the wrong block
 // (or a key that split one) fails instead of passing on a substring.
-const expectPage = (lines, what, ms = 15_000) => until(() => disk() === lines.map((l) => `- ${l}\n`).join(""), ms, `${what}: ${JSON.stringify(disk())}`);
+const expectPage = async (lines, what, ms = 15_000) => {
+  const bytes = lines.map((line) => `- ${line}\n`).join("");
+  try { return await waitForFileText(PAGE, text => text === bytes, { timeoutMs: ms }); }
+  catch (error) { throw new Error(`${what}: ${error.message}`); }
+};
 
 await check("type-save", async () => {
   if (!popup) throw new Error("no new window");
@@ -374,6 +446,6 @@ await check("close", async () => {
 if (alive()) child.kill();
 await sleep(500);
 fs.writeFileSync(path.join(out, "page-final.md"), disk());
-fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ platform: process.platform, results }, null, 2));
+fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ platform: process.platform, editorMode, results }, null, 2));
 console.log(JSON.stringify(results, null, 2));
 if (Object.values(results).some((r) => r.status !== "pass")) process.exitCode = 1;

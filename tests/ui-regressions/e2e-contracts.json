@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-editor-native.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Editing and clipboard transfers reach the exact expected Markdown file bytes, preserve the copied source and nested children, remove only the cut subtrees, and keep the reference target unchanged.", "blocking": true, "authority": "CM6 rollout acceptance D-20261025-CS / ET2 (#767), existing guarded save and outline clipboard semantics" },
+        { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": true }
+      ],
+      "acceptableVariations": ["Native clipboard plumbing, editor DOM, selection painting, completion layout and save latency may vary while the semantic outcomes and persisted bytes hold."],
+      "nonRequirements": ["A real OS IME candidate window, candidate selection/cancellation, dead keys, platform IME reconversion or mobile keyboards: these require human/device checks.", "macOS native UI certification: the repository currently has no macOS WebDriver app runner.", "Exact pixels, selection color, caret blink, timing or editor DOM structure."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-search-properties.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Typing a user property value into Ctrl+K shows highlighted property evidence; Enter reveals the owning block or page header in Markdown and Org, without changing graph files.","blocking":false,"authority":"GH #870; D-20261105-SP"}],
       "acceptableVariations": ["Snippet wrapping, highlight geometry, result timing and page layout may vary."],
