@@ -474,7 +474,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                         author there, then place the optional count beside it
                         so referenced blocks keep the same author position (#883). */}
                     <Show when={showsAuthor() && !bulletless()}>
-                      <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
+                      <AuthorChip author={author()} menuOf={props.id} />
                     </Show>
                     <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
                   </>}
@@ -482,7 +482,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               </QuoteHighlightProvider>
             }
           >
-            <Editor id={props.id} propertySession={propertySession} />
+            <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
           </Show>
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />

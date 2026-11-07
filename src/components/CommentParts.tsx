@@ -82,10 +82,10 @@ export function CommentHeader(props: { id: string; author: string | null }): JSX
  * it starts the block drag (the same gesture contract as the bullet), and its
  * long press opens the block menu (contextMenuPolicy). Right-click anywhere on
  * the row already opens the menu, where "Zoom into block" lives. */
-export function AuthorChip(props: { author: string | null; handleOf?: string }): JSX.Element {
+export function AuthorChip(props: { author: string | null; handleOf?: string; menuOf?: string }): JSX.Element {
   const onMouseDown = (e: MouseEvent) => {
     const id = props.handleOf;
-    if (id === undefined) return;
+    if (id === undefined) { if (props.menuOf) { e.stopPropagation(); if (e.button === 0) e.preventDefault(); } return; }
     // Not an edit gesture: keep the row's caret placement out of it.
     e.stopPropagation();
     internalLinkMouseDown(e);
@@ -98,11 +98,16 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
       classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined, ...tintClasses(props.author) }}
       title={props.author !== null ? t("comment-written-by", { author: props.author }) : t("comment-written-by-you")}
       onMouseDown={onMouseDown}
+      role={props.menuOf ? "button" : undefined}
+      tabIndex={props.menuOf ? 0 : undefined}
+      onKeyDown={e => { if (props.menuOf && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openContextMenu(r.left, r.bottom, props.menuOf); } }}
+      onClick={e => { if (props.menuOf) { e.stopPropagation(); openContextMenu(e.clientX, e.clientY, props.menuOf); } }}
       onContextMenu={e => {
-        if (props.handleOf === undefined || !shouldOpenBlockContextMenu(e.target)) return;
+        const id = props.menuOf ?? props.handleOf;
+        if (id === undefined || (!props.menuOf && !shouldOpenBlockContextMenu(e.target))) return;
         e.preventDefault();
         e.stopPropagation();
-        openContextMenu(e.clientX, e.clientY, props.handleOf);
+        openContextMenu(e.clientX, e.clientY, id);
       }}
     >
       {props.author ?? t("comment-author-you")}

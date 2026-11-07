@@ -299,6 +299,7 @@ export interface MessageArgs {
   "comment-on-whole-block": {};
   "comment-quote-ambiguous": {};
   "comment-quote-changed": {};
+  "comment-remove-author": {};
   "comment-reply": {};
   "comment-reply-placeholder": {};
   "comment-select-first": {};

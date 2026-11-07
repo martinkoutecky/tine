@@ -143,13 +143,13 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       }
     } finally { dispose(); }
   });
-  it.each(["md", "org"] as const)("keeps ordinary %s author and quote-suffix properties in the edit buffer", (format) => {
+  it.each(["md", "org"] as const)("hides ordinary %s author but keeps quote-suffix editable", (format) => {
     const raw = format === "md"
       ? "The obstacle is the way.\ntine.author:: Marcus Aurelius\ntine.quote-suffix:: after"
       : "The obstacle is the way.\n:PROPERTIES:\n:tine.author: Marcus Aurelius\n:tine.quote-suffix: after\n:END:";
     const { root, dispose } = mount([block("p", "Literature", [block("ordinary", raw)])], "ordinary", format);
     try {
-      expect(editor(root).value()).toBe(raw);
+      expect(editor(root).value()).toBe(raw.replace(format === "md" ? "\ntine.author:: Marcus Aurelius" : "\n:tine.author: Marcus Aurelius", ""));
     } finally { dispose(); }
   });
 

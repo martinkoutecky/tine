@@ -73,6 +73,17 @@
 .block-content > .author-chip {
   margin-top: calc((var(--ls-block-line-height) - 16px) / 2);
 }
+.authored-editor:has(> .author-chip) {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+}
+.authored-editor > .author-chip {
+  flex: none;
+  margin-top: calc(var(--ls-block-content-pad-y) + (var(--ls-block-line-height) - 16px) / 2);
+  cursor: pointer;
+}
+.authored-editor > .editor-wrap { flex: 1; min-width: 0; }
 
 /* Someone else's comment or reply sits on a background of its own, one tint per
    author name (authorTint in src/commentIdentity.ts), and its chip takes the same
