@@ -40,13 +40,13 @@ const source = String.raw`
   render(() => <MobileKeyboardToolbar />, document.querySelector("#dock"));
   main.scrollTop = 650;
   window.fixture = {
-    focus(tall = false) {
-      const text = tall ? "Edited first line\n".repeat(30) : "Edited heading";
+    focus(tall = false, twoLines = false) {
+      const text = tall ? "Edited first line\n".repeat(30) : twoLines ? "Edited heading\nSecond parent line" : "Edited heading";
       if (CM6) {
         cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: text }, selection: { anchor: 3 } });
         cmView.focus();
       } else {
-        editor.style.height = tall ? "720px" : "40px";
+        editor.style.height = tall ? "720px" : twoLines ? "56px" : "32px";
         editor.value = text;
         editor.focus({ preventScroll: true });
         editor.setSelectionRange(3, 3);
@@ -77,8 +77,10 @@ const source = String.raw`
       // (4px padding, 24px line height, both scaled by the root's CSS zoom).
       const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
       const lineTop = CM6 ? editor.querySelector(".cm-line").getBoundingClientRect().top : editor.getBoundingClientRect().top + (4 - editor.scrollTop) * zoom;
+      const bodyLine = parseFloat(getComputedStyle(editor).getPropertyValue("--ls-block-line-height"));
+      const child = document.querySelector(".first-child").getBoundingClientRect();
       if (CM6) row.visibleTop = Math.max(mainBox.top, pinsBottom) + 8 * zoom0;
-      return { ...row, zoom, lineTop, lineBottom: lineTop + 24 * zoom, scrollerTop: view.top, scrollerBottom: view.bottom, pinsBottom, toolbarTop: dock.getBoundingClientRect().top, scrollTop: main.scrollTop };
+      return { ...row, zoom, bodyLine, lineTop, lineBottom: lineTop + 24 * zoom, editorHeight: editor.getBoundingClientRect().height / zoom, childTop: child.top, childBottom: child.bottom, scrollerTop: view.top, scrollerBottom: view.bottom, pinsBottom, toolbarTop: dock.getBoundingClientRect().top, scrollTop: main.scrollTop };
     },
   };
 `;
@@ -94,8 +96,9 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width, 
   #cm6-host .cm-editor { outline: none; }
   #cm6-host .cm-content { padding: 4px; font: 18px/24px sans-serif; }
   #cm6-host .cm-line { padding: 0; }
+  .first-child { padding-left: 24px; line-height: var(--ls-block-line-height); }
 </style>
-<main class="main-content"><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 0"><button type="button">Parent A</button></div><div class="block-main">Parent A</div><div class="spacer-before"></div><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 30px"><button type="button">Parent B</button></div><div class="block-main">Parent B</div><div class="spacer-before"></div><div class="ls-block">${cm6 ? '<div id="cm6-host"></div>' : '<textarea class="block-editor"></textarea>'}</div><div class="spacer-after"></div></div></div></main>
+<main class="main-content"><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 0"><button type="button">Parent A</button></div><div class="block-main">Parent A</div><div class="spacer-before"></div><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 30px"><button type="button">Parent B</button></div><div class="block-main">Parent B</div><div class="spacer-before"></div><div class="ls-block">${cm6 ? '<div id="cm6-host"></div>' : '<textarea class="block-editor"></textarea>'}<div class="first-child">First child stays visible</div></div><div class="spacer-after"></div></div></div></main>
 <div id="dock"></div><script type="module" src="/__caret_settle.tsx"></script>`;
 const server = await createServer({
   root,
@@ -140,11 +143,13 @@ function visible(g) {
   assert(g.lineTop >= g.pinsBottom - 1 && g.lineBottom <= Math.min(g.scrollerBottom, g.toolbarTop) + 1,
     "Edited line must be visible below the pinned parents and above the keyboard toolbar: " + JSON.stringify(g));
   // GH #783 comment 14: leave three body lines below the caret for children/following blocks.
+  assert(Number.isFinite(g.bodyLine) && g.bodyLine > 0, "Body line-height token must resolve on either editor: " + JSON.stringify(g));
   if (g.editorHeight < 100) assert(g.childTop >= g.lineBottom && g.childBottom < g.toolbarTop,
     "A short parent's first child must remain visible above the keyboard toolbar: " + JSON.stringify(g));
   // At large zoom the pins can leave less than three lines; the caret must stay below them.
-  const target = Math.max(g.visibleTop + g.lineBottom - g.lineTop, g.toolbarTop - 3 * g.bodyLine * g.zoom);
-  assert(Math.abs(g.lineBottom - target) <= 2,
+  // CM6 supplies the glyph box; the textarea supplies its full line box.
+  const target = Math.max(g.visibleTop + g.bottom - g.top, g.toolbarTop - 3 * g.bodyLine * g.zoom);
+  assert(Math.abs(g.bottom - target) <= 2,
     "Edited line brought back must leave three zoomed body lines, bounded by the pinned parents: " + JSON.stringify(g));
 }
 try {
@@ -195,7 +200,7 @@ try {
     } finally { await context.close(); }
   }
 } finally {
-  fs.writeFileSync(path.join(out, "results.json"), JSON.stringify({ reference: reference || "worktree", results, failures }, null, 2) + "\n");
+  fs.writeFileSync(path.join(out, "results.json"), JSON.stringify({ reference: reference || "worktree", engine: cm6 ? "cm6" : "textarea", results, failures }, null, 2) + "\n");
   await browser.close();
   await server.close();
 }
