@@ -35,7 +35,6 @@ mod experiment_config_seed;
 mod file_lock;
 mod flight;
 mod flight_store;
-mod main_thread_liveness;
 mod git_settings;
 mod git_setup;
 mod graph;
@@ -56,6 +55,7 @@ mod linux_inline_preedit;
 mod linux_window_identity;
 #[cfg(test)]
 mod load_wait_guard_tests;
+mod main_thread_liveness;
 mod media_protocol;
 mod migrate_identifier;
 #[cfg(any(target_os = "android", target_os = "ios"))]
