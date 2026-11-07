@@ -516,6 +516,18 @@ fn guide_explains_missing_links_and_old_web_engines() {
 }
 
 #[test]
+fn guide_explains_phone_drawer_motion() {
+    let pages = bundled_guide_pages();
+    for title in ["Reference/Platforms and mobile", "Start/Where things are"] {
+        let page = pages.iter().find(|page| page.title == title).unwrap();
+        assert!(page.markdown.contains("slide in and out"));
+        assert!(page.markdown.contains("Reduce Motion"));
+        assert!(page.markdown.contains("instant"));
+        assert!(page.markdown.contains("immediately"));
+    }
+}
+
+#[test]
 fn guide_explains_query_sort_search_retry_and_print_refusal() {
     let _integration_guard = crate::integration_lock();
     let pages = bundled_guide_pages();

@@ -4,6 +4,7 @@ icon:: 📱
   - "Does this work on my phone?" hides two different questions: what changes because a **window is narrow**, and what changes because Tine is **running as the Android app** instead of a desktop one. This page keeps them apart and maps what current releases ship on each side.
 - ## Question 1 — is the window narrow?
   - Below a 640 px window width — on any device, including a desktop window you shrank yourself — the left and right sidebars stop squeezing the page and become **drawers over it**. Dismiss one by tapping the shaded outside edge, using its close control, pressing **Esc**, or pressing Android **Back**.
+  - Both drawers slide in and out from their own edge while the outside shade fades. A horizontal swipe toward a drawer's edge follows your finger; release early to bring it back. Your system's **Reduce Motion** setting makes opening and closing instant. Choosing a page opens it immediately, while the drawer slides away.
   - At 640 px and wider — including tablets — both sidebars are persistent panes that can stay open together and keep their resize controls.
   - The boundary is width, nothing else: it follows the window, not the device, so the same desktop shows both faces as you resize it.
 - ## Question 2 — which app is running?

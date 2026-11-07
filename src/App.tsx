@@ -61,6 +61,7 @@ import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
 import { OwnerProtectionNotice } from "./components/OwnerProtectionNotice";
 import { GitSyncNotice } from "./components/GitSyncNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
+import { dragOpeningMobileDrawer, settleMobileDrawer } from "./mobileDrawerMotion";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
@@ -692,6 +693,8 @@ export function App(): JSX.Element {
         // The edge swipe never closes the app: iOS has no root rung.
         back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
         openDrawer: () => setLeftSidebarOpen(true),
+        drawerProgress: dragOpeningMobileDrawer,
+        drawerSettle: () => settleMobileDrawer("left"),
         surface: () => mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
       });
     })();
@@ -1171,8 +1174,8 @@ export function App(): JSX.Element {
       <Show when={graphTransitioning()}>
         <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">{t("app-finishing-graph-operation")}</DrawerBackground>
       </Show>
-      <Show when={sidebarOpen()}>
         <MobileDrawerPanel
+          open={sidebarOpen()}
           side="left"
           label={t("app-prose-navigation-sidebar")}
           class="left-sidebar"
@@ -1209,7 +1212,6 @@ export function App(): JSX.Element {
             }}
           />
         </MobileDrawerPanel>
-      </Show>
       <DrawerBackground class="main-container" blockedBy="left">
         <FailureBoundary region="Graph recovery"><RootRecoveryNotice /></FailureBoundary>
         {/* In focus mode the topbar is hidden; this thin strip at the very top
