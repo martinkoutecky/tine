@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+- CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Wide Markdown and Org tables use free pane space, then wrap cell text to fit; long URLs wrap and unbreakable content scrolls inside the table (GH #802).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
@@ -77,6 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
 - **Settings → Editor → Auto-embed pasted video links** can be turned off to keep YouTube, Vimeo, Loom and Bilibili URLs as plain links in both editors, including Quick Capture. Automatic embedding stays on by default; no video titles are fetched on paste (#861).
 - **Toggle embed breadcrumbs** in the command palette switches the saved Block embed breadcrumbs setting. Assign a shortcut under Settings → Keyboard shortcuts; it has no default key (GH #860).
 - The prompt before opening another app's link offers **Always open <scheme> links** (#503). The choice applies to that exact scheme on this device, across graphs. **Settings → Editor → Remembered app links** lets you forget each choice and ask again.

@@ -2,18 +2,24 @@
 .el .ds Aq '
 .TH tine-prop-remove 1  "remove " 
 .SH NAME
-tine\-prop\-remove \- Remove KEY from the block
+tine\-prop\-remove \- Remove KEY from a block, page or journal
 .SH SYNOPSIS
-\fBtine prop remove\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fIKEY\fR> 
+\fBtine prop remove\fR [\fB\-\-page\fR] [\fB\-\-debug\fR] [\fB\-\-journal\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK_OR_KEY\fR> [\fIKEY\fR] 
 .SH DESCRIPTION
-Remove KEY from the block
+Remove KEY from a block, page or journal
 .SH OPTIONS
 .TP
-\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
-The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+\fB\-\-page\fR \fI<PAGE>\fR
+Edit properties of an existing PAGE
 .TP
 \fB\-\-debug\fR
 Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-journal\fR[=\fI<DATE>\fR]
+Edit an existing journal: today, or \-\-journal=DATE
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
 .TP
 \fB\-\-json\fR
 Print the typed result (schema tine.cli/1) as JSON
@@ -36,8 +42,8 @@ May also be specified with the \fBTINE_AUTHOR\fR environment variable.
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fIBLOCK\fR>
+<\fIBLOCK_OR_KEY\fR>
 
 .TP
-<\fIKEY\fR>
+[\fIKEY\fR]
 

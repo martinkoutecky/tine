@@ -30,6 +30,7 @@ pub(crate) use refs::page_identity;
 pub mod page_properties;
 pub mod pdf;
 pub mod projection;
+pub use tine_outline::page_property_edit;
 pub use tine_outline::property_line;
 pub use tine_outline::property_refs;
 pub use tine_outline::tine_keys;
