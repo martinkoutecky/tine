@@ -962,6 +962,48 @@ pub fn trash_sync_conflict(
     })
 }
 
+/// Trash the sync copies whose bytes equal their page's (GH #875). Such a
+/// copy holds nothing the page lacks, yet the queue would keep showing it as
+/// "nothing to decide": Syncthing can deliver several identical copies of one
+/// page, and resolving one leaves the others matching the page. Candidates
+/// are the queue's copies with no decidable row; each is compared byte for
+/// byte and trashed recoverably over the revision it was read at, so a copy
+/// that changed since, or that differs in any byte, is kept. A copy that is
+/// already gone is skipped. Returns the copies trashed, after re-deriving
+/// their queue entries. Cost O(candidate copy + page bytes).
+pub fn trash_identical_sync_copies(
+    store: &Store,
+    queue: &ConflictQueue,
+) -> io::Result<Vec<String>> {
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let mut trashed = Vec::new();
+    for (copy, winner) in queue.undecided_copies() {
+        let (Ok(conf), Ok(win)) = (id(store, &copy), id(store, &winner)) else {
+            continue;
+        };
+        // The pairing is path arithmetic, re-proved here (C3 L01).
+        if sync_copy_winner(conf.as_str()).as_deref() != Some(win.as_str()) {
+            continue;
+        }
+        let read = |file: &FileId| match store.read(file, max) {
+            Ok(read) => Ok(Some(read)),
+            Err(tine_store::StoreError::NotFound) => Ok(None),
+            Err(error) => Err(crate::store_error(error)),
+        };
+        let (Some((theirs, rev)), Some((mine, _))) = (read(&conf)?, read(&win)?) else {
+            continue;
+        };
+        if theirs == mine && trash_copy(store, &conf, rev)?.is_some() {
+            trashed.push(copy);
+        }
+    }
+    if !trashed.is_empty() {
+        let files: Vec<FileId> = trashed.iter().cloned().map(FileId::from).collect();
+        queue.refresh_files(store, &files)?;
+    }
+    Ok(trashed)
+}
+
 /// Two-way diff of a duplicate journal day's canonical file against one stray
 /// (master 9dc54e4a7). The two files have no common ancestor (two files that
 /// came to claim one day, not one document that diverged), so the diff is
