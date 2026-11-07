@@ -1458,41 +1458,6 @@ fn gh901_a_real_deletion_is_still_suggested() {
 }
 
 #[test]
-fn gh901_an_equal_body_parent_keeps_one_section_and_its_child_decisions() {
-    // Each device edited a different child. The parent's own text is the same
-    // on both sides; "both" on it used to copy both whole sections, ignoring
-    // the child rows' decisions and suggestions shown below it.
-    let base = parse("- Projects\n  - Prepare a detailed weekly report\n  - Publish the status notes every Monday\n");
-    let mine = parse("- Projects\n  - Prepare a detailed monthly report\n  - Publish the status notes every Monday\n");
-    let theirs = parse("- Projects\n  - Prepare a detailed weekly report\n  - Publish the status notes every Friday\n");
-    let d = diff3_docs(&base, &mine, &theirs);
-    let mut dec = HashMap::new();
-    opening_decisions(&d.rows, &mut dec);
-    assert_eq!(dec.get(&d.rows[0].id).map(String::as_str), Some("both"));
-    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
-    assert_eq!(
-        all_raws(&merged),
-        vec![
-            "Projects",
-            "Prepare a detailed monthly report",
-            "Publish the status notes every Friday"
-        ]
-    );
-    // Without a base nothing is suggested: one section, both versions of each child.
-    let two_way = diff_docs(&mine, &theirs);
-    let merged = merge_blocks(&mine.roots, &theirs.roots, &HashMap::new()).unwrap();
-    assert_eq!(two_way.rows.len(), 1);
-    assert_eq!(merged.len(), 1, "{:?}", all_raws(&merged));
-    assert_eq!(
-        all_raws(&merged)
-            .iter()
-            .filter(|l| *l == "Projects")
-            .count(),
-        1
-    );
-}
-
-#[test]
 fn gh901_both_on_a_parent_whose_text_differs_still_keeps_both_sections() {
     let mine = parse("- Projects for this week\n  - one\n");
     let theirs = parse("- Projects for this wek\n  - two\n");
@@ -1501,4 +1466,43 @@ fn gh901_both_on_a_parent_whose_text_differs_still_keeps_both_sections() {
     dec.insert(d.rows[0].id.clone(), "both".to_owned());
     let merged = merge_blocks(&mine.roots, &theirs.roots, &dec).unwrap();
     assert_eq!(merged.len(), 2, "{:?}", all_raws(&merged));
+}
+
+#[test]
+fn gh901_a_block_both_sides_still_have_survives_the_opening_choices() {
+    // Review fixture: mine's "Beta task" pairs with theirs' "Delta task" as
+    // Modified, so mine's own Delta is an Added row suggested away. Both on
+    // the equal-body parent must not compose that into a loss of Delta.
+    let base = parse("- Inbox\n  - Delta task\n");
+    let mine = parse("- Inbox\n  - Beta task\n  - Alpha task\n  - Delta task\n");
+    let theirs = parse("- Inbox\n  - Delta task\n  - Alpha task\n");
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    let raws = all_raws(&merged);
+    assert!(raws.iter().any(|r| r == "Delta task"), "{raws:?}");
+    assert!(raws.iter().any(|r| r == "Beta task"), "{raws:?}");
+}
+
+#[test]
+fn gh901_a_moved_block_keeps_its_id_under_the_opening_choices() {
+    let id = "11111111-1111-4111-8111-111111111111";
+    let base = parse(&format!(
+        "- Projects\n  - Task to move\n    id:: {id}\n  - Stable anchor\n  - Omega anchor\n"
+    ));
+    let mine = parse(&format!("- Projects\n  - Task to move\n    id:: {id}\n  - Stable anchor\n  - Omega anchor\n- Local capture\n"));
+    let theirs = parse(&format!(
+        "- Projects\n  - Stable anchor\n  - Omega anchor\n  - Task to move\n    id:: {id}\n"
+    ));
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    fn has_id(blocks: &[DocBlock], id: &str) -> bool {
+        blocks
+            .iter()
+            .any(|b| b.raw.contains(id) || has_id(&b.children, id))
+    }
+    assert!(has_id(&merged, id), "{:?}", all_raws(&merged));
 }

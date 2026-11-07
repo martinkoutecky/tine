@@ -917,9 +917,7 @@ const NOT_MERGEABLE: &str = "the two edits no longer merge cleanly";
 ///   - Unchanged  → the block, as-is.
 ///   - Modified   → mine/theirs body with recursively-merged children; `both`
 ///                  keeps both whole subtrees (the conflict copy's `id::`s
-///                  stripped so they don't collide with the winner's), except
-///                  when the two bodies are the same text: then it is one body
-///                  with recursively-merged children (GH #901).
+///                  stripped so they don't collide with the winner's).
 ///   - Added      → kept unless explicitly dropped (`theirs`).
 ///   - Removed    → pulled in only on `theirs`/`both`.
 /// `merged` is the fourth Modified outcome and needs a base — see
@@ -1059,13 +1057,6 @@ fn nodes_to_merged(nodes: &[Node], ctx: &MergeCtx) -> Result<Vec<DocBlock>, Merg
                 match decision_for(decisions, id) {
                     Decision::Mine => out.push(rebuild(mine, nodes_to_merged(children, ctx)?)),
                     Decision::Theirs => out.push(rebuild(theirs, nodes_to_merged(children, ctx)?)),
-                    // GH #901: the two bodies are the same text, so "both" has no
-                    // second version of THIS block to keep; only its children
-                    // differ. Copying both whole subtrees duplicated the section
-                    // and ignored every child decision shown below it.
-                    Decision::Both if mine.raw == theirs.raw => {
-                        out.push(rebuild(mine, nodes_to_merged(children, ctx)?))
-                    }
                     Decision::Both => {
                         out.push((*mine).clone());
                         // Fresh block — must not duplicate the winner's id:: on disk.
