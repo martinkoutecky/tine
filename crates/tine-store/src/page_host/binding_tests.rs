@@ -1470,6 +1470,8 @@ mod order;
 
 #[path = "binding_fresh_tests.rs"]
 mod fresh;
+#[path = "binding_path_tests.rs"]
+mod path_tests;
 
 #[path = "binding_window_tests.rs"]
 mod window;

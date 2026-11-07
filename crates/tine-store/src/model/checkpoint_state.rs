@@ -99,6 +99,15 @@ pub(crate) struct GraphState<P> {
     derived: DerivedState,
 }
 
+impl GraphState<PagesIn> {
+    /// A launch diff can retire a missing file only if its old path occurs in
+    /// the checkpoint's baseline. Never serve rows the diff cannot observe.
+    pub(crate) fn paths_observed(&self, check: impl Fn(&PageEntry) -> bool) -> bool {
+        self.pages.1.iter().all(|(_, entry, _, _)| check(entry))
+            && self.list.rows.iter().all(|(_, entry)| check(entry))
+    }
+}
+
 impl<P> GraphState<P> {
     /// The same state with its pages converted.
     pub(crate) fn map_pages<Q>(self, f: impl FnOnce(P) -> Q) -> GraphState<Q> {

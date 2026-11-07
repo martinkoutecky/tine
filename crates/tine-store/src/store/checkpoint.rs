@@ -494,6 +494,26 @@ pub(crate) fn load(
         Err(_) => return Err(Fallback::Unreadable),
     };
     let body = decode(&bytes, root, config_key, stop)?;
+    // GH #905: a cache can retain a claimant/list row after its watcher
+    // baseline forgot that path (including checkpoints from older builds).
+    // The stat diff cannot remove such a ghost: neither side names the missing
+    // file. Decline the disposable cache whole, before serving any of it.
+    let observed: HashSet<_> = body.stamps.iter().map(|(path, _)| path.as_path()).collect();
+    let entry_observed = |entry: &PageEntry| {
+        entry
+            .rel_path
+            .as_ref()
+            .is_none_or(|id| observed.contains(root.join(id.as_str()).as_path()))
+    };
+    if !body.graph.paths_observed(entry_observed)
+        || !body.claimants.values().flatten().all(entry_observed)
+        || !body
+            .name_by_path
+            .iter()
+            .all(|(path, _)| observed.contains(path.as_path()))
+    {
+        return Err(Fallback::Decode);
+    }
     Ok(Loaded {
         body,
         file_bytes: bytes.len() as u64,

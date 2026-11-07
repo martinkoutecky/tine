@@ -194,6 +194,8 @@ mod page_delete_missing;
 
 #[path = "page_rename_identity.rs"]
 mod page_rename_identity;
+#[path = "page_rename_subfolder.rs"]
+mod page_rename_subfolder;
 
 #[path = "page_rename_merge.rs"]
 mod page_rename_merge;
