@@ -1,4 +1,5 @@
 import { shortcutKey } from "./shortcutKey";
+import { requestAppQuit } from "./appQuit";
 import { installMouseHistory } from "./mouseHistory";
 import { setCurrentPageCollapsed, toggleCurrentPageCollapsed } from "./pageCollapse";
 import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailable } from "./seen/seenState";
@@ -317,6 +318,10 @@ function openSwitcherKeepingSelection(opts: Parameters<typeof openSwitcher>[0]):
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
+  // OG 6e7afa8eb uses Electron's native Quit menu role, not a shortcut-table
+  // command. Tine additionally exposes app/quit for remapping. macOS keeps Cmd+Q
+  // in its native menu, with no second default handler here.
+  { id: "app/quit", binding: isMac || isMobilePlatform ? "" : "mod+q", label: msg("command-app-quit"), scope: "global", available: () => isTauri() && !isMobilePlatform, run: () => { if (!isMobilePlatform) requestAppQuit(); }, global: true },
   { id: "ui/toggle-code-block-wrap", binding: "", label: msg("command-ui-toggle-code-block-wrap"), scope: "global", run: () => changeCodeWrapping(!codeWrapping()), global: true },
   { id: "editor/edit-selected-block", binding: "", label: msg("command-editor-edit-selected-block"), scope: "global", run: () => { editSelectedBlock(); }, global: true },
   { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcherKeepingSelection({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },

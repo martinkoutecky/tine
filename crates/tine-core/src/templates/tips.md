@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Tips & shortcuts
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- On Linux and Windows, **Ctrl+Q** runs **Quit Tine**, closing every graph window after saving pending edits. You can remap or disable `app/quit` in **Settings → Keyboard shortcuts**. On macOS use the app menu's **Cmd+Q**. If a page cannot be saved, the usual close warning keeps it available for recovery.
 	- On desktop, the formatting toolbar follows your selection, even near the bottom of a long block. It appears below the selection when there is no room above; choose an action there to format the selected words.
 	- With a non-Latin keyboard layout, shortcuts and recording use the physical key's Latin letter or digit: **Ctrl+K** still works when that key types **л**. Latin layouts such as AZERTY and Dvorak keep their letter-based shortcuts. Text you type keeps the selected language.
 - ## Find anything — Ctrl+K
