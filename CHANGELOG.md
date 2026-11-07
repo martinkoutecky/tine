@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+- `tine` commands run from the folder that contains a graph (for example your home folder, with the graph in `~/logseq`) no longer treat that folder as the graph, which listed Logseq backup copies as pages and journals as plain pages; they now look for the graph's `logseq/config.edn` (GH #908).
 
 ## [0.9.0-beta.8] - 2026-11-06
 

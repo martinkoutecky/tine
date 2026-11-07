@@ -16,7 +16,7 @@ icon:: ⌨️
 	- `tine doctor GRAPH` reads and parses the graph, reports how many pages and journals it found and the configured home page, names every unreadable page and every page name claimed by more than one file, and does not change the graph. It exits with status 1 when it finds a problem.
 - ## Read your graph from a terminal
 	- On Linux, macOS and Windows, the read commands below do not change notes. They ask the graph's owner, so `tine page show` and `tine journal` include unsaved edits when the app holds that page; other reads use the graph's indexed view.
-	- Choose a graph with `--graph GRAPH` (or `-g GRAPH`) on each command. Otherwise Tine uses `TINE_GRAPH`, then the nearest folder around your working directory with a `logseq/` subfolder. Example: `tine page show "Project notes" --graph ~/notes`.
+	- Choose a graph with `--graph GRAPH` (or `-g GRAPH`) on each command. Otherwise Tine uses `TINE_GRAPH`, then the nearest folder around your working directory that holds `logseq/config.edn`. Example: `tine page show "Project notes" --graph ~/notes`.
 	- `tine status` shows whether the app or `serve` owns the graph and what it is doing.
 	- `tine page show "Page name"` reads a page's outline. `tine journal` reads today; `tine journal 2026-10-13` reads a specific day that already exists.
 	- `tine block show UUID` reads a block and its descendants using its persisted `id::` UUID. `tine refs "Page name"` shows linked references; `tine refs UUID --block` finds references to a persisted block id.
