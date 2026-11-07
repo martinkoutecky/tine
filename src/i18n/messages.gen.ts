@@ -3072,6 +3072,8 @@ export interface MessageArgs {
   "themes-revoked": {};
   "themes-revoked-and-disabled": {};
   "themes-revoked-by-the-signed-registry": {};
+  "themes-show-all-theme-packages": { "count": string | number };
+  "themes-show-fewer-theme-packages": {};
   "themes-signed-community-themes-inert-token-manifests": {};
   "themes-stock": {};
   "themes-style": {};

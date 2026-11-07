@@ -487,7 +487,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
-      <ThemeSettings />
+      <ThemeSettings search={props.search} />
       <LanguageSetting />
 
       <div class="settings-row" {...settingAttributes(settings["settings-ui-mode"])}>

@@ -1,0 +1,812 @@
+[
+  {
+    "name": "r13-multiple-declarers",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/B.md": "alias:: X\n\n- B body\n",
+      "pages/C.md": "alias:: X\n\n- C body\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "X"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "X",
+              "survivor": null
+            },
+            {
+              "destination": "B",
+              "survivor": "pages/B.md"
+            },
+            {
+              "destination": "C",
+              "survivor": "pages/C.md"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-transitive-component",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/B.md": "alias:: X, Y\n\n- B body\n",
+      "pages/C.md": "alias:: Y\n\n- C body\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "X"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "X",
+              "survivor": null
+            },
+            {
+              "destination": "B",
+              "survivor": "pages/B.md"
+            },
+            {
+              "destination": "C",
+              "survivor": "pages/C.md"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-unsafe-literal-safe-alternate",
+    "files": {
+      "pages/A.md": "- source [[A/x]]\n",
+      "pages/B.md": "alias:: X\n\n- B body\n",
+      "pages/X%2Fx.md": "- stationary\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "X"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "B",
+              "survivor": "pages/B.md"
+            }
+          ],
+          "preferred": null,
+          "failedChecks": [
+            [
+              "noCapture"
+            ],
+            []
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-fileless-multiple",
+    "files": {
+      "pages/R.md": "- [[A]]\n",
+      "pages/B.md": "alias:: X\n\n- B\n",
+      "pages/C.md": "alias:: X\n\n- C\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "X"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "X",
+              "survivor": null
+            },
+            {
+              "destination": "B",
+              "survivor": null
+            },
+            {
+              "destination": "C",
+              "survivor": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-singleton-merge",
+    "files": {
+      "pages/A.md": "- first\n",
+      "pages/B.md": "- second\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "B",
+              "survivor": "pages/B.md"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-own-child-chain",
+    "files": {
+      "pages/A.md": "- root\n",
+      "pages/A%2Fx.md": "- child [[A/x/y]]\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "A/x"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "A/x",
+              "survivor": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-virtual-capture",
+    "files": {
+      "pages/A.md": "- [[A/x]]\n",
+      "pages/B%2Fx.md": "- stationary\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "noCapture"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-moving-child-vacates",
+    "files": {
+      "pages/A.md": "- [[A/x/y]]\n",
+      "pages/A%2Fx%2Fy.md": "- moving\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "A/x"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "A/x",
+              "survivor": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-task-anchor",
+    "files": {
+      "pages/TODO.md": "- page\n",
+      "pages/R.md": "- TODO [[TODO]]\n"
+    },
+    "renames": [
+      {
+        "old": "TODO",
+        "new": "Work"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "consistent"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-priority-anchor",
+    "files": {
+      "pages/A.md": "- page\n",
+      "pages/R.md": "- [#A] [[A]]\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "Work"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "consistent"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-inactive-journal-anchor",
+    "files": {
+      "pages/P.md": "title:: Oct 26th, 2026\n\n- active\n",
+      "journals/2026_10_26.md": "- inactive\n"
+    },
+    "renames": [
+      {
+        "old": "Oct 26th, 2026",
+        "new": "Later"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "consistent",
+              "localClean"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-original-conflict",
+    "files": {
+      "pages/A.md": "- first\n",
+      "pages/Z.md": "title:: A\n\n- second\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "localClean"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-alias-image-conflict",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/O.md": "alias:: A/x\n\n- O\n",
+      "pages/P.md": "title:: B/x\n\n- first\n",
+      "pages/Q.md": "title:: B/x\n\n- second\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "localClean"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-query-image-conflict",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/R.md": "- {{query (page \"A/x\")}}\n",
+      "pages/P.md": "title:: B/x\n\n- first\n",
+      "pages/Q.md": "title:: B/x\n\n- second\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "localClean"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-favorite-image-conflict",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/P.md": "title:: B/x\n\n- first\n",
+      "pages/Q.md": "title:: B/x\n\n- second\n"
+    },
+    "config": {
+      "edn": [
+        ":favorites [\"A/x\"]"
+      ]
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "localClean"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-unrelated-twins",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/P.md": "title:: Z\n\n- first [[Visible]]\n",
+      "pages/Q.md": "title:: Z\nalias:: Hidden\n\n- second [[Masked]]\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "B",
+              "survivor": null
+            }
+          ]
+        }
+      ],
+      "activeFiles": [
+        "pages/A.md",
+        "pages/P.md"
+      ]
+    }
+  },
+  {
+    "name": "r13-empty-real-opens-self",
+    "files": {
+      "pages/A.md": "alias:: B\n\n- owner\n",
+      "pages/B.md": ""
+    },
+    "navigate": [
+      "B"
+    ],
+    "expect": {
+      "navigate": {
+        "B": [
+          "page",
+          "b"
+        ]
+      }
+    }
+  },
+  {
+    "name": "r13-empty-child-gains-parent",
+    "files": {
+      "pages/A.md": "- source\n",
+      "pages/B%2Fx.md": ""
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B/x"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "B/x",
+              "survivor": "pages/B%2Fx.md"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-same-key-nested-org",
+    "files": {
+      "pages/nested/physical.org": "#+TITLE: Alpha\n* prose `[[Alpha]]` [[Alpha]]\n"
+    },
+    "renames": [
+      {
+        "old": "Alpha",
+        "new": "ALPHA"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "ALPHA",
+              "survivor": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-alias-edge-preview",
+    "files": {
+      "pages/A.md": "alias:: Z\n\n- source\n",
+      "pages/B.md": "alias:: X\n\n- B\n",
+      "pages/R.md": "- [[Z]]\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "X"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "X",
+              "survivor": null
+            },
+            {
+              "destination": "B",
+              "survivor": "pages/B.md"
+            }
+          ],
+          "unchangedPreview": [
+            "pages/R.md",
+            0
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-journal-parent-loss",
+    "files": {
+      "journals/2026_10_26.md": "alias:: A/x\n\n- [[A/x]]\n",
+      "pages/R.md": "- [[A]]\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "B",
+              "survivor": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-protected-equal-header",
+    "files": {
+      "pages/A.md": "same:: equal\nalias:: X\n\n- source `[[A]]`\n",
+      "pages/B.md": "same:: equal\n\n- destination\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "protectedText": [
+        "same:: equal",
+        "`[[A]]`"
+      ]
+    }
+  },
+  {
+    "name": "r13-query-output",
+    "files": {
+      "pages/A.md": "- [[A/x]]\n  - child\n",
+      "pages/R.md": "- {{query (and [[A]] (not (page \"Other\")))}}\n- {{tine-query @page and name = 'A'}}\n"
+    },
+    "queries": [
+      {
+        "anchor": "block",
+        "q": {
+          "not": {
+            "refs": "Other"
+          }
+        }
+      },
+      {
+        "anchor": "page",
+        "q": {
+          "name": "A"
+        }
+      }
+    ],
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {}
+  },
+  {
+    "name": "r13-configured-date-literal",
+    "files": {
+      "pages/2026-11-06.md": "- ordinary\n",
+      "journals/2026_11_06.md": "alias:: Today\n\n- journal\n",
+      "pages/R.md": "- [[2026-11-06]] [[Nov 6th, 2026]] [[Today]]\n"
+    },
+    "navigate": [
+      "2026-11-06",
+      "Nov 6th, 2026",
+      "Today"
+    ],
+    "expect": {
+      "navigate": {
+        "2026-11-06": [
+          "page",
+          "2026-11-06"
+        ],
+        "Nov 6th, 2026": [
+          "journal",
+          "nov 6th, 2026"
+        ]
+      }
+    }
+  },
+  {
+    "name": "r13-org-merge-nested",
+    "files": {
+      "pages/nested/A.org": "#+TITLE: A\n* source [[A]]\n",
+      "pages/nested/B.org": "#+TITLE: B\n* destination\n"
+    },
+    "renames": [
+      {
+        "old": "A",
+        "new": "B"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "B",
+              "survivor": "pages/nested/B.org"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-unsupported-query-favorite",
+    "files": {
+      "pages/R.md": "- {{query (page \"Absent\")}}\n"
+    },
+    "renames": [
+      {
+        "old": "Absent",
+        "new": "Other"
+      }
+    ],
+    "config": {
+      "edn": [
+        ":favorites [\"Absent\"]"
+      ]
+    },
+    "expect": {
+      "operations": [
+        {
+          "offers": [],
+          "failedChecks": [
+            [
+              "supported"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-plain-path-claimant-order",
+    "files": {
+      "pages/A.org": "#+TITLE: Same\n* [[Visible]]\n",
+      "pages/Same.md": "- [[Hidden]]\n"
+    },
+    "navigate": [
+      "Same",
+      "Visible",
+      "Hidden"
+    ],
+    "expect": {
+      "activeFiles": [
+        "pages/A.org"
+      ],
+      "navigate": {
+        "Same": [
+          "page",
+          "same"
+        ]
+      }
+    }
+  },
+  {
+    "name": "r13-fixed-favorites-setting",
+    "files": {
+      "pages/Favorites.md": "- [[Target]]\n",
+      "pages/R.md": "- [[Favorites/virtual]]\n"
+    },
+    "favoritesPage": "Favorites",
+    "config": {
+      "edn": [
+        ":favorites [\"Favorites\" \"Favorites/virtual\"]"
+      ]
+    },
+    "renames": [
+      {
+        "old": "Favorites",
+        "new": "Saved"
+      }
+    ],
+    "expect": {
+      "operations": [
+        {
+          "offers": [
+            {
+              "destination": "Saved",
+              "survivor": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "r13-query-presentation-options",
+    "files": {
+      "pages/A.md": "related:: [[Target]]\n\nProse [[Target]]\n\n- [[Target]]\n  - [[Target]]\n"
+    },
+    "queries": [
+      {
+        "anchor": "block",
+        "q": {
+          "refs": "Target"
+        }
+      },
+      {
+        "anchor": "block",
+        "q": {
+          "refs": "Target"
+        },
+        "tine": "[[Target]] {:remove-block-children? false}"
+      }
+    ],
+    "expect": {
+      "querySizes": [
+        3,
+        4
+      ]
+    }
+  },
+  {
+    "name": "r13-empty-namespace-output",
+    "files": {
+      "pages/A.md": ""
+    },
+    "renames": [
+      { "old": "A", "new": "Z/w" }
+    ],
+    "expect": {
+      "operations": [{ "afterPages": [["page", "z/w"]] }]
+    }
+  },
+  {
+    "name": "r13-whitespace-namespace-output",
+    "files": {
+      "pages/A.md": " \n\t"
+    },
+    "renames": [
+      { "old": "A", "new": "Z/w" }
+    ],
+    "expect": {
+      "operations": [{ "afterPages": [["page", "z/w"]] }]
+    }
+  }
+]
