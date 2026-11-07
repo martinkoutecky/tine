@@ -139,7 +139,8 @@ try {
   await sleep(2000);
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error",
     connectionRetryCount: 0, connectionRetryTimeout: 15_000,
-    capabilities: tauriCapabilities(app, "gh863-809", process.platform, target.debuggerAddress) });
+    capabilities: tauriCapabilities(app, "gh863-809", process.platform, target.debuggerAddress),
+  });
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
