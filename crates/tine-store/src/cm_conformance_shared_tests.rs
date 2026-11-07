@@ -17,7 +17,7 @@
 //! store harness asserts the copy equals the original on every file it sees.
 #![allow(dead_code)]
 
-#[path = "cm_conformance_r13_shared.rs"]
+#[path = "cm_conformance_r13_shared_tests.rs"]
 pub mod r13;
 
 use std::collections::{BTreeMap, BTreeSet};
