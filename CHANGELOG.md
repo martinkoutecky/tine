@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - `tine` commands run from the folder that contains a graph (for example your home folder, with the graph in `~/logseq`) no longer treat that folder as the graph, which listed Logseq backup copies as pages and journals as plain pages; they now look for the graph's `logseq/config.edn` (GH #908).
+- A wide table in a nested block no longer has the outline guide lines of its parent blocks drawn through its header and rows on narrow windows, split panes and the sidebar (GH #909).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
