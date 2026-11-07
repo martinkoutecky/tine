@@ -19,6 +19,7 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 import { marginFirstLineProblems } from "./lib/margin-first-line.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { seedJournalMargin, checkJournalMargin } from "./lib/e2e-journal-margin.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -50,9 +51,7 @@ fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 // A graph under git is the one that asks for a name (tine#841); autocommit stays off.
 execFileSync("git", ["-C", GRAPH, "init", "-q", "-b", "main"]);
 fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n- Authored note\n  tine.author:: Ada Marks  \t\n- A following sentinel\n- > A quoted passage\n  tine.author:: Quote Agent  \t\n`);
-const now = new Date();
-const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- open [[${PAGE_NAME}]]\n`);
+const journalFixture = seedJournalMargin(GRAPH, PAGE_NAME);
 const account = installAccountHome(TMP, OUT);
 
 const env = {
@@ -61,6 +60,7 @@ const env = {
   HOME: `${TMP}/home`, XDG_STATE_HOME: `${TMP}/xdg/state`,
   XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
+  TINE_E2E_TOUCH_GESTURES: "ios",
 };
 const log = fs.openSync(`${OUT}/tauri-driver.log`, "w");
 const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
@@ -306,10 +306,11 @@ try {
   if (await settingsNameField(browser) !== MY_NAME) throw new Error("Settings > Your name does not show the name given in the dialog");
   proof.steps.push("first comment asks once using signing language without git/GitHub; name persists in device Settings");
   await shot("05-completed-margin-journey");
+  await checkJournalMargin(browser, journalFixture, shot, proof);
   fs.writeFileSync(`${OUT}/proof.json`, JSON.stringify(proof, null, 2));
-  console.log("PASS: first comment asks for a name once, rightmost Comment icon, Enter reply, empty draft cancellation without a save, draft submission with author, top delete, and Ctrl+R quoted reply in the wide thread");
+  console.log("PASS: signing prompt, author editing, comment/reply actions, per-day journal margins, synthetic iOS tap editing with exact retained metadata, width transitions and reload");
 } catch (error) {
-  const failure = { testedCommit, delta: "working tree", journey: "margin-comment and ordinary author editing", expected: "hidden retained author, quote separation, removable chip, signing prompt and durable comment journey", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${OUT}/failure.png` };
+  const failure = { testedCommit, delta: "working tree", journey: "margin-comment, author editing and journal/iOS metadata", expected: "hidden retained metadata, quote separation, removable chip, signing prompt, per-day journal margins and durable comment edits", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${OUT}/failure.png` };
   console.error(JSON.stringify(failure));
   fs.writeFileSync(`${OUT}/failure.json`, JSON.stringify(failure, null, 2));
   // External capture avoids WebKitGTK's occasionally hanging screenshot endpoint.

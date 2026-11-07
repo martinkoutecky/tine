@@ -11,6 +11,7 @@ import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
 import { facetsOf } from "../render/facets";
+export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { raw: string; parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];

@@ -5,7 +5,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // edited in place; arrows lead in and out of them; hovering a thread emphasises
 // its passage and vice versa; and a keystroke costs at most one measurement pass.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { blockRegions, initParser } from "../render/parse";
@@ -306,6 +306,22 @@ describe("the margin column on a wide main pane", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("keeps the shared margin width when another journal day leaves the feed", () => {
+    const [secondDay, showSecondDay] = createSignal(true);
+    const { pane, dispose } = mount(commented(), 1600, () => (
+      <div class="main-content-inner" style={{ "--tine-main-content-max-width": "810px" }}>
+        <Host /><Show when={secondDay()}><Host /></Show>
+      </div>
+    ));
+    try {
+      const inner = pane.querySelector<HTMLElement>(".main-content-inner")!;
+      expect(inner.style.getPropertyValue("--margin-column-width")).toBe("440px");
+      showSecondDay(false);
+      expect(pane.querySelectorAll(".margin-column")).toHaveLength(1);
+      expect(inner.style.getPropertyValue("--margin-column-width")).toBe("440px");
+    } finally { dispose(); }
   });
 
   it("keeps a thread beside its passage while the commented block is edited, in any editor (MARGIN-POS)", () => {

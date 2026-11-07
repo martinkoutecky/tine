@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Journal days and split panes use the same width rule for margin comments as single pages; comment and reply editors hide every `tine.*` property on all platforms while preserving its bytes on save (GH #891).
 - Editing an authored block keeps its author mark visible while hiding and preserving `tine.author::`; the chip menu offers Remove author. Author metadata no longer appears inside blockquotes (GH #894, GH #895).
 - Margin comments anchor repeated passages using enough context to identify the selected occurrence, including the last word of a block. Tied matches are shown as ambiguous; missing quotes remain visible. Wide margin cards follow passage order and keep the focused thread beside its passage (GH #891).
 - On touch screens, Comment is available when selecting rendered text, before entering edit mode (GH #891).

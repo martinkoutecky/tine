@@ -176,7 +176,7 @@ import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection
 import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
-import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
+import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
 type SheetSlashView = "grid" | "table" | "board";
@@ -662,9 +662,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       && page.roots[0] === props.id
       && (node().originatedFromPageHeader || (!page.preBlock && propertyDraft));
   };
-  // Parsed editor facts travel with the committed buffer; hidden bytes survive.
+  const commentHide = commentEditorHide(node(), propertySession.facets(node().raw, pageFmt()).properties, pageFmt(), docNode);
   const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
-  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : BUILTIN_HIDE);
+  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : commentHide);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents

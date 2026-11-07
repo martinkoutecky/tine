@@ -235,6 +235,7 @@
 }
 .page-section:has(> .margin-column) {
   position: relative;
+  min-height: var(--margin-content-bottom, 0px);
 }
 .margin-column {
   position: absolute;

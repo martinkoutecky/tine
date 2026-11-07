@@ -33,8 +33,26 @@ export interface MarginSurface {
 
 interface Thread { el: HTMLElement; parentId: string; row: HTMLElement }
 
+// Journal days share one reading column. Releasing a day's reservation must
+// leave the width needed by the remaining days, including during feed eviction.
+const columnWidths = new WeakMap<HTMLElement, Map<HTMLElement, number>>();
+function reserveColumnWidth(inner: HTMLElement, outline: HTMLElement, width: number): () => void {
+  let widths = columnWidths.get(inner);
+  if (!widths) columnWidths.set(inner, widths = new Map());
+  widths.set(outline, width);
+  inner.style.setProperty("--margin-column-width", `${width}px`);
+  return () => {
+    widths.delete(outline);
+    const remaining = [...widths.values()].at(-1);
+    if (remaining === undefined) {
+      columnWidths.delete(inner);
+      inner.style.removeProperty("--margin-column-width");
+    } else inner.style.setProperty("--margin-column-width", `${remaining}px`);
+  };
+}
+
 /** The margin for one page section. `eligible` says whether this surface may
- * have a margin at all (the main pane's single-page view); the pane width and
+ * have a margin at all; the pane width and
  * whether the page holds a comment decide the rest. `outline` is the section's
  * `.page-blocks`; the column renders as its next sibling. */
 export function createMarginSurface(opts: {
@@ -70,13 +88,12 @@ export function createMarginSurface(opts: {
     if (!active()) return;
     const outline = opts.outline();
     const inner = outline?.closest<HTMLElement>(".main-content-inner");
-    if (!inner) return;
+    if (!inner || !outline) return;
     const style = inner.ownerDocument.defaultView?.getComputedStyle(inner);
     const content = style ? parseFloat(style.getPropertyValue("--tine-main-content-max-width") || style.getPropertyValue("--ls-main-content-max-width")) : NaN;
     const wide = !!inner.closest(".wide-mode");
     const column = marginColumnWidth(width, wide || !Number.isFinite(content) ? null : content);
-    inner.style.setProperty("--margin-column-width", `${column}px`);
-    onCleanup(() => inner.style.removeProperty("--margin-column-width"));
+    onCleanup(reserveColumnWidth(inner, outline, column));
   });
 
   const [rows, setRows] = createSignal<readonly { parentId: string; row: HTMLElement }[]>([]);
@@ -131,6 +148,10 @@ export function createMarginSurface(opts: {
       : a.t.row.compareDocumentPosition(b.t.row) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
     const tops = stackThreads(items, undefined, items.findIndex(item => item.id === untrack(focusedComment)));
     items.forEach((item, i) => { item.t.el.style.top = `${Math.round(tops[i])}px`; });
+    // A feed day's last thread can be taller than its outline. Reserve its
+    // space so the next day's text and margin start below this day's cards.
+    const bottom = items.reduce((end, item, i) => Math.max(end, Math.round(tops[i]) + item.height), 0);
+    column.parentElement?.style.setProperty("--margin-content-bottom", `${Math.ceil(bottom)}px`);
   };
 
   const api: MarginApi = {
@@ -238,6 +259,7 @@ export function createMarginSurface(opts: {
       api.schedule();
       onCleanup(() => {
         fonts?.removeEventListener?.("loadingdone", onFonts);
+        el.parentElement?.style.removeProperty("--margin-content-bottom");
         observer?.disconnect();
         observer = null;
         if (column === el) column = undefined;
