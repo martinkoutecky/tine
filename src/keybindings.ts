@@ -45,7 +45,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -54,7 +54,9 @@ import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink"
 import { openInPageFind } from "./inpageFind";
 import { toggleCommentMargin } from "./commentMargin";
 import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
-import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
+import { cellBlockId, cellSel, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
+import { enterGridEdit, openGridTarget } from "./sheet/gridEditMove";
+import { containingGridCell } from "./sheet/gridNeighbour";
 import { decodeNavIntent } from "./navProtocol";
 import {
   closePane,
@@ -174,8 +176,21 @@ function focusPaneByNumber(n: number) {
 function editSelectedBlock(): boolean {
   const ids = selectedIds();
   if (ids.length !== 1 || !docNode(ids[0])) return false;
+  if (editSelectedGridChild(ids[0], "start")) return true;
   clearSelection();
   startEditing(ids[0]);
+  return true;
+}
+
+function editSelectedGridChild(id: string, caret: "start" | "end"): boolean {
+  const scope = selectionScope();
+  // A cell scope excludes its fixed host; an ordinary zoom includes its root.
+  if (!scope?.forceExpandedRoot || scope.roots.includes(scope.forceExpandedRoot)) return false;
+  const cell = containingGridCell(id);
+  if (!cell || cellBlockId(cell) !== scope.forceExpandedRoot) return false;
+  const surface = focusedGridSurface(cell.gridId);
+  if (surface === null) return false;
+  openGridTarget({ blockId: id, cell: { ...cell, surfaceId: surface }, caret });
   return true;
 }
 
@@ -964,8 +979,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     const gridId = ids.length === 1 && blockIsGridView(ids[0]) ? ids[0] : ids.length === 0 ? outlinedGridSelectionId() : null;
     if (gridId) {
       const surface = focusedGridSurface(gridId);
-      if (surface !== null && enterGridSelection(gridId, surface)) return true;
+      if (surface !== null && enterGridEdit(gridId, surface)) return true;
     }
+    if (ids.length === 1 && editSelectedGridChild(ids[0], "end")) return true;
   }
   if (e.key === "ArrowDown") return moveSelection(1, e.shiftKey), true;
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
@@ -994,7 +1010,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "Enter") {
     const ids = selectedIds();
     const last = ids[ids.length - 1];
-    if (last) startEditing(last, 1e9);
+    if (last && !editSelectedGridChild(last, "end")) startEditing(last, 1e9);
     return true;
   }
   return false;
