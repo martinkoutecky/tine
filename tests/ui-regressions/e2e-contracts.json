@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-code-edit-toolbar.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"In both block editors, on a routed page and the journal, Copy code is available on desktop hover while editing and on touch while the caret is in code; it copies the current body and preserves the caret, then hides when the caret leaves.","blocking":false,"authority":"GH #879 items 2–3; UI-GH879-CODE-EDIT-TOOLBAR"}],
+      "acceptableVariations": ["Code card geometry, syntax highlighting, icon styling and copy notification timing may vary."],
+      "nonRequirements": ["No new Source/Delete or language buttons; no real Android keyboard, native clipboard or other platform certification. Uses the built app with its synthetic browser graph."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-editor-native.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },
