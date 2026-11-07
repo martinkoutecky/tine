@@ -21,7 +21,9 @@ fn probe(
 ) -> bool {
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     let started = Instant::now();
-    if !post(Box::new(move || { let _ = send.try_send(Instant::now()); })) {
+    if !post(Box::new(move || {
+        let _ = send.try_send(Instant::now());
+    })) {
         return false;
     }
     let mut last_threshold = None;
@@ -48,7 +50,11 @@ fn probe(
     // After 30 s, sleep until the one reply; no repeated events during a hang.
     match receive.recv() {
         Ok(replied) => {
-            record(last_threshold.unwrap_or(0), replied.duration_since(started).as_millis() as u64, true);
+            record(
+                last_threshold.unwrap_or(0),
+                replied.duration_since(started).as_millis() as u64,
+                true,
+            );
             true
         }
         Err(_) => false,
@@ -58,16 +64,18 @@ fn probe(
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub(crate) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let app = app.clone();
-    let _ = std::thread::Builder::new().name("main-loop-watch".into()).spawn(move || loop {
-        std::thread::sleep(INTERVAL);
-        if !probe(
-            |acknowledge| app.run_on_main_thread(acknowledge).is_ok(),
-            &THRESHOLDS,
-            crate::flight::record_main_thread_stall,
-        ) {
-            break;
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("main-loop-watch".into())
+        .spawn(move || loop {
+            std::thread::sleep(INTERVAL);
+            if !probe(
+                |acknowledge| app.run_on_main_thread(acknowledge).is_ok(),
+                &THRESHOLDS,
+                crate::flight::record_main_thread_stall,
+            ) {
+                break;
+            }
+        });
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -81,8 +89,14 @@ mod tests {
     fn idle_main_loop_is_quiet() {
         let mut events = Vec::new();
         for _ in 0..100 {
-            assert!(probe(|ack| { ack(); true }, &THRESHOLDS,
-                |threshold, delay, recovered| events.push((threshold, delay, recovered))));
+            assert!(probe(
+                |ack| {
+                    ack();
+                    true
+                },
+                &THRESHOLDS,
+                |threshold, delay, recovered| events.push((threshold, delay, recovered))
+            ));
         }
         assert!(events.is_empty());
         assert_eq!(INTERVAL, Duration::from_secs(5));
@@ -91,23 +105,52 @@ mod tests {
     #[test]
     fn stalled_loop_records_thresholds_before_a_reply_then_recovers() {
         let (send, receive) = std::sync::mpsc::channel();
-        let thresholds = [Duration::from_millis(1), Duration::from_millis(2), Duration::from_millis(3)];
-        let worker = std::thread::spawn(move || probe(
-            |ack| { send.send(Some(ack)).unwrap(); true }, &thresholds,
-            |threshold, _, recovered| { send.send(None).unwrap(); assert!(threshold <= 3); if recovered { assert_eq!(threshold, 3); } },
-        ));
+        let thresholds = [
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+            Duration::from_millis(3),
+        ];
+        let worker = std::thread::spawn(move || {
+            probe(
+                |ack| {
+                    send.send(Some(ack)).unwrap();
+                    true
+                },
+                &thresholds,
+                |threshold, _, recovered| {
+                    send.send(None).unwrap();
+                    assert!(threshold <= 3);
+                    if recovered {
+                        assert_eq!(threshold, 3);
+                    }
+                },
+            )
+        });
         let ack = receive.recv().unwrap().unwrap();
         // Three threshold notifications arrive while the callback is withheld.
-        for _ in 0..3 { assert!(receive.recv_timeout(Duration::from_secs(1)).unwrap().is_none()); }
+        for _ in 0..3 {
+            assert!(receive
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_none());
+        }
         ack();
-        assert!(receive.recv_timeout(Duration::from_secs(1)).unwrap().is_none());
+        assert!(receive
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .is_none());
         assert!(worker.join().unwrap());
     }
 
     #[test]
     fn platform_guard_names_all_five_shipped_targets() {
-        let source = include_str!("main_thread_liveness.rs").split("#[cfg(test)]").next().unwrap();
-        assert!(source.contains("#[cfg(any(target_os = \"linux\", target_os = \"windows\", target_os = \"macos\"))]"));
+        let source = include_str!("main_thread_liveness.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(source.contains(
+            "#[cfg(any(target_os = \"linux\", target_os = \"windows\", target_os = \"macos\"))]"
+        ));
         assert!(source.contains("#[cfg(any(target_os = \"android\", target_os = \"ios\"))]"));
         assert!(source.contains("|acknowledge| app.run_on_main_thread(acknowledge).is_ok()"));
     }

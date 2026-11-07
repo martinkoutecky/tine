@@ -126,7 +126,10 @@ struct OpenTrace {
 impl OpenTrace {
     fn record(self, stage: &'static str, facts: serde_json::Map<String, serde_json::Value>) {
         crate::flight::record_workspace_open(
-            self.sequence, stage, self.started.elapsed().as_millis() as u64, facts,
+            self.sequence,
+            stage,
+            self.started.elapsed().as_millis() as u64,
+            facts,
         );
     }
 
@@ -175,9 +178,7 @@ fn popups_of<R: tauri::Runtime>(
 
 #[cfg(desktop)]
 fn monitor_areas<R: tauri::Runtime>(window: &tauri::Window<R>) -> (Vec<Area>, Vec<f64>) {
-    let monitors = window
-        .available_monitors()
-        .unwrap_or_default();
+    let monitors = window.available_monitors().unwrap_or_default();
     let scales = monitors.iter().map(|m| m.scale_factor()).collect();
     let areas = monitors
         .iter()
@@ -242,9 +243,15 @@ fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<
                 .then_some(scale)
         })
     });
-    trace.record("native.prepared", crate::flight::workspace_display_fields(
-        Some((placement.width, placement.height)), Some(areas.len()), target_scale, None,
-    ));
+    trace.record(
+        "native.prepared",
+        crate::flight::workspace_display_fields(
+            Some((placement.width, placement.height)),
+            Some(areas.len()),
+            target_scale,
+            None,
+        ),
+    );
     app.state::<Pending>()
         .0
         .lock()
@@ -324,9 +331,10 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
                 trace.stage("native.build-returned");
                 let scale = window.scale_factor().ok();
                 let size = window.inner_size().ok().map(|s| (s.width, s.height));
-                trace.record("native.created-geometry", crate::flight::workspace_display_fields(
-                    None, None, scale, size,
-                ));
+                trace.record(
+                    "native.created-geometry",
+                    crate::flight::workspace_display_fields(None, None, scale, size),
+                );
                 // SetNewWindow and deferral Complete happen inside Wry after
                 // this return. Tine cannot observe them; do not claim it can.
                 trace.stage("native.response-create");
@@ -346,7 +354,9 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
 #[cfg(test)]
 fn block_window_open_for_test() {
     if std::env::var_os("TINE_TEST_BLOCK_WORKSPACE_OPEN").is_some() {
-        loop { std::thread::park(); }
+        loop {
+            std::thread::park();
+        }
     }
 }
 
