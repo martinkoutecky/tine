@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Margin comments anchor repeated passages using enough context to identify the selected occurrence, including the last word of a block. Tied matches are shown as ambiguous; missing quotes remain visible. Wide margin cards follow passage order and keep the focused thread beside its passage (GH #891).
 - On touch screens, Comment is available when selecting rendered text, before entering edit mode (GH #891).
 - Body editing skips whole margin-comment threads: Backspace, Delete, Enter, arrows, indentation, drag and paste preserve comments and their replies (GH #891, GH #110).
+- iOS Betas install as the separate amber Tine Beta app, with their own settings, graph folders and share inbox, alongside the App Store app (GH #890).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ### Changed

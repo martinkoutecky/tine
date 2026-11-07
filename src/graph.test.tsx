@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderEnglish, type UiText } from "./i18n";
 import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
+import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 
 const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
 
@@ -249,7 +250,7 @@ describe("mobile graph folder picker", () => {
     expect(h.api.prepareGraphFolder).toHaveBeenCalledWith(META.root);
     expect(h.api.createGraph).not.toHaveBeenCalled();
   });
-  const OUTSIDE = "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.";
+  const OUTSIDE = `Choose a folder inside On My iPhone → ${APP_IOS_DISPLAY_NAME} or iCloud Drive → ${APP_IOS_DISPLAY_NAME}. Other apps' folders and Files providers aren't supported yet.`;
 
   it("opens a picked graph from Tine's iOS Documents container", async () => {
     const harness = await loadHarness(null, undefined, true, true, undefined, undefined,

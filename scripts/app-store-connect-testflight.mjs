@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { createPrivateKey, sign } from "node:crypto";
-import { IDENTITIES } from "./lib/app-identity.mjs";
+import { IDENTITY, IDENTITIES, iosIdentity } from "./lib/app-identity.mjs";
 
 const API = "https://api.appstoreconnect.apple.com/v1";
-const bundleId = process.env.APP_BUNDLE_ID || IDENTITIES.release.identifier;
+const bundleId = process.env.APP_BUNDLE_ID || IDENTITY.identifier;
 const command = process.argv[2] || "inspect";
 const wantedVersion = process.env.TESTFLIGHT_BUILD_NUMBER || "";
 const groupName = process.env.TESTFLIGHT_GROUP_NAME || "Tine iOS Public Beta";
@@ -92,6 +92,10 @@ async function app() {
     throw new Error(
       `expected one App Store Connect app for ${bundleId}, found ${response.data.length}`,
     );
+  }
+  const identity = Object.values(IDENTITIES).find((value) => value.identifier === bundleId);
+  if (identity && response.data[0].id !== iosIdentity(identity).appStoreAppleId) {
+    throw new Error("App Store Connect app ID disagrees with app-identity.json");
   }
   return response.data[0];
 }
@@ -338,13 +342,15 @@ async function prepare() {
   await addBuild(group.id, current.build.id);
 
   const reviewPhone = process.env.APPLE_REVIEW_CONTACT_PHONE;
+  const appIdentity = Object.values(IDENTITIES).find((value) => value.identifier === bundleId);
+  const displayName = appIdentity ? iosIdentity(appIdentity).displayName : current.appResource.attributes.name;
   const reviewAttributes = {
     contactFirstName: "Martin",
     contactLastName: "Koutecky",
     contactEmail: "support@tine.page",
     demoAccountRequired: false,
     notes:
-      "Tine is a local-first outliner. No account or login is required. For the first beta, create or choose a TineOutline-owned graph under On My iPhone/iPad or iCloud Drive; arbitrary third-party Files-provider roots are intentionally unsupported.",
+      `Tine is a local-first outliner. No account or login is required. Create or choose a ${displayName}-owned graph under On My iPhone/iPad or iCloud Drive; arbitrary third-party Files-provider roots are intentionally unsupported.`,
   };
   if (reviewPhone) reviewAttributes.contactPhone = reviewPhone;
   await request("PATCH", `/betaAppReviewDetails/${current.review.id}`, {
