@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
-import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
+import { blockPageReadOnly, blockWritable, formatForBlock, node as docNode } from "../document";
 import { registerReplyDraft } from "../commentMargin";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { runWithCommentName } from "../commentNamePrompt";
@@ -44,7 +44,10 @@ export function CommentQuoteHeader(props: { parentId: string | null; selector: Q
 function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.Element {
   const anchor = createMemo(() => {
     const parent = docNode(props.parentId);
-    return parent ? anchorQuote(parent.raw, props.selector) : { kind: "stale" as const };
+    // In-thread quotes are compact historical excerpts of another response.
+    // New responses attach to the root, so their source need not be their parent.
+    if (inCommentThread(props.parentId, formatForBlock(props.parentId))) return { kind: "compact" as const };
+    return parent ? anchorQuote(parent.raw, props.selector, formatForBlock(props.parentId)) : { kind: "stale" as const };
   });
   return (
     <div class="comment-quote" classList={{ stale: anchor().kind === "stale" }}>
@@ -56,6 +59,9 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
         </span>
         <Show when={anchor().kind === "stale"}>
           <span class="comment-quote-stale">{t("comment-quote-changed")}</span>
+        </Show>
+        <Show when={anchor().kind === "ambiguous"}>
+          <span class="comment-quote-stale">{t("comment-quote-ambiguous")}</span>
         </Show>
       </Show>
     </div>

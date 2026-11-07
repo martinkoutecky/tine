@@ -10,6 +10,7 @@ comment-margin-count = 边栏中有 { NUMBER($count, useGrouping: 0) } { $count 
         [one] 条评论
        *[other] 条评论
     }
+comment-quote-ambiguous = 引用文字位置不明确
 comment-margin-label = 评论
 comment-toolbar = 评论
 comment-toolbar-shortcut = 评论 (Ctrl/Cmd+R)

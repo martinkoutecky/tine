@@ -495,7 +495,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
       </Show>
 
-      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+      <Show when={(bulletless() || props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
           <Match when={sheet().view === "grid"}>
             <SheetContainer>

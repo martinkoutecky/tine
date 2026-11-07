@@ -10,7 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Margin comments anchor repeated passages using enough context to identify the selected occurrence, including the last word of a block. Tied matches are shown as ambiguous; missing quotes remain visible. Wide margin cards follow passage order and keep the focused thread beside its passage (GH #891).
+- On touch screens, Comment is available when selecting rendered text, before entering edit mode (GH #891).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+
+### Changed
+
+- Comment threads read at one level in file order, including hand-nested replies; new replies attach directly to the thread root. Existing nesting stays unchanged on disk. Comment badges count threads, and the visibility command and setting are named Show/Hide comments (GH #110, GH #891).
 
 ## [0.9.0-beta.8] - 2026-11-06
 

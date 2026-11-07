@@ -1,6 +1,7 @@
 ## Margin dialogue: comments on a passage (Ctrl/Cmd+R)
 comment-on-whole-block = on the whole block
 comment-quote-changed = quoted text changed
+comment-quote-ambiguous = quoted text ambiguous
 # $author (string): the value of the block's tine.author:: property.
 comment-written-by = Written by { $author }
 comment-written-by-you = Written by you

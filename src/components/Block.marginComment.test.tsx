@@ -14,7 +14,7 @@ import { loadSingle } from "../document/workingSet";
 import { pageByName } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { installKeybindings } from "../keybindings";
-import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "../commentActions";
+import { commentOnPaletteSelection, rememberEditorSelectionForPalette, submitReply } from "../commentActions";
 import { invalidateBinding } from "../binding";
 import { setToasts, toasts } from "../toasts";
 import { Block } from "./Block";
@@ -67,6 +67,37 @@ afterEach(() => {
 });
 
 describe("Ctrl/Cmd+R creates a margin comment", () => {
+  it("keeps an ambiguous or missing quote's thread visible without guessing a highlight", () => {
+    const { root, dispose } = mount([block("p", "word repeated word", [
+      block("c", "Ambiguous response\ntine.quote:: word"),
+      block("s", "Missing response\ntine.quote:: vanished"),
+    ])]);
+    try {
+      expect(root.querySelector('[data-block-id="c"] .comment-quote')?.textContent).toContain("ambiguous");
+      expect(root.querySelector('[data-block-id="s"] .comment-quote')?.textContent).toContain("quoted text changed");
+      expect(root.querySelector(".comment-quote-anchor")).toBeNull();
+      expect(root.textContent).toContain("Ambiguous response");
+      expect(root.textContent).toContain("Missing response");
+    } finally { dispose(); }
+  });
+
+  it("preserves hand-nested response order and writes a reply to the outer root", () => {
+    const { root, dispose } = mount([block("p", "words", [
+      block("c", "Root\ntine.quote:: words", [
+        { ...block("a", "First", [block("deep", "Deep\ntine.quote:: First")]), collapsed: true },
+        block("b", "Last"),
+      ]),
+    ])]);
+    try {
+      const raw = docNode("deep")!.raw;
+      const reply = submitReply("deep", "New response")!;
+      expect(docNode(reply)!.parent).toBe("c");
+      expect(docNode("a")!.children).toEqual(["deep"]);
+      expect(docNode("deep")!.raw).toBe(raw);
+      expect([...root.querySelectorAll(".comment-header")].map(el => el.closest<HTMLElement>(".ls-block")!.dataset.blockId))
+        .toEqual(["c", "a", "deep", "b", reply]);
+    } finally { dispose(); }
+  });
   it.each(["p", "ancestor"])("keeps the margin thread inline and replyable when zoomed into %s", async (zoomRoot) => {
     loadSingle(page([block("ancestor", "Parent", [block("p", "Discuss these words", [
       block("c", "My view\ntine.quote:: words", [block("r", "Earlier reply")]),
@@ -215,7 +246,9 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(ctrlR(draft).defaultPrevented).toBe(true);
       const reply = docNode(docNode("c")!.children[0])!;
       expect(reply.raw).toBe("This deserves thought");
-      const child = docNode(reply.children[0])!;
+      const child = docNode(docNode("c")!.children[1])!;
+      expect(reply.children).toEqual([]);
+      expect(child.parent).toBe("c");
       expect(blockRegions(child.raw, format).properties.find(p => p.key === "tine.quote")?.value).toBe("deserves");
       expect(editingId()).toBe(child.id);
       endEdit("page-navigation");
@@ -230,8 +263,9 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       const ta = editor(root);
       ta.select(0, 2);
       ctrlR(ta);
-      const id = docNode("r")!.children.at(-1)!;
-      expect(docNode(id)!.parent).toBe("r");
+      const id = docNode("c")!.children.at(-1)!;
+      expect(docNode(id)!.parent).toBe("c");
+      expect(docNode("r")!.children).toEqual(["n"]);
       expect(docNode(id)!.raw).toContain("tine.quote:: My");
       expect(root.querySelectorAll(".comment-card")).toHaveLength(1);
       expect(root.querySelector('[data-block-id="r"] > .comment-quote .comment-quote-text')?.textContent).toBe("this claim");
@@ -323,7 +357,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       endEdit("page-navigation"); // opening the palette blurs the editor
       commentOnPaletteSelection();
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for");
+      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for\ntine.quote-suffix:: ");
     } finally {
       dispose();
     }

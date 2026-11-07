@@ -17,8 +17,8 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, 
 import { Block } from "./Block";
 import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
-import { countMarginMeasurePass, isCommentId, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
-import { node as docNode, type FeedPage } from "../document";
+import { countMarginMeasurePass, orderedCommentIds, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
+import { type FeedPage } from "../document";
 import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
 
@@ -81,6 +81,7 @@ export function createMarginSurface(opts: {
 
   const [rows, setRows] = createSignal<readonly { parentId: string; row: HTMLElement }[]>([]);
   const [activeComment, setActiveComment] = createSignal<string | null>(null);
+  const [focusedComment, setFocusedComment] = createSignal<string | null>(null);
   const threads = new Map<string, Thread>();
   // Where a quoted passage sat inside its block row at the last pass: while that
   // block is being edited its marks are gone, so its threads stay put.
@@ -106,7 +107,7 @@ export function createMarginSurface(opts: {
       }
       return marks;
     };
-    const items: { id: string; t: Thread; anchor: number; height: number; index: number }[] = [];
+    const items: { id: string; t: Thread; anchor: number; height: number }[] = [];
     for (const [id, t] of threads) {
       if (!t.el.isConnected || !t.row.isConnected) continue;
       const rowTop = t.row.getBoundingClientRect().top;
@@ -122,14 +123,13 @@ export function createMarginSurface(opts: {
         // block's top on entering edit and back on leaving it).
         anchor = rowTop + Math.min(offsets.get(id) ?? 0, Math.max(0, t.row.offsetHeight - 1));
       }
-      const index = untrack(() => docNode(t.parentId)?.children.indexOf(id) ?? 0);
-      items.push({ id, t, anchor: anchor - origin, height: t.el.offsetHeight, index });
+      items.push({ id, t, anchor: anchor - origin, height: t.el.offsetHeight });
     }
-    // Document order: commented blocks top to bottom, a block's comments in
-    // child order (a stale or whole-block thread keeps its place among them).
-    items.sort((a, b) => a.t.row === b.t.row ? a.index - b.index
+    // Blocks stay in document order; within each block use passage order,
+    // retaining file order when passages tie.
+    items.sort((a, b) => a.t.row === b.t.row ? (a.t.el.compareDocumentPosition(b.t.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
       : a.t.row.compareDocumentPosition(b.t.row) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-    const tops = stackThreads(items);
+    const tops = stackThreads(items, undefined, items.findIndex(item => item.id === untrack(focusedComment)));
     items.forEach((item, i) => { item.t.el.style.top = `${Math.round(tops[i])}px`; });
   };
 
@@ -150,6 +150,7 @@ export function createMarginSurface(opts: {
     setActiveComment,
   };
   onCleanup(() => cancelFrame?.());
+  createEffect(() => { focusedComment(); api.schedule(); });
 
   // Emphasis both ways: the passage of the hovered or focused thread, and the
   // thread of the hovered passage.
@@ -206,8 +207,8 @@ export function createMarginSurface(opts: {
         ref={el}
         onMouseEnter={() => setActiveComment(props.id)}
         onMouseLeave={() => setActiveComment(null)}
-        onFocusIn={() => setActiveComment(props.id)}
-        onFocusOut={(e) => { if (!el.contains(e.relatedTarget as Node | null)) setActiveComment(null); }}
+        onFocusIn={() => { setActiveComment(props.id); setFocusedComment(props.id); }}
+        onFocusOut={(e) => { if (!el.contains(e.relatedTarget as Node | null)) { setActiveComment(null); setFocusedComment(null); } }}
       >
         <MarginContext.Provider value={{ api, thread: { root: props.id, parent: props.parentId } }}>
           <Block id={props.id} />
@@ -247,9 +248,8 @@ export function createMarginSurface(opts: {
       api.schedule();
     });
     const commentsOf = (parentId: string) => {
-      const n = docNode(parentId);
       const format = opts.page()?.format ?? "md";
-      return n ? n.children.filter((id) => isCommentId(id, format)) : [];
+      return orderedCommentIds(parentId, format);
     };
     return (
       <aside class="margin-column" aria-label={t("comment-margin-label")} ref={el}>

@@ -115,6 +115,41 @@ afterEach(() => {
 });
 
 describe("the margin column on a wide main pane", () => {
+  it("keeps the focused card at its passage while its overlapping neighbor moves above it", () => {
+    const real = Element.prototype.getBoundingClientRect;
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
+    Element.prototype.getBoundingClientRect = function () {
+      const top = this.classList.contains("comment-quote-anchor") ? (this.getAttribute("data-comment-id") === "c1" ? 100 : 110) : 0;
+      return { top, bottom: top + 20, left: 0, right: 100, width: 100, height: 20 } as DOMRect;
+    };
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get() { return this.classList.contains("margin-thread") ? 50 : 20; } });
+    const { pane, dispose } = mount(commented());
+    try {
+      thread(pane, "c2")!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      flushFrames();
+      expect(thread(pane, "c2")!.style.top).toBe("110px");
+      expect(parseFloat(thread(pane, "c1")!.style.top) + 50).toBeLessThan(110);
+    } finally {
+      dispose();
+      Element.prototype.getBoundingClientRect = real;
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", height);
+    }
+  });
+
+  it("orders threads by passage offsets even on the same line, with stable ties and a thread-only count", () => {
+    const { pane, dispose } = mount([block("p", "early middle late", [
+      block("late", "Last\ntine.quote:: late", [block("reply", "Reply\ntine.quote:: Last")]),
+      block("early", "First\ntine.quote:: early"),
+      block("tie", "Again\ntine.quote:: early"),
+    ])]);
+    try {
+      expect([...column(pane)!.querySelectorAll<HTMLElement>(".margin-thread")].map(el => el.dataset.threadId))
+        .toEqual(["early", "tie", "late"]);
+      expect(pane.querySelector(".margin-marker")!.textContent).toBe("3");
+      expect(pane.querySelectorAll(".margin-marker")).toHaveLength(1);
+    } finally { dispose(); }
+  });
+
   it("draws each comment thread in the column, not in the outline, with a count on the commented block", () => {
     const { pane, dispose } = mount(commented());
     try {
