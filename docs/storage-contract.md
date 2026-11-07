@@ -1681,6 +1681,17 @@ replaces a page holding an unsaved draft, and the frontend's "always ask"
 policy only holds clean changes it would otherwise apply silently. Tests cover
 these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 
+`Change::files` retains physical evidence, including losing twins, for conflict
+inventory and mutation bookkeeping. `Change::pages` enumerates changed active
+pages: editing a losing twin's body carries no graph-page event and does not
+force full query invalidation. A claim transition includes an unchanged sibling
+newly promoted to opening file; a still-existing logical page is not reported as deleted when
+its former opening disappears. Own writes retain their empty external page
+list. Block deep links use `WholeGraph::blocks(_, false)` to navigate to the
+physical holder, while block references, previews and rendering use active-only
+lookup. Both modes share the exact physical block index and inspect only its
+answering pages. Proof: `src-tauri/src/{watcher,deep_links}.rs`.
+
 Every publication, including an own text-only save, carries the existing
 `answers: {rev, inventoryChanged, blockRefCounts}` envelope with an added
 `summary: {rev, pages, blocks, linksTo, textTo, tagsTo, tagTableTo, refsTo, queryTo, days, journals, templates, props, inventoryChanged, full}`.

@@ -67,7 +67,7 @@ fn keyed_block(whole: &WholeGraph, uuid: &str) -> Result<Option<BlockHit>, ()> {
         false
     }
     let group = whole
-        .blocks(&[uuid.to_owned()])
+        .blocks(&[uuid.to_owned()], true)
         .map_err(|_| ())?
         .pop()
         .flatten();

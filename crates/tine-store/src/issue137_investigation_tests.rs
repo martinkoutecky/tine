@@ -90,7 +90,7 @@ impl FixtureGraph {
         self.store
             .whole_graph()
             .unwrap()
-            .blocks(&[uuid.to_owned()])
+            .blocks(&[uuid.to_owned()], true)
             .unwrap()
             .into_iter()
             .next()

@@ -88,7 +88,7 @@ fn resolve(store: &Store, ids: &[&str]) -> (Vec<Option<(String, String)>>, usize
     // measures resolving the requested ids.
     let before = crate::query::resolve_pages_touched();
     let got: Vec<_> = view
-        .blocks(&ids)
+        .blocks(&ids, true)
         .unwrap()
         .into_iter()
         .map(|group| group.map(|group| (group.page, first_line(&group.blocks[0].raw))))
@@ -445,7 +445,7 @@ fn acceptance_resolve_every_reference_in_a_graph() {
     });
     let scan_time = started.elapsed();
     let started = std::time::Instant::now();
-    view.graph.block_owner_page("");
+    view.graph.block_owner_page("", true);
     let lookup_time = started.elapsed();
     let dangling: Vec<String> = refs
         .iter()
@@ -457,7 +457,7 @@ fn acceptance_resolve_every_reference_in_a_graph() {
         let started = std::time::Instant::now();
         let out: Vec<_> = ids
             .chunks(crate::store::RESULT_BRIDGE_MAX_ROWS)
-            .flat_map(|chunk| view.blocks(chunk).unwrap())
+            .flat_map(|chunk| view.blocks(chunk, true).unwrap())
             .collect();
         (
             out,

@@ -2186,8 +2186,11 @@ mod tests {
             .unwrap()
             .expect("retried page publication");
         assert_eq!(
-            change.page(&FileId::from("pages/A.md".to_owned())),
-            Some((tine_core::model::PageKind::Page, "A"))
+            change
+                .pages()
+                .map(|(id, _, kind, name)| (id.as_str(), kind, name))
+                .collect::<Vec<_>>(),
+            vec![("pages/A.md", tine_core::model::PageKind::Page, "A")]
         );
         assert!(store
             .whole_graph()

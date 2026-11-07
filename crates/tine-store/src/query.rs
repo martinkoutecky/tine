@@ -2301,12 +2301,13 @@ pub(crate) fn quick_switch_for_editor(
 /// `Some(..)`/`None`).
 #[cfg(test)]
 pub(crate) fn resolve_blocks(graph: &ReadSnapshot, uuids: &[String]) -> Vec<Option<RefGroup>> {
-    resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
+    resolve_blocks_bounded(graph, uuids, true, usize::MAX, usize::MAX).0
 }
 
 pub(crate) fn resolve_blocks_bounded(
     graph: &ReadSnapshot,
     uuids: &[String],
+    active_only: bool,
     max_rows: usize,
     max_bytes: usize,
 ) -> (Vec<Option<RefGroup>>, bool, usize) {
@@ -2314,7 +2315,7 @@ pub(crate) fn resolve_blocks_bounded(
     type Want<'a> = (&'a (PageEntry, std::sync::Arc<Document>), HashSet<&'a str>);
     let mut by_page: BTreeMap<usize, Want<'_>> = BTreeMap::new();
     for id in uuids {
-        if let Some((slot, page)) = graph.block_owner_page(id) {
+        if let Some((slot, page)) = graph.block_owner_page(id, active_only) {
             by_page
                 .entry(slot)
                 .or_insert_with(|| (page, HashSet::new()))
@@ -2600,7 +2601,7 @@ pub(crate) fn preview_block_with_budget(
     let max_nodes = max_nodes.max(1);
     let max_bytes = max_bytes.max(1);
     // The exact block index names the answering page (see `resolve_blocks`).
-    let (_, (entry, doc)) = graph.block_owner_page(uuid)?;
+    let (_, (entry, doc)) = graph.block_owner_page(uuid, true)?;
     touch_page();
     let mut found: Option<&DocBlock> = None;
     walk(&doc.roots, &mut |block| {

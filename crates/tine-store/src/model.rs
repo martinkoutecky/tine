@@ -1638,7 +1638,13 @@ impl ReadSnapshot {
     pub(crate) fn block_owner_page(
         &self,
         uuid: &str,
+        active_only: bool,
     ) -> Option<(usize, &(PageEntry, Arc<Document>))> {
+        let pages = if active_only {
+            &self.pages
+        } else {
+            &self.physical_pages
+        };
         let owner = self
             .block_index
             .get()
@@ -1648,7 +1654,7 @@ impl ReadSnapshot {
                 owners
                     .slots()
                     .iter()
-                    .find_map(|&slot| self.pages.get(slot).map(|page| (slot, page)))
+                    .find_map(|&slot| pages.get(slot).map(|page| (slot, page)))
             });
         // Also compiled in the app's debug tests, where tine-store is a dependency.
         // A missed owner walk is as suspect as an absent row. Never recover by
@@ -1662,7 +1668,7 @@ impl ReadSnapshot {
             };
             if !owner.is_some_and(|(_, (_, doc))| holds(doc)) {
                 assert!(
-                    !self.pages.iter().any(|(_, doc)| holds(doc)),
+                    !pages.iter().any(|(_, doc)| holds(doc)),
                     "block index missed held id {uuid:?}"
                 );
             }
@@ -1700,7 +1706,7 @@ impl ReadSnapshot {
     /// Every slot the block index lists for `uuid`, ascending (index oracle).
     #[cfg(test)]
     pub(crate) fn block_owner_slots(&self, uuid: &str) -> Vec<usize> {
-        self.block_owner_page(uuid);
+        self.block_owner_page(uuid, true);
         self.block_index
             .get()
             .and_then(|index| index.owners(uuid))
@@ -7249,7 +7255,7 @@ mod tests {
                 scope.spawn(move || {
                     assert_eq!(
                         snapshot
-                            .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001")
+                            .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001", true)
                             .map(|(_, (entry, _))| entry.name.as_str()),
                         Some("Target")
                     );
@@ -7285,7 +7291,7 @@ mod tests {
         assert!(after.referenced_name_index.get().is_some());
         assert_eq!(
             after
-                .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001")
+                .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001", true)
                 .map(|(_, (entry, _))| entry.name.as_str()),
             Some("Target")
         );
@@ -9287,7 +9293,7 @@ mod tests {
                     store
                         .whole_graph()
                         .unwrap()
-                        .blocks(&["11111111-1111-4111-8111-111111111111".into()])
+                        .blocks(&["11111111-1111-4111-8111-111111111111".into()], true)
                         .unwrap()[0]
                         .is_some(),
                     "ID-bearing root lost addressability"

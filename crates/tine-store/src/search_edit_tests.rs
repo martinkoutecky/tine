@@ -569,7 +569,7 @@ fn frontend_added_id_survives_reload_and_resolves() {
         reopened
             .whole_graph()
             .unwrap()
-            .blocks(&[uuid.clone()])
+            .blocks(&[uuid.clone()], true)
             .unwrap()[0]
             .is_some(),
         "resolve_block finds it by id::"
@@ -1143,7 +1143,7 @@ fn resolve_block_index_refreshes_after_cache_change() {
         crate::store::Store::open(&root, crate::store::OpenOptions::default()).unwrap();
     let original = store.whole_graph().unwrap();
     assert_eq!(
-        original.blocks(&["aaaa-1111".into()]).unwrap()[0]
+        original.blocks(&["aaaa-1111".into()], true).unwrap()[0]
             .as_ref()
             .unwrap()
             .page,
@@ -1159,20 +1159,20 @@ fn resolve_block_index_refreshes_after_cache_change() {
     store.refresh(crate::Depth::Stamps).unwrap();
     let current = store.whole_graph().unwrap();
     assert_eq!(
-        current.blocks(&["bbbb-2222".into()]).unwrap()[0]
+        current.blocks(&["bbbb-2222".into()], true).unwrap()[0]
             .as_ref()
             .unwrap()
             .page,
         "B"
     );
     assert_eq!(
-        current.blocks(&["aaaa-1111".into()]).unwrap()[0]
+        current.blocks(&["aaaa-1111".into()], true).unwrap()[0]
             .as_ref()
             .unwrap()
             .page,
         "A"
     );
-    assert!(original.blocks(&["bbbb-2222".into()]).unwrap()[0].is_none());
+    assert!(original.blocks(&["bbbb-2222".into()], true).unwrap()[0].is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1207,7 +1207,7 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
         "nope-0000".to_string(), // unknown
         "aaaa-1111".to_string(), // duplicate input
     ];
-    let out = view.blocks(&req).unwrap();
+    let out = view.blocks(&req, true).unwrap();
     assert_eq!(out.len(), req.len(), "one result slot per input");
     assert_eq!(out[0].as_ref().unwrap().page, "A");
     assert_eq!(
@@ -1230,13 +1230,13 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
     // Batch agrees with N single resolves (same semantics, just one pass).
     for u in &req {
         assert_eq!(
-            view.blocks(std::slice::from_ref(u))
+            view.blocks(std::slice::from_ref(u), true)
                 .unwrap()
                 .into_iter()
                 .next()
                 .unwrap()
                 .map(|r| r.page),
-            view.blocks(std::slice::from_ref(u)).unwrap()[0]
+            view.blocks(std::slice::from_ref(u), true).unwrap()[0]
                 .as_ref()
                 .map(|r| r.page.clone()),
         );

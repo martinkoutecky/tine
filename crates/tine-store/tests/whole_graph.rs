@@ -104,7 +104,9 @@ fn all_whole_graph_questions_use_the_public_view() {
     let unlinked = view.unlinked_references("Target").unwrap();
     assert!(unlinked.iter().any(|group| group.page == "Source"));
     let source_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_string();
-    let blocks = view.blocks(&[source_id.clone(), "missing".into()]).unwrap();
+    let blocks = view
+        .blocks(&[source_id.clone(), "missing".into()], true)
+        .unwrap();
     assert_eq!(blocks.len(), 2);
     assert_eq!(blocks[0].as_ref().unwrap().page, "Source");
     assert!(blocks[1].is_none());
@@ -171,7 +173,7 @@ fn bounded_and_cancelled_answers_are_typed() {
     let fixture = Fixture::new();
     let view = fixture.view();
     assert!(matches!(
-        view.blocks(&vec!["missing".into(); 20_001]),
+        view.blocks(&vec!["missing".into(); 20_001], true),
         Err(QueryError::ResultTooLarge { .. })
     ));
     assert!(matches!(

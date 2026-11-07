@@ -66,7 +66,7 @@ fn demo_graph_scaffolds_and_resolves() {
     }
     let view = store.whole_graph().unwrap();
     assert!(
-        view.blocks(&[TARGET_ID.to_string()]).unwrap()[0].is_some(),
+        view.blocks(&[TARGET_ID.to_string()], true).unwrap()[0].is_some(),
         "block-ref target missing"
     );
     assert_eq!(

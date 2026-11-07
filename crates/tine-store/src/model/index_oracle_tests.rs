@@ -53,7 +53,7 @@ fn an_index_miss_checks_every_page_in_tests() {
     index.edit(&id, Vec::clear);
     snapshot.block_index.take();
     snapshot.block_index.set(index).ok().unwrap();
-    snapshot.block_owner_page(&id);
+    snapshot.block_owner_page(&id, true);
 }
 
 /// The canonical image of `graph`'s initial build.

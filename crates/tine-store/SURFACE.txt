@@ -97,11 +97,11 @@ field store::Change.origin
 enum store::LoadError
 fn store::Store::refresh
 fn store::Store::subscribe
-fn store::Change::page
+fn store::Change::pages
 # Cost-model audit 2026-11-02 row 1: a link edit's inventory signal carries the
 # entries that moved, so the window patches its names instead of rereading the
 # whole inventory per autosave. No existing Change item answers names
-# (`Change::page` is one page's parsed form), and `WholeGraph::inventory` cannot
+# (`Change::pages` lists affected active pages), and `WholeGraph::inventory` cannot
 # take a parameter for it: a later view answers a later revision, not this
 # publication's. The answer reuses `Inventory`; no type is added.
 fn store::Change::inventory_delta

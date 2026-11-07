@@ -149,6 +149,79 @@ impl PendingFiles {
 }
 
 impl Snapshot {
+    /// The active pages changed by this publication, including opening
+    /// siblings that no physical write touched. Physical evidence stays in
+    /// Change::files for conflict refresh and mutation bookkeeping.
+    fn page_changes(
+        &self,
+        old: Option<&Self>,
+        origin: Origin,
+        files: &[(FileId, ChangeKind, Option<FileRev>)],
+    ) -> Vec<(FileId, ChangeKind, PageKind, String)> {
+        if origin == Origin::Own {
+            return Vec::new();
+        }
+        let kinds: HashMap<_, _> = files
+            .iter()
+            .map(|(id, kind, _)| (id.as_str(), *kind))
+            .collect();
+        let mut paths: Vec<_> = files
+            .iter()
+            .map(|(id, _, _)| id.as_str().to_owned())
+            .collect();
+        paths.extend(self.graph.semantic_changed_paths.iter().cloned());
+        let mut seen = HashSet::new();
+        paths.retain(|path| seen.insert(path.clone()));
+        let mut pages = Vec::new();
+        fn get<'a>(
+            snapshot: &'a Snapshot,
+            path: &str,
+        ) -> Option<&'a (PageEntry, Arc<tine_core::doc::Document>)> {
+            snapshot
+                .graph
+                .pages
+                .positions
+                .get(path)
+                .and_then(|&slot| snapshot.graph.pages.get(slot))
+        }
+        for path in paths {
+            let before = old.and_then(|snapshot| get(snapshot, &path));
+            let after = get(self, &path);
+            if let Some((entry, doc)) = after {
+                if before.is_some_and(|(previous, previous_doc)| {
+                    previous.name == entry.name
+                        && previous.kind == entry.kind
+                        && (Arc::ptr_eq(previous_doc, doc) || previous_doc == doc)
+                }) {
+                    continue;
+                }
+                let change = kinds
+                    .get(path.as_str())
+                    .copied()
+                    .unwrap_or(ChangeKind::Modified);
+                pages.push((FileId::from(path), change, entry.kind, entry.name.clone()));
+            } else if let Some((entry, _)) = before {
+                // A demoted file or removed opening with a replacement is
+                // represented by the new opening file's event, not deletion
+                // of a logical page that still exists.
+                if self
+                    .graph
+                    .real_page_owners()
+                    .opening_entry(&tine_core::refs::page_key(&entry.name))
+                    .is_none()
+                {
+                    pages.push((
+                        FileId::from(path),
+                        ChangeKind::Removed,
+                        entry.kind,
+                        entry.name.clone(),
+                    ));
+                }
+            }
+        }
+        pages
+    }
+
     pub(super) fn capture(
         graph: &Graph,
         config: &RwLock<ConfigState>,
@@ -440,7 +513,7 @@ impl ChangeFeed {
         origin: Origin,
         files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
         config_changed: bool,
-        pages: Vec<(FileId, PageKind, String)>,
+        _pages: Vec<(FileId, PageKind, String)>,
         before_notify: impl FnOnce(),
         watch: Option<WatchBatch>,
         rebuild: bool,
@@ -566,6 +639,7 @@ impl ChangeFeed {
         }
         #[cfg(test)]
         self.publish_hooks.before_publish();
+        let pages = snapshot.page_changes(old.as_deref(), origin, &files);
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let rev = GraphRev(state.rev);
@@ -712,6 +786,9 @@ impl Store {
             self.changes
                 .publish_deferred_early(&self.watch.core_for_load());
         }
+        let previous = (origin == Origin::External)
+            .then(|| self.changes.snapshot.read().unwrap().clone())
+            .flatten();
         let rev = self.changes.publish_observed(
             origin,
             files.clone(),
@@ -721,8 +798,13 @@ impl Store {
         );
         // No snapshot: a publication during the load whose capture panicked.
         // The write landed; only its answers are unknown.
-        let answers = (self.changes.snapshot.read().unwrap().as_ref())
-            .map(|snapshot| snapshot.answers.clone())
+        let (answers, pages) = (self.changes.snapshot.read().unwrap().as_ref())
+            .map(|snapshot| {
+                (
+                    snapshot.answers.clone(),
+                    snapshot.page_changes(previous.as_deref(), origin, &files),
+                )
+            })
             .unwrap_or_default();
         let change = Change {
             graph_rev: rev,

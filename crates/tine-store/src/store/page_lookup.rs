@@ -123,14 +123,18 @@ mod tests {
             .unwrap();
         // Print finds an embedded block's page through `blocks`: the
         // exact owner index names the page a corpus scan finds first.
-        let group = view.blocks(&[id.to_owned()]).unwrap().remove(0).unwrap();
+        let group = view
+            .blocks(&[id.to_owned()], true)
+            .unwrap()
+            .remove(0)
+            .unwrap();
         assert_eq!(
             (group.page.as_str(), group.kind),
             (first.name.as_str(), first.kind)
         );
         assert!(group.blocks[0].raw.contains(&format!("id:: {id}")));
         assert!(view
-            .blocks(&["6553f1a0-0000-4000-8000-0000000000ff".to_owned()])
+            .blocks(&["6553f1a0-0000-4000-8000-0000000000ff".to_owned()], true)
             .unwrap()[0]
             .is_none());
         store.close();

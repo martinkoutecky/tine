@@ -249,10 +249,10 @@ pub struct Change {
     /// `Origin::External` `assets/<path relative to that directory>` tuple with
     /// no revision, from file metadata only (cost: `asset_watch.rs`).
     /// Sync-conflict
-    /// copies may appear as files while [`Self::page`] returns `None` for them;
+    /// copies and inactive twins may appear as files while [`Self::pages`] omits them;
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-    pages: Vec<(FileId, PageKind, String)>,
+    pages: Vec<(FileId, ChangeKind, PageKind, String)>,
     answers: Answers,
     /// The watcher batch that produced this publication, for latency
     /// receipts (GH #337 diagnosis); `None` for every other publisher.
@@ -308,22 +308,16 @@ impl Change {
         )
     }
 
-    /// The parsed graph page altered by an external observation or an external
-    /// writer whose bytes survived transaction undo, using its effective
-    /// `title::`-aware name (the old name for a removal). Own writes
-    /// list changed files but carry no parsed page entries, so this returns
-    /// `None` for them. It also returns `None` for a file with no parsed page
-    /// change, including a duplicate journal claimant or sync-conflict copy.
-    /// A move lists its old file as removed and its destination as created,
-    /// without a pairing identifier;
-    /// `page()` can describe either only when parsed page evidence is present.
-    /// Cost O(parsed page entries in this publication) per call; calling it
-    /// for every file can be quadratic in a large publication.
-    pub fn page(&self, file: &FileId) -> Option<(PageKind, &str)> {
+    /// Active graph pages altered by an external observation or an external
+    /// writer whose bytes survived transaction undo, with effective names
+    /// (the old name for a removal). Includes an unchanged sibling promoted
+    /// to opening claimant, whose file need not appear in `files`. Inactive
+    /// twins and sync-conflict copies contribute no pages. Own writes carry
+    /// no entries. Cost O(affected active pages), without a graph walk.
+    pub fn pages(&self) -> impl Iterator<Item = (&FileId, ChangeKind, PageKind, &str)> {
         self.pages
             .iter()
-            .find(|(id, _, _)| id == file)
-            .map(|(_, kind, name)| (*kind, name.as_str()))
+            .map(|(id, change, kind, name)| (id, *change, *kind, name.as_str()))
     }
 }
 
@@ -2355,7 +2349,7 @@ pub enum Resolved {
     /// references, backlinks, and search. A
     /// subscriber should re-resolve this name after a claimant is removed.
     /// For an `Origin::Own` removal, remember the name from the earlier view:
-    /// `Change::page` has no parsed name for that event.
+    /// `Change::pages` has no parsed name for that event.
     Existing {
         /// Canonical claimant.
         id: PageId,
@@ -3150,7 +3144,13 @@ impl WholeGraph {
     /// More than 20,000 requested ids returns
     /// `ResultTooLarge` with `RequestedBlockRefs`; result data is also limited
     /// to 20,000 rows and 32 MiB.
-    pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
+    /// `active_only` selects semantic block references; false also admits
+    /// physical losing twins for explicit file navigation.
+    pub fn blocks(
+        &self,
+        uuids: &[String],
+        active_only: bool,
+    ) -> Result<Vec<Option<RefGroup>>, QueryError> {
         if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
             return Err(QueryError::bridge_result_too_large(
                 Budget::RequestedBlockRefs,
@@ -3161,6 +3161,7 @@ impl WholeGraph {
         let (groups, exceeded, total) = crate::query::resolve_blocks_bounded(
             &self.graph,
             uuids,
+            active_only,
             RESULT_BRIDGE_MAX_ROWS,
             RESULT_BRIDGE_MAX_BYTES,
         );
@@ -5267,7 +5268,7 @@ mod rev5_tests {
             ),
             (
                 "blocks",
-                format!("{:?}", view.blocks(&["d3-block".into()]).unwrap()),
+                format!("{:?}", view.blocks(&["d3-block".into()], true).unwrap()),
             ),
             (
                 "preview_block",
