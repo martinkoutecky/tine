@@ -1,9 +1,10 @@
-import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
+import { For, Show, createComputed, createEffect, createSignal, createUniqueId, on, onCleanup, type JSX } from "solid-js";
 import { VIEW_KINDS, type AggFn, type ViewSettings } from "../editor/queryIr";
 import type { RegistryAccess } from "./querySheetParts";
 import { QueryVocabularyPicker, displayFieldEntries, type DisplaySlot } from "./QueryVocabularyPicker";
 import { registerTransientLayer } from "../transientLayers";
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
+import { pushToastUnique } from "../toasts";
 
 /** The inline Display panel edits one ViewSettings value. The host owns the
  * guarded write, so a field choice and the header switcher share one save path.
@@ -24,7 +25,14 @@ export function QueryDisplay(props: {
   const [open, setOpen] = createSignal(props.inline ?? false);
   createEffect(() => props.onOpenChange?.(open()));
   const [picker, setPicker] = createSignal<DisplaySlot | null>(null);
-  const [sampleText, setSampleText] = createSignal(props.view().sample === undefined ? "" : String(props.view().sample));
+  const sampleOf = (value: number | undefined) => value === undefined ? "" : String(value);
+  const [sampleText, setSampleText] = createSignal(sampleOf(props.view().sample));
+  // GH #911: the saved sample the field was seeded from. An untouched field
+  // follows an external change; an edited draft of an older value is refused.
+  let sampleBase = props.view().sample;
+  createComputed(on(() => props.view().sample, (next) => {
+    if (sampleText() === sampleOf(sampleBase)) { setSampleText(sampleOf(next)); sampleBase = next; }
+  }, { defer: true }));
   const id = `query-display-${createUniqueId()}`;
   let trigger: HTMLButtonElement | undefined;
   let panel: HTMLDivElement | undefined;
@@ -41,7 +49,7 @@ export function QueryDisplay(props: {
   const availableColumns = () => [...new Set(props.availableColumns?.() ?? props.defaultColumns?.() ?? [])];
   const apply = (patch: Partial<ViewSettings>) => void props.apply({ ...view(), ...patch });
   const openPanel = () => {
-    if (!open()) setSampleText(view().sample === undefined ? "" : String(view().sample));
+    if (!open()) { setSampleText(sampleOf(view().sample)); sampleBase = view().sample; }
     setOpen(!open());
     setPicker(null);
   };
@@ -89,7 +97,14 @@ export function QueryDisplay(props: {
   };
   const commitSample = () => {
     const parsed = sample();
-    if (parsed.valid && parsed.value !== view().sample) apply({ sample: parsed.value });
+    if (!parsed.valid || parsed.value === view().sample) return;
+    if (sampleBase !== view().sample) {
+      setSampleText(sampleOf(view().sample)); sampleBase = view().sample;
+      pushToastUnique(msg("macro-block-changed"), "error");
+      return;
+    }
+    sampleBase = parsed.value;
+    apply({ sample: parsed.value });
   };
   return <div class="qd-root">
     <Show when={!props.inline}><button ref={trigger} type="button" class="qd-trigger" aria-expanded={open()} aria-controls={id}
