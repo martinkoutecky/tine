@@ -21,7 +21,8 @@ import { DatePicker } from "./components/DatePicker";
 import { applyTaskWorkflow, datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { endEdit, startEditing } from "./editorController";
-import { installKeybindings, eventToBindingString } from "./keybindings";
+import { installKeybindings, matchesCommand } from "./keybindings";
+import { bindingAlternatives, type ShortcutBinding } from "./shortcutBindings";
 import { backend } from "./backend";
 import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
 import { startUiLanguage } from "./i18n/preference";
@@ -75,16 +76,16 @@ const captureEditorIsCm6 = () => !!document.querySelector(".capture-shell [data-
 
 // Pretty-print a binding string ("mod+shift+enter") for a hint ("Ctrl-Shift-Enter").
 // "mod" is Ctrl on Linux/Windows (Cmd on macOS — but this app targets Linux).
-function formatBinding(binding: string): string {
+function formatBinding(binding: ShortcutBinding): string {
   const label: Record<string, string> = {
     mod: "Ctrl", ctrl: "Ctrl", control: "Ctrl", cmd: "Cmd", meta: "Cmd",
     super: "Super", shift: "Shift", alt: "Alt", enter: "Enter", esc: "Esc",
     space: "Space", tab: "Tab", up: "↑", down: "↓", left: "←", right: "→",
   };
-  return binding
+  return bindingAlternatives(binding).map((alternative) => alternative
     .split("+")
     .map((k) => label[k.toLowerCase()] ?? (k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1)))
-    .join("-");
+    .join("-")).join(", ");
 }
 
 function Capture() {
@@ -94,12 +95,12 @@ function Capture() {
   // appended to today's journal. Plus the live merged shortcut map (from the main
   // window) so the hint text shows the user's ACTUAL submit shortcut.
   const [title, setTitle] = createSignal("");
-  const [shortcuts, setShortcuts] = createSignal<Record<string, string>>({});
+  const [shortcuts, setShortcuts] = createSignal<Record<string, ShortcutBinding>>({});
   const [captureStatus, setCaptureStatus] = createSignal<"idle" | "saving" | "error">("idle");
   const [captureMessage, setCaptureMessage] = createSignal("");
   const [previousGraph, setPreviousGraph] = createSignal(false);
   const submitBinding = () => shortcuts()["editor/quick-capture-file"] ?? "mod+shift+enter";
-  const bulletHint = () => submitBinding() === "false"
+  const bulletHint = () => !bindingAlternatives(submitBinding()).length
     ? "Edit as usual; use File capture to submit"
     : `Edit as usual, ${formatBinding(submitBinding())} to submit`;
   let titleRef: HTMLInputElement | undefined;
@@ -650,7 +651,7 @@ function Capture() {
         const unTheme = await listen<{ theme: string }>("capture-apply-theme", (e) =>
           applyThemeAttr(e.payload.theme)
         );
-        const unKeys = await listen<Record<string, string>>("capture-apply-shortcuts", (e) => {
+        const unKeys = await listen<Record<string, ShortcutBinding>>("capture-apply-shortcuts", (e) => {
           disposeKeys();
           disposeKeys = installKeybindings(e.payload ?? {});
           setShortcuts(e.payload ?? {}); // keep the hint's submit shortcut current
@@ -732,8 +733,7 @@ function Capture() {
               // target must do the same rather than falling through to submit,
               // cancellation, or title-to-editor focus movement.
               if (e.isComposing || e.keyCode === 229) return;
-              const want = shortcuts()["editor/quick-capture-file"] || "mod+shift+enter";
-              if (eventToBindingString(e) === want) {
+              if (matchesCommand(e, "editor/quick-capture-file")) {
                 e.preventDefault();
                 submit();
               } else if (e.key === "Escape") {
@@ -748,7 +748,7 @@ function Capture() {
           <div class="page-blocks">
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>
-          <Show when={submitBinding() === "false"}>
+          <Show when={!bindingAlternatives(submitBinding()).length}>
             <div class="capture-actions">
               <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>{t("capture-file-capture")}</button>
             </div>

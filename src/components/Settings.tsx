@@ -64,6 +64,7 @@ import { detectMediaEditorCommand, mediaEditorCommand, setMediaEditorCommand } f
 import { formatAssetName } from "../media";
 import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
+import { bindingAlternatives, shortcutValue } from "../shortcutBindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { Field, Toggle, settingLabel, settingAttributes, settingDescription, settingHint } from "./settingsField";
 import { TraySettings } from "./TraySettings";
@@ -187,6 +188,7 @@ export function Settings(): JSX.Element {
     const ov = shortcutOverrides();
     return commandDefaults().map((c) => ({
       ...c,
+      alias: c.id in ov || c.id in cfg ? undefined : c.alias,
       effective: ov[c.id] ?? cfg[c.id] ?? c.binding,
       overridden: c.id in ov,
     }));
@@ -208,6 +210,17 @@ export function Settings(): JSX.Element {
 
   // Recording: capture the next chord for the command being remapped.
   const [recording, setRecording] = createSignal<string | null>(null);
+  const [recordingIndex, setRecordingIndex] = createSignal<number | null>(0);
+  const recordShortcut = (id: string, index: number | null = 0) => {
+    const cancel = recording() === id && recordingIndex() === index;
+    setRecordingIndex(index);
+    setRecording(cancel ? null : id);
+  };
+  const removeShortcut = (id: string, index: number) => {
+    setRecording(null);
+    const row = shortcuts().find((row) => row.id === id)!;
+    setShortcutOverride(id, shortcutValue(bindingAlternatives(row.effective).filter((_, i) => i !== index)));
+  };
   // Settings owns its semantic Escape rungs.  Registering here (rather than in
   // App) keeps shortcut recording/search/disclosures from being skipped by a
   // blanket modal close and ensures disposal follows this component lifetime.
@@ -241,7 +254,15 @@ export function Settings(): JSX.Element {
       e.stopPropagation();
       const b = eventToBindingString(e);
       if (!b) return; // bare modifier — keep waiting
-      setShortcutOverride(id, b);
+      const row = shortcuts().find((row) => row.id === id)!;
+      const values = bindingAlternatives(row.effective);
+      const index = recordingIndex();
+      if (index === null) {
+        // Adding keeps both the primary default and any built-in alias.
+        if (row.alias && !row.overridden && !(id in (graphMeta()?.shortcuts ?? {}))) values.push(row.alias);
+        values.push(b);
+      } else values[index] = b;
+      setShortcutOverride(id, shortcutValue([...new Set(values)]));
       setRecording(null);
     };
     onCleanup(listen(activeWindow(), "keydown", onKey, true));
@@ -357,9 +378,11 @@ export function Settings(): JSX.Element {
                   shortcuts={shortcuts()}
                   search={settingsQuery()}
                   recording={recording()}
-                  onRecord={(id) => setRecording(recording() === id ? null : id)}
+                  recordingIndex={recordingIndex()}
+                  onRecord={recordShortcut}
+                  onRemove={removeShortcut}
                   onUnbind={(id) => { setRecording(null); setShortcutOverride(id, "false"); }}
-                  onReset={resetShortcutOverride}
+                  onReset={(id) => { setRecording(null); resetShortcutOverride(id); }}
                 /></div>
               </Show>
               <Show when={tab() === "about"}>

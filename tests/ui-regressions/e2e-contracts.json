@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-multiple-hotkeys.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Settings adds a second key while keeping the default. Each opens search before and after reloading the app; both alternatives from an OG config.edn vector also open help. Note and config bytes stay unchanged.", "blocking": false, "authority": "GH #878; OG shortcut vectors" }],
+      "acceptableVariations": ["Shortcut control markup, keycap styling, timing and window geometry may vary while both alternatives run and persist."],
+      "nonRequirements": ["No exact pixels, private graph, macOS/Windows certification or release burn-in; unit and component tests cover parsing, matching, conflicts, removing, replacing and resetting."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-editor-native.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },

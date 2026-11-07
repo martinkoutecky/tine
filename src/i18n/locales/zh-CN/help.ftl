@@ -111,6 +111,8 @@ help-or = 或 <span>{ $alias }</span>
 help-unbind = 取消绑定
 
 help-remove-this-keybinding = 移除此快捷键
+help-add-keybinding = 添加快捷键
+help-shortcut-conflicts = 与以下命令冲突：{ $commands }
 
 help-reset = 重置
 

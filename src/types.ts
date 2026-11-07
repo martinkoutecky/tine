@@ -644,7 +644,7 @@ export interface GraphMeta {
   journals_dir: string;
   pages_dir: string;
   preferred_workflow: string; // "now" | "todo"
-  shortcuts: Record<string, string>;
+  shortcuts: Record<string, import("./shortcutBindings").ShortcutBinding>;
   start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
   /** `:property-pages/enabled?`; absent means enabled, as in OG. */
