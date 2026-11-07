@@ -1054,7 +1054,7 @@ export interface MessageArgs {
   "gpu-tine-is-rendering-on-the-cpu-your-gpu": {};
   "graph-a-rename-is-still-running-switch": {};
   "graph-allow-external-assets-directory": {};
-  "graph-choose-a-folder-inside-on-my-iphone": {};
+  "graph-choose-a-folder-inside-on-my-iphone": { "app": string | number };
   "graph-couldn-t-create-the-graph": { "error": string | number; "graphState": string | number };
   "graph-couldn-t-open-the-folder-picker": { "error": string | number; "platform": string | number };
   "graph-couldn-t-prepare-the-icloud-graph": { "error": string | number };
@@ -1112,8 +1112,8 @@ export interface MessageArgs {
   "graph-this-graph-s-assets-folder-points-outside-the": { "assetsDirectory": string | number };
   "graph-tine-left-unreadable-crash-recovery-file-s-in-place": { "count": number; "files": string | number };
   "graph-tine-needs-a-folder-on-the-device-s": {};
-  "graph-tineoutline-can-only-create-graphs-inside-on": {};
-  "graph-tineoutline-can-only-open-folders-inside-on": {};
+  "graph-tineoutline-can-only-create-graphs-inside-on": { "app": string | number };
+  "graph-tineoutline-can-only-open-folders-inside-on": { "app": string | number };
   "graph-verification-at-least-one-report-is-incomplete-no-match": {};
   "graph-verification-cancel": {};
   "graph-verification-compare-reports": {};
@@ -3219,7 +3219,7 @@ export interface MessageArgs {
   "welcome-free-open-source-your-notes": {};
   "welcome-new-to-this-we-ll-set-up-a": {};
   "welcome-nothing-was-changed-on-disk-you-can": {};
-  "welcome-on-iphone-and-ipad-graphs-can-live": {};
+  "welcome-on-iphone-and-ipad-graphs-can-live": { "app": string | number };
   "welcome-open-an-existing-graph": {};
   "welcome-opening": {};
   "welcome-point-tine-at-a-logseq-graph-folder": {};

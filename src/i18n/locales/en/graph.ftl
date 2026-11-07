@@ -8,7 +8,7 @@ graph-graph-not-opened-its-external-assets-directory = Graph not opened: its ext
 graph-some-pages-couldn-t-be-saved-resolve = Some pages couldn't be saved — resolve conflicts before switching graphs.
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-couldn-t-prepare-the-icloud-graph = Couldn't prepare the iCloud graph. ({ $error })
-graph-tineoutline-can-only-open-folders-inside-on = TineOutline can only open folders inside On My iPhone → TineOutline or iCloud Drive → TineOutline.
+graph-tineoutline-can-only-open-folders-inside-on = { $app } can only open folders inside On My iPhone → { $app } or iCloud Drive → { $app }.
 graph-pdf-changes-couldn-t-be-saved-the = PDF changes couldn't be saved — the current graph is still open.
 graph-a-rename-is-still-running-switch = A rename is still running — switch graphs once it finishes.
 graph-waiting-for-tine-to-finish-saving = Waiting for Tine to finish saving “{ $saving }” before opening this graph…
@@ -37,10 +37,10 @@ graph-page-already-exists-merge-into = Page “{ $to }” already exists. Merge 
 graph-couldn-t-open-the-folder-picker = Couldn't open the { $platform } folder picker. ({ $error })
 graph-tine-needs-a-folder-on-the-device-s = Tine needs a folder on the device's own storage. This provider folder can't be opened directly. Use your provider's sync-to-local-folder feature, then pick that local folder in Open graph.
 graph-grant-all-files-access-for-tine-then = Grant "All files access" for Tine, then tap Open again.
-graph-choose-a-folder-inside-on-my-iphone = Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.
+graph-choose-a-folder-inside-on-my-iphone = Choose a folder inside On My iPhone → { $app } or iCloud Drive → { $app }. Other apps' folders and Files providers aren't supported yet.
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-couldn-t-prepare-the-icloud-location = Couldn't prepare the iCloud location. ({ $error })
-graph-tineoutline-can-only-create-graphs-inside-on = TineOutline can only create graphs inside On My iPhone → TineOutline or iCloud Drive → TineOutline.
+graph-tineoutline-can-only-create-graphs-inside-on = { $app } can only create graphs inside On My iPhone → { $app } or iCloud Drive → { $app }.
 # $graphState is open when an existing graph remains open, otherwise none. $error is an untranslated diagnostic.
 graph-couldn-t-create-the-graph = { $graphState ->
     [open] Couldn't create the graph. The current graph is still open. ({ $error })

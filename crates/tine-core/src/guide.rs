@@ -1312,7 +1312,24 @@ mod rename_guide_tests {
         // The iOS picker opens only the app's own On My iPhone / iCloud Drive
         // folders (src/graph.ts switchGraph) and Settings hides Plugins on iOS.
         let mobile = include_str!("templates/platforms-and-mobile.md");
+        let identities: serde_json::Value =
+            serde_json::from_str(include_str!("../../../src-tauri/app-identity.json")).unwrap();
+        let beta = identities["identities"]["experiment"]["productName"]
+            .as_str()
+            .unwrap();
         for outcome in [
+            format!("separate **{beta}** app"),
+            format!("**On My iPhone → {beta}** and **iCloud Drive → {beta}**"),
+        ] {
+            assert!(mobile.contains(&outcome), "missing iOS Guide outcome: {outcome}");
+        }
+        for outcome in [
+            "[App Store](https://apps.apple.com/us/app/tineoutline/id6804403687) as **TineOutline**",
+            "**amber icon**",
+            "installs alongside the stable **TineOutline**",
+            "starts on Welcome with fresh settings and no remembered graph",
+            "cannot see the stable app's settings or iCloud folder",
+            "copy and the original are independent",
             "**On My iPhone → TineOutline** or **iCloud Drive → TineOutline**",
             "refuses folders from other Files providers",
             "a remembered graph reopens after an app update",

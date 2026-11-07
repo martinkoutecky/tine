@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 final class GraphFolderPickerPlugin: Plugin, UIDocumentPickerDelegate {
   private static let markerName = ".tine-container"
-  private static let iCloudContainerIdentifier = "iCloud.page.tine.Tine"
+  private static let iCloudContainerIdentifier = "iCloud.page.tine.TineBeta"
   private static let materializationTimeout: TimeInterval = 120
 
   private var documentsURL: URL?
@@ -127,7 +127,7 @@ final class GraphFolderPickerPlugin: Plugin, UIDocumentPickerDelegate {
         throw NSError(
           domain: "page.tine.app.folder-picker",
           code: 3,
-          userInfo: [NSLocalizedDescriptionKey: "TineOutline couldn't enumerate the iCloud graph."]
+          userInfo: [NSLocalizedDescriptionKey: "Tine Beta couldn't enumerate the iCloud graph."]
         )
       }
 
@@ -148,7 +148,7 @@ final class GraphFolderPickerPlugin: Plugin, UIDocumentPickerDelegate {
           code: 4,
           userInfo: [
             NSLocalizedDescriptionKey:
-              "The iCloud graph is still downloading. Keep TineOutline open and try again."
+              "The iCloud graph is still downloading. Keep Tine Beta open and try again."
           ]
         )
       }
@@ -201,7 +201,7 @@ final class GraphFolderPickerPlugin: Plugin, UIDocumentPickerDelegate {
             throw NSError(
               domain: "page.tine.app.folder-picker",
               code: 2,
-              userInfo: [NSLocalizedDescriptionKey: "TineOutline's local Documents container is unavailable."]
+              userInfo: [NSLocalizedDescriptionKey: "Tine Beta's local Documents container is unavailable."]
             )
           }
           if Self.isInside(selected, container: local) {
