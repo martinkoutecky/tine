@@ -299,6 +299,83 @@ it("keeps readable names and reports unreadable files once when a file name can'
 // carries them; the index patches itself with no `page_inventory` IPC and
 // answers exactly as a fresh read would.
 describe("page index: name-only inventory deltas", () => {
+  it.each([8, 32])("patches one name without visiting or notifying %i unrelated names", async (size) => {
+    const { createRoot, createComputed } = await import("solid-js");
+    let visits = 0;
+    const entries = Array.from({ length: size }, (_, i) => {
+      const row = absent(`Name${i}`);
+      const target = row.target;
+      Object.defineProperty(row, "target", { get: () => { visits++; return target; } });
+      return row;
+    });
+    const index = await answers(inventory(1, ...entries));
+    let runs = 0;
+    const dispose = createRoot(dispose => {
+      for (const row of entries) createComputed(() => { index.resolvedTarget(row.name); runs++; });
+      return dispose;
+    });
+    visits = runs = 0;
+    expect(index.patchPageIndex(2n, { keys: ["fresh"], entries: [absent("Fresh")] })).toEqual({ aliases: false });
+    expect({ runs, visits }).toEqual({ runs: 0, visits: 0 });
+    expect(index.resolvedTarget("Fresh")?.kind).toBe("absent");
+    expect(index.allPageNames()).toContain("Fresh");
+    runs = 0;
+    backendMock.pageInventory.mockResolvedValue(inventory(3, ...entries, absent("Fresh")));
+    await index.refreshPageIndex();
+    expect(runs).toBe(0);
+    dispose();
+  });
+
+  it("keeps spelling twins, kind-qualified names and owner-path dependencies through patches and refresh", async () => {
+    const twins = [file("Foo", "pages/Foo.md", ["pages/foo.md"]), file("foo", "pages/Foo.md", ["pages/foo.md"])];
+    const journal = { ...absent("Same"), is_journal: true, day: 20261107 };
+    const shortcut = alias("Shortcut", "pages/Foo.md");
+    const index = await answers(inventory(1, ...twins, absent("Same"), journal, shortcut));
+    const files = index.allPages();
+    index.patchPageIndex(2n, { keys: ["typed"], entries: [absent("Typed")] });
+    expect(index.allPages()).toBe(files);
+    expect(index.navigationName("FOO")).toBe("Foo");
+    expect(index.resolvedTarget("Same", "journal")).toEqual(journal.target);
+    const { createRoot, createComputed } = await import("solid-js");
+    const names: string[] = [];
+    const dispose = createRoot(dispose => {
+      createComputed(() => names.push(index.navigationName("Shortcut")));
+      return dispose;
+    });
+    backendMock.pageInventory.mockResolvedValue(inventory(3, file("Renamed", "pages/Foo.md"), shortcut));
+    await index.refreshPageIndex();
+    expect(names).toEqual(["Foo", "Renamed"]);
+    index.resetPageIndex();
+    expect(names.at(-1)).toBe("Shortcut");
+    backendMock.pageInventory.mockResolvedValue(inventory(4, file("Again", "pages/Foo.md"), shortcut));
+    await index.refreshPageIndex();
+    expect(names.at(-1)).toBe("Again");
+    dispose();
+  });
+
+  it("keeps the backend order through growing, shrinking and replacing name buckets", async () => {
+    const index = await answers(inventory(1, file("Physical")));
+    const names = Array.from({ length: 96 }, (_, i) => `Name${String(i).padStart(3, "0")}`);
+    const expected = new Set<string>();
+    let rev = 1n;
+    const check = () => expect(index.allPageNames()).toEqual(["Physical", ...[...expected].sort()]);
+    for (const name of names.toReversed()) {
+      index.patchPageIndex(++rev, { keys: [name.toLowerCase()], entries: [absent(name)] });
+      expected.add(name); check();
+    }
+    for (const name of names.filter((_, i) => i % 2 === 0)) {
+      index.patchPageIndex(++rev, { keys: [name.toLowerCase()], entries: [] });
+      expected.delete(name); check();
+    }
+    for (const name of names) {
+      index.patchPageIndex(++rev, { keys: [name.toLowerCase()], entries: [alias(name, "pages/Physical.md")] });
+      expected.add(name); check();
+    }
+    for (const name of names.toReversed()) {
+      index.patchPageIndex(++rev, { keys: [name.toLowerCase()], entries: [] });
+      expected.delete(name); check();
+    }
+  });
   const sorted = (...entries: PageInventoryEntry[]) =>
     [...entries].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const change = (rev: number, keys: string[], entries: PageInventoryEntry[]) =>

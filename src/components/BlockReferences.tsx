@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import { bulkCollapseTarget } from "../collapseToggle";
-import { For, Show, createSignal, createEffect, type JSX } from "solid-js";
+import { For, Show, createEffect, type JSX } from "solid-js";
+import { createKeyedGroupCollapse } from "../referenceGroupCollapse";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -38,20 +39,11 @@ export function BlockReferences(props: { id: string }): JSX.Element {
   const groups = () => readOr(groupsResource, undefined, "block references");
   createEffect(() => dependency.remember(groups() ?? []));
   const count = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
-  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   const groupKey = (group: { page: string; kind: string; path?: string }) =>
     `${group.kind}\0${group.path ?? ""}\0${group.page}`;
-  const groupCollapsed = (group: { page: string; kind: string; path?: string }) =>
-    collapsedGroups().has(groupKey(group));
-  const setGroupCollapsed = (group: { page: string; kind: string; path?: string }, value: boolean) => {
-    setCollapsedGroups((current) => {
-      const next = new Set(current);
-      if (value) next.add(groupKey(group)); else next.delete(groupKey(group));
-      return next;
-    });
-  };
+  const { groupCollapsed, setGroupCollapsed, setAll } = createKeyedGroupCollapse(groupKey);
   const setAllGroups = (value: boolean) =>
-    setCollapsedGroups(value ? new Set((groups() ?? []).map(groupKey)) : new Set<string>());
+    setAll(groups() ?? [], value);
 
   return (
     <>

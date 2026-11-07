@@ -6,7 +6,8 @@ import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { setToasts, toasts } from "../toasts";
 import { dropDisplayedFor } from "./displayed";
-import { ensureSeenAvailability, forgetSeenStateNow, leaveAllSeenPages, leaveSeenPage, markGraphSeenNow, markPageSeenNow, noteSeenAnswer, registerDisplayed, resetSeenForTests, seenAvailable } from "./seenState";
+import { ensureSeenAvailability, forgetSeenStateNow, leaveAllSeenPages, leaveSeenPage, markGraphSeenNow, markPageSeenNow, noteSeenAnswer, registerDisplayed, resetSeenForTests, seenAvailable, seenRevision } from "./seenState";
+import { createRoot, createComputed } from "solid-js";
 import { graphOwner } from "../owned";
 
 beforeAll(() => initParser());
@@ -49,6 +50,29 @@ describe("availability is learned once, from getPageChanges (F5)", () => {
 
 describe("explicit actions", () => {
   beforeEach(() => noteSeenAnswer(true));
+
+  it.each([8, 32])("marking one page leaves %i unrelated seen readers asleep", async size => {
+    loadSingle({ name: "P", kind: "page", title: "P", pre_block: null, blocks: [], format: "md", id: "pages/P.md" } as never);
+    vi.spyOn(backend(), "markPageSeen").mockResolvedValue(undefined);
+    vi.spyOn(backend(), "markGraphSeen").mockResolvedValue(undefined);
+    vi.spyOn(backend(), "forgetSeenState").mockResolvedValue(undefined);
+    let otherRuns = 0, ownRuns = 0;
+    const dispose = createRoot(dispose => {
+      for (let i = 0; i < size; i++) createComputed(() => { seenRevision(`Other${i}`); otherRuns++; });
+      for (const name of ["P", "p"]) createComputed(() => { seenRevision(name); ownRuns++; });
+      return dispose;
+    });
+    try {
+      otherRuns = ownRuns = 0;
+      expect(await markPageSeenNow("P", false)).toBe(true);
+      expect(otherRuns).toBe(0);
+      expect(ownRuns).toBe(2);
+      await markGraphSeenNow();
+      expect(otherRuns).toBe(size);
+      await forgetSeenStateNow();
+      expect(otherRuns).toBe(size * 2);
+    } finally { dispose(); }
+  });
 
   it("Mark page seen marks the loaded page under its identity key and path, then announces it", async () => {
     loadSingle({ name: "My Page", kind: "page", title: "My Page", pre_block: null, blocks: [], format: "md", id: "pages/My Page.md" } as never);

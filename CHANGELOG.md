@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Editing tables and outlines and browsing journals avoids repeated work in unrelated formula cells, outline windows and day placeholders (GH #886).
+- Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
 - Long Linked and Unlinked References sections stay responsive while scrolling: groups far from view are set aside and redrawn when you come back, keeping their folds, edits and selection, and memory no longer grows with every group you scroll past (GH #886).
 - Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886).

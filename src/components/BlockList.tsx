@@ -10,10 +10,10 @@
  * viewport/font come from DOM. Hosts register
  * descendant ids for model-driven reveal; callers provide only ids.
  */
-import { For, Show, batch, createEffect, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { node } from "../document";
 import { pageFoldSurfaces } from "./block/readOnlyFold";
-import { editingId } from "../editorController";
+import { isEditingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { Block, CollapseSurfaceContext, SurfaceContext } from "./Block";
@@ -197,10 +197,10 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
   const [interaction, setInteraction] = createSignal(false);
   const model = createOutlineWindowModel(props.ids, folds);
   const geometry = createOutlineWindowGeometry(model, () => props.width, () => props.font);
-  const active = () => {
-    const id = editingId();
-    return !!id && model().members.has(id);
-  };
+  const active = createMemo(() => {
+    for (const id of model().members) if (isEditingId(id)) return true;
+    return false;
+  });
   const mounted = () => near() || forced() || active() || interaction() || printingOutline()
     || (height() > 0 && inPageFindOpen());
   createEffect(() => {

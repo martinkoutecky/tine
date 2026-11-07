@@ -1,6 +1,7 @@
 import { revealOutlineBlock } from "./outlineViewport";
 import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
-import { batch, createSignal } from "solid-js";
+import { batch, createComputed, createRoot, createSignal, untrack } from "solid-js";
+import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
 import { requestFrame } from "./windowRealm";
@@ -37,6 +38,24 @@ export type EndEditReason =
   | "undo";
 
 const [editingId, setEditingId] = createSignal<string | null>(null);
+const editorMembers = new ChangeKeyRegistry();
+createRoot(() => {
+  let previous: string | null = null;
+  createComputed(() => {
+    const next = editingId();
+    batch(() => {
+      if (previous !== null) editorMembers.advance(previous);
+      if (next !== null) editorMembers.advance(next);
+    });
+    previous = next;
+  });
+});
+
+/** Block identity only; occurrence/surface arbitration remains with the caller. */
+export function isEditingId(id: string): boolean {
+  editorMembers.read(id);
+  return untrack(editingId) === id;
+}
 // Which on-screen <Block> instance owns the active editor. One block uuid can
 // render in several places at once (main view + sidebar + query result); without
 // this they'd all mount a textarea for the same node and fight over its value.

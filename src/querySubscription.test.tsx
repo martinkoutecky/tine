@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createEffect, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "./backend";
-import { createQuerySubscription, noteQueryInput, QUERY_QUIET_MS, type QueryRegistration, type QuerySubscription } from "./querySubscription";
+import { createQuietRun, createQuerySubscription, noteQueryInput, QUERY_QUIET_MS, type QueryRegistration, type QuerySubscription } from "./querySubscription";
 import { bumpGraphEpoch, bumpDataRev } from "./graphSession";
 import { applyChangeSummary } from "./changeSummary";
 import { installResultsPendingGate, resultsSettled } from "./queryResultsEpoch";
@@ -43,6 +43,27 @@ function mount(request: QuerySubscription = { kind: "full" }) {
   }, root);
   return read;
 }
+
+it.each([8, 32])("input does not revisit %i idle quiet schedulers or subscriptions", async size => {
+  const gates = await import("./queryResultsEpoch");
+  const probe = vi.spyOn(gates, "resultsSettled");
+  const run = vi.fn();
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => {
+    for (let i = 0; i < size; i++) {
+      createQuietRun(run)();
+      createQuerySubscription(() => ({ kind: "registry" }));
+    }
+    return <div />;
+  }, root);
+  await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS);
+  probe.mockClear(); run.mockClear();
+  noteQueryInput();
+  expect(probe).toHaveBeenCalledTimes(0);
+  await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS);
+  expect(run).not.toHaveBeenCalled();
+  probe.mockRestore();
+});
 
 it("a registered reader uses only its query key, with full and gap fallback", async () => {
   const read = mount(); await vi.advanceTimersByTimeAsync(0); read.mockClear();

@@ -69,7 +69,11 @@ export function createPageSeen(page: Accessor<{ name: string } | null>): PageSee
     });
   };
 
-  createEffect(on([() => page(), returned, seenRevision], ([current]) => {
+  const seen = () => {
+    const current = page();
+    return current ? seenRevision(current.name) : undefined;
+  };
+  createEffect(on([() => page(), returned, seen], ([current]) => {
     const token = ++sequence;
     // The first read of a binding is the availability check; once the graph
     // said it cannot answer, no page asks again.
@@ -83,7 +87,7 @@ export function createPageSeen(page: Accessor<{ name: string } | null>): PageSee
   let cursor: SeenCursor | null = null;
   let stepping = 0;
   const [landed, setLanded] = createSignal<{ index: number; total: number; wrapped: boolean; count: number } | null>(null);
-  createEffect(on([() => page(), seenRevision], () => { cursor = null; stepping++; setLanded(null); }, { defer: true }));
+  createEffect(on([() => page(), seen], () => { cursor = null; stepping++; setLanded(null); }, { defer: true }));
   const step = async (direction: 1 | -1, scroller: HTMLElement): Promise<void> => {
     const current = untrack(page);
     if (!current) return;

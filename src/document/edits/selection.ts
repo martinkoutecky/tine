@@ -6,7 +6,8 @@ import { captureReferenceChangeCount } from "../../toasts";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
-import { createSignal, createRoot, createMemo } from "solid-js";
+import { batch, createSignal, createRoot, createMemo, createComputed, untrack } from "solid-js";
+import { ChangeKeyRegistry } from "../../changeKeyRegistry";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
@@ -106,8 +107,21 @@ export function selectedIds(): string[] {
 // call — so without this, a selection over N visible blocks costs O(N²). The
 // memo recomputes only when the anchor/focus or the visible tree changes.
 const selectedSet = createRoot(() => createMemo(() => new Set(selectedIds())));
+const selectedMembership = new ChangeKeyRegistry();
+createRoot(() => {
+  let previous = new Set<string>();
+  createComputed(() => {
+    const next = selectedSet();
+    batch(() => {
+      for (const id of previous) if (!next.has(id)) selectedMembership.advance(id);
+      for (const id of next) if (!previous.has(id)) selectedMembership.advance(id);
+    });
+    previous = next;
+  });
+});
 export function isSelected(id: string): boolean {
-  return selectedSet().has(id);
+  selectedMembership.read(id);
+  return untrack(selectedSet).has(id);
 }
 // Hierarchical Ctrl/Cmd+A (GH #262): the ancestor whose visible subtree the
 // current select-all sequence covers. Any other selection mutation resets it.
@@ -118,12 +132,10 @@ export function selectBlock(id: string, scope: OutlineScope | null = null) {
   notifyOutlineSelectionStarted(id);
   activeSelectionScope = scope;
   selectAllHead = null;
-  setSelAnchor(id);
-  setSelFocus(id);
+  batch(() => { setSelAnchor(id); setSelFocus(id); });
 }
 export function clearSelection() {
-  setSelAnchor(null);
-  setSelFocus(null);
+  batch(() => { setSelAnchor(null); setSelFocus(null); });
   activeSelectionScope = null;
   selectAllHead = null;
 }

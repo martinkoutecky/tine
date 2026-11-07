@@ -16,12 +16,13 @@ export function setSectionOverride(section: ReferenceSection, page: string, open
   sections.set(key(section, page), open);
 }
 
-/** Return the current group collapse set; callers replace rather than mutate it. */
+/** Snapshot of the current group choices (an intentional whole-set read). */
 export function collapsedGroupsFor(section: ReferenceSection, page: string): Set<string> {
-  return groups.get(key(section, page)) ?? new Set<string>();
+  return new Set(groups.get(key(section, page)));
 }
 
-/** Replace a page section's group collapse set. */
+/** Adopt the last writing panel's snapshot. Readers copy on read, so the panel
+ * can update its own set without changing another panel's local snapshot. */
 export function setCollapsedGroupsFor(section: ReferenceSection, page: string, value: Set<string>): void {
   groups.set(key(section, page), value);
 }

@@ -1,9 +1,10 @@
 // Graph-level state and actions of "changed since you last looked" (ADR 0079):
 // whether the graph can answer at all (checked once per binding, from
-// getPageChanges.available), the revision every open page re-reads on, and the
+// getPageChanges.available), the revisions open pages re-read on, and the
 // mark / forget actions. Marking and forgetting are skipped, silently, while the
 // graph cannot answer (not a git repository): no error toasts on any platform.
 import { createSignal } from "solid-js";
+import { ChangeKeyRegistry } from "../changeKeyRegistry";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { clearOnBindingInvalidated } from "../binding";
@@ -19,10 +20,12 @@ import { clearDisplayed, registerDisplayed, takeAllDisplayed, takeDisplayed } fr
 // the binding: a page-level "baseline no longer on this branch" is not the
 // graph losing git.
 const [availability, setAvailability] = createSignal<boolean | undefined>(undefined);
-/** Bumped after a mark or forget so every open page re-reads. */
+/** Graph-wide mark/forget/reset; single-page marks use their folded key. */
 const [revision, setRevision] = createSignal(0);
+const pageRevisions = new ChangeKeyRegistry();
 let probing = false;
 clearOnBindingInvalidated(() => {
+  pageRevisions.clear();
   setAvailability(undefined);
   probing = false;
   clearDisplayed();
@@ -30,7 +33,11 @@ clearOnBindingInvalidated(() => {
 });
 
 export const seenAvailable = availability;
-export const seenRevision = revision;
+export function seenRevision(name: string): string {
+  const global = revision();
+  const token = pageRevisions.read(pageIdentityKey(name));
+  return `${global}:${token.instance}:${token.revision}`;
+}
 
 export function noteSeenAnswer(available: boolean): void {
   if (available) setAvailability(true);
@@ -65,7 +72,7 @@ export async function markPageSeenNow(name: string, announce = true): Promise<bo
   try {
     const done = await writeOwned(bindingOwner(), backend().markPageSeen(page.key, page.path));
     if (done.kind === "stale") return false;
-    setRevision((n) => n + 1);
+    pageRevisions.advance(page.key);
     if (announce) pushToast(msg("seen-page-marked", { name }), "success");
     return true;
   } catch (error) {

@@ -1,5 +1,7 @@
 import { reportUiFailure, reportUnreadableFiles } from "./uiFailure";
-import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
+import { batch, createEffect, createMemo, createRoot, createSignal, getListener, getOwner, on, runWithOwner, untrack } from "solid-js";
+import { ChangeKeyRegistry } from "./changeKeyRegistry";
+import { InventoryOrder } from "./inventoryOrder";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
@@ -26,7 +28,12 @@ import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, 
 interface Held {
   generation: number;
   rev: bigint;
-  entries: PageInventoryEntry[];
+  entries: Map<string, PageInventoryEntry[]>;
+  order: InventoryOrder;
+  ordered?: PageInventoryEntry[];
+  names?: string[];
+  refs?: PageEntry[];
+  refsCurrent?: boolean;
   /** The `existing` entries: the file list, which a patch never changes, so
    *  views of the files (All pages) keep their answer across patches. */
   files: PageInventoryEntry[];
@@ -38,6 +45,29 @@ interface Held {
 }
 
 const [held, setHeld] = createSignal<Held | null>(null);
+// The unloaded answer does not need the parser's page-key function. Keep that
+// startup gate reactive without subscribing keyed readers to full replacements.
+const inventoryAvailable = createRoot(() => createMemo(() => held() !== null));
+const namesChanged = new ChangeKeyRegistry();
+const [orderedRevision, setOrderedRevision] = createSignal(0);
+const [inventoryReset, setInventoryReset] = createSignal(0);
+
+function nameAnswer(key: string): Held | null {
+  // Full reads/reset replace the inventory; a delta advances only its names.
+  inventoryReset();
+  namesChanged.read(`name:${key}`);
+  return untrack(held);
+}
+
+function orderedEntries(current: Held): PageInventoryEntry[] {
+  orderedRevision();
+  if (!current.ordered) {
+    const entries: PageInventoryEntry[] = [];
+    for (const key of current.order.keys()) entries.push(...current.entries.get(key)!);
+    current.ordered = entries;
+  }
+  return current.ordered;
+}
 // Bumped by `resetPageIndex` (graph bind/switch, rename): every response to a
 // request issued before it is dropped.
 let generation = 0;
@@ -61,10 +91,14 @@ export function withoutPageInventory(): void {
 }
 
 function build(inventory: PageInventory, rev: bigint): Held {
+  const entries = new Map<string, PageInventoryEntry[]>();
   const pages = new Map<string, PageInventoryEntry>();
   const journals = new Map<string, PageInventoryEntry>();
   const nameById = new Map<string, string>();
   for (const entry of inventory.entries) {
+    const bucket = entries.get(entry.key);
+    if (bucket) bucket.push(entry);
+    else entries.set(entry.key, [entry]);
     // Several entries share a key only for physical spelling twins (`Foo.md`
     // and `foo.md`); each is an `existing` target that the backend resolves to
     // the same page, so whichever is kept navigates identically.
@@ -76,7 +110,7 @@ function build(inventory: PageInventory, rev: bigint): Held {
     }
   }
   const files = inventory.entries.filter((entry) => entry.target.kind === "existing");
-  return { generation, rev, entries: inventory.entries, files, pages, journals, nameById };
+  return { generation, rev, entries, order: new InventoryOrder([...entries.keys()], compareCodePoints), ordered: inventory.entries, files, pages, journals, nameById };
 }
 
 /** Rust's `str` order (UTF-8 bytes, i.e. code points), which the backend sorts
@@ -101,39 +135,51 @@ function entryOrder(left: PageInventoryEntry, right: PageInventoryEntry): number
  *  `rev`. Returns `null` when it cannot (nothing held yet, a rebind, or a read
  *  in flight or queued whose answer may predate or postdate this change): the
  *  caller refetches, as before. `aliases`: an alias entry was dropped or added.
- *  Cost O(entries) to copy the entry list, O(changed log entries) otherwise;
- *  no IPC. */
+ *  Only changed key buckets are visited. Ordered whole-inventory views are
+ *  materialized on demand; keyed name readers never request them. No IPC. */
 export function patchPageIndex(rev: bigint, delta: PageInventoryDelta): { aliases: boolean } | null {
-  const current = held();
+  const current = untrack(held);
   if (!current || current.generation !== generation || inFlight !== null || queued) return null;
   // A read at or after `rev` already holds this change.
   if (rev <= current.rev) return { aliases: false };
-  const keys = new Set(delta.keys);
   let aliases = delta.entries.some((entry) => entry.target.kind === "alias");
-  const entries: PageInventoryEntry[] = [];
-  for (const entry of current.entries) {
-    if (keys.has(entry.key) && entry.target.kind !== "existing") {
+  const changed = new Set([...delta.keys, ...delta.entries.map(entry => entry.key)]);
+  for (const key of delta.keys) {
+    const kept = (current.entries.get(key) ?? []).filter(entry => {
+      if (entry.target.kind === "existing") return true;
       aliases ||= entry.target.kind === "alias";
       const map = entry.is_journal ? current.journals : current.pages;
-      if (map.get(entry.key) === entry) map.delete(entry.key);
-    } else {
-      entries.push(entry);
-    }
+      if (map.get(key) === entry) map.delete(key);
+      return false;
+    });
+    if (kept.length) current.entries.set(key, kept);
+    else { current.entries.delete(key); current.order.delete(key); }
   }
   for (const entry of delta.entries) {
-    let low = 0, high = entries.length;
+    let bucket = current.entries.get(entry.key);
+    if (!bucket) {
+      current.entries.set(entry.key, bucket = []);
+      current.order.add(entry.key);
+    }
+    let low = 0, high = bucket.length;
     while (low < high) {
       const middle = (low + high) >> 1;
-      if (entryOrder(entries[middle], entry) <= 0) low = middle + 1;
+      if (entryOrder(bucket[middle], entry) <= 0) low = middle + 1;
       else high = middle;
     }
-    entries.splice(low, 0, entry);
-    // The full read keeps the last entry of a key in list order.
+    bucket.splice(low, 0, entry);
     const map = entry.is_journal ? current.journals : current.pages;
     const kept = map.get(entry.key);
     if (!kept || entryOrder(kept, entry) <= 0) map.set(entry.key, entry);
   }
-  setHeld({ ...current, rev, entries });
+  current.rev = rev;
+  current.ordered = undefined;
+  current.names = undefined;
+  current.refsCurrent = false;
+  batch(() => {
+    for (const key of changed) namesChanged.advance(`name:${key}`);
+    setOrderedRevision(n => n + 1);
+  });
   return { aliases };
 }
 
@@ -156,7 +202,16 @@ export async function refreshPageIndex(): Promise<void> {
   const rev = BigInt(inventory.rev);
   const current = held();
   if (current && current.generation === generation && rev < current.rev) return;
-  setHeld(build(inventory, rev));
+  const next = build(inventory, rev);
+  batch(() => {
+    setHeld(next);
+    for (const key of new Set([...current?.entries.keys() ?? [], ...next.entries.keys()])) {
+      if (JSON.stringify(current?.entries.get(key)) !== JSON.stringify(next.entries.get(key))) namesChanged.advance(`name:${key}`);
+    }
+    for (const path of new Set([...current?.nameById.keys() ?? [], ...next.nameById.keys()])) {
+      if (current?.nameById.get(path) !== next.nameById.get(path)) namesChanged.advance(`path:${path}`);
+    }
+  });
 }
 
 function scheduleRefresh(): void {
@@ -190,7 +245,11 @@ async function signalled(): Promise<void> {
 /** Forget the held inventory (graph bind/switch, rename). */
 export function resetPageIndex(): void {
   generation++;
-  setHeld(null);
+  batch(() => {
+    namesChanged.clear();
+    setHeld(null);
+    setInventoryReset(n => n + 1);
+  });
 }
 
 let installed: {
@@ -231,9 +290,13 @@ function ensureInstalled() {
       }
       return rows;
     });
-    const allPageNames = createMemo(() => {
+    // Whole-answer work is lazy, even when ensureInstalled was reached only
+    // by a keyed link reader. Cache the result until the inventory changes.
+    const allPageNames = () => {
       const current = held();
       if (!current) return [];
+      orderedRevision();
+      if (current.names) return current.names;
       // Physical display spellings win per page identity (`pageIdentityKey`,
       // the store's `page_key`); alias and reference-only names then fill gaps.
       const seen = new Set<string>();
@@ -248,28 +311,46 @@ function ensureInstalled() {
         }
       };
       for (const page of allPages() ?? []) add(page.name);
-      for (const entry of current.entries) {
+      for (const entry of orderedEntries(current)) {
         if (entry.target.kind !== "existing") add(entry.name);
       }
       keysOfNames.set(names, keys);
-      return names;
-    });
+      return current.names = names;
+    };
     // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
     // the backend's absent entries that open themselves (no `link`), with
     // their supplied kind and day, less what OG's `get-all-pages`
     // drops (built-in pages, UUID names, drawings) by the Rust answer
     // (`hidden_from_all_pages`; CM step 2 batches 5 and 8). A patch that
     // leaves this list equal leaves All pages alone. O(entries).
-    const referenceOnlyPages = createMemo<PageEntry[]>(() => {
+    const computeReferenceOnlyPages = (): PageEntry[] => {
       const current = held();
       if (!current) return [];
+      orderedRevision();
+      if (current.refsCurrent) return current.refs!;
       const rows: PageEntry[] = [];
-      for (const entry of current.entries) {
+      for (const entry of orderedEntries(current)) {
         if (entry.target.kind !== "absent" || entry.link || hidden_from_all_pages(entry.name)) continue;
         rows.push({ name: entry.name, kind: entry.is_journal ? "journal" : "page", date_key: entry.day, path: "" });
       }
-      return rows;
-    }, [], { equals: (a, b) => a.length === b.length && a.every((row, at) => row.name === b[at].name && row.kind === b[at].kind && row.date_key === b[at].date_key) });
+      current.refsCurrent = true;
+      let refsAnswer = current.refs ?? [];
+      if (rows.length !== refsAnswer.length || rows.some((row, at) => row.name !== refsAnswer[at].name || row.kind !== refsAnswer[at].kind || row.date_key !== refsAnswer[at].date_key)) refsAnswer = rows;
+      return current.refs = refsAnswer;
+    };
+    // A tracked reader goes through one memo, so a patch that leaves the list
+    // equal (row by row, also across a full refresh) does not wake it: All pages keeps its rows and
+    // focus. The memo is made on the first tracked read, so a graph whose
+    // views never ask for the list never computes it.
+    const owner = getOwner();
+    let shielded: (() => PageEntry[]) | undefined;
+    const referenceOnlyPages = (): PageEntry[] => {
+      if (!getListener()) return computeReferenceOnlyPages();
+      shielded ??= runWithOwner(owner, () => createMemo(computeReferenceOnlyPages, [], {
+        equals: (a, b) => a.length === b.length && a.every((row, at) => row.name === b[at].name && row.kind === b[at].kind && row.date_key === b[at].date_key),
+      }))!;
+      return shielded();
+    };
     return { allPages, allPageNames, referenceOnlyPages };
   });
   return installed;
@@ -279,8 +360,10 @@ function ensureInstalled() {
  *  for a name the inventory does not list (neither is a file or an alias). */
 export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedPage | undefined {
   ensureInstalled();
-  const current = held();
-  return (kind === "journal" ? current?.journals : current?.pages)?.get(pageIdentityKey(name))?.target;
+  if (!inventoryAvailable()) return undefined;
+  const key = pageIdentityKey(name);
+  const current = nameAnswer(key);
+  return (kind === "journal" ? current?.journals : current?.pages)?.get(key)?.target;
 }
 
 // The pure row readers live in `inventoryRows.ts`, shared with the published
@@ -293,7 +376,7 @@ export { ownerPath, type LinkDestination } from "./inventoryRows";
  *  kind). O(1), no IPC. */
 export function linkTarget(name: string): LinkDestination {
   ensureInstalled();
-  return linkTargetIn(held(), name);
+  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name);
 }
 
 /** A named ordinary-page route (not a link): an alias opens what the store
@@ -304,7 +387,9 @@ export function linkTarget(name: string): LinkDestination {
  *  file's path never comes here (the router keeps an exact owner). */
 export function navigationTarget(name: string): LinkDestination {
   ensureInstalled();
-  const entry = held()?.pages.get(pageIdentityKey(name));
+  if (!inventoryAvailable()) return { name, kind: "page" };
+  const key = pageIdentityKey(name);
+  const entry = nameAnswer(key)?.pages.get(key);
   if ((entry?.target.kind === "alias" || entry?.empty_alias) && entry.link) return entry.link;
   return { name: navigationName(name), kind: "page" };
 }
@@ -314,18 +399,22 @@ export function navigationTarget(name: string): LinkDestination {
  *  unchanged. */
 export function navigationName(name: string): string {
   ensureInstalled();
-  const entry = held()?.pages.get(pageIdentityKey(name));
+  if (!inventoryAvailable()) return name;
+  const key = pageIdentityKey(name);
+  const entry = nameAnswer(key)?.pages.get(key);
   const target = entry?.target;
   if (!target || target.kind === "absent") return name;
   if (target.kind === "alias" && entry?.link) return entry.link.name;
   const id = ownerPath(target);
-  return (id === undefined ? undefined : held()?.nameById.get(id)) ?? name;
+  return (id === undefined ? undefined : pageNameForPath(id)) ?? name;
 }
 
 /** Physical owner's display name, using the inventory's existing identity map. */
 export function pageNameForPath(path: string): string | undefined {
   ensureInstalled();
-  return held()?.nameById.get(path);
+  inventoryReset();
+  namesChanged.read(`path:${path}`);
+  return untrack(held)?.nameById.get(path);
 }
 
 /** Every physical page and journal file (`undefined` until the first load). */
@@ -350,7 +439,8 @@ export function allPageNames(): string[] {
  *  `pageIdentityKey(name)` when the caller already has it. O(1). */
 export function isNamespaceName(name: string, key?: string): boolean {
   if (!name.includes("/")) return false;
-  const current = held();
+  if (!inventoryAvailable()) return true;
+  const current = nameAnswer(key ?? pageIdentityKey(name));
   if (!current) return true;
   const k = key ?? pageIdentityKey(name);
   return !(current.pages.get(k) ?? current.journals.get(k))?.not_namespace;
@@ -359,7 +449,7 @@ export function isNamespaceName(name: string, key?: string): boolean {
 /** The store's page-universe answer for namespace views. Alias completion
  *  and navigation continue to read the full inventory. O(1). */
 export function isNamespacePage(name: string, key?: string): boolean {
-  const current = held();
+  const current = nameAnswer(key ?? pageIdentityKey(name));
   const k = key ?? pageIdentityKey(name);
   return !(current?.pages.get(k) ?? current?.journals.get(k))?.namespace_excluded;
 }

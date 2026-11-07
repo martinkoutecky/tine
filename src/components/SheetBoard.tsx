@@ -229,7 +229,7 @@ export function SheetBoard(props: {
     return pointIndex().first.get(rowId) ?? null;
   };
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.ownerId);
     if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
     if (sel.kind === "cell" && sel.rowId) {
       const point = pointForRowId(sel.rowId, sel.columnId);
@@ -268,7 +268,7 @@ export function SheetBoard(props: {
     if (limit !== null) setRenderLimit(limit);
   };
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.ownerId);
     if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
     if (sel.kind === "cell" && sel.rowId) {
       const row = pointIndex().rowOrder.get(sel.rowId);

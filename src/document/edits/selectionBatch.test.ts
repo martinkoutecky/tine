@@ -14,8 +14,9 @@ vi.mock("../model", async (importOriginal) => {
 });
 
 import { initParser } from "../../render/parse";
+import { createRoot, createComputed } from "solid-js";
 import {
-  extendSelectionTo, isDirty, indentSelection, loadFeed, outdentSelection, redo, resetStore, selectBlock, selectedIds, undo,
+  extendSelectionTo, isDirty, isSelected, indentSelection, loadFeed, outdentSelection, redo, resetStore, selectBlock, selectedIds, undo,
 } from "..";
 import { doc, setDoc } from "../model";
 import type { BlockDto, PageDto } from "../../types";
@@ -36,6 +37,26 @@ function measure(run: () => void) {
 }
 
 describe("selection indent/outdent batches one command (master b3fc9c813)", () => {
+  it.each([8, 32])("selecting one block does not revisit %i unrelated memberships", size => {
+    load(Array.from({ length: size + 2 }, (_, i) => blk(`b${i}`)));
+    let other = 0, own = 0;
+    const dispose = createRoot(dispose => {
+      for (let i = 2; i < size + 2; i++) createComputed(() => { isSelected(`b${i}`); other++; });
+      for (let i = 0; i < 2; i++) createComputed(() => { isSelected(`b${i}`); own++; });
+      return dispose;
+    });
+    try {
+      other = own = 0;
+      selectBlock("b0");
+      expect(other).toBe(0);
+      expect(own).toBe(1);
+      expect(selectedIds()).toEqual(["b0"]);
+      other = own = 0;
+      selectBlock("b1");
+      expect(other).toBe(0);
+      expect(own).toBe(2);
+    } finally { dispose(); }
+  });
   it.each([50, 200])("indents %i flat roots with one publication, undo/redo exact", (n) => {
     const roots = Array.from({ length: n }, (_, i) => blk(`s${i}`));
     load([blk("pred"), ...roots, blk("tail")]);

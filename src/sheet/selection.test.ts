@@ -4,6 +4,7 @@ import { isSelected, resetStore, selectBlock } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { initParser } from "../render/parse";
+import { createRoot, createComputed } from "solid-js";
 import {
   cellSel,
   cellIsSelected,
@@ -17,6 +18,7 @@ import {
   resetCellSelectionForTests,
   rowSeamSel,
   setCellSel,
+  aggregateFooterPinned, setAggregateFooterPinned, emptyTagColumnsForBoard, addEmptyTagColumn,
 } from "./selection";
 
 let disposeHooks: (() => void) | null = null;
@@ -98,6 +100,39 @@ function press(key: string, init: Partial<KeyboardEvent> = {}) {
 }
 
 describe("cell selection state", () => {
+  it.each([8, 32])("sheet operations leave %i unrelated owners asleep", size => {
+    let selections = 0, footers = 0, columns = 0;
+    const selected: (string | undefined)[] = [], pinned: boolean[] = [], tags: string[][] = [];
+    const dispose = createRoot(dispose => {
+      for (let i = 0; i < size; i++) {
+        createComputed(() => { cellSel(`other${i}`); selections++; });
+        createComputed(() => { aggregateFooterPinned(`other${i}`); footers++; });
+        createComputed(() => { emptyTagColumnsForBoard(`other${i}`); columns++; });
+      }
+      createComputed(() => selected.push(cellSel("own")?.gridId));
+      createComputed(() => pinned.push(aggregateFooterPinned("own")));
+      createComputed(() => tags.push([...emptyTagColumnsForBoard("own")]));
+      return dispose;
+    });
+    try {
+      selections = footers = columns = 0;
+      setCellSel({ gridId: "own", row: 0, col: 0 });
+      setAggregateFooterPinned("own", true);
+      addEmptyTagColumn("own", "fresh");
+      expect({ selections, footers, columns }).toEqual({ selections: 0, footers: 0, columns: 0 });
+      expect(cellSel("own")?.gridId).toBe("own");
+      expect(aggregateFooterPinned("own")).toBe(true);
+      expect(emptyTagColumnsForBoard("own")).toEqual(["fresh"]);
+      expect(selected).toEqual([undefined, "own"]);
+      expect(pinned).toEqual([false, true]);
+      expect(tags).toEqual([[], ["fresh"]]);
+      setCellSel({ gridId: "other0", row: 1, col: 0 });
+      expect(selected.at(-1)).toBeUndefined();
+      resetCellSelectionForTests();
+      expect(pinned.at(-1)).toBe(false);
+      expect(tags.at(-1)).toEqual([]);
+    } finally { dispose(); }
+  });
   it("sets and clears the active cell while remembering the last cell per grid", () => {
     const clearOutlineSelection = vi.fn();
     const endActiveEdit = vi.fn();

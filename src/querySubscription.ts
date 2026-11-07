@@ -36,16 +36,16 @@ function quietDelay(): number { return Math.max(0, QUERY_QUIET_MS - (Date.now() 
 export function createQuietRun(run: () => void): () => void {
   const [requested, setRequested] = createSignal(0);
   const [retry, setRetry] = createSignal(0);
-  let served = 0;
+  const [served, setServed] = createSignal(0);
   let first = true;
   createEffect(() => {
     const want = requested();
+    if (want === served()) return;
     retry();
+    const fire = () => { setServed(want); untrack(run); };
+    if (first) { first = false; fire(); return; }
     inputRevision();
     const settled = resultsSettled();
-    if (want === served) return;
-    const fire = () => { served = want; untrack(run); };
-    if (first) { first = false; fire(); return; }
     // A held gate is not a reactive source: look again after one quiet span.
     const delay = settled ? quietDelay() : QUERY_QUIET_MS;
     if (delay === 0) { fire(); return; }
@@ -117,10 +117,11 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
   const waitsForQuiet = () => subscription().mode() !== "narrow" && !refreshEverything();
   createEffect(() => {
     const current = raw();
+    if (current === quietRevision()) return;
     const quiet = waitsForQuiet();
-    inputRevision();
+    if (quiet) inputRevision();
     const settled = resultsSettled();
-    if (current === untrack(quietRevision) || !settled) return;
+    if (!settled) return;
     if (!quiet) { setQuietRevision(current); return; }
     const delay = quietDelay();
     if (delay === 0) { setQuietRevision(current); return; }

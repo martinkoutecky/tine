@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
-import { resetPageIndex } from "../pageIndex";
+import { patchPageIndex, resetPageIndex } from "../pageIndex";
 import { resetTabsToJournals, route } from "../router";
 import type { PaneRouter } from "../router";
 import { resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
@@ -293,6 +293,21 @@ describe("the All Pages view", () => {
     await settle();
     expect(rowNames(host)).toEqual([]);
     expect(host.querySelector(".all-pages-empty")!.textContent).toBe("No page names match.");
+    dispose();
+  });
+
+  // GH #886 (fan-out lane review): an alias-only name patch leaves the listed
+  // pages equal, so All Pages keeps its rows and the keyboard focus on them.
+  it("keeps the focused row and its focus when a patch only adds an alias", async () => {
+    const { host, dispose } = await mountAllPages([existing("Alpha"), existing("beta")]);
+    const row = [...host.querySelectorAll<HTMLElement>(".all-pages-open")].find((el) => logical(el) === "Alpha")!;
+    row.focus();
+    expect(document.activeElement).toBe(row);
+    expect(patchPageIndex(2n, { keys: ["shortcut"], entries: [{ key: "shortcut", name: "Shortcut", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Alpha.md"] } }] })).toEqual({ aliases: true });
+    await settle();
+    expect(rowNames(host)).toEqual(["Alpha", "beta"]);
+    expect(row.isConnected).toBe(true);
+    expect(document.activeElement).toBe(row);
     dispose();
   });
 

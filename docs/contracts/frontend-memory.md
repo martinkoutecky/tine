@@ -33,6 +33,16 @@ nested references; output completeness does not depend on inactive-cache capacit
 These are retention charges, not device heap budgets. No persisted format or
 storage write changes.
 
+Keyed page-inventory answers, selected block memberships, active editor
+identities, sheet owners, seen baselines and authored identity claims notify
+only their changed keys. Their dependency registries follow reactive consumers
+and retain at most 512 imperative keys. Inventory deltas visit their named
+buckets; ordered whole-inventory views materialize only when requested.
+Reference panels retain independent fold snapshots and persist individual
+choices without copying other groups; bulk changes and explicit reloads still
+visit the replaced choices. Idle query schedulers do not subscribe to input or
+pending gates; due work retains the quiet and publication checks.
+
 ## Journal feed days (L10-03, development only)
 
 See also the [reference rendering contract](reference-rendering.md) for the

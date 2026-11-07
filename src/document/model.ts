@@ -1,6 +1,7 @@
 import { type PageKind, type Format } from "../types";
 import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
+import { ChangeKeyRegistry } from "../changeKeyRegistry";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
 import { ownerPath, resolvedTarget } from "../pageIndex";
@@ -176,8 +177,7 @@ export function isLoaded(name?: string): boolean { return name === undefined ? d
 interface AuthoredIdentityPage {
   byNode: Map<string, string | null>;
   claims: Map<string, Set<string>>;
-  revision: () => number;
-  changed: () => void;
+  changes: ChangeKeyRegistry;
 }
 const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
 clearOnBindingInvalidated(() => authoredIdentityPages.clear());
@@ -237,7 +237,8 @@ function updateAuthoredIdentity(id: string): void {
     index.claims.set(after, claims);
   }
   index.byNode.set(id, after);
-  index.changed();
+  if (before !== null) index.changes.advance(before);
+  if (after !== null) index.changes.advance(after);
 }
 
 /** All reachable authored claimants, including duplicates. Reactive to ID and
@@ -248,8 +249,7 @@ export function authoredBlockClaims(page: string, identity: string): ReadonlySet
   let index = authoredIdentityPages.get(page);
   if (!index) {
     index = untrack(() => {
-      const [revision, setRevision] = createSignal(0);
-      const next: AuthoredIdentityPage = { byNode: new Map(), claims: new Map(), revision, changed: () => setRevision(v => v + 1) };
+      const next: AuthoredIdentityPage = { byNode: new Map(), claims: new Map(), changes: new ChangeKeyRegistry() };
       const stack = [...(pageByName(page)?.roots ?? [])];
       while (stack.length) {
         const id = stack.pop()!;
@@ -269,7 +269,7 @@ export function authoredBlockClaims(page: string, identity: string): ReadonlySet
       return next;
     });
   }
-  index.revision();
+  index.changes.read(identity);
   return index.claims.get(identity);
 }
 

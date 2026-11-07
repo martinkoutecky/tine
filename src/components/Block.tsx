@@ -54,6 +54,7 @@ import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   editingId,
+  isEditingId,
   editingOwner,
   captureEditIntent,
   editingSurface,
@@ -231,7 +232,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const bulletOpen = useContext(BulletOpenContext);
   const seenRow = useSeenRow(props.id);
   const editing = () => {
-    if (editingId() !== props.id) return false;
+    if (!isEditingId(props.id)) return false;
     const owner = editingOwner();
     // Scoped (a click): only the exact instance that was clicked edits; every other
     // instance of this uuid stays rendered and reflects the edit live.

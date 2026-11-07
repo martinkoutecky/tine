@@ -321,7 +321,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   };
 
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.id);
     if (sel) ensureSelectionVisible(sel);
   });
 
@@ -346,7 +346,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   let wasEditing = false;
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.id);
     columns();
     const editing = editingInThisGrid();
     if (wasEditing && !editing) {
@@ -361,7 +361,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   });
 
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.id);
     matrix();
     columns();
     if (!gridRef || !sel || sel.gridId !== props.id || (sel.kind !== "row-seam" && sel.kind !== "col-seam")) {

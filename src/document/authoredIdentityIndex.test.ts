@@ -7,6 +7,29 @@ import { resolveBlockRef } from "./edits/identity";
 
 afterEach(resetStore);
 
+it.each([8, 32])("changing one claim leaves %i different identities on the same page asleep", size => {
+  loadSingle({ name: "Claims", title: "Claims", kind: "page", pre_block: null, format: "md", id: "pages/Claims.md",
+    blocks: Array.from({ length: size + 1 }, (_, i) => ({ id: `b${i}`, raw: `Body\nid:: claim${i}`, collapsed: false, children: [] })) });
+  const ref = (uuid: string) => ({ uuid, page: "Claims", pageKind: "page" as const, path: "pages/Claims.md" });
+  let other = 0;
+  const answers: (string | null)[] = [];
+  const dispose = createRoot(dispose => {
+    for (let i = 1; i <= size; i++) createComputed(() => { resolveBlockRef(ref(`claim${i}`)); other++; });
+    createComputed(() => { answers.push(resolveBlockRef(ref("fresh"))); });
+    return dispose;
+  });
+  try {
+    other = 0;
+    setDoc("byId", "b0", "raw", "Body\nid:: fresh");
+    expect(other).toBe(0);
+    expect(answers.at(-1)).toBe("b0");
+    setDoc("byId", "b1", "raw", "Body\nid:: fresh");
+    expect(answers.at(-1)).toBeNull();
+    setDoc("byId", "b0", "raw", "Body");
+    expect(answers.at(-1)).toBe("b1");
+  } finally { dispose(); }
+});
+
 it.each(["md", "org"] as const)("keeps %s zoom/reference identities live across stamping, duplicates, undo and replacement", format => {
   const raw = (id: string) => format === "md" ? `Body\nid:: ${id}` : `Body\n:PROPERTIES:\n:ID: ${id}\n:END:`;
   const page = {

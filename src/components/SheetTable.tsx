@@ -260,7 +260,7 @@ export function SheetTable(props: {
 
   let wasEditing = false;
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.ownerId);
     baseGridColumns();
     const editing = editingInThisTable();
     if (wasEditing && !editing) {
@@ -325,7 +325,7 @@ export function SheetTable(props: {
     if (row !== undefined) ensureDisplayedThrough(row);
   }));
   createEffect(() => {
-    const sel = cellSel();
+    const sel = cellSel(props.ownerId);
     if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
     if (sel.kind === "cell" && sel.rowId) {
       const row = sortedRowIndex().get(sel.rowId);

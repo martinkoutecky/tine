@@ -1,6 +1,8 @@
 import { shortcutKey } from "../shortcutKey";
 import { msg } from "../i18n";
-import { createRoot, createSignal } from "solid-js";
+import { batch, createComputed, createRoot, createSignal, untrack } from "solid-js";
+import { createStore } from "solid-js/store";
+import { ChangeKeyRegistry } from "../changeKeyRegistry";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
 import { editingId, endEdit, prepareEditEntry, startEditing } from "../editorController";
@@ -137,10 +139,20 @@ export interface SheetViewAdapter {
 }
 
 const [activeCellSel, writeCellSel] = createRoot(() => createSignal<SheetSel | null>(null));
-const [aggregateFooterPins, writeAggregateFooterPins] = createRoot(() => createSignal<ReadonlySet<string>>(new Set<string>()));
-const [emptyTagColumns, writeEmptyTagColumns] = createRoot(() =>
-  createSignal<ReadonlyMap<string, ReadonlySet<string>>>(new Map())
-);
+const [aggregateFooterPins, writeAggregateFooterPins] = createRoot(() => createStore<Record<string, boolean | undefined>>(Object.create(null)));
+const [emptyTagColumns, writeEmptyTagColumns] = createRoot(() => createStore<Record<string, readonly string[] | undefined>>(Object.create(null)));
+const selectionOwners = new ChangeKeyRegistry();
+createRoot(() => {
+  let previous: string | undefined;
+  createComputed(() => {
+    const next = activeCellSel()?.gridId;
+    batch(() => {
+      if (previous !== undefined && previous !== next) selectionOwners.advance(previous);
+      if (next !== undefined) selectionOwners.advance(next);
+    });
+    previous = next;
+  });
+});
 const lastByGrid = new Map<string, { row: number; col: number }>();
 const adapters = new Map<string, SheetViewAdapter>();
 const visibilityHooks = new Map<string, (sel: SheetSel) => void>();
@@ -198,21 +210,18 @@ export function resetCellSelectionForTests(): void {
   clearCellSelectionOnly();
   outlinedGridId = null;
   lastByGrid.clear();
-  writeAggregateFooterPins(new Set<string>());
-  writeEmptyTagColumns(new Map());
+  batch(() => {
+    for (const key of Object.keys(aggregateFooterPins)) writeAggregateFooterPins(key, undefined);
+    clearEmptyTagColumns();
+  });
 }
 
 export function aggregateFooterPinned(ownerId: string): boolean {
-  return aggregateFooterPins().has(ownerId);
+  return aggregateFooterPins[ownerId] ?? false;
 }
 
 export function setAggregateFooterPinned(ownerId: string, pinned: boolean): void {
-  writeAggregateFooterPins((cur) => {
-    const next = new Set(cur);
-    if (pinned) next.add(ownerId);
-    else next.delete(ownerId);
-    return next;
-  });
+  writeAggregateFooterPins(ownerId, pinned ? true : undefined);
 }
 
 export function toggleAggregateFooterPinned(ownerId: string): void {
@@ -220,45 +229,31 @@ export function toggleAggregateFooterPinned(ownerId: string): void {
 }
 
 export function emptyTagColumnsForBoard(ownerId: string): readonly string[] {
-  return [...(emptyTagColumns().get(ownerId) ?? [])];
+  return [...(emptyTagColumns[ownerId] ?? [])];
 }
 
 export function addEmptyTagColumn(ownerId: string, tag: string): void {
   const clean = tag.trim();
   if (!clean) return;
-  writeEmptyTagColumns((cur) => {
-    const next = new Map(cur);
-    const tags = new Set(next.get(ownerId) ?? []);
-    tags.add(clean);
-    next.set(ownerId, tags);
-    return next;
-  });
+  const tags = new Set(emptyTagColumns[ownerId] ?? []);
+  tags.add(clean);
+  writeEmptyTagColumns(ownerId, [...tags]);
 }
 
 export function pruneEmptyTagColumns(ownerId: string, persisted: ReadonlySet<string>): void {
-  const current = emptyTagColumns().get(ownerId);
+  const current = emptyTagColumns[ownerId];
   if (!current) return;
-  const nextTags = [...current].filter((tag) => !persisted.has(tag));
-  if (nextTags.length === current.size) return;
-  writeEmptyTagColumns((cur) => {
-    const next = new Map(cur);
-    if (nextTags.length) next.set(ownerId, new Set(nextTags));
-    else next.delete(ownerId);
-    return next;
-  });
+  const nextTags = current.filter((tag) => !persisted.has(tag));
+  if (nextTags.length === current.length) return;
+  writeEmptyTagColumns(ownerId, nextTags.length ? nextTags : undefined);
 }
 
 export function clearEmptyTagColumns(ownerId?: string): void {
   if (!ownerId) {
-    writeEmptyTagColumns(new Map());
+    batch(() => { for (const key of Object.keys(emptyTagColumns)) writeEmptyTagColumns(key, undefined); });
     return;
   }
-  if (!emptyTagColumns().has(ownerId)) return;
-  writeEmptyTagColumns((cur) => {
-    const next = new Map(cur);
-    next.delete(ownerId);
-    return next;
-  });
+  writeEmptyTagColumns(ownerId, undefined);
 }
 
 export function isSheetCellOwner(owner: string | null): boolean {
@@ -325,8 +320,11 @@ function rememberSelection(sel: SheetSel): void {
   else if (sel.kind === "range") lastByGrid.set(key, { ...sel.focus });
 }
 
-export function cellSel(): SheetSel | null {
-  return activeCellSel();
+export function cellSel(gridId?: string): SheetSel | null {
+  if (gridId === undefined) return activeCellSel();
+  selectionOwners.read(gridId);
+  const current = untrack(activeCellSel);
+  return current?.gridId === gridId ? current : null;
 }
 
 export function setCellSel(sel: SheetSelInput | null): void {
@@ -471,7 +469,7 @@ export function focusCell(sel: CellSel | RangeSel): CellSel {
 
 /** Focus highlight for legacy selections with no surface id. O(1). */
 export function cellIsSelected(gridId: string, row: number, col: number, surfaceId: string): boolean {
-  const sel = cellSel();
+  const sel = cellSel(gridId);
   if (!sel || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
   const point = sel.kind === "cell" ? sel : sel.kind === "range" ? sel.focus : null;
   return !!point && point.row === row && point.col === col;
@@ -479,7 +477,7 @@ export function cellIsSelected(gridId: string, row: number, col: number, surface
 
 /** Grid highlights ranges only and accepts legacy unscoped selections. O(1). */
 export function cellIsInLegacyRange(gridId: string, row: number, col: number, surfaceId: string): boolean {
-  const sel = cellSel();
+  const sel = cellSel(gridId);
   if (!sel || sel.kind !== "range" || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
   return pointInSelection(row, col, sel);
 }
@@ -493,7 +491,7 @@ function pointInSelection(row: number, col: number, sel: CellSel | RangeSel): bo
 }
 
 export function cellIsInRange(gridId: string, row: number, col: number, surfaceId?: string): boolean {
-  const sel = cellSel();
+  const sel = cellSel(gridId);
   if (!sel || sel.gridId !== gridId || sel.surfaceId !== surfaceId || isSeamSel(sel)) return false;
   return pointInSelection(row, col, sel);
 }
