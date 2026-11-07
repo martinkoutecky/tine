@@ -116,7 +116,7 @@ interface LiveRefGroupProps {
 // offscreen group (I-25). Reference owners supply heightKey; queries also retain
 // their outer shell's height. The bounded, graph-scoped cache checks pane width.
 
-interface LocalCollapseRow { v: boolean; epoch: number; bulk?: boolean }
+interface LocalCollapseRow { v: boolean; bulk?: boolean }
 interface RefOccurrence {
   surface: string;
   initialCollapsed: Map<string, boolean>;
@@ -549,11 +549,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const surface = props.occurrence.surface;
   const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = props.occurrence.initialCollapsed;
-  // Local fold rows. The embedded ROOT has a durable occurrence-owned override on
-  // its macro host (GH #360); nested rows remain local presentation state whose
-  // `epoch` remembers the source collapse generation at fold time, so a later
-  // source write reclaims authority. Ref/query surfaces keep their pre-existing
-  // local-copy semantics and ignore `epoch`.
+  // Only ref/query results own local disclosure here. Writable inner embed folds
+  // belong to the source; a block embed's root keeps its host override (GH #360).
   const [localCollapsed, setLocalCollapsed] = props.occurrence.localCollapsed;
   const isEmbed = () => props.surface === "embed";
   const embedRootOverride = (id: string): boolean | null => {
@@ -603,21 +600,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     initialCollapsed.set(id, initial);
     return initial;
   };
-  // D-20261030-EMB: inside a block embed, folds below its root are the
-  // source's own `collapsed::`, shared everywhere (OG). Page embeds keep 0.8's
-  // local folds below their page's blocks.
-  const sourceFolds = () => isEmbed() && !!props.embedId;
   const collapseSurface: CollapseSurfaceApi = {
     collapsed: (id, stored) => {
       if (isEmbed()) {
         const override = embedRootOverride(id);
         if (override !== null) return override;
-        if (sourceFolds()) return stored;
-        // Nested local folds govern only while the source hasn't written
-        // another collapse since. The root never enters this map: its explicit
-        // true/false host property survives remount and reload.
-        const local = localCollapsed()[id];
-        return local && local.epoch === collapseEpochOf(id) ? local.v : stored;
+        return stored;
       }
       const local = localCollapsed();
       // Bulk actions saved the source. Follow it live, including Undo, while
@@ -630,12 +618,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
         setBlockProperty(props.hostBlockId, "collapsed", String(!current));
         return;
       }
-      if (sourceFolds()) { setCollapsed(id, !current); return; }
-      setLocalCollapsed((state) => ({ ...state, [id]: { v: !current, epoch: collapseEpochOf(id) } }));
+      if (isEmbed()) { setCollapsed(id, !current); return; }
+      setLocalCollapsed((state) => ({ ...state, [id]: { v: !current } }));
     },
-    setMany: (ids, collapsed) => sourceFolds() ? setCollapsedBlocks(ids, collapsed) : setLocalCollapsed((state) => {
+    setMany: (ids, collapsed) => isEmbed() ? setCollapsedBlocks(ids, collapsed) : setLocalCollapsed((state) => {
       const next = { ...state };
-      for (const id of ids) next[id] = { v: collapsed, epoch: collapseEpochOf(id) };
+      for (const id of ids) next[id] = { v: collapsed };
       return next;
     }),
   };
@@ -657,7 +645,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       setLocalCollapsed(state => {
         const next = { ...state };
         for (const id of ids) if (request.epochs.get(id) === collapseEpochOf(id)) {
-          next[id] = { v: request.collapsed, epoch: collapseEpochOf(id), bulk: true };
+          next[id] = { v: request.collapsed, bulk: true };
         }
         return next;
       });

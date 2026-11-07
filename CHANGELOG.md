@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).
 - Conflict review no longer suggests removing a block that both versions still contain when one device moved it and the other edited a neighbour; applying the suggestions, or choosing either whole version of its parent, lost that block (GH #901).
 - **Apply all suggested** no longer resets your choices on rows Tine has no suggestion for; **Keep both everywhere** shows the active choice on blocks only one side has; a review that knows the common version no longer says none is known (GH #901).
 - Journal days and split panes use the same width rule for margin comments as single pages; comment and reply editors hide every `tine.*` property on all platforms while preserving its bytes on save (GH #891).
