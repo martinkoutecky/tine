@@ -87,6 +87,16 @@ source-entry paths remain a follow-up.
 
 Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
+Both editors ask `properties.ts` for Markdown value positions through the existing
+accepted-property-line parser; only then does autocomplete split comma-separated
+query spans. Typing and pasting (including typing inside an existing value) share
+this answer, with the existing parser-owned fence exclusion; moving the caret alone
+never opens value suggestions, as in OG. A value session reads only that
+key through `CompletionValues(key)`, without requiring a name session; pending
+read subscribers refresh their current query when the answer arrives. Failed
+reads cache nothing. Intentional difference from OG `6e7afa8eb`
+`handler/editor.cljs:2211-2226`: OG starts values only after choosing a property
+name. Org drawers retain OG's absence of a value trigger.
 Retained outside this door, pending native doors: the Org drawer extents used when a page-property
 removal empties a drawer (`editor/properties.ts` `pagePartsWithProperty`), the outline/bullet grammar of
 pasted and copied outlines (`outline.ts`, `clipboard.ts` `outlineToHtml` cannot see a fence that

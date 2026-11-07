@@ -16,6 +16,7 @@ import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities,
 
 const root = path.resolve(import.meta.dirname, "..");
 const mode = process.env.E2E_EDITOR || "cm6";
+const propertyValuesOnly = process.env.E2E_PROPERTY_VALUES_ONLY === "1";
 assert.ok(["cm6", "textarea"].includes(mode), `Unknown E2E_EDITOR ${mode}`);
 assert.ok(["linux", "win32"].includes(process.platform), "Native UI harness supports Linux and Windows only");
 const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root, "artifacts/editor-native"));
@@ -36,6 +37,10 @@ for (const [name, text] of Object.entries({
   "Native copy": "- destination\n",
   "Native cut": "- destination\n",
   "Native compose": "- compose\n",
+  "Native property typed": "- Typed property\n",
+  "Native property pasted": "- Pasted property\n",
+  "Native property existing": "- Existing property\n  alpha:: o\n",
+  "Native property values": "- Values\n  alpha:: one\n- More values\n  alpha:: two\n",
 })) fs.writeFileSync(file(name), text);
 const app = process.env.TINE_APP || path.join(root, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
 const fixture = accountHomeFixture(out, out, { ...process.env,
@@ -60,7 +65,9 @@ const nativePort = Number(process.env.E2E_NATIVE_PORT) || await freePort();
 const log = fs.openSync(path.join(out, "driver.log"), "w");
 const proof = { base: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"), platform: process.platform, mode,
-  composition: "Synthetic compositionstart/update/end, browser insertText DOM mutation, composing Enter, then ordinary Enter; no real OS IME", outcomes: [] };
+  subset: propertyValuesOnly ? "property-values" : "full",
+  composition: propertyValuesOnly ? "Not run (property-values subset)"
+    : "Synthetic compositionstart/update/end, browser insertText DOM mutation, composing Enter, then ordinary Enter; no real OS IME", outcomes: [] };
 let browser, driver, webview, stage = "startup", expected;
 const editorSelector = mode === "cm6" ? '.main-content [data-block-editor="cm6"] .cm-content' : ".main-content textarea.block-editor";
 const editor = () => browser.$(editorSelector);
@@ -84,7 +91,8 @@ async function type(text) {
 async function value() {
   return browser.execute(selector => {
     const el = document.querySelector(selector);
-    return el instanceof HTMLTextAreaElement ? el.value : el?.textContent ?? null;
+    return el instanceof HTMLTextAreaElement ? el.value
+      : el ? [...el.querySelectorAll(".cm-line")].map(line => line.textContent).join("\n") : null;
   }, editorSelector);
 }
 async function saved(page, bytes) {
@@ -182,6 +190,7 @@ try {
   await browser.waitUntil(async () => await toggle.getAttribute("aria-checked") === String(mode === "cm6"));
   await keys("Escape");
 
+  if (!propertyValuesOnly) {
   stage = "Typing, Enter, Tab, Shift+Tab and Backspace merge";
   await edit("Native core", "alpha");
   await keys("Control", "End"); await type(" beta");
@@ -290,6 +299,32 @@ try {
   await saved("Native compose", "- compose 漢\n");
   await keys("Enter"); await type("after composition"); await exit();
   await saved("Native compose", "- compose 漢\n- after composition\n");
+  }
+
+  // UI-PROPERTY-VALUES-TYPED: use real typing, OS clipboard paste and typing
+  // inside an existing value on a routed page, with no property-name choice.
+  for (const [method, title] of [["typed", "Typed property"], ["pasted", "Pasted property"], ["existing", "Existing property"]]) {
+    stage = `Property values after ${method} entry`;
+    const page = `Native property ${method}`;
+    await edit(page, title);
+    await keys("Control", "End");
+    if (method !== "existing") {
+      await keys("Shift", "Enter");
+      if (method === "typed") await type("alpha:: ");
+      else {
+        await clipboard("write_text", "alpha:: ");
+        await keys("Control", "v");
+      }
+    } else await type("n");
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")]
+      .some(row => row.textContent?.trim() === "one")), { timeout: 10000, timeoutMsg: `${method} property did not offer its known value` });
+    await browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-item")]
+      .find(row => row.querySelector(".ac-label")?.textContent?.trim() === "one")
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await browser.waitUntil(async () => await value() === `${title}\nalpha:: one`, { timeoutMsg: `${method} value choice did not replace the value span` });
+    await exit();
+    await saved(page, `- ${title}\n  alpha:: one\n`);
+  }
   fixture.verify();
   stage = "Capture native evidence";
   await screenshot("complete.png");

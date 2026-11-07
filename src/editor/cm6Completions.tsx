@@ -91,8 +91,6 @@ export function cm6Completions(props: {
     if (applying || !current()) return;
     if (update.transactions.some(tr => tr.isUserEvent("input") || tr.isUserEvent("delete"))) {
       if (view().compositionStarted || update.transactions.some(tr => tr.isUserEvent("input.type.compose"))) return;
-      const value = text(), pos = caret();
-      completion.noteInput(value[pos - 1] ?? "");
       refresh();
     } else if (update.selectionSet) selectionChanged();
   };
@@ -100,7 +98,6 @@ export function cm6Completions(props: {
     if (!current() || event.isComposing || view().compositionStarted || applying) return;
     // A platform input may describe an unchanged state (fixture/IME notification).
     // Actual native edits are reconciled by CM and handled by changed().
-    completion.noteInput(event.data ?? "");
     refresh();
   };
   // The property-name workflow authors name|::, starting with an empty ::.
