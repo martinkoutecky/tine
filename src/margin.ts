@@ -5,10 +5,10 @@
 // derived from the outline at render time; nothing is persisted.
 
 import { createSignal } from "solid-js";
-import { quoteSelectorOf } from "./comments";
-import { facetsOf } from "./render/facets";
-import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type Node, type OutlineScope } from "./document";
+import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
+import { isCommentId, bodyNeighbor } from "./document";
+export { isCommentId, threadRootOf } from "./document";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The
  * main column keeps at least ~550 px beside a 280 px column, a 32 px gap and the
@@ -35,15 +35,6 @@ export function marginColumnWidth(paneWidth: number, content: number | null): nu
 /** Vertical space between two stacked threads, px. */
 export const MARGIN_THREAD_GAP = 8;
 
-const isComment = (n: Node, format: Format): boolean =>
-  n.parent !== null && quoteSelectorOf(facetsOf(n.raw, format).properties) !== null;
-
-/** Whether `id` is a comment: it has a parent block and a `tine.quote::`. */
-export function isCommentId(id: string, format: Format): boolean {
-  const n = docNode(id);
-  return !!n && isComment(n, format);
-}
-
 // Bumped when a comment is written, so the margin re-asks `pageHasComment`
 // although writing it changes only the new block's text (see below).
 const [commentsEpoch, setCommentsEpoch] = createSignal(0);
@@ -59,16 +50,7 @@ export const watchCommentsWritten = (): number => commentsEpoch();
  * child, so a structural change re-asks; a block edited by hand into (or out of)
  * a comment is noticed at the next structural change or page reload. */
 export function pageHasComment(roots: readonly string[], format: Format): boolean {
-  return someBlockInTrees(roots, (n) => isComment(n, format));
-}
-
-/** The comment whose thread holds `id` (itself or its nearest comment
- * ancestor), or null for an ordinary block. O(depth). */
-export function threadRootOf(id: string, format: Format): string | null {
-  for (let at: string | null = id; at !== null; at = docNode(at)?.parent ?? null) {
-    if (isCommentId(at, format)) return at;
-  }
-  return null;
+  return someBlockInTrees(roots, (n) => isCommentId(n.id, format));
 }
 
 /** Top offsets for threads already sorted in document order: each sits at its
@@ -92,17 +74,11 @@ export interface MarginNav {
   format: Format;
 }
 
-function mainStep(from: string, step: (id: string) => string | null, format: Format): string | null {
-  let at = step(from);
-  while (at !== null && threadRootOf(at, format) !== null) at = step(at);
-  return at;
-}
-
 /** The block above `id` in the view: the main column skips threads; the top of a
  * thread returns to the commented block. */
 export function marginPrev(id: string, scope: OutlineScope | null, nav: MarginNav): string | null {
   const step = (at: string) => prevVisible(at, scope);
-  if (!nav.thread) return mainStep(id, step, nav.format);
+  if (!nav.thread) return bodyNeighbor(id, -1, scope);
   return id === nav.thread.root ? nav.thread.parent : step(id);
 }
 
@@ -110,10 +86,10 @@ export function marginPrev(id: string, scope: OutlineScope | null, nav: MarginNa
  * of a thread comes the main-column block after the commented one. */
 export function marginNext(id: string, scope: OutlineScope | null, nav: MarginNav): string | null {
   const step = (at: string) => nextVisible(at, scope);
-  if (!nav.thread) return mainStep(id, step, nav.format);
+  if (!nav.thread) return bodyNeighbor(id, 1, scope);
   const next = step(id);
   if (next !== null && insideThread(next, nav.thread.root)) return next;
-  return mainStep(nav.thread.parent, step, nav.format);
+  return bodyNeighbor(nav.thread.parent, 1, scope);
 }
 
 function insideThread(id: string, root: string): boolean {

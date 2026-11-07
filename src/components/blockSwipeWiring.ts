@@ -8,6 +8,7 @@ import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
 import { touchGestures } from "../inputCapability";
 import { openContextMenu } from "../ui";
+import { threadRootOf } from "../document";
 
 export interface BlockRowSwipeDeps {
   /** The block the row's position belongs to: a whole-block embed's root row
@@ -69,6 +70,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
       if (!block || pageByName(block.page)?.guide) return false;
       if (deps.editing() && focusedEditorCommandBridge()?.blockId !== (deps.editorId ?? deps.id)) return false;
       if (action === "actions") return true;
+      if (threadRootOf(deps.id) !== null) return false;
       if (action === "outdent") return block.parent !== null && deps.scope?.forceExpandedRoot !== block.parent;
       const siblings = block.parent === null ? pageRoots(block.page) : childIds(block.parent);
       const index = siblings.indexOf(deps.id);

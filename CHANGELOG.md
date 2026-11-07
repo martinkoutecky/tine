@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Body editing skips whole margin-comment threads: Backspace, Delete, Enter, arrows, indentation, drag and paste preserve comments and their replies (GH #891, GH #110).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ## [0.9.0-beta.8] - 2026-11-06

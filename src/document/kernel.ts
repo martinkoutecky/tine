@@ -15,6 +15,7 @@ import { doc, keySource, keysUsed, pageByName, setDoc, writeRaw } from "./model"
 import { msg } from "../i18n";
 import { pushToastUnique } from "../toasts";
 import { editorHidePolicy } from "../editor/properties";
+import { bodyStructureChangeAllowed, bodyStructureVerb } from "./bodyStructure";
 
 /** Why a verb did nothing (`outline::Reason`). */
 export type OutlineRefusal =
@@ -27,7 +28,7 @@ export type OutlineVerb =
   | { verb: "split"; key: string; raw_offset: number; force_child: boolean; children_visible: boolean; keep_start_in_scope: boolean }
   | { verb: "merge"; survivor: string; absorbed: string; absorbed_referenced: boolean }
   | { verb: "indent"; keys: string[] }
-  | { verb: "outdent"; keys: string[]; logical: boolean }
+  | { verb: "outdent"; keys: string[]; logical: boolean; retain?: readonly string[] }
   | { verb: "delete"; keys: string[] }
   | { verb: "insert_empty_child"; parent: string; at: number }
   | { verb: "move_to"; keys: readonly string[]; to: OutlinePlace; inherit_from?: string | null }
@@ -140,6 +141,9 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
  *  (a store whose parent links disagree with its children lists, or a read
  *  set that missed a block) is asked again with whole pages. */
 export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): OutlineChange | { refused: OutlineRefusal } {
+  const bodyVerb = bodyStructureVerb(verb);
+  if (!bodyVerb) return { refused: "no_outline_step" };
+  verb = bodyVerb;
   const names = [...new Set(pageNames)];
   const ask = (reads: readonly OutlineRead[] | null) => {
     const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
@@ -153,13 +157,14 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
   }
   if (answer.refused) return { refused: answer.refused as OutlineRefusal };
   const change = answer.ok as { pages: PagePatch[]; focus: { key: string; raw_offset: number | null } | null; notices: OutlineNotice[]; keys_used: number; transfers?: [string, string][] };
-  return {
+  const result: OutlineChange = {
     pages: change.pages,
     focus: change.focus && { key: change.focus.key, editorOffset: change.focus.raw_offset === null ? null : answer.editor_offset },
     notices: change.notices,
     keysUsed: change.keys_used,
     transfers: change.transfers ?? [],
   };
+  return bodyStructureChangeAllowed(verb, result) ? result : { refused: "no_outline_step" };
 }
 
 /** Tell the user why a verb did nothing, when the refusal is theirs to learn

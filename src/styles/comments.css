@@ -136,7 +136,7 @@
   padding-left: 0;
 }
 .comment-handle {
-  cursor: grab;
+  cursor: context-menu;
 }
 
 .comment-actions {

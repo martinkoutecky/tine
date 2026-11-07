@@ -33,6 +33,7 @@ blockProperty
 blockRef
 blockSubtreeMarkdown
 blockWritable
+bodyNeighbor  # why: GH #891: editors and embed exits share navigation that omits whole comment threads; batch-fix-beta-mc-structure
 buildClipboardPayload
 canIndentBlock  # why: the swipe indent cue asks the kernel indent verb instead of restating its depth rule (outline kernel twin 14); batch-outline-kernel
 captureEmptyPage  # why: the tine://capture route admits today's journal exactly as the capture append does (ADR 0073); batchNativeIntegrations
@@ -91,6 +92,7 @@ installPageIdentityNavigation  # why: route/tab rekey must precede exact-path wo
 installRenameRefreshHandler
 isBlockMoving
 isBlockRefUuid  # why: an unresolved ((id)) that is not a UUID is shown, never looked up (GH #589); batch20b
+isCommentId  # why: GH #891: one parsed comment discriminator for document structure and all editor surfaces; batch-fix-beta-mc-structure
 isConflicted
 isDirty
 isLoaded
@@ -187,6 +189,7 @@ stopOwnNumberedListOnEmptyEnter
 storedFold  # why: the bullet's fold including a query's authored default, read by Block and the query arrow; batch-og-query-fold-arrow
 subscribeOwnerFlush  # why: the window answers its graph owner's flush before a CLI write (CLI slice 2); batch-cli-slice2
 switcherPage
+threadRootOf  # why: GH #891: one thread-membership predicate for body editing, drag, paste and navigation; batch-fix-beta-mc-structure
 toLoadablePage
 toggleBlockProperty
 toggleCollapse
