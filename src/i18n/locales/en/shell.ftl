@@ -12,3 +12,4 @@ shell-cli-delete-broken-count = Block references broken by this deletion:
 shell-cli-delete-confirmation = Pass --yes (or --force) to confirm; nothing changed
 shell-cli-delete-removed = removed text (block and children):
 shell-cli-delete-truncated = removed text truncated at 65536 UTF-8 bytes; omitted bytes:
+shell-cli-page-properties-refusal = This outline text would become page properties; use tine prop set --page PAGE KEY VALUE to change page properties; nothing changed

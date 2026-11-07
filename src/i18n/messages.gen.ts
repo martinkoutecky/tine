@@ -3000,6 +3000,7 @@ export interface MessageArgs {
   "shell-cli-delete-help": {};
   "shell-cli-delete-removed": {};
   "shell-cli-delete-truncated": {};
+  "shell-cli-page-properties-refusal": {};
   "shell-edit-paste-match-style": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
@@ -3157,6 +3158,7 @@ export interface MessageArgs {
   "ui-failure-marker-read": {};
   "ui-failure-page-header-read": {};
   "ui-failure-page-inventory": {};
+  "ui-failure-page-property-edit": {};
   "ui-failure-page-refresh": {};
   "ui-failure-pdf-find": {};
   "ui-failure-query-hydration": {};

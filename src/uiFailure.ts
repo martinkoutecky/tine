@@ -38,6 +38,7 @@ export type UiFailureFamily =
   | "logbook"
   | "marker-read"
   | "page-header-read"
+  | "page-property-edit"
   | "export-preview"
   | "sheet-export";
 
@@ -49,6 +50,7 @@ const MESSAGES: Record<UiFailureFamily, Msg> = {
   "logbook": msg("ui-failure-logbook"),
   "marker-read": msg("ui-failure-marker-read"),
   "page-header-read": msg("ui-failure-page-header-read"),
+  "page-property-edit": msg("ui-failure-page-property-edit"),
   "export-preview": msg("ui-failure-export-preview"),
   "sheet-export": msg("ui-failure-sheet-export"),
   "config-read": msg("ui-failure-config-read"),

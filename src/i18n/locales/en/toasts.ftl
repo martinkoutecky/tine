@@ -391,6 +391,7 @@ ui-failure-logbook = Couldn't read or update a time-tracking entry.
 ui-failure-marker-read = Couldn't read a task marker from a block. It is shown as plain text.
 
 ui-failure-page-header-read = Couldn't read a page's property header. It is shown as ordinary text.
+ui-failure-page-property-edit = Couldn't change this page property. The page was not changed.
 
 ui-failure-export-preview = Couldn't prepare a block for the export preview. It is shown unresolved.
 

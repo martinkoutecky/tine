@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+- CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
 - Long Linked and Unlinked References sections stay responsive while scrolling: groups far from view are set aside and redrawn when you come back, keeping their folds, edits and selection, and memory no longer grows with every group you scroll past (GH #886).
@@ -76,6 +78,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
 - Remappable **Quit Tine** command, with **Ctrl+Q** on Linux and Windows, saving pending edits before closing every graph window (GH #805).
 - Drag the frameless desktop window from empty space in the left sidebar header; workspace controls stay clickable (GH #815).
 - **Settings → Editor → Auto-embed pasted video links** can be turned off to keep YouTube, Vimeo, Loom and Bilibili URLs as plain links in both editors, including Quick Capture. Automatic embedding stays on by default; no video titles are fetched on paste (#861).
