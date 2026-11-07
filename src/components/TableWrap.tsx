@@ -29,9 +29,23 @@ export function tableBleedGeometry(normalLeft: number, normalWidth: number, natu
 export function TableWrap(props: { children: JSX.Element }): JSX.Element {
   let el!: HTMLDivElement;
   onMount(() => {
+    // A table can mount before its block is attached to the page (a Linked
+    // References copy in the sidebar, GH #802): no pane is found yet, so set up
+    // when the wrap is first laid out, never once-and-give-up.
+    if (el.isConnected) { onCleanup(setup()); return; }
+    let dispose: (() => void) | undefined;
+    const waiter = newResizeObserver(el, () => {
+      if (!el.isConnected || dispose) return;
+      waiter?.disconnect();
+      dispose = setup();
+    });
+    waiter?.observe(el);
+    onCleanup(() => { waiter?.disconnect(); dispose?.(); });
+  });
+  const setup = (): (() => void) => {
     const parent = el.parentElement;
     const pane = el.closest<HTMLElement>(".main-content, .rs-item-body, .right-sidebar-body");
-    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) return;
+    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) return () => {};
     const surface = el.firstElementChild as HTMLElement;
     const column = el.closest<HTMLElement>(".main-content-inner") ?? parent;
     let frame: (() => void) | undefined;
@@ -66,7 +80,7 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
     for (const node of [parent, pane, column, surface]) observer?.observe(node);
     const stopResize = listen(el, "resize", schedule);
     schedule();
-    onCleanup(() => { observer?.disconnect(); frame?.(); stopResize(); });
-  });
+    return () => { observer?.disconnect(); frame?.(); stopResize(); };
+  };
   return <div ref={el} class="md-table-wrap">{props.children}</div>;
 }

@@ -51,6 +51,14 @@ async function checkReading(selector, name, count = 4) {
   // loads; they must satisfy the same containment rule and are welcome here.
   await browser.waitUntil(() => browser.execute((selector, count) => document.querySelectorAll(`${selector} .md-table-wrap`).length >= count, selector, count), { timeout: 20000 });
   await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+  // Copies arriving late (Linked References) are measured by TableWrap a frame
+  // after they lay out; wait for the settled layout the reader sees, then assert.
+  // A layout that never settles still fails below with its metrics.
+  await browser.waitUntil(() => browser.execute(selector => [...document.querySelectorAll(`${selector} .md-table-wrap`)].every(wrap => {
+    const pane = wrap.closest(".rs-item-body, .main-content");
+    const r = wrap.getBoundingClientRect(), p = pane.getBoundingClientRect();
+    return r.left >= p.left - 1 && r.right <= p.right + 1 && pane.scrollWidth - pane.clientWidth <= 1 && wrap.scrollWidth - wrap.clientWidth <= 1;
+  }), selector), { timeout: 10000, interval: 200 }).catch(() => {});
   const metrics = await browser.execute(selector => [...document.querySelectorAll(`${selector} .md-table-wrap`)].map(wrap => {
     const pane = wrap.closest(".rs-item-body, .main-content");
     const r = wrap.getBoundingClientRect(), p = pane.getBoundingClientRect();
