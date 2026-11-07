@@ -27,9 +27,9 @@ const source = String.raw`
   render(() => <MobileKeyboardToolbar />, document.querySelector("#dock"));
   main.scrollTop = 650;
   window.fixture = {
-    focus(tall = false) {
-      editor.style.height = tall ? "720px" : "40px";
-      editor.value = tall ? "Edited first line\n".repeat(30) : "Edited heading";
+    focus(tall = false, twoLines = false) {
+      editor.style.height = tall ? "720px" : twoLines ? "56px" : "32px";
+      editor.value = tall ? "Edited first line\n".repeat(30) : twoLines ? "Edited heading\nSecond parent line" : "Edited heading";
       editor.focus({ preventScroll: true });
       editor.setSelectionRange(3, 3);
       registerFocusedEditorCommandBridge({ blockId: "fixture", dispatch: () => true, blur: () => editor.blur() });
@@ -55,7 +55,9 @@ const source = String.raw`
       // (4px padding, 24px line height, both scaled by the root's CSS zoom).
       const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
       const lineTop = editor.getBoundingClientRect().top + (4 - editor.scrollTop) * zoom;
-      return { ...row, zoom, lineTop, lineBottom: lineTop + 24 * zoom, scrollerTop: view.top, scrollerBottom: view.bottom, pinsBottom, toolbarTop: dock.getBoundingClientRect().top, scrollTop: main.scrollTop };
+      const bodyLine = parseFloat(getComputedStyle(editor).getPropertyValue("--ls-block-line-height"));
+      const child = document.querySelector(".first-child").getBoundingClientRect();
+      return { ...row, zoom, bodyLine, lineTop, lineBottom: lineTop + 24 * zoom, editorHeight: editor.getBoundingClientRect().height / zoom, childTop: child.top, childBottom: child.bottom, scrollerTop: view.top, scrollerBottom: view.bottom, pinsBottom, toolbarTop: dock.getBoundingClientRect().top, scrollTop: main.scrollTop };
     },
   };
 `;
@@ -67,8 +69,9 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width, 
   .spacer-before { height: 450px; }
   .spacer-after { height: 1600px; }
   textarea.block-editor { display: block; width: 95%; margin: 0; padding: 4px; border: 0; font: 18px/24px sans-serif; }
+  .first-child { padding-left: 24px; line-height: var(--ls-block-line-height); }
 </style>
-<main class="main-content"><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 0"><button type="button">Parent A</button></div><div class="block-main">Parent A</div><div class="spacer-before"></div><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 30px"><button type="button">Parent B</button></div><div class="block-main">Parent B</div><div class="spacer-before"></div><div class="ls-block"><textarea class="block-editor"></textarea></div><div class="spacer-after"></div></div></div></main>
+<main class="main-content"><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 0"><button type="button">Parent A</button></div><div class="block-main">Parent A</div><div class="spacer-before"></div><div class="ls-block" data-sticky-parent><div class="sticky-ancestor" style="top: 30px"><button type="button">Parent B</button></div><div class="block-main">Parent B</div><div class="spacer-before"></div><div class="ls-block"><textarea class="block-editor"></textarea><div class="first-child">First child stays visible</div></div><div class="spacer-after"></div></div></div></main>
 <div id="dock"></div><script type="module" src="/__caret_settle.tsx"></script>`;
 const server = await createServer({
   root,
@@ -110,13 +113,16 @@ function visible(g) {
   assert(Math.abs(g.visibleTop - (g.pinsBottom + 8 * g.zoom)) <= 1, "Visible top must be the painted pins' bottom plus the margin: " + JSON.stringify(g));
   assert(g.lineTop >= g.pinsBottom - 1 && g.lineBottom <= Math.min(g.scrollerBottom, g.toolbarTop) + 1,
     "Edited line must be visible below the pinned parents and above the keyboard toolbar: " + JSON.stringify(g));
-  // GH #783 (beta.4 report): a line brought back goes as low as it can, just above the toolbar
-  // (0.7.4's place), not to the top edge under the pins. Every journey here moves it out of view first.
-  assert(g.lineBottom >= g.toolbarTop - 8 * g.zoom - 48 * g.zoom,
-    "Edited line brought back must sit just above the keyboard toolbar, not high under the pins: " + JSON.stringify(g));
+  // GH #783 comment 14: leave three body lines below the caret for children/following blocks.
+  if (g.editorHeight < 100) assert(g.childTop >= g.lineBottom && g.childBottom < g.toolbarTop,
+    "A short parent's first child must remain visible above the keyboard toolbar: " + JSON.stringify(g));
+  // At large zoom the pins can leave less than three lines; the caret must stay below them.
+  const target = Math.max(g.visibleTop + g.lineBottom - g.lineTop, g.toolbarTop - 3 * g.bodyLine * g.zoom);
+  assert(Math.abs(g.lineBottom - target) <= 2,
+    "Edited line brought back must leave three zoomed body lines, bounded by the pinned parents: " + JSON.stringify(g));
 }
 try {
-  for (const journey of ["late-scroll", "late-scroll-below", "tall-late-scroll", "late-focus", "user-scroll", "keyboard-close", "zoom-late-scroll", "zoom150-late-scroll", "zoom-under-pins", "zoom150-under-pins"]) {
+  for (const journey of ["keyboard-open", "two-line-keyboard-open", "zoom-keyboard-open", "late-scroll", "late-scroll-below", "tall-late-scroll", "late-focus", "user-scroll", "keyboard-close", "zoom-late-scroll", "zoom150-late-scroll", "zoom-under-pins", "zoom150-under-pins"]) {
     const context = await browser.newContext({ viewport: { width: 412, height: 840 }, hasTouch: true });
     const page = await context.newPage();
     page.on("pageerror", error => failures.push(journey + ": " + error.message));
@@ -124,7 +130,7 @@ try {
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`);
       await page.waitForFunction(() => !!window.fixture);
       if (journey.startsWith("zoom")) await page.evaluate(scale => window.fixture.zoom(scale), journey.startsWith("zoom150") ? 1.5 : 1.25);
-      if (journey !== "late-focus") await page.evaluate(tall => window.fixture.focus(tall), journey === "tall-late-scroll");
+      if (journey !== "late-focus") await page.evaluate(journey => window.fixture.focus(journey === "tall-late-scroll", journey === "two-line-keyboard-open"), journey);
       await page.evaluate(() => window.fixture.ime(true));
       for (const height of [690, 550, 430]) {
         await page.setViewportSize({ width: 412, height });
@@ -134,7 +140,7 @@ try {
         await page.evaluate(() => { window.fixture.scroll(500); window.fixture.focus(); });
       } else if (journey.endsWith("under-pins")) {
         await page.evaluate(() => window.fixture.parkUnderPins());
-      } else {
+      } else if (!journey.endsWith("keyboard-open")) {
         // Native focus scroll arrives AFTER beta.2's two-frame reveal stopped.
         await page.evaluate(delta => window.fixture.scroll(delta), journey === "late-scroll-below" ? -300 : 500);
       }
