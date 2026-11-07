@@ -1,5 +1,6 @@
 import { shortcutKey } from "../shortcutKey";
 import { createMembershipResource } from "../resultMembership";
+import { createSearchResultRows } from "../searchResultRows";
 import {
   For,
   Match,
@@ -830,7 +831,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   answerDay.follow(asOfDay);
   const subscription = createQuerySubscription(() => {
     if (!source().trim()) return undefined;
-    if (sourceKind() === "search" || props.route.resultKinds === PAGES_AND_BLOCKS) return { kind: "full" };
+    if (sourceKind() === "search") return { kind: "search", source: source().trim(),
+      page_match_scope: pageMatchScope(), transliteration: pinyinMatchingEnabled() };
+    if (props.route.resultKinds === PAGES_AND_BLOCKS) return { kind: "full" };
     const dsl = queryWorkspaceDsl(source().trim());
     return { kind: "source", source: dsl.argument, dialect: dsl.dialect };
   }, answerDay.day);
@@ -849,7 +852,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), props.route.resultKinds, sourceKind() === "search" && pinyinMatchingEnabled()]),
     async (request): Promise<QueryExecution> => {
       const cancelled: QueryExecution = { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true };
-      if (!await subscription.ready()) return cancelled;
+      const retained = () => readLatestOr(execution, undefined, "search") ?? cancelled;
+      if (!await subscription.ready()) return retained();
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
       }
@@ -865,7 +869,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           request.pageMatchScope,
           { page: request.pageView, block: request.blockView }
         ));
-        return result.kind === "current" && owner() ? result.value : cancelled;
+        return result.kind === "current" && owner() && !result.value.cancelled ? result.value : retained();
       }
       const source = queryWorkspaceDsl(request.source);
       const parsed = await readOwned(owner, deps().parseQuery(source.argument, source.dialect));
@@ -893,6 +897,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     () => true,
     true,
     subscription.revision,
+    subscription,
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.
@@ -907,19 +912,27 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
    *  a retype and its first answer it has no value for the new identity. Neither may read as "No
    *  matching pages". A failed read is shown as a failure, never as pending. */
   const awaitingAnswer = () => !!source().trim() && !execution.error && (execution.loading || executed() === undefined);
-  const hits = () => executed()?.hits ?? [];
+  const hits = createSearchResultRows(() => executed()?.hits ?? [],
+    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), props.route.resultKinds, pinyinMatchingEnabled()]),
+    () => workspace);
   const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
   const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");
   const boardGroups = createMemo(() => {
-    const grouped: [string, QueryHit[]][] = [];
+    const grouped: { key: string; page: string; hits: QueryHit[] }[] = [];
+    const occurrences = new Map<string, number>();
     for (const hit of blockHits()) {
       const page = hitPage(hit);
       const last = grouped[grouped.length - 1];
-      if (last && last[0] === page) last[1].push(hit);
-      else grouped.push([page, [hit]]);
+      if (last && last.page === page) last.hits.push(hit);
+      else {
+        const occurrence = occurrences.get(page) ?? 0;
+        occurrences.set(page, occurrence + 1);
+        grouped.push({ key: JSON.stringify([page, occurrence]), page, hits: [hit] });
+      }
     }
     return grouped;
   });
+  const boardByKey = createMemo(() => new Map(boardGroups().map(group => [group.key, group])));
   const [pageDisplayOpen, setPageDisplayOpen] = createSignal(false);
   const [blockDisplayOpen, setBlockDisplayOpen] = createSignal(false);
   const registry = createQueryRegistryAccess(() => pageDisplayOpen() || blockDisplayOpen());
@@ -1138,6 +1151,68 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     </button>
   );
 
+  // Own each family/body once. Rebuilding these objects inside the JSX made
+  // Solid's keyed For replace both sections on every new answer (GH #907).
+  const resultFamilies: ResultFamily[] = [
+    { kind: "page", get hits() { return pageHits().length; }, get hasMore() { return !!executed()?.has_more?.pages; },
+      control: sectionControl("page"),
+      body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} showProperties={sourceKind() === "dsl"} /> },
+    { kind: "block", get hits() { return blockHits().length; }, get hasMore() { return !!executed()?.has_more?.blocks; },
+      control: sectionControl("block"),
+      body: <Switch>
+        <Match when={blockView().view === "search"}>
+          <div class="query-results-search" role="list" aria-label={t("query-query-workspace-block-results")}>
+            <For each={blockHits()}>{(hit) => (
+              <div role="listitem">
+                {task(hit)}
+                {resultButton(hit, <SearchResultRow page={hit.page} breadcrumb={hit.block.breadcrumb ?? []}
+                  text={hit.display_text} spans={hitSpans(hit)} />)}
+              </div>
+            )}</For>
+          </div>
+        </Match>
+        <Match when={blockView().view === "list"}>
+          <ul class="query-results-list" aria-label={t("query-query-workspace-query-results")}>
+            <For each={blockHits()}>{(hit) => (
+              <li>{task(hit)}<button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
+                <span class="query-list-context">{hitPage(hit)}</span>
+                <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
+              </button></li>
+            )}</For>
+          </ul>
+        </Match>
+        <Match when={blockView().view === "table"}>
+          <div class="query-results-table-wrap"><table class="query-results-table">
+            <caption class="sr-only">{t("query-query-workspace-query-results")}</caption>
+            <thead><tr><th scope="col">{t("query-query-workspace-type")}</th><th scope="col">{t("query-query-workspace-page")}</th><th scope="col">{t("query-query-workspace-content")}</th></tr></thead>
+            <tbody><For each={blockHits()}>{(hit) => (
+              <tr data-inpage-find-surface={hitSurfaceId(hit)}>
+                <td>{hitKind(hit)}</td>
+                <td><button type="button" {...resultActions(hit, false)}>{hitPage(hit)}</button></td>
+                <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
+              </tr>
+            )}</For></tbody>
+          </table></div>
+        </Match>
+        <Match when={blockView().view === "board"}>
+          <div class="query-results-board" aria-label={t("query-query-workspace-query-results-grouped-by-page")}>
+            <For each={boardGroups().map(group => group.key)}>{(key) => {
+              const group = () => boardByKey().get(key)!;
+              return (
+              <section class="query-board-column">
+                <h2>{group().page}<span class="query-board-count">{group().hits.length}</span></h2>
+                <div role="list"><For each={group().hits}>{(hit) => (
+                  <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
+                    <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
+                  </button></div>
+                )}</For></div>
+              </section>
+            ); }}</For>
+          </div>
+        </Match>
+      </Switch> },
+  ];
+
   return (
     <section ref={workspace} onKeyDown={resultKeyDown} onFocusIn={(event) => {
       const target = event.target as HTMLElement;
@@ -1272,81 +1347,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
       <Show when={source().trim() && !ogHint()?.date_windows}>
       <QueryResultSections
-        pending={awaitingAnswer()}
+        pending={awaitingAnswer() && executed() === undefined}
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
-        families={([
-          { kind: "page", hits: pageHits().length, hasMore: !!executed()?.has_more?.pages,
-            control: sectionControl("page"),
-            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} showProperties={sourceKind() === "dsl"} /> },
-          { kind: "block", hits: blockHits().length, hasMore: !!executed()?.has_more?.blocks,
-            control: sectionControl("block"),
-            body: <Switch>
-        <Match when={blockView().view === "search"}>
-          <div class="query-results-search" role="list" aria-label={t("query-query-workspace-block-results")}>
-            <For each={blockHits()}>{(hit) => (
-              <div role="listitem">
-                {task(hit)}
-                {resultButton(hit, <SearchResultRow
-                    page={hit.page}
-                    breadcrumb={hit.block.breadcrumb ?? []}
-                    text={hit.display_text}
-                    spans={hitSpans(hit)}
-                  />)}
-              </div>
-            )}</For>
-          </div>
-        </Match>
-
-        <Match when={blockView().view === "list"}>
-          <ul class="query-results-list" aria-label={t("query-query-workspace-query-results")}>
-            <For each={blockHits()}>{(hit) => (
-              <li>
-                {task(hit)}
-                <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
-                  <span class="query-list-context">{hitPage(hit)}</span>
-                  <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
-                </button>
-              </li>
-            )}</For>
-          </ul>
-        </Match>
-
-        <Match when={blockView().view === "table"}>
-          <div class="query-results-table-wrap">
-            <table class="query-results-table">
-              <caption class="sr-only">{t("query-query-workspace-query-results")}</caption>
-              <thead><tr><th scope="col">{t("query-query-workspace-type")}</th><th scope="col">{t("query-query-workspace-page")}</th><th scope="col">{t("query-query-workspace-content")}</th></tr></thead>
-              <tbody>
-                <For each={blockHits()}>{(hit) => (
-                  <tr data-inpage-find-surface={hitSurfaceId(hit)}>
-                    <td>{hitKind(hit)}</td>
-                    <td><button type="button" {...resultActions(hit, false)}>{hitPage(hit)}</button></td>
-                    <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
-                  </tr>
-                )}</For>
-              </tbody>
-            </table>
-          </div>
-        </Match>
-
-        <Match when={blockView().view === "board"}>
-          <div class="query-results-board" aria-label={t("query-query-workspace-query-results-grouped-by-page")}>
-            <For each={boardGroups()}>{([page, pageHits]) => (
-              <section class="query-board-column">
-                <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>
-                <div role="list">
-                  <For each={pageHits}>{(hit) => (
-                    <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
-                      <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
-                    </button></div>
-                  )}</For>
-                </div>
-              </section>
-            )}</For>
-          </div>
-        </Match>
-      </Switch> },
-        ] as ResultFamily[]).filter((family) => !executed()?.families || executed()!.families!.includes(family.kind))}
+        families={resultFamilies.filter((family) => !executed()?.families || executed()!.families!.includes(family.kind))}
       />
       </Show>
 

@@ -6,13 +6,14 @@ import { captureBinding } from "./binding";
 import { bindingOwner, readOwned } from "./owned";
 import { graphEpoch } from "./graphSession";
 import { changeSummary } from "./changeSummary";
-import { changed, changedAny, refreshEverything } from "./changeKeys";
+import { changed, changedAny, changeKeyPending, refreshEverything } from "./changeKeys";
 import { resultsSettled } from "./queryResultsEpoch";
 import { onEachWindow } from "./windowRealm";
 import type { Query, ExecutionContext } from "./editor/queryIr";
 
 export type QuerySubscription = { kind: "query"; query: Query; context: ExecutionContext }
   | { kind: "source"; source: string; dialect: import("./editor/queryIr").QueryTextDialect }
+  | { kind: "search"; source: string; page_match_scope: import("./editor/queryIr").FriendlyPageMatchScope; transliteration: boolean }
   | { kind: "registry" } | { kind: "full" };
 export interface QueryRegistration { mode: "narrow" | "quiet" | "full"; rev: string }
 export const QUERY_QUIET_MS = 1500;
@@ -79,19 +80,26 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
   // An unknown plan can include links/near or a second result family. Its
   // conservative dependency must be conservative about graph-wide cost too.
   const waitsForQuiet = () => subscription().mode() !== "narrow" && !refreshEverything();
+  let coalesceUntil = 0;
   createEffect(() => {
     const current = raw();
     const quiet = waitsForQuiet();
     inputRevision();
     const settled = resultsSettled();
     if (current === untrack(quietRevision) || !settled) return;
-    if (!quiet) { setQuietRevision(current); return; }
-    const delay = Math.max(0, QUERY_QUIET_MS - (Date.now() - lastInput));
-    if (delay === 0) { setQuietRevision(current); return; }
+    // External writers do not advance the typing clock. Bound Search refreshes
+    // to one release per window, even under an uninterrupted publication stream.
+    const search = question()?.kind === "search" && !refreshEverything();
+    if (search && !coalesceUntil) coalesceUntil = Date.now() + 200;
+    const delay = Math.max(0, quiet ? QUERY_QUIET_MS - (Date.now() - lastInput) : 0,
+      search ? coalesceUntil - Date.now() : 0);
+    if (delay === 0) { coalesceUntil = 0; setQuietRevision(current); return; }
     const timer = setTimeout(() => {
       // Both are rechecked at execution: no stale-publication run can slip
       // between a timer and a newly accepted edit or publication wait.
-      if (resultsSettled() && Date.now() - lastInput >= QUERY_QUIET_MS) setQuietRevision(current);
+      if (resultsSettled() && (!quiet || Date.now() - lastInput >= QUERY_QUIET_MS)) {
+        coalesceUntil = 0; setQuietRevision(current);
+      }
       else setRetryRevision(n => n + 1);
     }, delay);
     onCleanup(() => clearTimeout(timer));
@@ -119,7 +127,8 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
     started.readStarted = true;
     return true;
   };
-  return { revision, ready,
+  return { revision, ready, current: () => revision() === raw()
+    && !changeKeyPending(subscription().registered ? `query:${subscription().id}` : "publication"),
     // Cache identity is sampled only when a read starts. It never schedules a
     // read. Registration's host revision closes the late-mount/delayed-event
     // race; the summary catches subsequent publications of this reader.
