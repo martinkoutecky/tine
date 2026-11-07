@@ -49,6 +49,8 @@ export function RefBlocks(props: {
   /** Hover previews share the source's fold (GH #748). Unwritable or missing
    *  sources retain a local fold. Text remains read-only. */
   pageBody?: boolean;
+  /** An embed's fallback copy preserves folds without writing the source. */
+  localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
   return <RefBlocksAtDepth {...props} treeDepth={1} />;
@@ -63,6 +65,7 @@ function RefBlocksAtDepth(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   readOnly?: boolean;
   pageBody?: boolean;
+  localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
   treeDepth: number;
   queryResult?: boolean;
@@ -79,6 +82,7 @@ function RefBlocksAtDepth(props: {
           onEditPageProperties={props.onEditPageProperties}
           readOnly={props.readOnly}
           pageBody={props.pageBody}
+          localFolds={props.localFolds}
           onOpenBlock={props.onOpenBlock}
           depth={props.depth ?? b.breadcrumb?.length ?? 0}
           treeDepth={props.treeDepth}
@@ -96,6 +100,7 @@ function RefBlock(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   readOnly?: boolean;
   pageBody?: boolean;
+  localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
   depth: number;
   treeDepth: number;
@@ -126,9 +131,10 @@ function RefBlock(props: {
     pageKind: (props.pageKind ?? "page") as "journal" | "page",
     ...(props.path ? { path: props.path } : {}),
   });
-  const sourceId = createMemo(() => props.pageBody && props.page ? resolveBlockRef(refTarget()) : null);
+  const sourceId = createMemo(() => props.pageBody && !props.localFolds && props.page ? resolveBlockRef(refTarget()) : null);
   const folded = () => {
     if (!props.pageBody || !hasKids()) return false;
+    if (props.localFolds) return localFold() ?? props.block.collapsed;
     const id = sourceId();
     const stored = (id ? docNode(id)?.collapsed : undefined) ?? props.block.collapsed;
     return id && blockWritable(id) ? stored : (localFold() ?? stored);
@@ -139,6 +145,7 @@ function RefBlock(props: {
   const toggleFold = async () => {
     if (!hasKids() || folding) return;
     const next = !folded();
+    if (props.localFolds) { setLocalFold(next); return; }
     const ref = refTarget();
     const owner = graphOwner(() => alive);
     folding = true;
@@ -296,7 +303,7 @@ function RefBlock(props: {
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
               queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
-              readOnly={props.readOnly} pageBody={props.pageBody} onOpenBlock={props.onOpenBlock}
+              readOnly={props.readOnly} pageBody={props.pageBody} localFolds={props.localFolds} onOpenBlock={props.onOpenBlock}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>
         </div>

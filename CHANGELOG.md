@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page embeds keep the source outline's order after structural edits, and preserve folded branches while the source page is loading (GH #868).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ## [0.9.0-beta.8] - 2026-11-06
