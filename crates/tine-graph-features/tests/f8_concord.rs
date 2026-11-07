@@ -957,3 +957,153 @@ fn resaving_highlights_leaves_a_restyled_hls_page_byte_identical() {
     drop(host);
     let _ = fs::remove_dir_all(&root);
 }
+
+fn trashed_copies(root: &Path) -> Vec<Vec<u8>> {
+    let dir = root.join("logseq/.tine-trash/conflicts");
+    let mut out = Vec::new();
+    fn walk(dir: &Path, out: &mut Vec<Vec<u8>>) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else {
+                out.push(fs::read(&path).unwrap());
+            }
+        }
+    }
+    walk(&dir, &mut out);
+    out
+}
+
+/// GH #875 (Brikas 2026-11-07): Syncthing delivered two byte-identical copies
+/// of one page; each stayed as a box saying there was nothing to decide. A copy
+/// whose bytes equal its page's is trashed recoverably; one differing in any
+/// byte, and a real conflict, stay queued.
+#[test]
+fn sync_copies_identical_to_their_page_are_trashed_and_others_stay() {
+    let _integration_guard = crate::integration_lock();
+    let root = scratch("identical-copies");
+    let page = "- shared text\n  - child\n";
+    fs::write(root.join("pages/Notes.md"), page).unwrap();
+    let first = "pages/Notes.sync-conflict-20261107-101010-ABCDEFG.md";
+    let second = "pages/Notes.sync-conflict-20261107-101012-ABCDEFG.md";
+    let spaced = "pages/Notes.sync-conflict-20261107-101014-ABCDEFG.md";
+    let real = "pages/Notes.sync-conflict-20261107-101016-ABCDEFG.md";
+    fs::write(root.join(first), page).unwrap();
+    fs::write(root.join(second), page).unwrap();
+    fs::write(root.join(spaced), "- shared text\n  - child\n\n").unwrap();
+    fs::write(root.join(real), "- other text\n").unwrap();
+    let store = open(&root);
+    let queue = conflicts::ConflictQueue::default();
+    let before = queue.inventory(&store).unwrap();
+    assert_eq!(
+        before
+            .queue
+            .iter()
+            .filter(|c| c.source == ConflictSource::SyncCopy)
+            .count(),
+        4
+    );
+
+    let trashed = conflicts::trash_identical_sync_copies(&store, &queue).unwrap();
+
+    assert_eq!(trashed, vec![first.to_owned(), second.to_owned()]);
+    assert!(!root.join(first).exists() && !root.join(second).exists());
+    assert!(
+        root.join(spaced).exists(),
+        "a copy differing in a byte stays"
+    );
+    assert!(root.join(real).exists(), "a real conflict stays");
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Notes.md")).unwrap(),
+        page
+    );
+    let kept = trashed_copies(&root);
+    assert_eq!(kept.len(), 2, "both copies are recoverable from the trash");
+    assert!(kept.iter().all(|bytes| bytes == page.as_bytes()));
+    let after = queue.inventory(&store).unwrap();
+    let mut queued: Vec<_> = after
+        .queue
+        .iter()
+        .filter(|c| c.source == ConflictSource::SyncCopy)
+        .filter_map(|c| {
+            c.sides
+                .iter()
+                .find(|s| s.role == SideRole::Theirs)?
+                .path
+                .clone()
+        })
+        .collect();
+    queued.sort();
+    assert_eq!(queued, vec![spaced.to_owned(), real.to_owned()]);
+    assert_eq!(
+        conflicts::trash_identical_sync_copies(&store, &queue).unwrap(),
+        Vec::<String>::new(),
+        "a second pass finds nothing"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// GH #875 second report: after resolving one of two identical copies by
+/// keeping the copy's side, the page equals the other copy, which is trashed
+/// instead of sticking as "nothing to decide".
+#[test]
+fn resolving_one_copy_lets_its_identical_twin_be_trashed() {
+    let _integration_guard = crate::integration_lock();
+    let root = scratch("identical-twin");
+    fs::write(root.join("pages/Notes.md"), "- mine\n").unwrap();
+    let first = "pages/Notes.sync-conflict-20261107-101010-ABCDEFG.md";
+    let second = "pages/Notes.sync-conflict-20261107-101012-ABCDEFG.md";
+    fs::write(root.join(first), "- theirs\n").unwrap();
+    fs::write(root.join(second), "- theirs\n").unwrap();
+    let store = open(&root);
+    let host = crate::test_host(&store);
+    let queue = conflicts::ConflictQueue::default();
+    queue.inventory(&store).unwrap();
+    assert!(conflicts::trash_identical_sync_copies(&store, &queue)
+        .unwrap()
+        .is_empty());
+    let diff = conflicts::sync_conflict_diff(&store, "pages/Notes.md", first, &[])
+        .unwrap()
+        .unwrap();
+    conflicts::resolve_sync_conflict(
+        &store,
+        &host,
+        "pages/Notes.md",
+        first,
+        &all(&diff.rows, "theirs"),
+        &diff.base_rev,
+        &diff.conflict_rev,
+        None,
+        &[],
+        "union",
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Notes.md")).unwrap(),
+        "- theirs\n"
+    );
+    queue
+        .refresh_files(
+            &store,
+            &[
+                tine_store::FileId::from("pages/Notes.md".to_owned()),
+                tine_store::FileId::from(first.to_owned()),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(
+        conflicts::trash_identical_sync_copies(&store, &queue).unwrap(),
+        vec![second.to_owned()]
+    );
+    assert!(!root.join(second).exists());
+    assert!(queue
+        .inventory(&store)
+        .unwrap()
+        .queue
+        .iter()
+        .all(|c| c.source != ConflictSource::SyncCopy));
+    drop(host);
+    let _ = fs::remove_dir_all(&root);
+}

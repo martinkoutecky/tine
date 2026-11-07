@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
-
+- A sync copy identical to its page no longer sticks as a conflict that says there is nothing to decide: identical copies go to Tine's trash on their own, including the second of two identical copies after the first is resolved, and a copy that only looks identical offers Discard copy (GH #875).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ## [0.9.0-beta.8] - 2026-11-06

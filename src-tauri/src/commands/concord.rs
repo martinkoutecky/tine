@@ -4,6 +4,7 @@
 //! transaction; nothing here touches a file.
 
 use crate::state::{slot_for_context, GraphContext, GraphSlot};
+use tauri::Manager;
 
 /// Concord refusals explain how to recover. Do not erase a property choice,
 /// malformed file, or partial-success explanation into `io:InvalidInput`.
@@ -201,13 +202,49 @@ pub(crate) async fn conflict_inventory(
     state: GraphContext<'_>,
 ) -> Result<tine_core::concord_queue::ConflictInventory, String> {
     let slot = slot_for_context(&state)?;
+    let (app, label) = (
+        state.window.app_handle().clone(),
+        state.window.label().to_owned(),
+    );
     tauri::async_runtime::spawn_blocking(move || {
-        slot.conflict_queue
+        let inventory = slot
+            .conflict_queue
             .inventory(&slot.store)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        // Copies that were already identical when the graph opened.
+        trash_identical_copies(&app, &label, &slot);
+        inventory
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// GH #875: a sync copy whose bytes equal its page's (delivered that way, or
+/// made so by a save or a resolve) holds nothing to decide, so it is trashed
+/// recoverably, off the calling thread; the window then re-reads the queue on
+/// `conflicts-changed`. Nothing to do costs one in-memory queue scan.
+pub(crate) fn trash_identical_copies(
+    app: &tauri::AppHandle,
+    label: &str,
+    slot: &std::sync::Arc<GraphSlot>,
+) {
+    use tauri::Emitter;
+    if slot.conflict_queue.undecided_copies().is_empty() {
+        return;
+    }
+    let (app, label, slot) = (app.clone(), label.to_owned(), slot.clone());
+    std::thread::spawn(move || {
+        match tine_graph_features::conflicts::trash_identical_sync_copies(
+            &slot.store,
+            &slot.conflict_queue,
+        ) {
+            Ok(trashed) if !trashed.is_empty() => {
+                let _ = app.emit_to(label.as_str(), "conflicts-changed", ());
+            }
+            Ok(_) => {}
+            Err(error) => crate::debug::diag_private("conflict-refresh-failed", error.to_string()),
+        }
+    });
 }
 
 /// Block diff of a marker-bearing page's own sides (3-way when the markers
