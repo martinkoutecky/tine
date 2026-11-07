@@ -97,14 +97,17 @@ export function QueryDisplay(props: {
   };
   const commitSample = () => {
     const parsed = sample();
-    if (!parsed.valid || parsed.value === view().sample) return;
+    if (!parsed.valid) return;
+    if (parsed.value === view().sample) { sampleBase = parsed.value; return; }
+    // Our own save of this value is in flight (Enter's save blurs the field).
+    if (parsed.value === sampleBase) return;
     if (sampleBase !== view().sample) {
       setSampleText(sampleOf(view().sample)); sampleBase = view().sample;
       pushToastUnique(msg("macro-block-changed"), "error");
       return;
     }
     sampleBase = parsed.value;
-    apply({ sample: parsed.value });
+    void Promise.resolve(props.apply({ ...view(), sample: parsed.value })).then(saved => { if (saved === false) sampleBase = view().sample; });
   };
   return <div class="qd-root">
     <Show when={!props.inline}><button ref={trigger} type="button" class="qd-trigger" aria-expanded={open()} aria-controls={id}
