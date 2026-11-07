@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - On Android, opening the keyboard leaves about three body lines below the caret so children of short blocks stay visible, while keeping the edited line below pinned parents (GH #783).
 - Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+- `tine` commands run from the folder that contains a graph (for example your home folder, with the graph in `~/logseq`) no longer treat that folder as the graph, which listed Logseq backup copies as pages and journals as plain pages; they now look for the graph's `logseq/config.edn` (GH #908).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
