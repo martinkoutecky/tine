@@ -15,6 +15,12 @@
       "variants": ["EMBED_KIND=page|block", "E2E_SURFACE=main|sidebar|references", "E2E_STRUCTURAL=1 additionally proves reparenting and Undo", "E2E_CORPUS supplies a read-only corpus that is copied before use; CSS, window size, reference placement and click timing are configurable"],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh906-delete-rendered.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Deleting or merging a horizontal-rule bullet through textarea keys, block selection, the context menu or cut preserves its routed page or journal and surviving siblings; the intended outline change is saved to disk.","blocking":false,"authority":"GH #906; UI-GH906-DELETE-RENDERED-BLOCK"}],
+      "acceptableVariations": ["Theme, layout, save latency and editor presentation may vary while surviving blocks remain visible and saved outline text is correct."],
+      "nonRequirements": ["No private graph, reporter screenshot, macOS runtime certification or release acceptance; boundary combinations are covered by render tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pdf-area-ref.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
       "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],

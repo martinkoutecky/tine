@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - An externally moved page no longer stays hidden behind a stale path: late page-index updates drop absent files, and an incomplete launch checkpoint rebuilds from disk (GH #905).
 - Page embeds keep the source outline's order after structural edits, and preserve folded branches while the source page is loading (GH #868).
 - On Android, opening the keyboard leaves about three body lines below the caret so children of short blocks stay visible, while keeping the edited line below pinned parents (GH #783).
+- Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ### Changed
