@@ -778,7 +778,7 @@ fn own_journal_creation_updates_day_and_published_answers() {
     writer
         .save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc)
         .unwrap();
-    assert_eq!(store.journal_id(crate::Day(20260925)), id);
+    assert_eq!(store.journal_id(crate::Day(20260925), false), id);
     let view = store.whole_graph().unwrap();
     assert!(matches!(
         view.resolve("Sep 25th, 2026", true),

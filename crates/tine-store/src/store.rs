@@ -1466,17 +1466,36 @@ impl Store {
         self.load.closed.load(Ordering::Acquire)
     }
 
-    /// Return a cached canonical journal id or propose a configured path (directory,
+    /// Return a cached physical journal id or propose a configured path (directory,
     /// filename format, preferred extension). The day index covers accessible files
     /// before open and refreshes before relevant publications: direct reads/writes,
-    /// transactions, restore, watcher and refresh. Cost O(format + path bytes);
-    /// no parse or disk read. Unreadable subtrees or unobserved external creations
+    /// transactions, restore, watcher and refresh. With `active_only = false`,
+    /// cost O(format + path bytes), with no parse or disk read.
+    /// Unreadable subtrees or unobserved external creations
     /// can yield a duplicate-day proposal. It does not indicate existence: `page(id)`
     /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
     /// Use guarded `CreateNew` saves; handle conflicts, twins, I/O and target-safety
     /// refusals, including unreadable destination directories.
-    pub fn journal_id(&self, day: Day) -> PageId {
+    /// `active_only` selects the day's opening claimant across kinds, including
+    /// an ordinary owner. False retains the physical journal identity for guarded
+    /// mutations and exact-file inspection. Active lookup uses the published
+    /// names, or the live preamble index before a view exists (one O(P) discovery
+    /// per invalidation, then indexed lookups); it never reads journal bodies.
+    pub fn journal_id(&self, day: Day, active_only: bool) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
+        if active_only {
+            let title = self.graph.current_journal_format().title(date);
+            // Use the same comparator as every name opening, over both physical
+            // claim buckets. The lookup also works before Ready and after a
+            // contained load failure, without waiting or reading journal bodies.
+            if let Some(entry) = [PageKind::Page, PageKind::Journal]
+                .into_iter()
+                .filter_map(|kind| self.move_claimant(&title, kind))
+                .min_by(crate::model::compare_page_claimants)
+            {
+                return PageId::from(self.graph.rel_path(&entry.path));
+            }
+        }
         if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
             return id.clone();
         }

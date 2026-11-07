@@ -164,7 +164,10 @@ fn l8_03_watcher_arrival_protects_the_asset_and_removal_releases_it() {
         .map(|page| page.id)
         .collect();
     assert_eq!(after, before);
-    assert_eq!(store.journal_id(tine_store::Day(20261002)).as_str(), KEEPER);
+    assert_eq!(
+        store.journal_id(tine_store::Day(20261002), false).as_str(),
+        KEEPER
+    );
     assert_eq!(
         fs::read_to_string(root.path().join(KEEPER)).unwrap(),
         "- the day\n"

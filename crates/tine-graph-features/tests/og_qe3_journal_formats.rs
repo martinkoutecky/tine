@@ -70,7 +70,7 @@ fn feed_and_routed_page_use_every_og_format_without_rewriting_files() {
             let feed = journals::feed_page(&store, 10, None).unwrap();
             assert_eq!(feed.pages.len(), 1, "{pattern}/{ext}");
             assert_eq!(feed.pages[0].doc.title, title, "{pattern}/{ext}");
-            let routed = store.page(&store.journal_id(Day(20240105))).unwrap();
+            let routed = store.page(&store.journal_id(Day(20240105), false)).unwrap();
             assert_eq!(routed.doc.title, title);
             assert!(routed
                 .doc

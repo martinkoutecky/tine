@@ -258,14 +258,17 @@ mod cold_index_tests {
         GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
         let (store, _, _) = crate::Store::open(&dir, Default::default()).unwrap();
         let open_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.replace(0));
-        let journal = store.journal_id(crate::Day(
-            tine_core::date::JournalDate {
-                year: 2026,
-                month: 9,
-                day: 29,
-            }
-            .ordinal_key(),
-        ));
+        let journal = store.journal_id(
+            crate::Day(
+                tine_core::date::JournalDate {
+                    year: 2026,
+                    month: 9,
+                    day: 29,
+                }
+                .ordinal_key(),
+            ),
+            false,
+        );
         assert_eq!(store.page(&journal).unwrap().doc.blocks[0].raw, "journal");
         let feed_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.get());
         fs::remove_file(dir.join(".tine-test-pause-load")).unwrap();

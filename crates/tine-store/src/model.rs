@@ -999,13 +999,28 @@ impl ReadSnapshot {
             usize::from(previous_block.is_none_or(|(_, before)| {
                 changed_paths.is_empty() && !Arc::ptr_eq(before, &pages)
             }));
+        let active_list = std::sync::OnceLock::new();
+        if let Some(old) = old.filter(|old| {
+            // The physical metadata root is shared for body-only edits. Check
+            // only affected paths for active membership changes; an unchanged
+            // sibling can have promoted or demoted without changing its bytes.
+            Arc::ptr_eq(&old.list, &list)
+                && changed_paths.iter().all(|path| {
+                    old.pages.positions.contains_key(path.as_str())
+                        == pages.positions.contains_key(path.as_str())
+                })
+        }) {
+            if let Some(materialized) = old.active_list.get() {
+                let _ = active_list.set(Arc::clone(materialized));
+            }
+        }
         let mut snapshot = Self {
             physical_pages,
             pages,
             semantic_changed_paths: semantic_paths.clone(),
             config,
             list,
-            active_list: std::sync::OnceLock::new(),
+            active_list,
             observed_mtimes,
             explicit_index,
             reference_candidate_index: RwLock::new(reference_candidate_index),
@@ -1700,11 +1715,11 @@ impl ReadSnapshot {
     pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
         #[cfg(test)]
         PAGE_LIST_READS.with(|count| count.set(count.get() + 1));
-        Arc::clone(
-            self.active_list.get_or_init(|| {
-                Arc::new(self.pages.iter().map(|(entry, _)| entry.clone()).collect())
-            }),
-        )
+        Arc::clone(self.active_list.get_or_init(|| {
+            #[cfg(test)]
+            ACTIVE_LIST_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
+            Arc::new(self.pages.iter().map(|(entry, _)| entry.clone()).collect())
+        }))
     }
 
     #[cfg(test)]
@@ -2059,6 +2074,7 @@ impl BlockOwners {
 #[cfg(test)]
 thread_local! {
     static PAGE_LIST_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ACTIVE_LIST_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whole page-list reads (`page_list_arc`) on this thread (cost audit row 8).
@@ -11123,7 +11139,7 @@ mod tests {
 
             guide: false,
         };
-        let id = store.journal_id(tine_store::Day(20260710));
+        let id = store.journal_id(tine_store::Day(20260710), false);
         assert!(matches!(
             host_writer.save(
                 tine_store::EditKind::ReplacePage,

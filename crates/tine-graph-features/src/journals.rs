@@ -113,7 +113,7 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
     let config = store.config();
     let title = format(store).title(JournalDate::from_ordinal(day.0));
     FeedRead {
-        id: store.journal_id(day),
+        id: store.journal_id(day, true),
         doc: tine_core::model::PageDto {
             name: title.clone(),
             title,
@@ -134,6 +134,8 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
 /// Cost O((J + D) log(J + D) + R + returned page bytes), plus indexed alias
 /// lookups for date-shaped names on completion. J is journal files, R indexed reference names,
 /// D referenced dates. No reference-content scan or graph file write.
+/// Before a name index exists, active selection also discovers ordinary
+/// preambles once per invalidation (O(P)); it does not wait for graph parsing.
 #[cfg(any(test, feature = "test-faults"))]
 pub fn feed_page(
     store: &Store,
@@ -146,7 +148,8 @@ pub fn feed_page(
 /// As `feed_page`, extending the window through an already displayed day.
 /// Late referenced days can be inserted without dropping the visible suffix.
 /// `include_references` waits via the ordinary whole-graph read; false never
-/// consults the graph. Only returned journal bodies are read in either mode.
+/// waits for that parse, using the available name indexes for active selection.
+/// Only returned journal bodies are read in either mode.
 pub fn feed_page_through(
     store: &Store,
     limit: usize,
@@ -172,10 +175,7 @@ pub fn feed_page_through(
     // event published them; a file-only step (graph still loading) has no
     // view to ask.
     let (entries, listing_unreadable) = match (&graph, before_day) {
-        (Some(graph), Some(_)) => (
-            indexed_days_through(store, graph, Day(as_of_day)),
-            Vec::new(),
-        ),
+        (Some(graph), Some(_)) => (indexed_days_through(graph, Day(as_of_day)), Vec::new()),
         _ => feed_days_through(store, Day(as_of_day))?,
     };
     let referenced: std::collections::BTreeSet<_> = graph
@@ -191,7 +191,9 @@ pub fn feed_page_through(
         .unwrap_or_default();
     let mut days: BTreeMap<_, _> = entries.into_iter().collect();
     for day in referenced.iter().filter(|day| day.0 <= as_of_day) {
-        days.entry(*day).or_insert_with(|| store.journal_id(*day));
+        if let Some(id) = active_journal_id(store, *day) {
+            days.entry(*day).or_insert(id);
+        }
     }
     let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
     let entries: Vec<_> = days.into_iter().rev().collect();
@@ -226,6 +228,7 @@ pub fn feed_page_through(
         page.upcoming = referenced
             .into_iter()
             .filter(|day| day.0 > as_of_day)
+            .filter(|day| active_journal_id(store, *day).is_some())
             .map(|day| virtual_day(store, day))
             .collect();
     }
@@ -420,7 +423,7 @@ pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, St
     {
         return Ok(None);
     }
-    Ok(Some(store.journal_id(Day(date.ordinal_key()))))
+    Ok(Some(store.journal_id(Day(date.ordinal_key()), false)))
 }
 
 fn format(store: &Store) -> JournalFormat {
@@ -477,7 +480,8 @@ fn stem(entry: &FileEntry) -> Option<&str> {
 
 /// Dated journal ids newest first, once per day, through `cutoff`. Future days
 /// stay addressable as pages. Listing entries that cannot be read are skipped.
-/// Cost O(J log J).
+/// Cost O(J log J), plus initial ordinary preamble discovery before a name
+/// index exists (see `Store::journal_id`).
 #[cfg(any(test, feature = "test-faults"))]
 pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<(Day, PageId)>> {
     Ok(feed_days_through(store, cutoff)?.0)
@@ -485,22 +489,20 @@ pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<
 
 /// [`feed_days_through`]'s days from the view's day index instead of the
 /// directory: no disk access, O(J log J) in memory.
-fn indexed_days_through(
-    store: &Store,
-    graph: &tine_store::WholeGraph,
-    cutoff: Day,
-) -> Vec<(Day, PageId)> {
-    let days: std::collections::BTreeSet<Day> = graph
+fn indexed_days_through(graph: &tine_store::WholeGraph, cutoff: Day) -> Vec<(Day, PageId)> {
+    let days: BTreeMap<Day, PageId> = graph
         .inventory(tine_store::InventoryScope::JournalFiles)
         .0
         .iter()
-        .filter_map(|entry| entry.day)
-        .filter(|day| *day <= cutoff)
+        .filter_map(|entry| {
+            let day = entry.day.filter(|day| *day <= cutoff)?;
+            let tine_store::Resolved::Existing { id, .. } = &entry.target else {
+                return None;
+            };
+            entry.is_journal.then(|| (day, id.clone()))
+        })
         .collect();
-    days.into_iter()
-        .rev()
-        .map(|day| (day, store.journal_id(day)))
-        .collect()
+    days.into_iter().rev().collect()
 }
 
 /// `feed_journals_desc_through` plus the listing's unreadable entries.
@@ -517,9 +519,17 @@ fn feed_days_through(store: &Store, cutoff: Day) -> io::Result<(Vec<(Day, PageId
     let days = days
         .into_keys()
         .rev()
-        .map(|day| (day, store.journal_id(day)))
+        .filter_map(|day| active_journal_id(store, day).map(|id| (day, id)))
         .collect();
     Ok((days, unreadable))
+}
+
+/// A physical journal (or its proposed path) belongs in the feed only when
+/// it is also the opening file. An ordinary owner masks the entire journal
+/// day, including reference-only insertion; it is not an empty virtual day.
+fn active_journal_id(store: &Store, day: Day) -> Option<PageId> {
+    let active = store.journal_id(day, true);
+    (active == store.journal_id(day, false)).then_some(active)
 }
 
 fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {

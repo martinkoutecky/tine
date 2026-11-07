@@ -1642,7 +1642,10 @@ fn a_journal_file_delivered_on_a_held_path_during_load_names_its_day() {
     };
     assert!(index(&store, &publication));
     drop(writer);
-    assert_eq!(store.journal_id(day).as_str(), "journals/2026-10-02.md");
+    assert_eq!(
+        store.journal_id(day, false).as_str(),
+        "journals/2026-10-02.md"
+    );
     fs::remove_file(temp.path().join(".tine-test-pause-load")).unwrap();
     store.close();
 }

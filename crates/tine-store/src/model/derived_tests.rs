@@ -23,6 +23,47 @@ fn graph(files: &[(&str, &[u8])]) -> (tempfile::TempDir, Arc<Store>) {
     (temp, store)
 }
 
+#[test]
+fn active_page_list_materialization_survives_body_only_edits() {
+    let (root, store) = graph(&[
+        ("pages/A.md", b"title:: Shared\n- first\n"),
+        ("pages/Z.md", b"title:: Shared\n- inactive\n"),
+    ]);
+    store.stop_watcher_for_tests();
+    let first = store.whole_graph().unwrap().test_read_snapshot();
+    let list = first.page_list_arc();
+    assert_eq!(list.len(), 1);
+    let count = super::ACTIVE_LIST_MATERIALIZATIONS.with(std::cell::Cell::get);
+    fs::write(
+        root.path().join("pages/A.md"),
+        "title:: Shared\n- edited body\n",
+    )
+    .unwrap();
+    store.refresh(Depth::Bytes).unwrap();
+    let second = store.whole_graph().unwrap().test_read_snapshot();
+    assert!(Arc::ptr_eq(&first.list, &second.list));
+    let after = second.page_list_arc();
+    assert_eq!(
+        super::ACTIVE_LIST_MATERIALIZATIONS.with(std::cell::Cell::get),
+        count
+    );
+    assert!(Arc::ptr_eq(&list, &after));
+    // A title change promotes the unchanged sibling and invalidates the list.
+    fs::write(
+        root.path().join("pages/A.md"),
+        "title:: Elsewhere\n- edited body\n",
+    )
+    .unwrap();
+    store.refresh(Depth::Bytes).unwrap();
+    let third = store.whole_graph().unwrap().test_read_snapshot();
+    assert_eq!(third.page_list_arc().len(), 2);
+    assert_eq!(
+        super::ACTIVE_LIST_MATERIALIZATIONS.with(std::cell::Cell::get),
+        count + 1
+    );
+    store.close();
+}
+
 /// Hold `key` with no host running and nothing published yet.
 fn hold(store: &Store, key: &str) {
     let _writer = store.writer.lock().unwrap();
@@ -574,7 +615,7 @@ fn a_journal_only_the_capture_names_joins_the_day_index() {
         Some(PageId::from(key)),
         "the page list names the day"
     );
-    assert_eq!(store.journal_id(crate::Day(20310601)).as_str(), key);
+    assert_eq!(store.journal_id(crate::Day(20310601), false).as_str(), key);
     drop(view);
     store.close();
 }
