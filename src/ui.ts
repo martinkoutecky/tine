@@ -1,4 +1,5 @@
 import { msg } from "./i18n";
+import type { ShortcutBinding } from "./shortcutBindings";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { reportUiFailure, reportUnreadableFiles } from "./uiFailure";
@@ -804,9 +805,9 @@ export function pushRecent(targetOrName: PageTarget | string, kind: PageKind = "
 
 // User keyboard-shortcut overrides set from the Settings modal. Persisted
 // locally and layered on top of config.edn `:shortcuts` (which is itself on top
-// of the built-in defaults). Map of command id -> binding string.
+// of the built-in defaults). Values use OG's string or vector of alternatives.
 const SHORTCUTS_KEY = "logseq-claude.shortcuts";
-function loadShortcutOverrides(): Record<string, string> {
+function loadShortcutOverrides(): Record<string, ShortcutBinding> {
   try {
     const v = JSON.parse(localStorage.getItem(SHORTCUTS_KEY) ?? "{}");
     return v && typeof v === "object" ? v : {};
@@ -815,14 +816,14 @@ function loadShortcutOverrides(): Record<string, string> {
   }
 }
 export const [shortcutOverrides, setShortcutOverrides] =
-  createSignal<Record<string, string>>(loadShortcutOverrides());
-function persistShortcuts(next: Record<string, string>) {
+  createSignal<Record<string, ShortcutBinding>>(loadShortcutOverrides());
+function persistShortcuts(next: Record<string, ShortcutBinding>) {
   // Like changeAccent: a refused write is announced and NOT applied, so the
   // shortcut the user sees is the one that will still be there after a restart.
   if (!saveStr(SHORTCUTS_KEY, JSON.stringify(next), "keyboard shortcuts")) return;
   setShortcutOverrides(next);
 }
-export function setShortcutOverride(id: string, binding: string) {
+export function setShortcutOverride(id: string, binding: ShortcutBinding) {
   persistShortcuts({ ...shortcutOverrides(), [id]: binding });
 }
 export function resetShortcutOverride(id: string) {

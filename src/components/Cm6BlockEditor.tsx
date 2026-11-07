@@ -40,7 +40,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { documentHasFocus, isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeFenceOnly } from "../editor/codeFence";
+import { codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { codeFences } from "../editor/fences";
 import { calcSource, evalCalc, serializeCalcExitCommit } from "../editor/calc";
 import { codeWrapping } from "../codeDisplay";
@@ -495,6 +495,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(code() ?? codeFenceOnly(visible(), format))?.lang.toLowerCase()}</span>
+        <Show when={code() ?? codeBodyProjection(visible(), format)}>
+          {body => <CopyButton text={body().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
+        </Show>
         <LineGutter lines={shown().split("\n")} code />
       </Show>
       <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>

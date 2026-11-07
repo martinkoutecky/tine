@@ -4,7 +4,7 @@ import { pushToast } from "../toasts";
 import { writeClipboardText } from "../clipboard";
 
 // Shared raw-source copy affordance for inline code/links and fenced blocks.
-export function CopyButton(props: { text: string; title: string; class?: string }): JSX.Element {
+export function CopyButton(props: { text: string; title: string; class?: string; preserveFocus?: boolean }): JSX.Element {
   const onCopy = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -17,6 +17,9 @@ export function CopyButton(props: { text: string; title: string; class?: string 
       class={`copy-btn${props.class ? " " + props.class : ""}`}
       title={props.title}
       aria-label={props.title}
+      onMouseDown={(e) => {
+        if (props.preserveFocus) { e.preventDefault(); e.stopPropagation(); }
+      }}
       onClick={onCopy}
     >
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">

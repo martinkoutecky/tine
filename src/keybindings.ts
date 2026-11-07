@@ -1,5 +1,6 @@
 import { shortcutKey } from "./shortcutKey";
 import { requestAppQuit } from "./appQuit";
+import { bindingAlternatives, type ShortcutBinding } from "./shortcutBindings";
 import { installMouseHistory } from "./mouseHistory";
 import { setCurrentPageCollapsed, toggleCurrentPageCollapsed } from "./pageCollapse";
 import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailable } from "./seen/seenState";
@@ -13,6 +14,7 @@ import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindo
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
+// or OG vectors such as `:shortcuts {:cmd ["mod+k" "mod+j"]}`.
 // (delivered in GraphMeta.shortcuts). "mod" = Ctrl (Cmd on macOS). Bindings may
 // be a single chord ("mod+k") or a sequence of chords ("g j").
 //
@@ -845,8 +847,17 @@ function chordEq(a: Chord, b: Chord): boolean {
 
 // Merged binding table (defaults + config overrides), populated by
 // installKeybindings and consulted by matchesCommand.
-let bindings: Record<string, Chord[]> = {};
-let overridesApplied: Record<string, string> = {};
+let bindings: Record<string, Chord[][]> = {};
+let overridesApplied: Record<string, ShortcutBinding> = {};
+
+/** Compare every alternative using the dispatcher's platform/key normalization.
+ * A sequence prefix conflicts too: its shorter command would consume the key. */
+export function shortcutBindingsConflict(a: ShortcutBinding, b: ShortcutBinding): boolean {
+  return bindingAlternatives(a).some((left) => bindingAlternatives(b).some((right) => {
+    const x = parseBinding(left), y = parseBinding(right);
+    return x.slice(0, Math.min(x.length, y.length)).every((chord, i) => chordEq(chord, y[i]));
+  }));
+}
 
 // When true, the global dispatcher ignores all keys — used while the Settings
 // modal is recording a new binding so chords like "mod+k" get captured instead
@@ -859,8 +870,7 @@ export function setKeybindingsSuspended(b: boolean) {
 /** Does the event match the configured binding for `id`? (single-chord only). */
 export function matchesCommand(e: KeyboardEvent, id: string): boolean {
   const cs = bindings[id];
-  if (!cs || cs.length !== 1) return false;
-  return chordEq(eventToChord(e), cs[0]);
+  return cs?.some((chords) => chords.length === 1 && chordEq(eventToChord(e), chords[0])) ?? false;
 }
 
 /** The editor-scoped command id whose configured (single-chord) binding matches
@@ -871,7 +881,7 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
   for (const c of COMMANDS) {
     if (c.scope !== "editor") continue;
     const cs = bindings[c.id];
-    if (cs && cs.length === 1 && chordEq(chord, cs[0])) return c.id;
+    if (cs?.some((chords) => chords.length === 1 && chordEq(chord, chords[0]))) return c.id;
   }
   return null;
 }
@@ -887,16 +897,14 @@ export function paletteCommands(
       id: c.id,
       label: render(c.label),
       english: renderEnglish(c.label),
-      binding: (overridesApplied[c.id] ?? c.binding) === "false" ? "" : overridesApplied[c.id] ?? c.binding,
+      binding: bindingAlternatives(overridesApplied[c.id] ?? c.binding).join(", "),
       run: c.run!,
     }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     label: contribution.title,
     english: contribution.title,
-    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] === "false"
-      ? ""
-      : overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
+    binding: bindingAlternatives(overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "").join(", "),
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
@@ -1040,7 +1048,7 @@ export function isWebviewReloadChord(e: KeyboardEvent): boolean {
 
 /** Install the global shortcut handler, merging config overrides over defaults.
  *  Returns a disposer. */
-export function installKeybindings(overrides: Record<string, string> = {}): () => void {
+export function installKeybindings(overrides: Record<string, ShortcutBinding> = {}): () => void {
   overridesApplied = overrides;
   bindings = {};
   const allCommands = [...COMMANDS, ...pluginCommandDefs()];
@@ -1052,15 +1060,14 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   }
   for (const c of allCommands) {
     const b = overrides[c.id] ?? c.binding;
-    if (b !== "false") bindings[c.id] = parseBinding(b);
+    bindings[c.id] = bindingAlternatives(b).map(parseBinding);
   }
 
   // Global dispatch list (sequences + global chords). Aliases come last, so a
   // primary binding always wins a collision, and are dropped for any command the
   // user has bound themselves.
   const primary = allCommands.filter((c) => c.scope === "global" && c.run)
-    .map((c) => ({ ...c, chords: bindings[c.id] }))
-    .filter((c) => c.chords);
+    .flatMap((c) => bindings[c.id].map((chords) => ({ ...c, chords })));
   const aliased = allCommands
     .filter((c) => c.scope === "global" && c.run && c.alias && !(c.id in overrides))
     .map((c) => ({ ...c, chords: parseBinding(c.alias!) }));
