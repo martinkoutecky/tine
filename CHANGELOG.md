@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
