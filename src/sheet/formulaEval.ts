@@ -1,4 +1,4 @@
-import { createMemo, mapArray, type Accessor } from "solid-js";
+import { createMemo, getOwner, mapArray, runWithOwner, type Accessor } from "solid-js";
 import { changedAny, pageChangeKey } from "../changeKeys";
 import { formatForBlock, type Node as StoreNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
@@ -195,31 +195,52 @@ export function computeFormulaResults(
   return { results, evaluations };
 }
 
-export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<ReadonlyMap<string, FormulaValue>> {
+export type FormulaResultsMemo = Accessor<ReadonlyMap<string, FormulaValue>> & {
+  get: (key: string) => FormulaValue | undefined;
+};
+
+export function createFormulaResultsMemo(opts: FormulaResultsOptions): FormulaResultsMemo {
   let warned = false;
+  const owner = getOwner();
   // mapArray owns one computation per current row and disposes removed rows.
   // The evaluator can read only this row, formula definitions and time (including
   // .relative()); formula references also resolve in this same row context.
   // Keep provenance/hydration dependencies inside each computation as well.
-  const cells = mapArray(() => opts.formulas().size ? opts.rows() : [], row => createMemo(() => {
-    changedAny([`block:${row.id}`, pageChangeKey(row.page)]);
-    return computeFormulaResults([row], opts.formulas(), opts.now?.() ?? appNow(), opts.onEvaluate);
-  }));
-  return createMemo(() => {
-    const results = new Map<string, FormulaValue>();
-    let evaluations = 0;
-    for (const cell of cells()) {
-      const row = cell();
-      evaluations += row.evaluations;
-      for (const [key, value] of row.results) results.set(key, value);
+  const cells = createMemo(mapArray(() => opts.formulas().size ? opts.rows() : [], row => ({
+    row,
+    value: createMemo(() => {
+      changedAny([`block:${row.id}`, pageChangeKey(row.page)]);
+      return computeFormulaResults([row], opts.formulas(), opts.now?.() ?? appNow(), opts.onEvaluate);
+    }),
+  })));
+  // Membership/definition changes rebuild this directory; a row edit does not.
+  // Last occurrence wins for duplicate keys, as in the full-map merge below.
+  const byKey = createMemo(() => {
+    const current = cells();
+    const names = [...opts.formulas().keys()];
+    const index = new Map<string, Accessor<ReturnType<typeof computeFormulaResults>>>();
+    for (const cell of current) {
+      for (const name of names) index.set(formulaResultKey(cell.row, name), cell.value);
     }
     const threshold = opts.warnThreshold ?? DEFAULT_EVAL_WARN_THRESHOLD;
-    if (evaluations > threshold && !warned) {
+    if (current.length * names.length > threshold && !warned) {
       warned = true;
       console.warn("SheetTable evaluated many formula cells in one render pass");
     }
-    return results;
+    return index;
   });
+  // Preserve the snapshot API for whole-answer consumers, but only create its
+  // merge computation when requested. Ordinary cells subscribe to their row.
+  let aggregate: Accessor<ReadonlyMap<string, FormulaValue>> | undefined;
+  const results = () => {
+    aggregate ??= runWithOwner(owner, () => createMemo(() => {
+      const merged = new Map<string, FormulaValue>();
+      for (const cell of cells()) for (const [key, value] of cell.value().results) merged.set(key, value);
+      return merged;
+    }))!;
+    return aggregate();
+  };
+  return Object.assign(results, { get: (key: string) => byKey().get(key)?.().results.get(key) });
 }
 
 /** The rows a `tine.filter` keeps, or the filter's error with every row kept.

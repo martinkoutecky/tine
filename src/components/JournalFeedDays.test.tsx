@@ -5,12 +5,40 @@ import { initParser } from "../render/parse";
 import { loadFeed, node, pageByName, resetStore } from "../document";
 import { backend } from "../backend";
 import type { PageDto } from "../types";
+import * as documentDoor from "../document";
 
 const day = (i: number, raw = `day ${i}`): PageDto => ({ name: `Day${i}`, title: `Day${i}`, kind: "journal", format: "md",
   pre_block: null, blocks: [{ id: `day-${i}-${raw}`, raw, collapsed: false, children: [] }] });
 beforeAll(initParser);
 afterEach(() => { resetStore(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 const content = (page: { roots: readonly string[] }) => <div>{page.roots.map(id => node(id)?.raw).join(" ")}</div>;
+
+it.each([8, 32])("GH #886: a journal observer frame skips unrelated retained slots, K=%i", K => {
+  let observer!: { callback: IntersectionObserverCallback; elements: Set<Element> };
+  class FakeObserver {
+    elements = new Set<Element>();
+    constructor(readonly callback: IntersectionObserverCallback) { observer = this; }
+    observe(el: Element) { this.elements.add(el); }
+    unobserve(el: Element) { this.elements.delete(el); }
+    disconnect() { this.elements.clear(); }
+  }
+  vi.stubGlobal("IntersectionObserver", FakeObserver);
+  const frames = new Map<number, FrameRequestCallback>(); let sequence = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++sequence, callback); return sequence; });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => { frames.delete(id); });
+  const drain = () => { const next = [...frames.values()]; frames.clear(); next.forEach(fn => fn(0)); };
+  loadFeed(Array.from({ length: K }, (_, i) => day(i)));
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <JournalFeedDays>{content}</JournalFeedDays>, host);
+  try {
+    drain();
+    const target = [...observer.elements][0];
+    observer.callback([{ target, isIntersecting: false }] as IntersectionObserverEntry[], observer as unknown as IntersectionObserver);
+    const probe = vi.spyOn(documentDoor, "pageByName");
+    drain();
+    expect(probe).not.toHaveBeenCalled(); // An unmeasured slot cannot nominate any retirement.
+  } finally { dispose(); }
+});
 
 it("replaces a loaded day instance when a feed refresh publishes new roots", () => {
   loadFeed([day(0, "before")]);
@@ -50,6 +78,8 @@ it("requires every surface to be away, preserves measured placeholders and reloa
     await vi.waitFor(() => expect(host.querySelectorAll("[data-feed-retired]")).toHaveLength(16));
     expect(pageByName("Day0")).toBeDefined();
     expect(pageByName("Day1")).toBeUndefined();
+    expect(pageByName("Day8")).toBeUndefined();
+    expect(pageByName("Day9")).toBeDefined();
     expect(host.querySelector<HTMLElement>('[data-feed-day="Day1"]')?.style.minHeight).toBe("100px");
     const reopened = document.createElement("div"); document.body.append(reopened);
     disposeReopened = render(() => <JournalFeedDays>{content}</JournalFeedDays>, reopened);

@@ -67,19 +67,18 @@ export function createQuotedSourceRanges(parentId: Accessor<string | null>, form
       const selector = child && untrack(() => quoteSelectorOf(facetsOf(child.raw, fmt).properties));
       if (selector) selectors.set(childId, selector);
     }
-    return { positions, selectors, fmt };
+    const current = { positions, selectors, fmt };
+    onCleanup(onBlockRawChanged(id => {
+      const child = docNode(id);
+      const selector = child ? quoteSelectorOf(facetsOf(child.raw, current.fmt).properties) : null;
+      const previous = current.selectors.get(id);
+      if ((!selector && !previous) || selector && previous && selector.quote === previous.quote
+        && selector.prefix === previous.prefix && selector.suffix === previous.suffix) return;
+      if (selector) current.selectors.set(id, selector); else current.selectors.delete(id);
+      setRevision(value => value + 1);
+    }, positions.keys()));
+    return current;
   });
-  onCleanup(onBlockRawChanged(id => {
-    const current = children();
-    if (!current.positions.has(id)) return;
-    const child = docNode(id);
-    const selector = child ? quoteSelectorOf(facetsOf(child.raw, current.fmt).properties) : null;
-    const previous = current.selectors.get(id);
-    if ((!selector && !previous) || selector && previous && selector.quote === previous.quote
-      && selector.prefix === previous.prefix && selector.suffix === previous.suffix) return;
-    if (selector) current.selectors.set(id, selector); else current.selectors.delete(id);
-    setRevision(value => value + 1);
-  }));
   return createMemo(() => {
     const current = children();
     revision();

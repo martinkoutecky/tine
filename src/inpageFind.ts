@@ -155,21 +155,21 @@ function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<nu
       };
       visit(scope.roots);
     }
-    return { q, accents, byId, matching, scopes };
+    const index = { q, accents, byId, matching, scopes };
+    onCleanup(onBlockRawChanged(id => {
+      let changed = false;
+      for (const entry of index.byId.get(id) ?? []) {
+        const next = read(entry, index.q, index.accents);
+        if (next.length === entry.matches.length && next.every((span, i) =>
+          span.start === entry.matches[i].start && span.end === entry.matches[i].end)) continue;
+        entry.matches = next;
+        if (next.length) index.matching.add(entry); else index.matching.delete(entry);
+        changed = true;
+      }
+      if (changed) setRevision(value => value + 1);
+    }, byId.keys()));
+    return index;
   });
-  onCleanup(onBlockRawChanged(id => {
-    const index = outline();
-    let changed = false;
-    for (const entry of index.byId.get(id) ?? []) {
-      const next = read(entry, index.q, index.accents);
-      if (next.length === entry.matches.length && next.every((span, i) =>
-        span.start === entry.matches[i].start && span.end === entry.matches[i].end)) continue;
-      entry.matches = next;
-      if (next.length) index.matching.add(entry); else index.matching.delete(entry);
-      changed = true;
-    }
-    if (changed) setRevision(value => value + 1);
-  }));
   return createMemo(() => {
     const index = outline();
     revision(); surfaceRevision();

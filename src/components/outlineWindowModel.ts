@@ -71,7 +71,7 @@ export function createOutlineWindowGeometry(
       heights[i] = next;
       const nextVersion = contentVersion(n, n.raw);
       setVersion(value => Math.max(value, nextVersion));
-    }));
+    }, current.all));
     return { estimate, version };
   });
 }

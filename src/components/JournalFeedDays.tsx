@@ -10,14 +10,29 @@ import { reportUiFailure } from "../uiFailure";
 import { clearOnBindingInvalidated } from "../binding";
 import "../styles/journalFeed.css";
 
-type Slot = { name: string; el: HTMLElement; near: boolean; height: number; measure: () => void };
+type Slot = { name: string; el: HTMLElement; near: boolean; height: number; order: number; measure: () => void };
 // All mounted surfaces consent to retirement: a split/window can be reading
 // another part of the same shared feed. Slots retain geometry, never DTOs/text.
-const slots = new Set<Slot>();
+const slots = new Map<string, Set<Slot>>();
+const eligibleSlots = new Map<string, Set<Slot>>();
+let slotOrder = 0;
 // Geometry follows feed membership across pane disposal/reopening. A new
 // Journals surface must not start all already-retired days at zero height.
 const heights = new Map<string, number>();
-clearOnBindingInvalidated(() => { slots.clear(); heights.clear(); });
+clearOnBindingInvalidated(() => { slots.clear(); eligibleSlots.clear(); heights.clear(); });
+
+function reconsider(name: string): void {
+  const group = slots.get(name);
+  if (group?.size && pageByName(name) && [...group].every(slot => !slot.near && slot.height > 0)) eligibleSlots.set(name, group);
+  else eligibleSlots.delete(name);
+}
+
+function forgetSlot(slot: Slot): void {
+  const group = slots.get(slot.name);
+  group?.delete(slot);
+  if (!group?.size) slots.delete(slot.name);
+  reconsider(slot.name);
+}
 
 export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Element }): JSX.Element {
   const win = useOwnerWindow();
@@ -26,14 +41,10 @@ export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Eleme
   let cancelFrame: (() => void) | undefined;
   const sweep = () => {
     cancelFrame = undefined;
-    const candidates = new Map<string, Slot[]>();
-    for (const slot of slots) {
-      if (!pageByName(slot.name)) continue;
-      const group = candidates.get(slot.name) ?? [];
-      group.push(slot); candidates.set(slot.name, group);
-    }
-    const eligible = [...candidates].filter(([, group]) => group.every(slot => {
-      if (slot.near || slot.height <= 0) return false;
+    // Keep the former registration order, including when the first surface for
+    // a name disappears. Only loaded, measured, far-away groups participate.
+    const candidates = [...eligibleSlots].sort((a, b) => a[1].values().next().value!.order - b[1].values().next().value!.order);
+    const eligible = candidates.filter(([, group]) => [...group].every(slot => {
       const selection = slot.el.ownerDocument.getSelection();
       if (selection && !selection.isCollapsed) for (let i = 0; i < selection.rangeCount; i++) {
         if (selection.getRangeAt(i).intersectsNode(slot.el)) return false;
@@ -44,7 +55,10 @@ export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Eleme
     // Exact measured boxes are already reserved before document publication.
     untrack(() => retireFeedPages(eligible.map(([name]) => name)));
   };
-  const schedule = () => { if (!cancelFrame) cancelFrame = requestFrame(win, sweep); };
+  const schedule = (name?: string) => {
+    if (name !== undefined) untrack(() => reconsider(name));
+    if (!cancelFrame) cancelFrame = requestFrame(win, sweep);
+  };
   const observe = (slot: Slot, update: (near: boolean) => void) => {
     if (observer === undefined) observer = newIntersectionObserver(win, entries => {
       for (const entry of entries) {
@@ -53,18 +67,26 @@ export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Eleme
         held.slot.near = entry.isIntersecting;
         held.slot.measure();
         held.update(entry.isIntersecting);
+        schedule(held.slot.name);
       }
       schedule();
     }, { root: slot.el.closest(".main-content"), rootMargin: "1200px 0px" });
-    local.set(slot.el, { slot, update }); slots.add(slot);
+    local.set(slot.el, { slot, update });
+    let group = slots.get(slot.name);
+    if (!group) slots.set(slot.name, group = new Set());
+    group.add(slot);
     observer?.observe(slot.el);
     // No layout observer (tests/SSR): render eagerly, never guess geometry.
     if (!observer) { slot.near = true; update(true); }
-    return () => { observer?.unobserve(slot.el); local.delete(slot.el); slots.delete(slot); };
+    createEffect(() => {
+      pageByName(slot.name);
+      untrack(() => schedule(slot.name));
+    });
+    return () => { observer?.unobserve(slot.el); local.delete(slot.el); forgetSlot(slot); };
   };
   onCleanup(() => {
     cancelFrame?.(); observer?.disconnect();
-    for (const { slot } of local.values()) slots.delete(slot);
+    for (const { slot } of local.values()) forgetSlot(slot);
   });
   createEffect(() => {
     const names = new Set(feedNames());
@@ -82,7 +104,7 @@ export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Eleme
 }
 
 function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Element;
-  observe: (slot: Slot, update: (near: boolean) => void) => () => void; schedule: () => void }): JSX.Element {
+  observe: (slot: Slot, update: (near: boolean) => void) => () => void; schedule: (name?: string) => void }): JSX.Element {
   let el!: HTMLDivElement;
   let live = true;
   let inFlight = false;
@@ -138,14 +160,14 @@ function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Ele
   });
   onCleanup(() => resize?.disconnect());
   onMount(() => {
-    const slot: Slot = { name: props.name, el, near: true, height: height(), measure: () => {
+    const slot: Slot = { name: props.name, el, near: true, height: height(), order: ++slotOrder, measure: () => {
       if (!page()) return;
       const measured = el.getBoundingClientRect().height;
       if (measured > 0) { slot.height = measured; heights.set(props.name, measured); setHeight(measured); }
     } };
     onCleanup(props.observe(slot, setNear));
-    slot.measure(); props.schedule();
-    onCleanup(() => { live = false; slots.delete(slot); });
+    slot.measure(); props.schedule(props.name);
+    onCleanup(() => { live = false; });
   });
   return <div ref={el} class="journal-feed-day" data-feed-day={props.name} data-feed-retired={!page() || undefined}
     onPointerDown={() => setReserve(false)} onKeyDown={() => setReserve(false)}

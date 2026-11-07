@@ -186,7 +186,7 @@ export function SheetTable(props: {
   const formulaValue = (row: RowRecord, field: FieldId): FormulaValue | null => {
     const name = formulaNameFromField(field);
     if (!name) return null;
-    return formulaResults().get(formulaResultKey(row, name)) ?? null;
+    return formulaResults.get(formulaResultKey(row, name)) ?? null;
   };
   const rowFieldValue = (row: RowRecord, field: FieldId): FieldValue | null => {
     return isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);

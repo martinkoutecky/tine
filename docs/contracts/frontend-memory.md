@@ -46,7 +46,10 @@ days retire their nodes, facet owners and undo snapshots. Near-viewport days,
 editing pages, drafts, unsaved/saving/conflicted pages, transfers, graph freezes,
 selection and routed/deep-link/sidebar targets stay loaded even above that bound.
 Every mounted feed surface must have measured the day and be away from it before
-it can retire. A day near any viewport reloads through the normal owned page read
+it can retire. Retirement candidates follow per-name slot geometry and loaded
+membership; observer frames do not scan unrelated near or retired placeholders.
+Candidates keep slot registration order and pass every existing safety pin.
+A day near any viewport reloads through the normal owned page read
 and admission gate. Retiring and reloading preserve the reader's viewport and
 measured space; no offscreen source text cache is introduced.
 Measured heights survive feed surface disposal/reopening, are pruned on the

@@ -75,12 +75,24 @@ export function hydrateWorkingSet<T>(write: () => T): T {
 // (rawFunnel.guard.test.ts), so an outline window keeps one listener, not one
 // tracked computation per row. Replacing or removing a node is structure, which
 // readers observe through `node(id)`.
-const rawListeners = new Set<(id: string) => void>();
+const rawListeners = new Map<string, Set<(id: string) => void>>();
 let producedRaw: string[] = [];
-/** Calls `fn(id)` after each committed raw write; returns the unsubscribe. */
-export function onBlockRawChanged(fn: (id: string) => void): () => void {
-  rawListeners.add(fn);
-  return () => { rawListeners.delete(fn); };
+/** Calls `fn(id)` after each committed raw write to a member; returns the
+ * unsubscribe. Owners replace their registration when membership changes. */
+export function onBlockRawChanged(fn: (id: string) => void, ids: Iterable<string>): () => void {
+  const members = new Set(ids);
+  for (const id of members) {
+    let listeners = rawListeners.get(id);
+    if (!listeners) rawListeners.set(id, listeners = new Set());
+    listeners.add(fn);
+  }
+  return () => {
+    for (const id of members) {
+      const listeners = rawListeners.get(id);
+      listeners?.delete(fn);
+      if (listeners?.size === 0) rawListeners.delete(id);
+    }
+  };
 }
 /** The only in-place raw assignment, for `setDoc(produce(...))` drafts. */
 export function writeRaw(state: DocState, id: string, raw: string): void {
@@ -100,7 +112,7 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
       const changedRaw = rawField ? [args[1] as string] : producedRaw;
       producedRaw = [];
       untrack(() => {
-        for (const id of changedRaw) for (const listener of rawListeners) listener(id);
+        for (const id of changedRaw) for (const listener of rawListeners.get(id) ?? []) listener(id);
         if (rawField) {
           updateAuthoredIdentity(args[1] as string);
         } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {

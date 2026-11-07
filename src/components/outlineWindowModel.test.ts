@@ -1,14 +1,35 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createComputed, createRoot, createSignal, getOwner, type Owner } from "solid-js";
 import { produce } from "solid-js/store";
 import { resetStore } from "../document";
 import { setDoc, writeRaw, type Node } from "../document/model";
 import { createOutlineWindowGeometry, createOutlineWindowModel } from "./outlineWindowModel";
+import * as documentDoor from "../document";
 
 const row = (id: string, children: string[] = []): Node => ({
   id, raw: id, children, collapsed: false, parent: null, page: "Window",
 });
 afterEach(resetStore);
+
+it.each([8, 32])("GH #886: one raw edit reads only its owning geometry, K=%i", K => {
+  setDoc("byId", Object.fromEntries(Array.from({ length: K }, (_, i) => [`window${i}`, row(`window${i}`)])));
+  createRoot(dispose => {
+    const geometries = Array.from({ length: K }, (_, i) => createOutlineWindowGeometry(
+      createOutlineWindowModel(() => [`window${i}`], () => (_id, _page, stored) => stored),
+      () => 900, () => "16px sans-serif",
+    ));
+    const probe = vi.spyOn(documentDoor, "node");
+    try {
+      setDoc("byId", "window0", "raw", "one\ntwo");
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(geometries[0]().estimate()).toBe(54);
+      expect(geometries.slice(1).map(geometry => geometry().estimate())).toEqual(Array(K - 1).fill(28));
+      dispose(); probe.mockClear();
+      setDoc("byId", "window0", "raw", "after disposal");
+      expect(probe).not.toHaveBeenCalled();
+    } finally { probe.mockRestore(); dispose(); }
+  });
+});
 
 it("keeps reveal membership stable on text edits while updating multiline spacer geometry", () => {
   setDoc("byId", { root: row("root", ["child"]), child: row("child") });

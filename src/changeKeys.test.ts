@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { applyChangeSummary } from "./changeSummary";
-import { changed, changedAny, flushChangeKeys, installChangeKeyPublicationHold, setRefreshEverything } from "./changeKeys";
+import { changed, changedAny, flushChangeKeys, fullChangeKeyFlushCount, installChangeKeyPublicationHold, setRefreshEverything } from "./changeKeys";
 import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
 import { dataRev } from "./dataRevision";
 import { invalidateBinding } from "./binding";
@@ -17,6 +17,22 @@ beforeEach(() => {
 afterEach(() => {
   setRefreshEverything(false); installChangeKeyPublicationHold(() => false);
   resetRefreshReads(); vi.useRealTimers();
+});
+
+it("GH #886: counts full fallback flushes without changing precise or fallback invalidation", () => {
+  const before = fullChangeKeyFlushCount();
+  const original = changed("future:counter");
+  stage({ days: false, journals: false, templates: false }); bumpDataRev(true);
+  expect(fullChangeKeyFlushCount()).toBe(before);
+  expect(changed("future:counter")).toBe(original);
+  bumpDataRev();
+  bumpDataRev(true); // A promised but absent summary is still a full flush.
+  stage({ full: true }); bumpDataRev(true);
+  rev += 2; stage(); bumpDataRev(true); // Gap in host summary evidence.
+  expect(fullChangeKeyFlushCount()).toBe(before + 4);
+  expect(changed("future:counter")).not.toBe(original);
+  bumpGraphEpoch(); stage(); bumpDataRev(true); // First summary in a new graph.
+  expect(fullChangeKeyFlushCount()).toBe(before + 5);
 });
 
 it("precise day, journal-content and template evidence fires only its reader family; dataRev is full-only", () => {

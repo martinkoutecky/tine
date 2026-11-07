@@ -65,19 +65,18 @@ export function TodayTaskSummary(props: { page: FeedPage }): JSX.Element {
       open += value.open; inProgress += value.inProgress;
     }
     setSummary({ open, inProgress });
+    onCleanup(onBlockRawChanged(id => {
+      const block = node(id);
+      if (!block) return; // a structural producer removed it; the walk settles membership
+      const marker = facetsOf(block.raw, props.page.format).marker;
+      const previous = markers.get(id)!;
+      if (marker === previous) return;
+      markers.set(id, marker);
+      const before = count(previous), after = count(marker);
+      setSummary(value => ({ open: value.open + after.open - before.open,
+        inProgress: value.inProgress + after.inProgress - before.inProgress }));
+    }, markers.keys()));
   });
-  onCleanup(onBlockRawChanged(id => {
-    if (!markers.has(id)) return;
-    const block = node(id);
-    if (!block) return; // a structural producer removed it; the walk settles membership
-    const marker = facetsOf(block.raw, props.page.format).marker;
-    const previous = markers.get(id)!;
-    if (marker === previous) return;
-    markers.set(id, marker);
-    const before = count(previous), after = count(marker);
-    setSummary(value => ({ open: value.open + after.open - before.open,
-      inProgress: value.inProgress + after.inProgress - before.inProgress }));
-  }));
   const tasks = () => t("journals-prose-tasks-today", { count: summary().open });
   const progress = () => t("journals-prose-in-progress", { count: summary().inProgress });
 

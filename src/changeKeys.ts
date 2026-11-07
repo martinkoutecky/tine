@@ -12,6 +12,10 @@ import { installDataRevisionRefresh } from "./dataRevision";
 
 export const [refreshEverything, setRefreshEverything] = createSignal(false);
 const [fullRevision, setFullRevision] = createSignal(0);
+let fullFlushes = 0;
+/** App-lifetime diagnostic count of conservative full flushes, excluding
+ * binding resets. Observation only: every fallback still fires every key. */
+export const fullChangeKeyFlushCount = (): number => fullFlushes;
 const keys = new ChangeKeyRegistry();
 export const changeKeyCount = () => keys.size;
 const invalidators = new Set<(affected: ReadonlySet<string> | null) => void>();
@@ -124,7 +128,7 @@ export function flushChangeKeys(hasSummary = false): boolean {
   serial++;
   batch(() => {
     for (const invalidate of invalidators) invalidate(full ? null : affected);
-    if (full) setFullRevision(n => n + 1);
+    if (full) { fullFlushes++; setFullRevision(n => n + 1); }
     else for (const key of affected) keys.advance(key);
   });
   return full;

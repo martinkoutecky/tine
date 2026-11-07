@@ -1,10 +1,30 @@
 import { afterEach, expect, it } from "vitest";
 import { createComputed, createRoot } from "solid-js";
 import { produce } from "solid-js/store";
-import { pageByName, setDoc, someBlockInTrees, writeWholePages } from "./model";
+import { onBlockRawChanged, pageByName, setDoc, someBlockInTrees, writeRaw, writeWholePages } from "./model";
 import { ensurePageLoaded, loadFeed, resetStore, retireFeedPages } from "./workingSet";
 
 afterEach(resetStore);
+
+it.each([8, 32])("GH #886: raw writes dispatch only to registered block owners, K=%i", K => {
+  setDoc("byId", Object.fromEntries(Array.from({ length: K }, (_, i) => [`raw${i}`, {
+    id: `raw${i}`, raw: "body", page: "P", parent: null, children: [], collapsed: false,
+  }])));
+  let calls = 0;
+  const stops = Array.from({ length: K }, (_, i) => onBlockRawChanged(() => { calls++; }, [`raw${i}`]));
+  const overlapping = onBlockRawChanged(() => { calls++; }, ["raw0", "raw1", "raw0"]);
+  try {
+    setDoc("byId", "raw0", "raw", "edited");
+    expect(calls).toBe(2);
+    calls = 0;
+    setDoc(produce(s => { writeRaw(s, "raw1", "producer"); writeRaw(s, "raw1", "final"); }));
+    expect(calls).toBe(4); // Preserve notification order and repeated writes.
+    calls = 0;
+    stops[0](); overlapping();
+    setDoc("byId", "raw0", "raw", "after disposal");
+    expect(calls).toBe(0);
+  } finally { stops.forEach(stop => stop()); overlapping(); }
+});
 it.each([8, 32])("GH #886: a page tree follows its own replacement and ignores disjoint admissions, K=%i", K => {
   for (let i = 0; i < K; i++) ensurePageLoaded({ name: `P${i}`, title: `P${i}`, kind: "page", pre_block: null,
     blocks: [{ id: `root${i}`, raw: "body", collapsed: false, children: [] }] });
