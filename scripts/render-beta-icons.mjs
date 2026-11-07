@@ -24,7 +24,9 @@ from pathlib import Path
 from PIL import Image
 for icon in Path("src-tauri/icons-beta/ios").glob("*.png"):
     image = Image.open(icon).convert("RGB")
-    image.save(icon)
+    # Palette like the stable set: Xcode compiles an RGB source into an RGBA
+    # icon, which the signed-IPA check (and App Store) refuses.
+    image.convert("P", palette=Image.Palette.ADAPTIVE, colors=256).save(icon, optimize=True)
 `]);
 if (!iosOnly) {
   run("npx", ["tauri", "icon", `${artifacts}/beta-1024.png`, "-o", "src-tauri/icons-beta", "-p", "64"]);
