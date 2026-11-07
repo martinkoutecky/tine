@@ -36,7 +36,7 @@ export function quotedSourceRanges(parentId: string, format: Format): QuotedRang
     if (!child) continue;
     const selector = quoteSelectorOf(facetsOf(child.raw, format).properties);
     if (!selector) continue;
-    const anchor = anchorQuote(raw, selector);
+    const anchor = anchorQuote(raw, selector, format);
     if (anchor.kind !== "range" || anchor.start < lead) continue;
     const start = utf8ByteLength(raw.slice(lead, anchor.start)) + 2;
     out.push([start, start + utf8ByteLength(raw.slice(anchor.start, anchor.end)), childId]);

@@ -400,7 +400,7 @@ settings-ui-document-mode = 文档模式
 
 settings-ui-hides-bullets-and-indent-guides-for-a-cleaner-prose = 隐藏项目符号和缩进辅助线，使正文更简洁。
 
-settings-ui-comment-margin = 评论边栏
+settings-ui-comment-margin = 显示/隐藏评论
 
 settings-ui-shows-the-comment-threads-beside-the-page-off-hides = 在页面旁显示评论串。关闭后，所有窗格中的评论串都会隐藏；评论仍保留在你的文件中。保存在此设备上。
 

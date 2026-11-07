@@ -297,7 +297,9 @@ export interface MessageArgs {
   "comment-name-prompt-scope": {};
   "comment-name-prompt-title": {};
   "comment-on-whole-block": {};
+  "comment-quote-ambiguous": {};
   "comment-quote-changed": {};
+  "comment-remove-author": {};
   "comment-reply": {};
   "comment-reply-placeholder": {};
   "comment-select-first": {};

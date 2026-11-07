@@ -3,7 +3,8 @@ import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { facetsFromDto } from "../render/facets";
 import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { BLOCK_SCOPED_PROPERTY_KEYS, BUILTIN_HIDE, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { commentEditorHide } from "../editor/commentProperties";
 import { blockRegions } from "../render/parse";
 import { utf8ByteLength } from "../render/spans";
 import { journalTitle, appNow } from "../journal";
@@ -222,7 +223,8 @@ function toDto(id: string): BlockDto {
     const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
     const own = blockRegions(n.raw, format).properties.filter((p) => p.primary);
     const properties = own.map((p): [string, string] => [p.key, p.value]);
-    if (own.some((p) => p.line[1] === end && hides(BUILTIN_HIDE, p.key, properties))) raw = n.raw;
+    const hide = commentEditorHide(n, properties, format, (parent) => doc.byId[parent]);
+    if (own.some((p) => p.line[1] === end && hides(hide, p.key, properties))) raw = n.raw;
   }
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }

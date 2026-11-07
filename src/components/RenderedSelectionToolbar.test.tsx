@@ -97,6 +97,25 @@ const press = (id: string) => {
 const selectedText = () => document.getSelection()!.toString();
 
 describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)", () => {
+  it.each(["md", "org"] as const)("offers Comment on a rendered %s selection and retains the target through a native selection loss", (format) => {
+    load(format, blocks("alpha selected omega"));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "selected");
+      expect(editingId()).toBeNull();
+      const button = toolbar()!.querySelector<HTMLButtonElement>('[data-selection-action="comment"]');
+      expect(button).not.toBeNull();
+      button!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      document.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+      button!.click();
+      const comment = docNode(docNode("second")!.children[0])!;
+      expect(comment.raw).toContain(format === "md" ? "tine.quote:: selected" : ":tine.quote: selected");
+      expect(docNode("second")!.raw).toBe("alpha selected omega");
+      expect(editingId()).toBe(comment.id);
+    } finally { page.dispose(); }
+  });
+
   it("never rewrites a code block when its code is selected", () => {
     const raw = "```js\nconst answer = 42\n```";
     load("md", blocks(raw));

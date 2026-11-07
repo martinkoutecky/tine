@@ -16,6 +16,8 @@ import {
 import { selectionActionLabel } from "./SelectionActionLabel";
 import { listen, onEachWindow, selectionOf } from "../windowRealm";
 import { trackSelectionToolbarHeight } from "./block/selectionToolbarPlacement";
+import { commentOnRenderedSelection } from "../commentActions";
+import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 
 // GH #375 (D-20261018-LP2): on a touch-first device, text selected inside a
 // RENDERED block keeps its native selection, handles and menu; this toolbar
@@ -113,6 +115,18 @@ export function RenderedSelectionToolbar(): JSX.Element {
       refresh(doc);
     }, PRESS_WINDOW_MS);
   };
+  const comment = () => {
+    const snapshot = target();
+    endPress();
+    if (!snapshot) return;
+    const live = renderedSelectionTarget(selectionOf(snapshot.root)) ?? snapshot;
+    commentOnRenderedSelection({
+      blockId: live.blockId,
+      text: splitProps(live.raw, BUILTIN_HIDE, live.format).visible,
+      start: live.start, end: live.end,
+    });
+    setTarget(null);
+  };
 
   return (
     <Show when={touchPrimary() && target()}>
@@ -135,6 +149,11 @@ export function RenderedSelectionToolbar(): JSX.Element {
             onClick={() => run(action)}
           >{selectionActionLabel(action)}</button>
         )}</For>
+        <button type="button" data-selection-action="comment"
+          title={t("comment-toolbar-shortcut")} aria-label={t("comment-toolbar")}
+          onClick={comment}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>
+        </button>
       </div>
     </Show>
   );

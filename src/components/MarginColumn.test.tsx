@@ -5,7 +5,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // edited in place; arrows lead in and out of them; hovering a thread emphasises
 // its passage and vice versa; and a keystroke costs at most one measurement pass.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { blockRegions, initParser } from "../render/parse";
@@ -115,6 +115,41 @@ afterEach(() => {
 });
 
 describe("the margin column on a wide main pane", () => {
+  it("keeps the focused card at its passage while its overlapping neighbor moves above it", () => {
+    const real = Element.prototype.getBoundingClientRect;
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
+    Element.prototype.getBoundingClientRect = function () {
+      const top = this.classList.contains("comment-quote-anchor") ? (this.getAttribute("data-comment-id") === "c1" ? 100 : 110) : 0;
+      return { top, bottom: top + 20, left: 0, right: 100, width: 100, height: 20 } as DOMRect;
+    };
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get() { return this.classList.contains("margin-thread") ? 50 : 20; } });
+    const { pane, dispose } = mount(commented());
+    try {
+      thread(pane, "c2")!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      flushFrames();
+      expect(thread(pane, "c2")!.style.top).toBe("110px");
+      expect(parseFloat(thread(pane, "c1")!.style.top) + 50).toBeLessThan(110);
+    } finally {
+      dispose();
+      Element.prototype.getBoundingClientRect = real;
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", height);
+    }
+  });
+
+  it("orders threads by passage offsets even on the same line, with stable ties and a thread-only count", () => {
+    const { pane, dispose } = mount([block("p", "early middle late", [
+      block("late", "Last\ntine.quote:: late", [block("reply", "Reply\ntine.quote:: Last")]),
+      block("early", "First\ntine.quote:: early"),
+      block("tie", "Again\ntine.quote:: early"),
+    ])]);
+    try {
+      expect([...column(pane)!.querySelectorAll<HTMLElement>(".margin-thread")].map(el => el.dataset.threadId))
+        .toEqual(["early", "tie", "late"]);
+      expect(pane.querySelector(".margin-marker")!.textContent).toBe("3");
+      expect(pane.querySelectorAll(".margin-marker")).toHaveLength(1);
+    } finally { dispose(); }
+  });
+
   it("draws each comment thread in the column, not in the outline, with a count on the commented block", () => {
     const { pane, dispose } = mount(commented());
     try {
@@ -271,6 +306,22 @@ describe("the margin column on a wide main pane", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("keeps the shared margin width when another journal day leaves the feed", () => {
+    const [secondDay, showSecondDay] = createSignal(true);
+    const { pane, dispose } = mount(commented(), 1600, () => (
+      <div class="main-content-inner" style={{ "--tine-main-content-max-width": "810px" }}>
+        <Host /><Show when={secondDay()}><Host /></Show>
+      </div>
+    ));
+    try {
+      const inner = pane.querySelector<HTMLElement>(".main-content-inner")!;
+      expect(inner.style.getPropertyValue("--margin-column-width")).toBe("440px");
+      showSecondDay(false);
+      expect(pane.querySelectorAll(".margin-column")).toHaveLength(1);
+      expect(inner.style.getPropertyValue("--margin-column-width")).toBe("440px");
+    } finally { dispose(); }
   });
 
   it("keeps a thread beside its passage while the commented block is edited, in any editor (MARGIN-POS)", () => {

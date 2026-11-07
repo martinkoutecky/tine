@@ -1,4 +1,4 @@
-//! Built-in metadata rows that mldoc folds into a final quote (GH #721): the
+//! Metadata rows that mldoc folds into a final quote (GH #721, #895): the
 //! kernel still owns them (regions) and the render AST drops them.
 
 use crate::block_regions::{line_ranges, raw_range, trimmed_range, BlockRegions, Property, Range};
@@ -29,14 +29,37 @@ pub(crate) fn add_regions(raw: &str, blocks: &[Block], out: &mut BlockRegions) {
     out.properties.sort_by_key(|p| p.line.0);
 }
 
-/// The hidden built-ins the kernel claims after a final quote. Not `id`
+/// Hidden metadata claimed after a final quote, including Tine's per-block author.
+/// Not `id`
 /// (GH #721 review B1): mldoc ends a quote at any `id:: ` row
 /// case-insensitively, lsdoc only at lowercase, so a swallowed `ID::` row is
 /// one lsdoc's Properties facet (the backend uuid index) does not see;
 /// claiming it would give the block a frontend-only identity, and Copy block
 /// ref would hand out an unresolvable `((uuid))`. A lowercase `id::` row is a
 /// Properties node already and needs no claim.
-const SWALLOWED_KEYS: [&str; 2] = ["collapsed", "logseq.order-list-type"];
+const SWALLOWED_KEYS: [&str; 3] = [
+    "collapsed",
+    "logseq.order-list-type",
+    crate::tine_keys::AUTHOR,
+];
+
+/// Tine's author chrome reads the same recovered row as its editor. OG has no
+/// special meaning for this key; fold/list facets retain their existing policy.
+pub fn extend_author_facet(properties: &mut Vec<(String, String)>, regions: &BlockRegions) {
+    if properties
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case(crate::tine_keys::AUTHOR))
+    {
+        return;
+    }
+    properties.extend(
+        regions
+            .properties
+            .iter()
+            .filter(|p| p.primary && p.key.eq_ignore_ascii_case(crate::tine_keys::AUTHOR))
+            .map(|p| (p.key.clone(), p.value.clone())),
+    );
+}
 
 /// The swallowed rows of [`add_regions`], in source order
 /// (`region` unset).
@@ -175,14 +198,15 @@ pub(crate) fn swallowed_lines(raw: &str, key: &str) -> Vec<Range> {
 }
 
 /// Remove the swallowed rows' text from the render AST so they are not painted
-/// inside the quote (GH #721). The final quote paragraph ends
-/// `[…, Plain(row), Break]` once per row; any other shape is left untouched, so
-/// the worst case is the row staying visible, never quoted text lost.
+/// inside the quote (GH #721, #895). Source spans identify the start of the
+/// owned trailing run, including author values parsed as markup or hard breaks.
+/// An unexpected AST shape stays untouched rather than losing quoted content.
 pub fn strip_swallowed_rows(raw: &str, blocks: &mut [Block]) {
-    let n = rows(raw, blocks).len();
-    if n == 0 {
+    let found = rows(raw, blocks);
+    let Some(first) = found.first() else {
         return;
-    }
+    };
+    let start = trimmed_range(raw, first.line).0;
     let Some(Block::Quote { children, .. }) = blocks
         .iter_mut()
         .rev()
@@ -193,21 +217,17 @@ pub fn strip_swallowed_rows(raw: &str, blocks: &mut [Block]) {
     let Some(Block::Paragraph { inline, .. }) = children.last_mut() else {
         return;
     };
-    let is_row = |i: &Inline| match i {
-        Inline::Plain { text, .. } => text.split_once("::").is_some_and(|(key, _)| {
-            SWALLOWED_KEYS
-                .iter()
-                .any(|k| k.eq_ignore_ascii_case(key.trim()))
-        }),
+    let at = inline.iter().position(|i| match i {
+        Inline::Plain { span, .. } => raw_range(raw, span, false).is_some_and(|r| r.0 == start),
         _ => false,
-    };
-    let tail = 2 * n;
-    let at = inline.len().saturating_sub(tail);
-    let shaped = inline.len() >= tail + 2
-        && inline[at..]
-            .chunks(2)
-            .all(|pair| is_row(&pair[0]) && matches!(pair.get(1), Some(Inline::Break { .. })));
-    if shaped {
+    });
+    if let Some(at) = at.filter(|at| {
+        *at > 0
+            && matches!(
+                inline[*at - 1],
+                Inline::Break { .. } | Inline::HardBreak { .. }
+            )
+    }) {
         inline.truncate(at);
     }
 }
@@ -215,6 +235,20 @@ pub fn strip_swallowed_rows(raw: &str, blocks: &mut [Block]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quote_author_text_is_stripped_with_markup_and_hard_breaks() {
+        for nl in ["\n", "\r\n"] {
+            for author in ["Ada", "Ada Test  \t", "**Ada**", "[[Ada]]", "艾达"] {
+                let raw = format!("> quoted words{nl}tine.author:: {author}");
+                let mut blocks = crate::render::parse_block(&raw, false);
+                strip_swallowed_rows(&raw, &mut blocks);
+                let json = lsdoc::blocks_to_json(&blocks).unwrap();
+                assert!(!json.contains("tine.author"), "{raw:?}: {json}");
+                assert!(json.contains("quoted words"), "{json}");
+            }
+        }
+    }
 
     /// GH #721 review B1: an uppercase `ID::` row lsdoc folds into a quote is
     /// never claimed (lsdoc's facets do not see it as an id).

@@ -10,8 +10,10 @@ import { commentsFirst, nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
+import { facetsOf } from "../render/facets";
+export { commentEditorHide } from "../editor/commentProperties";
 
-interface CommentNode { parent: string | null; children: readonly string[] }
+interface CommentNode { raw: string; parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];
 
 /** Plain functions over the block's facets: an ordinary block pays two property
@@ -56,7 +58,13 @@ export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: 
   const place = useContext(MarginContext);
   const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
   // GH #845: with the margin hidden no surface draws a thread (not even inline).
-  const outlineChildren = () => (main() || commentMarginHidden() ? node().children.filter((id) => !isCommentId(id, fmt())) : commentsFirst(node().children));
+  const outlineChildren = () => {
+    const n = node();
+    if (main() || commentMarginHidden()) return n.children.filter(id => !isCommentId(id, fmt()));
+    // Replies retain file pre-order, even when a hand-nested reply has a quote.
+    if (inCommentThread(n.parent, fmt()) || (n.parent !== null && quoteSelectorOf(facetsOf(n.raw, fmt()).properties) !== null)) return n.children;
+    return commentsFirst(n.children);
+  };
   const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt())) : []);
   return { outlineChildren, marginComments };
 }

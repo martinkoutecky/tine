@@ -7,7 +7,7 @@ import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter, layoutHasMultiplePanes, layoutRoot, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
+import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { openShareDialog } from "../shareState";
@@ -1037,13 +1037,12 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
-  // Margin dialogue (vision §3.7): the main pane's single-page view, unsplit,
-  // draws comments in a right-hand column when it is wide enough.
+  // Every page section (including each journal day) owns its margin;
+  // the available pane width chooses the tier, independent of route or split.
   let outline: HTMLDivElement | undefined;
-  const windowId = useWindowId();
   const margin = createMarginSurface({
     page: () => props.page,
-    eligible: () => pane.paneId === "main" && router.route().kind === "page" && !layoutHasMultiplePanes(layoutRoot(windowId)),
+    eligible: () => true,
     outline: () => outline,
   });
   const editPreamble = () => {

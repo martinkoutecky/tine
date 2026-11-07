@@ -23,6 +23,7 @@ import { invalidateBinding } from "./binding";
 import { endEdit } from "./editorController";
 import type { BlockDto } from "./types";
 import { bindTestHost } from "./document/host/wiring.test.support";
+import { loadLocale, showLocale } from "./i18n";
 
 const PAGE = "CommentNamePrompt";
 const TEXT = "An agent wrote a phrase worth disputing here.";
@@ -64,6 +65,7 @@ const gitGraph = () => resetCommentNamePromptForTests({ repository: true });
 
 beforeAll(() => initParser());
 beforeEach(async () => {
+  showLocale("en");
   await bindTestHost();
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
   setApp = spyOnSetAppString();
@@ -71,6 +73,7 @@ beforeEach(async () => {
   resetCommentNamePromptForTests();
 });
 afterEach(() => {
+  showLocale("en");
   dispose?.(); dispose = undefined;
   endEdit("page-navigation");
   resetStore(); setGraphMeta(null); vi.restoreAllMocks();
@@ -80,11 +83,20 @@ afterEach(() => {
 });
 
 describe("the first comment in a git graph, no name", () => {
+  it("asks about signing without git or GitHub in Simplified Chinese", async () => {
+    await loadLocale("zh-CN"); showLocale("zh-CN");
+    mount([block("p", TEXT)]); gitGraph(); commentOnRenderedSelection(HELD);
+    expect(dialog()!.getAttribute("aria-label")).toBe("你的批注应该如何署名？");
+    expect(dialog()!.textContent).not.toMatch(/git|github/i);
+    expect(children()).toHaveLength(0);
+  });
   it("asks first, says the name is a device setting for all graphs, and writes nothing until answered", () => {
     mount([block("p", TEXT)]);
     gitGraph();
     commentOnRenderedSelection(HELD);
     expect(dialog()).not.toBeNull();
+    expect(dialog()!.getAttribute("aria-label")).toBe("How should your comments be signed?");
+    expect(dialog()!.textContent).not.toMatch(/git|github/i);
     expect(dialog()!.textContent).toMatch(/Tine setting on this device, used in all your graphs, not a setting of this graph/);
     expect(children()).toHaveLength(0);
   });
