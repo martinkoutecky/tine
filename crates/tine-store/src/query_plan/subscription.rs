@@ -18,10 +18,15 @@ impl QueryPlan {
         // and removals without rebuilding keys or walking the graph.
         let mut plan = self.clone();
         plan.name_keys = Some(std::sync::Arc::clone(&graph.transliteration_names));
-        plan.touches_document(entry, doc)
+        plan.touches_document(entry, doc, graph.config())
     }
 
-    fn touches_document(&self, entry: &PageEntry, doc: &Document) -> bool {
+    fn touches_document(
+        &self,
+        entry: &PageEntry,
+        doc: &Document,
+        config: &tine_core::Config,
+    ) -> bool {
         for branch in &self.branches {
             if branch.target == QueryTarget::Pages
                 && self.page_match_scope != FriendlyPageMatchScope::Content
@@ -40,7 +45,7 @@ impl QueryPlan {
             // block text, so they need the same name predicate as physical pages.
             if branch.target == QueryTarget::Pages
                 && self.page_match_scope != FriendlyPageMatchScope::Content
-                && crate::model::collect_document_referenced_names(doc)
+                && crate::model::collect_document_referenced_names(doc, config)
                     .iter()
                     .any(|name| {
                         pages::best_page_match(self, &branch.predicate, name, &[]).is_some()
