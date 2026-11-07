@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ## [0.9.0-beta.8] - 2026-11-06
