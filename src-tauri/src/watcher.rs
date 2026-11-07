@@ -467,7 +467,16 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
         crate::concord::trash_identical_copies(app, label, slot);
     }
     let pages = events.len();
-    for (name, payload) in publication_event_payloads(events, binding_generation, &change) {
+    let payloads = publication_event_payloads(events, binding_generation, &change);
+    if let Some(link) = slot.window.get() {
+        if let Some(answers) = payloads
+            .first()
+            .and_then(|(_, payload)| payload.get("answers"))
+        {
+            link.published(change.graph_rev, answers.clone());
+        }
+    }
+    for (name, payload) in payloads {
         let _ = app.emit_to(label, name, payload);
     }
     if let Some(payload) = asset_event_payload(&change, binding_generation) {

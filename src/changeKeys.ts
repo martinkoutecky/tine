@@ -16,6 +16,12 @@ const keys = new ChangeKeyRegistry();
 export const changeKeyCount = () => keys.size;
 const invalidators = new Set<(affected: ReadonlySet<string> | null) => void>();
 export const changeKeyHasConsumers = (key: string) => keys.hasConsumers(key);
+/** Adoption checks must also see evidence staged behind the publication gate:
+ * a relevant change is already stale before its coalesced revision releases. */
+export function changeKeyPending(key: string): boolean {
+  ensureEpoch();
+  return staged && (pendingFull || pending.has(key));
+}
 export const onChangeKeyReleased = (callback: () => void) => keys.onRelease(callback);
 export const onChangeKeysFlushed = (callback: (affected: ReadonlySet<string> | null) => void) => { invalidators.add(callback); };
 let epoch = -1;

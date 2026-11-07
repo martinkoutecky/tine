@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Page embeds keep the source outline's order after structural edits, and preserve folded branches while the source page is loading (GH #868).
 - On Android, opening the keyboard leaves about three body lines below the caret so children of short blocks stay visible, while keeping the edited line below pinned parents (GH #783).
 - Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).
+- Search tabs keep their result rows and scroll position usable while the graph is being written through the CLI; unrelated edits skip the search refresh and matching edits update without replacing unchanged rows (GH #907).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - `tine` commands run from the folder that contains a graph (for example your home folder, with the graph in `~/logseq`) no longer treat that folder as the graph, which listed Logseq backup copies as pages and journals as plain pages; they now look for the graph's `logseq/config.edn` (GH #908).
 - A wide table in a nested block no longer has the outline guide lines of its parent blocks drawn through its header and rows on narrow windows, split panes and the sidebar (GH #909).

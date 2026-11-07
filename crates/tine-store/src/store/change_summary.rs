@@ -33,6 +33,15 @@ pub enum QuerySubscription {
         /// The same wire dialect supplied to query_parse.
         dialect: tine_core::query::wire_parse::QueryTextDialect,
     },
+    /// Both families of a friendly Search tab, using execution's text plan.
+    Search {
+        /// Complete friendly search source.
+        source: String,
+        /// Which physical pages may match through their content.
+        page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
+        /// Include the same page-name expansion as the displayed answer.
+        transliteration: bool,
+    },
     /// Builder property/key vocabulary.
     Registry,
     /// A reader without a classifiable plan (for example graph search).
@@ -96,6 +105,7 @@ pub(super) struct QueryRegistry {
 pub(super) struct QueryTarget {
     request: QuerySubscription,
     plan: Option<Plan>,
+    search_plan: Option<crate::query_plan::QueryPlan>,
     added: u64,
     revoked: Option<std::sync::Weak<AtomicBool>>,
     dirty: bool,
@@ -139,6 +149,7 @@ impl QueryTarget {
     fn mode(&self) -> &'static str {
         match &self.request {
             QuerySubscription::Registry => "quiet",
+            QuerySubscription::Search { .. } => "narrow",
             QuerySubscription::Full | QuerySubscription::Unlinked { .. } => "full",
             QuerySubscription::Query { .. } | QuerySubscription::Source { .. }
                 if self.plan.is_none() =>
@@ -212,6 +223,7 @@ mod retirement_tests {
         let target = Arc::new(Mutex::new(QueryTarget {
             request: QuerySubscription::Full,
             plan: None,
+            search_plan: None,
             added: 0,
             revoked: Some(Arc::downgrade(&revoked)),
             dirty: false,
@@ -390,6 +402,12 @@ impl Snapshot {
                         match &target.request {
                             QuerySubscription::Full | QuerySubscription::Unlinked { .. } => true,
                             QuerySubscription::Registry => was.registry_rows_differ(now),
+                            QuerySubscription::Search { .. } => {
+                                target.search_plan.as_ref().is_none_or(|plan| {
+                                    plan.touches_search_document(entry, before, &old.graph)
+                                        || plan.touches_search_document(entry, after, &self.graph)
+                                })
+                            }
                             QuerySubscription::Query { .. } | QuerySubscription::Source { .. } => {
                                 target.plan.as_ref().is_none_or(|plan| {
                                     plan.touches_edit(entry, before, after, was, now, &config)
@@ -616,6 +634,25 @@ impl Store {
             plan: view
                 .as_ref()
                 .and_then(|view| QueryTarget::plan(&request, &view.graph)),
+            search_plan: view.as_ref().and_then(|view| match &request {
+                QuerySubscription::Search {
+                    source,
+                    page_match_scope,
+                    transliteration,
+                } => {
+                    let mut plan = crate::query_plan::QueryPlan::friendly_with_scope(
+                        source,
+                        1,
+                        1,
+                        view.graph.config().enable_search_remove_accents,
+                        *page_match_scope,
+                    )
+                    .with_transliteration(*transliteration);
+                    plan.name_keys = Some(Arc::clone(&view.graph.transliteration_names));
+                    Some(plan)
+                }
+                _ => None,
+            }),
             request,
             added: 0,
             revoked: revoked.map(Arc::downgrade),

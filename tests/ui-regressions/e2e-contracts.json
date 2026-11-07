@@ -1059,6 +1059,12 @@
       "nonRequirements": ["Exact scrollbar palette/RGB, thumb dimensions, CSS selector, or DOM structure."],
       "stability": "stable"
     },
+    "scripts/e2e-search-write-churn.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A scrollable Search tab keeps unchanged rows mounted during unrelated and matching-page CLI writes, updates new membership while preserving the result under the pointer, and opens a lower result during ongoing writes.","blocking":false,"authority":"GH #907; UI-GH907-SEARCH-WRITE-CHURN"}],
+      "acceptableVariations": ["Search ranking, rendering and publication latency, exact row geometry and total refresh counts may vary."],
+      "nonRequirements": ["No private graph, exact pixels, macOS or Windows certification, performance benchmark or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-search-parity.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching and default accent folding, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results; search folding does not broaden exact page identity.", "blocking": true }],
       "acceptableVariations": ["Search result layout and ranking among equally valid matches may evolve."],
