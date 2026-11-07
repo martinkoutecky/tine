@@ -13,8 +13,8 @@ import Foundation
 /// reported saved. The app never sees a partial item. An interrupted `.tmp-`
 /// directory is swept by the app after a day (src-tauri/src/share_inbox.rs).
 enum ShareInbox {
-  static let appGroup = "group.page.tine.Tine"
-  static let changedNotification = "page.tine.Tine.share-inbox-changed"
+  static let appGroup = "group.page.tine.TineBeta"
+  static let changedNotification = "page.tine.TineBeta.share-inbox-changed"
 
   struct Resource {
     /// Bytes to store, or a file to copy.
