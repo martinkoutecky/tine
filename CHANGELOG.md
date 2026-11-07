@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page embeds keep their bullet pinned while scrolling through embedded rows, with embedded parents stacked below; block embeds keep their single source-root bullet pinned (GH #898).
 - Known property values appear after typing or pasting a Markdown property key and when editing an existing value in either editor; pending suggestions appear when they finish loading (UI-PROPERTY-VALUES-TYPED).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).

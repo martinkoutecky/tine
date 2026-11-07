@@ -278,7 +278,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
-  const stickyParent = () => stickyParents() && !bulletless() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // Thread rows have no bullet pins; the spacer would pull the body over its quote.
+  // Thread rows have no bullet pins; the spacer would pull the body over its quote.
+  // A page-embed host pins its own bullet while its embedded page scrolls (GH #898).
+  const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
   let mainEl: HTMLDivElement | undefined;
 
   return (
@@ -302,7 +304,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
-      <Show when={stickyParent()}><StickyAncestor id={props.id} raw={node().raw} /></Show>
+      <Show when={stickyParent() ? macro()?.kind ?? "outline" : false} keyed><StickyAncestor id={props.id} raw={macro()?.kind === "embed" ? macro()!.inner.slice("embed ".length) : node().raw} /></Show>
       <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
       <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>
       <div
@@ -338,7 +340,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         }}
       >
         <Show when={!blockEmbedHost() && !bulletless()}>
-        <div class="block-controls">
+        <div class="block-controls" data-sticky-row={macro()?.kind === "embed" ? "" : undefined}>
           <span
             class="collapse-toggle"
             classList={{ "has-children": hasFoldableBody() }}

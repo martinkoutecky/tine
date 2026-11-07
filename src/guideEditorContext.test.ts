@@ -23,6 +23,9 @@ it("the canonical context tour teaches pinned ancestor navigation and selecting 
   expect(page).toContain("Select embedding block");
   expect(page).toContain("command starts without a key");
   expect(page).toContain("block and page embeds");
+  expect(page).toContain("Page embeds keep their host bullet pinned");
+  expect(page).toContain("Block embeds pin their single visible source-root bullet");
+  expect(page).toContain("Linked References, split panes, and the right sidebar");
 });
 
 it("the context tour distinguishes top splits from tab-strip reordering", () => {

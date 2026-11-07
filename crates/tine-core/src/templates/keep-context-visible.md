@@ -4,6 +4,7 @@ icon:: 📌
   - Source beside draft, note beside plan: this tour builds a working layout step by step — park a page in the right sidebar, collect places in tabs, split the window for true side-by-side, give a page its own window, and save the arrangement as a workspace. Each part ends with what you should see. The shortcut map is [[Features/Tips & shortcuts]].
 - ## Keep your place in a long outline
   - Scroll down a nested outline: ancestors that leave the screen stay pinned at the top, through the root. Click a pinned ancestor to scroll back to its block. This works in pages, journals, panes, and right-sidebar outlines.
+  - Page embeds keep their host bullet pinned while you scroll through the embedded rows, with the embedded outline's parents stacked below it. Block embeds pin their single visible source-root bullet. The same applies in Linked References, split panes, and the right sidebar.
   - Settings → **Appearance** → **Sticky parent bullets** turns this on or off on desktop and mobile. It starts on and is remembered on this device.
 - ## Select the block containing an embed
   - While editing an embedded source block, run **Select embedding block** from the command palette (**Ctrl+Shift+P**). It leaves the editor and selects the block containing the `{{embed ...}}` macro. Use the ordinary move, indent, outdent, or edit shortcuts on that selection.

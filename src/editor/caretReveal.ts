@@ -1,6 +1,7 @@
 import { documentOf, isElementTag, requestFrame, windowOf } from "../windowRealm";
 import { textareaCaretLeft, textareaCaretRow } from "./caretRows";
 import { cssInterfaceZoom } from "../zoom";
+import { stickyRow } from "../stickyGeometry";
 
 /** GH #745. The one rule for where the view goes when the caret lands in a
  * block editor (Enter split, Backspace/Delete merge, paste, indent/outdent,
@@ -43,7 +44,7 @@ function pinnedBottom(editor: HTMLElement, scroller: HTMLElement): number {
   let bottom = 0;
   parents.forEach((ancestor, i) => {
     const slotBottom = viewTop + (reserved + (parents.length - i) * PIN) * z; // outermost pins below the notice
-    const row = ancestor.querySelector(":scope > .block-main");
+    const row = stickyRow(ancestor);
     if (row && row.getBoundingClientRect().bottom <= slotBottom) bottom = Math.max(bottom, slotBottom);
   });
   return bottom;

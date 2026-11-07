@@ -71,6 +71,17 @@ it("keeps the caret row below the sticky parent pins", () => {
   revealCaret(f.editor, f.scroller);
   expect(f.scroller.scrollTop).toBe(1000 + (10 - (60 + 8)));
 });
+it("keeps the caret below a page-embed pin while its tall embedded body is still on screen (GH #898)", () => {
+  const f = fixture(10, 1);
+  const main = f.scroller.querySelector<HTMLElement>(".block-main")!;
+  main.getBoundingClientRect = () => ({ bottom: 900 } as DOMRect);
+  const controls = document.createElement("div"); controls.setAttribute("data-sticky-row", "");
+  controls.getBoundingClientRect = () => ({ bottom: 60 } as DOMRect);
+  main.append(controls, f.editor.closest(".ls-block")!);
+  f.editor.focus();
+  revealCaret(f.editor, f.scroller);
+  expect(f.scroller.scrollTop).toBe(1000 + 10 - 30 - 8);
+});
 it("keeps a revealed caret below a wrapped sticky seen notice", () => {
   const f = fixture(30);
   f.scroller.style.scrollPaddingTop = "82px";

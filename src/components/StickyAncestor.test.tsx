@@ -69,8 +69,8 @@ it("GH #643: pins stay below menus, toolbars and modals at every depth", () => {
   } finally { dispose(); }
 });
 
-it("GH #619 c6: a query or embed host with children is not pinned, so its live macro is not mounted twice", () => {
-  for (const raw of ["{{query (task TODO)}}", '{{tine-query @block and task in (\'TODO\')}}', "{{embed [[Other]]}}"]) {
+it("GH #619 c6: a query host with children is not pinned, so its live query is not mounted twice", () => {
+  for (const raw of ["{{query (task TODO)}}", '{{tine-query @block and task in (\'TODO\')}}']) {
     loadSingle({ name: "Hosts", title: "Hosts", kind: "page", pre_block: null,
       blocks: [{ id: "host", raw, collapsed: false, children: [{ id: "c", raw: "child", collapsed: false, children: [] }] }] });
     const root = document.createElement("div"); root.className = "main-content"; document.body.append(root);
