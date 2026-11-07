@@ -97,6 +97,7 @@ import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
 import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
+import { editorNodeBinding } from "../editor/nodeBinding";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
@@ -552,17 +553,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
   const autocompleteLayerId = `block-completion-${createUniqueId()}`;
   const selectionOverflowLayerId = `block-selection-overflow-${createUniqueId()}`;
-  const node = () => docNode(props.id);
-  // The node this editor instance was built to show. A page replacement (an
-  // external change, the host's answer to an Open) purges the page's nodes and
-  // builds new ones, often under the same ids (runtime ids are structural), and
-  // remounts the outline; `upsertPage` carries the editor to the new copy.
-  // Chromium-family webviews then fire `blur` on this instance's removed,
-  // focused textarea. Such an instance is stale: its text is the pre-reload
-  // block, so writing it would silently revert the external change, and
-  // ending the edit would close the carried editor (UI-CARRY-RELOAD-STALE-BLUR).
-  const shownNode = node();
-  const replacedUnderEditor = () => !editorMounted && (!node() || node() !== shownNode);
+  const { node, shownNode, live: liveNode, current: editorNodeCurrent, writable: editorNodeWritable } = editorNodeBinding(() => props.id, () => editorMounted);
+  const replacedUnderEditor = () => !editorNodeWritable();
   const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
@@ -612,7 +604,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   let rawBeforeLastCommit = node().raw;
   const markerBaseline = editorMarkerBaseline(node().raw, pageFmt());
-  const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode, () => ref.value);
+  const commitRecovery = editorCommitRecovery(() => ref, editorNodeCurrent, () => ref.value);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return;
@@ -667,7 +659,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
 
   const completion = editorCompletions({
     id: props.id, format: pageFmt,
-    current: () => editorMounted && !!node() && !!ref?.isConnected,
+    current: () => editorMounted && !!liveNode() && !!ref?.isConnected,
     composing: () => compositionActive,
     // Census D9: retain the shipped textarea's code-body completion policy.
     suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell,
@@ -811,7 +803,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   let selectionOverflowRef: HTMLDivElement | undefined;
   const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
-    if (!editorMounted || !ref.isConnected || !node()) return;
+    if (!editorMounted || !ref.isConnected || !liveNode()) return;
     codeView.syncSelection(ref);
     const selected = ref.selectionStart !== ref.selectionEnd;
     setHasSel(selected);
