@@ -5,7 +5,7 @@
 // the comment, which is nested under the commented block. GH #845: t then m
 // hides every thread (and leaves the file alone), the choice survives a reload,
 // and t then m shows them again.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -13,6 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { seedMarginThreads, checkMarginThreads } from "./lib/margin-thread-journey.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -34,13 +36,19 @@ if (process.env.E2E_MARGIN_TMP) {
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
+// Isolate git discovery from a checkout containing the scratch fixture.
+execFileSync("git", ["-C", GRAPH, "init", "-q", "-b", "main"]);
 fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n`);
+seedMarginThreads(GRAPH);
+fs.mkdirSync(`${TMP}/home`, { recursive: true });
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- open [[${PAGE_NAME}]]\n`);
+const account = installAccountHome(TMP);
 
 const env = {
   ...process.env,
+  HOME: `${TMP}/home`,
   TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
@@ -58,8 +66,11 @@ try {
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  await assertAppLease(account);
   // Wide enough for the margin column with the left sidebar open.
   await browser.setWindowSize(1600, 1000);
+  await checkMarginThreads(browser, GRAPH, TMP);
+  if (process.env.E2E_MARGIN_THREADS_ONLY !== "1") {
   await openPageByName(browser, PAGE_NAME);
 
   const agent = await browser.$(`.page-blocks .ls-block.authored`);
@@ -75,6 +86,10 @@ try {
   }, PHRASE);
   if (selected !== PHRASE) throw new Error(`selection was ${JSON.stringify(selected)}`);
   await browser.keys(["Control", "r"]);
+  await browser.waitUntil(() => browser.execute(() =>
+    !!document.querySelector(".comment-name-prompt, .margin-column textarea.block-editor")),
+  { timeout: 5000, timeoutMsg: "Comment opened neither a name prompt nor an editor" });
+  if (await browser.$(".comment-name-prompt").isExisting()) await browser.$(".comment-name-prompt .export-btn-secondary").click();
 
   // The new comment opens for editing in the margin column, not in the outline.
   await browser.waitUntil(() => browser.execute(() => {
@@ -181,6 +196,15 @@ try {
   }, COMMENT, REPLY), { timeout: 5_000, timeoutMsg: "t m did not show the comment threads again" });
   if (fs.readFileSync(PAGE_FILE, "utf8") !== saved) throw new Error("showing the margin changed the page file");
   console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk; t m hides and shows every thread, across a reload, without touching the file");
+  }
+} catch (error) {
+  await browser?.saveScreenshot(path.join(TMP, "failure.png")).catch(() => {});
+  fs.writeFileSync(path.join(TMP, "failure.json"), JSON.stringify({
+    journey: "scripts/e2e-margin-column.mjs",
+    expected: "Comment creation, editing, guarded persistence and margin-thread regressions complete",
+    observed: String(error), classification: error.classification ?? "ambiguous",
+  }, null, 2) + "\n");
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

@@ -244,8 +244,8 @@ export type HidePolicy =
   | { readonly kind: "builtin" | "sheet_cell" | "all" | "form_managed" | "structural" }
   | { readonly kind: "configured"; readonly keys: readonly string[]; readonly sheet_cell?: boolean }
   | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
-/** A normal block editor: LOGBOOK and OG hidden built-ins; comment context and
- *  author only when its own primary properties include quote. */
+/** A normal block editor: LOGBOOK, OG hidden built-ins and tine.author;
+ *  comment context only when its own primary properties include quote. */
 export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
 /** Properties with dedicated controls; other metadata remains editable in the form. */
 export const FORM_MANAGED: HidePolicy = Object.freeze({ kind: "form_managed" });

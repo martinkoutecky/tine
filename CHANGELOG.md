@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Journal days and split panes use the same width rule for margin comments as single pages; comment and reply editors hide every `tine.*` property on all platforms while preserving its bytes on save (GH #891).
+- Editing an authored block keeps its author mark visible while hiding and preserving `tine.author::`; the chip menu offers Remove author. Author metadata no longer appears inside blockquotes (GH #894, GH #895).
+- Margin comments anchor repeated passages using enough context to identify the selected occurrence, including the last word of a block. Tied matches are shown as ambiguous; missing quotes remain visible. Wide margin cards follow passage order and keep the focused thread beside its passage (GH #891).
+- On touch screens, Comment is available when selecting rendered text, before entering edit mode (GH #891).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
@@ -66,6 +70,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged.
+- Comment threads read at one level in file order, including hand-nested replies; new replies attach directly to the thread root. Existing nesting stays unchanged on disk. Comment badges count threads, and the visibility command and setting are named Show/Hide comments (GH #110, GH #891).
 - Settings > Appearance shows the first few theme packages with **Show all**, so the settings below the list are no longer far down (#882).
 - Grids edit like an outline: click or arrow into a cell, keep editing across cells, and use Enter and Tab to build its child outline; Esc keeps your text and selects the cell (GH #874).
 - Block and page embed toolbars use compact icons for **Edit link** and **Open source**, with translated tooltips and accessible names. **Remove** keeps its text beside an icon, and touch screens keep all labels (#847).

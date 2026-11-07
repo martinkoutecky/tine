@@ -3,10 +3,6 @@
    card; agent-written blocks (`author::`) carry a chip and a quiet left mark. */
 
 .ls-block.comment-card {
-  /* Slice 2b: no bullets. A reply's depth is a thin rule plus this indent,
-     capped at depth 2 (the rule keeps showing). */
-  --comment-reply-indent: 10px;
-  --comment-rule: color-mix(in srgb, var(--accent) 42%, transparent);
   margin: 4px 0;
   padding: 2px 8px 4px 8px;
   border-radius: 8px;
@@ -77,6 +73,17 @@
 .block-content > .author-chip {
   margin-top: calc((var(--ls-block-line-height) - 16px) / 2);
 }
+.authored-editor:has(> .author-chip) {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+}
+.authored-editor > .author-chip {
+  flex: none;
+  margin-top: calc(var(--ls-block-content-pad-y) + (var(--ls-block-line-height) - 16px) / 2);
+  cursor: pointer;
+}
+.authored-editor > .editor-wrap { flex: 1; min-width: 0; }
 
 /* Someone else's comment or reply sits on a background of its own, one tint per
    author name (authorTint in src/commentIdentity.ts), and its chip takes the same
@@ -113,18 +120,15 @@
      the line in the gutter so it cannot paint over the first character. */
 }
 
-/* Slice 2b: replies nest without the outline's full indent and without bullets
-   or fold arrows (a comment's author chip is its handle). */
+/* Threads read flat in file pre-order, including hand-nested replies.
+   Keep the stored tree intact: no structure or save operation runs to flatten it. */
 .ls-block.comment-in-thread > .block-children-container {
   margin-inline-start: 0;
 }
 .ls-block.comment-in-thread > .block-children-container > .block-children {
   margin-inline-start: 0;
-  padding-inline-start: var(--comment-reply-indent, 10px);
-  border-inline-start: 2px solid var(--comment-rule);
-}
-.ls-block.comment-card .block-children .block-children .block-children {
   padding-inline-start: 0;
+  border-inline-start: 0;
 }
 .ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
   display: none;
@@ -231,6 +235,7 @@
 }
 .page-section:has(> .margin-column) {
   position: relative;
+  min-height: var(--margin-content-bottom, 0px);
 }
 .margin-column {
   position: absolute;

@@ -5,7 +5,7 @@
 // derived from the outline at render time; nothing is persisted.
 
 import { createSignal } from "solid-js";
-import { quoteSelectorOf } from "./comments";
+import { anchorQuote, quoteSelectorOf } from "./comments";
 import { facetsOf } from "./render/facets";
 import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type Node, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
@@ -44,6 +44,20 @@ export function isCommentId(id: string, format: Format): boolean {
   return !!n && isComment(n, format);
 }
 
+/** Stable passage order, independent of creation/file order. Unanchored threads
+ * stay reachable at the block's start; replies never contribute a thread. */
+export function orderedCommentIds(parentId: string, format: Format): string[] {
+  const parent = docNode(parentId);
+  if (!parent) return [];
+  return parent.children.flatMap(id => {
+    const child = docNode(id);
+    const selector = child && quoteSelectorOf(facetsOf(child.raw, format).properties);
+    if (!selector) return [];
+    const anchor = anchorQuote(parent.raw, selector, format);
+    return [{ id, at: anchor.kind === "range" ? anchor.start : -1 }];
+  }).sort((a, b) => a.at - b.at).map(item => item.id);
+}
+
 // Bumped when a comment is written, so the margin re-asks `pageHasComment`
 // although writing it changes only the new block's text (see below).
 const [commentsEpoch, setCommentsEpoch] = createSignal(0);
@@ -62,25 +76,33 @@ export function pageHasComment(roots: readonly string[], format: Format): boolea
   return someBlockInTrees(roots, (n) => isComment(n, format));
 }
 
-/** The comment whose thread holds `id` (itself or its nearest comment
+/** The comment whose thread holds `id` (itself or its outermost comment
  * ancestor), or null for an ordinary block. O(depth). */
 export function threadRootOf(id: string, format: Format): string | null {
+  let root: string | null = null;
   for (let at: string | null = id; at !== null; at = docNode(at)?.parent ?? null) {
-    if (isCommentId(at, format)) return at;
+    if (isCommentId(at, format)) root = at;
   }
-  return null;
+  return root;
 }
 
 /** Top offsets for threads already sorted in document order: each sits at its
  * anchor unless the previous one is still in the way, then directly below it.
  * Nothing overlaps. O(threads). */
-export function stackThreads(items: readonly { anchor: number; height: number }[], gap = MARGIN_THREAD_GAP): number[] {
+export function stackThreads(items: readonly { anchor: number; height: number }[], gap = MARGIN_THREAD_GAP, focused = -1): number[] {
   const tops: number[] = [];
   let floor = -Infinity;
   for (const { anchor, height } of items) {
     const top = Math.max(anchor, floor);
     tops.push(top);
     floor = top + height + gap;
+  }
+  if (focused >= 0 && focused < items.length) {
+    tops[focused] = items[focused].anchor;
+    for (let i = focused - 1; i >= 0; i--)
+      tops[i] = Math.min(items[i].anchor, tops[i + 1] - items[i].height - gap);
+    for (let i = focused + 1; i < items.length; i++)
+      tops[i] = Math.max(items[i].anchor, tops[i - 1] + items[i - 1].height + gap);
   }
   return tops;
 }

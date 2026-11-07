@@ -29,6 +29,12 @@ describe("stacking threads in the margin", () => {
     expect(stackThreads([{ anchor: 0, height: 40 }, { anchor: 100, height: 40 }], 8)).toEqual([0, 100]);
   });
 
+  it("pins a focused thread to its anchor and cascades neighbors in both directions", () => {
+    expect(stackThreads([
+      { anchor: 100, height: 50 }, { anchor: 110, height: 30 }, { anchor: 120, height: 20 },
+    ], 8, 1)).toEqual([52, 110, 148]);
+  });
+
   it("pushes an overlapping thread below the previous one, never overlapping", () => {
     const items = [{ anchor: 10, height: 50 }, { anchor: 20, height: 30 }, { anchor: 30, height: 10 }, { anchor: 200, height: 5 }];
     const tops = stackThreads(items, 8);

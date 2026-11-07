@@ -36,14 +36,14 @@ export function quotedSourceRanges(parentId: string, format: Format): QuotedRang
     if (!selector) continue;
     selectors.push([childId, selector]);
   }
-  return rangesForSelectors(parent.raw, selectors);
+  return rangesForSelectors(parent.raw, selectors, format);
 }
 
-function rangesForSelectors(raw: string, selectors: Iterable<readonly [string, QuoteSelector]>): QuotedRange[] {
+function rangesForSelectors(raw: string, selectors: Iterable<readonly [string, QuoteSelector]>, format: Format): QuotedRange[] {
   const lead = raw.length - raw.trimStart().length;
   const out: QuotedRange[] = [];
   for (const [childId, selector] of selectors) {
-    const anchor = anchorQuote(raw, selector);
+    const anchor = anchorQuote(raw, selector, format);
     if (anchor.kind !== "range" || anchor.start < lead) continue;
     const start = utf8ByteLength(raw.slice(lead, anchor.start)) + 2;
     out.push([start, start + utf8ByteLength(raw.slice(anchor.start, anchor.end)), childId]);
@@ -86,6 +86,6 @@ export function createQuotedSourceRanges(parentId: Accessor<string | null>, form
     const id = parentId();
     const parent = id ? docNode(id) : null;
     return parent ? rangesForSelectors(parent.raw, [...current.selectors]
-      .sort(([a], [b]) => current.positions.get(a)! - current.positions.get(b)!)) : [];
+      .sort(([a], [b]) => current.positions.get(a)! - current.positions.get(b)!), format()) : [];
   });
 }

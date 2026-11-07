@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
-import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
+import { blockPageReadOnly, blockWritable, formatForBlock, node as docNode } from "../document";
 import { registerReplyDraft } from "../commentMargin";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { runWithCommentName } from "../commentNamePrompt";
@@ -44,7 +44,10 @@ export function CommentQuoteHeader(props: { parentId: string | null; selector: Q
 function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.Element {
   const anchor = createMemo(() => {
     const parent = docNode(props.parentId);
-    return parent ? anchorQuote(parent.raw, props.selector) : { kind: "stale" as const };
+    // In-thread quotes are compact historical excerpts of another response.
+    // New responses attach to the root, so their source need not be their parent.
+    if (inCommentThread(props.parentId, formatForBlock(props.parentId))) return { kind: "compact" as const };
+    return parent ? anchorQuote(parent.raw, props.selector, formatForBlock(props.parentId)) : { kind: "stale" as const };
   });
   return (
     <div class="comment-quote" classList={{ stale: anchor().kind === "stale" }}>
@@ -56,6 +59,9 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
         </span>
         <Show when={anchor().kind === "stale"}>
           <span class="comment-quote-stale">{t("comment-quote-changed")}</span>
+        </Show>
+        <Show when={anchor().kind === "ambiguous"}>
+          <span class="comment-quote-stale">{t("comment-quote-ambiguous")}</span>
         </Show>
       </Show>
     </div>
@@ -76,10 +82,10 @@ export function CommentHeader(props: { id: string; author: string | null }): JSX
  * it starts the block drag (the same gesture contract as the bullet), and its
  * long press opens the block menu (contextMenuPolicy). Right-click anywhere on
  * the row already opens the menu, where "Zoom into block" lives. */
-export function AuthorChip(props: { author: string | null; handleOf?: string }): JSX.Element {
+export function AuthorChip(props: { author: string | null; handleOf?: string; menuOf?: string }): JSX.Element {
   const onMouseDown = (e: MouseEvent) => {
     const id = props.handleOf;
-    if (id === undefined) return;
+    if (id === undefined) { if (props.menuOf) { e.stopPropagation(); if (e.button === 0) e.preventDefault(); } return; }
     // Not an edit gesture: keep the row's caret placement out of it.
     e.stopPropagation();
     internalLinkMouseDown(e);
@@ -92,11 +98,16 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
       classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined, ...tintClasses(props.author) }}
       title={props.author !== null ? t("comment-written-by", { author: props.author }) : t("comment-written-by-you")}
       onMouseDown={onMouseDown}
+      role={props.menuOf ? "button" : undefined}
+      tabIndex={props.menuOf ? 0 : undefined}
+      onKeyDown={e => { if (props.menuOf && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openContextMenu(r.left, r.bottom, props.menuOf); } }}
+      onClick={e => { if (props.menuOf) { e.stopPropagation(); openContextMenu(e.clientX, e.clientY, props.menuOf); } }}
       onContextMenu={e => {
-        if (props.handleOf === undefined || !shouldOpenBlockContextMenu(e.target)) return;
+        const id = props.menuOf ?? props.handleOf;
+        if (id === undefined || (!props.menuOf && !shouldOpenBlockContextMenu(e.target))) return;
         e.preventDefault();
         e.stopPropagation();
-        openContextMenu(e.clientX, e.clientY, props.handleOf);
+        openContextMenu(e.clientX, e.clientY, id);
       }}
     >
       {props.author ?? t("comment-author-you")}

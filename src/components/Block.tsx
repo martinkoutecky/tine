@@ -125,7 +125,7 @@ import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection
 import { isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
-import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
+import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
@@ -413,7 +413,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                         author there, then place the optional count beside it
                         so referenced blocks keep the same author position (#883). */}
                     <Show when={showsAuthor() && !bulletless()}>
-                      <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
+                      <AuthorChip author={author()} menuOf={props.id} />
                     </Show>
                     <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
                   </>}
@@ -421,7 +421,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               </QuoteHighlightProvider>
             }
           >
-            <Editor id={props.id} propertySession={propertySession} />
+            <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
           </Show>
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
@@ -434,7 +434,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
       </Show>
 
-      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+      <Show when={(bulletless() || props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
           <Match when={sheet().view === "grid"}>
             <SheetContainer>
@@ -572,9 +572,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       && page.roots[0] === props.id
       && (node().originatedFromPageHeader || (!page.preBlock && propertyDraft));
   };
-  // Parsed editor facts travel with the committed buffer; hidden bytes survive.
+  const commentHide = commentEditorHide(node(), propertySession.facets(node().raw, pageFmt()).properties, pageFmt(), docNode);
   const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
-  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : BUILTIN_HIDE);
+  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : commentHide);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents
