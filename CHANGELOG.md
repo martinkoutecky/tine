@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Renaming a page keeps its file in its current subfolder, including Org files and namespace children (GH #904).
+- An externally moved page no longer stays hidden behind a stale path: late page-index updates drop absent files, and an incomplete launch checkpoint rebuilds from disk (GH #905).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 
 ## [0.9.0-beta.8] - 2026-11-06

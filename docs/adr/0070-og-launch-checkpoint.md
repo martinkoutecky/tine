@@ -208,7 +208,12 @@ the checkpoint is rewritten only on the existing cadence, one file per write.
   5. config key;
   6. lengths;
   7. checksum;
-  8. decode.
+  8. decode, including baseline coverage of every physical page row, list
+     entry, claimant and path-to-name entry (GH #905). A cached path with no
+     recorded stamp cannot be reconciled by the launch diff; decline the whole
+     checkpoint with `decode` and rebuild from files. This also recovers an
+     older checkpoint retaining an already-removed claimant. No graph file is
+     changed to repair the cache, and no format change is needed.
 
   Any failure is a fallback token in diagnostics and today's full build. It is
   never a refusal or a migration. If the checkpoint is good, the loaded state

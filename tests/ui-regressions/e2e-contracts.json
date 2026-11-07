@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-beta-page-paths.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A page moved into a subfolder while Tine is closed opens its real content after a checkpoint restart with a stale sidebar session; GUI saves, CLI reads and tine://block links agree on the real file. Live sync-style moves and a manually repaired flattened rename also recover; CLI rename retains the folder.","blocking":false,"authority":"GH #904; GH #905; docs/storage-contract.md; REG-GH904-RENAME-SUBFOLDER; REG-GH905-MOVED-PAGE-CHECKPOINT"}],
+      "acceptableVariations": ["Watcher, save and checkpoint latency; navigation and notice layout."],
+      "nonRequirements": ["Exact pixels; automatic retargeting of an explicitly pinned missing sidebar file; reporter attachments, real Syncthing or macOS/Windows runtime certification. Malformed checkpoint coverage is tested at the store layer."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pdf-area-ref.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
       "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],
