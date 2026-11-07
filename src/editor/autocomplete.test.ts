@@ -20,7 +20,6 @@ import {
   codeLanguageItems,
   COMMON_CODE_LANGUAGES,
   propertyKeyFold,
-  propertyValueKeyAfterBoundary,
 } from "./autocomplete";
 import slashFixtureManifest from "./fixtures/slash-ranking-prefix-base-15bbddc/manifest.json";
 import slashFixturePart1 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-1.json";
@@ -239,32 +238,35 @@ describe("detectTrigger", () => {
   // C3X X6 (L13): the trigger's key alphabet was ASCII while the persisted parser's is Unicode.
   it("opens property completion for a Unicode key, the same alphabet the parser stores", () => {
     expect(detectTrigger("stav_úkolu::", 12)).toEqual({ kind: "property-name", query: "stav_úkolu", start: 0, end: 12 });
-    expect(detectTrigger("статус:: ", 9, "статус")).toEqual({
+    expect(detectTrigger("статус:: ", 9)).toEqual({
       kind: "property-value", query: "", start: 9, end: 9, property: "статус",
     });
     expect(detectTrigger("ordinary prose ::", 17)).toBeNull();
   });
 
-  it("keeps a chosen canonical property's value span separate from its key and delimiter", () => {
-    expect(detectTrigger("alpha:: ", 8, "alpha")).toEqual({
+  it("keeps any parser-accepted property's value span separate from its key and delimiter (intentional OG difference)", () => {
+    expect(detectTrigger("alpha:: ", 8)).toEqual({
       kind: "property-value", query: "", start: 8, end: 8, property: "alpha",
     });
-    expect(detectTrigger("alpha:: one", 11, "alpha")).toEqual({
+    expect(detectTrigger("alpha:: one", 11)).toEqual({
       kind: "property-value", query: "one", start: 8, end: 11, property: "alpha",
     });
-    expect(detectTrigger("other:: one", 11, "alpha")).toBeNull();
-    expect(detectTrigger("alpha:: one", 11)).toBeNull();
-    expect(detectTrigger("alpha:: one, two", 16, "alpha")).toEqual({
+    expect(detectTrigger("other:: one", 11)?.property).toBe("other");
+    expect(detectTrigger("alpha:: one, two", 16)).toEqual({
       kind: "property-value", query: "two", start: 13, end: 16, property: "alpha",
       propertyValues: ["one"],
     });
   });
 
-  it("enters property-value completion only from a just-typed value boundary", () => {
-    expect(propertyValueKeyAfterBoundary("Alpha_value:: ", 14, " ")).toBe("alpha-value");
-    expect(propertyValueKeyAfterBoundary("alpha:: one,", 12, ",")).toBe("alpha");
-    expect(propertyValueKeyAfterBoundary("alpha:: one", 11, "e")).toBeNull();
-    expect(propertyValueKeyAfterBoundary("prose alpha:: ", 14, " ")).toBeNull();
+  it("excludes parser-rejected property lookalikes and Org drawers from value search", () => {
+    for (const raw of ["prose alpha:: ", "alpha::one", "  alpha:: one", "[[alpha]]:: one", "```\nalpha:: one", "#alpha:: one"]) {
+      expect(detectTrigger(raw, raw.length)?.kind).not.toBe("property-value");
+    }
+    const org = ":PROPERTIES:\n:alpha: one\n:END:";
+    expect(detectTrigger(org, org.indexOf("one") + 3, "org")).toBeNull();
+    const raw = "Body\nстатус:: один, д";
+    expect(detectTrigger(raw, raw.length)).toMatchObject({ kind: "property-value", property: "статус", query: "д", propertyValues: ["один"] });
+    expect(detectTrigger("alpha:: ", 3)?.kind).not.toBe("property-value");
   });
 
   it("detects language text only on opening backtick and tilde fences", () => {

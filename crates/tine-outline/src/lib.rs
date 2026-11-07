@@ -17,6 +17,7 @@ pub mod outline;
 pub mod page_filename;
 pub mod page_format;
 pub mod page_preamble;
+pub mod page_property_edit;
 pub mod property_line;
 pub mod property_refs;
 pub mod property_visibility;

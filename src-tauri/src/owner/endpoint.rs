@@ -693,7 +693,7 @@ mod local {
             if line.len() > REQUEST_CAP
                 && !matches!(
                     request.verb.as_str(),
-                    "block.edit" | "block.add" | "block.prop"
+                    "block.edit" | "block.add" | "block.prop" | "page.prop"
                 )
             {
                 send(

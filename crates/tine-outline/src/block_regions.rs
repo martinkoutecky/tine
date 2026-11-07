@@ -909,6 +909,24 @@ impl BlockRegions {
             .iter()
             .any(|r| r.0 == at && is_properties_drawer(raw, r))
     }
+    /// Delimiter byte offsets inside parser-accepted property regions. Used by
+    /// the page form to remove an emptied drawer without reading literal text.
+    pub fn property_drawer_boundaries(&self, raw: &str) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for region in &self.property_regions {
+            let mut open = None;
+            for line in line_ranges(raw, *region) {
+                if is_properties_drawer(raw, &line) {
+                    open = Some(line.0);
+                } else if line.slice(raw).trim().eq_ignore_ascii_case(":END:") {
+                    if let Some(start) = open.take() {
+                        out.push((start, line.0));
+                    }
+                }
+            }
+        }
+        out
+    }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);
         let prefix = if at > 0 && !raw[..at].ends_with('\n') {

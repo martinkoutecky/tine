@@ -13,7 +13,7 @@ use super::verbs::{
 use super::wire::ErrorBody;
 use super::write::{
     block_at_mut, handle_page, outline_refused, parse_handle, refused, resolve_on, store_refused,
-    write_page_with_create, Planned,
+    write_page_from_source, Planned,
 };
 use crate::state::GraphSlot;
 
@@ -83,13 +83,13 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         .clone()
         .or_else(|| std::env::var("TINE_AUTHOR").ok())
         .unwrap_or_else(|| "agent".into());
-    write_page_with_create(
+    write_page_from_source(
         slot,
         &page,
         EditKind::InsertBlocks,
         args.rev.as_deref(),
         handle.is_none(),
-        |doc, page| {
+        |doc, page, _, creating| {
             let org = doc.format == Format::Org;
             // Use the very same bounded page parser as a file read. A fragment's
             // pre-block is its first imported block, like the app's visible header.
@@ -105,7 +105,11 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                 ));
             }
             let mut blocks = fragment.doc.blocks;
+            let mut explicit_header = false;
             if let Some(raw) = fragment.doc.pre_block.filter(|raw| !raw.trim().is_empty()) {
+                explicit_header = !tine_core::page_header::page_property_lines(&raw, org)
+                    .is_empty()
+                    && tine_core::page_properties::preamble_content_range(&raw, org).is_none();
                 blocks.insert(
                     0,
                     BlockDto {
@@ -117,6 +121,15 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
             if blocks.is_empty() {
                 return Err(ErrorBody::new("bad-args", "content has no blocks", false));
             }
+            let header = creating
+                && (explicit_header
+                    || (!org
+                        && blocks.first().is_some_and(|b| {
+                            b.children.is_empty()
+                                && tine_core::page_header::is_page_header_candidate(
+                                    b.raw.trim_end_matches(['\n', '\r']),
+                                )
+                        })));
             let graph = whole_graph(slot)?;
             let mut live_ids = Vec::new();
             fn prepare(
@@ -126,10 +139,12 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                 graph: &tine_store::WholeGraph,
                 live_ids: &mut Vec<String>,
                 page: &tine_store::PageId,
+                header: bool,
             ) -> Result<Vec<OutlineNode>, ErrorBody> {
                 blocks
                     .iter()
-                    .map(|block| {
+                    .enumerate()
+                    .map(|(index, block)| {
                         for uuid in tine_core::render::block_refs(&block.raw, org).block {
                             if graph
                                 .preview_block(&uuid, 1)
@@ -155,24 +170,45 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                                 live_ids.push(id);
                             }
                         }
-                        let raw = block_regions::edit(
-                            &block.raw,
-                            org,
-                            Edit::Property {
-                                key: tine_core::tine_keys::AUTHOR.into(),
-                                value: Some(author.into()),
-                            },
-                        )
-                        .map_err(|e| refused("kernel", Some(page), e))?;
+                        let raw = if header && index == 0 {
+                            block.raw.clone()
+                        } else {
+                            block_regions::edit(
+                                &block.raw,
+                                org,
+                                Edit::Property {
+                                    key: tine_core::tine_keys::AUTHOR.into(),
+                                    value: Some(author.into()),
+                                },
+                            )
+                            .map_err(|e| refused("kernel", Some(page), e))?
+                        };
                         Ok(OutlineNode {
                             raw,
-                            children: prepare(&block.children, org, author, graph, live_ids, page)?,
+                            children: prepare(
+                                &block.children,
+                                org,
+                                author,
+                                graph,
+                                live_ids,
+                                page,
+                                false,
+                            )?,
                         })
                     })
                     .collect()
             }
-            let blocks = prepare(&blocks, org, &author, &graph, &mut live_ids, page)?;
+            let mut blocks = prepare(&blocks, org, &author, &graph, &mut live_ids, page, header)?;
             let mut next = doc.clone();
+            if header {
+                next.pre_block = Some(blocks.remove(0).raw);
+                if blocks.is_empty() {
+                    return Ok(Planned {
+                        doc: next,
+                        changed: vec![],
+                    });
+                }
+            }
             let path = handle
                 .as_ref()
                 .map(|h| resolve_on(doc, page, h, anchor.unwrap(), args.rev.is_some()))
