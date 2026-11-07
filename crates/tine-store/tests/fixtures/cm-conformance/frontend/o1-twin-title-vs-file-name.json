@@ -8,7 +8,7 @@
   "counts": [
     [
       [
-        "pages/zed.md",
+        "pages/a.md",
         2
       ],
       [
@@ -36,10 +36,10 @@
       "key": "zed",
       "name": "ZED",
       "target": {
-        "id": "pages/zed.md",
+        "id": "pages/a.md",
         "kind": "existing",
         "others": [
-          "pages/a.md"
+          "pages/zed.md"
         ]
       }
     },
@@ -49,10 +49,10 @@
       "key": "zed",
       "name": "zed",
       "target": {
-        "id": "pages/zed.md",
+        "id": "pages/a.md",
         "kind": "existing",
         "others": [
-          "pages/a.md"
+          "pages/zed.md"
         ]
       }
     }
@@ -105,11 +105,11 @@
     },
     "ZED": {
       "journal": null,
-      "page": "pages/zed.md"
+      "page": "pages/a.md"
     },
     "zed": {
       "journal": null,
-      "page": "pages/zed.md"
+      "page": "pages/a.md"
     }
   },
   "pages": [

@@ -168,20 +168,21 @@ invalid graph state (D-20261019-ZY2, narrowed by AL1); alias equivalence is
 unchanged. `WholeGraph::resolve` and `inventory` retain the competing file ids
 as `Resolved::Existing::others`; journal conflicts also feed the existing
 duplicate-day resolution queue. Unrelated names remain usable. The fixed
-claimant order is shared live and fresh: a journal's configured date filename
-first; an ordinary page's matching decoded filename first; then `.md` before
-other extensions, filename, and full path lexicographically. Ordinary twins
-retain their physical content, while only a day's winning journal contributes
-query and backlink rows. A new winner displaces the old parsed journal, and
-removing it promotes the next claimant, including a held file's last published
-bytes. A promoted journal whose parse or projection panics is isolated as one
+claimant order is shared live and fresh: ordinary pages before journals on
+the same literal key, then unsigned UTF-8 graph-relative path order within a
+kind (D-20261107-OWN2). Only the opening claimant supplies aliases, blocks,
+references, queries, counts and filename namespace parents. All physical twins
+remain parsed for mutation checks and asset safety, and stay available in
+conflict reporting. Adding, removing or retitling a claimant updates both the
+old and new active contributions, including an unchanged sibling and a held
+file's last published bytes. A promoted journal whose parse or projection panics is isolated as one
 unreadable file, just as at launch; unrelated indexed pages and later writer
 operations remain available. Each event visits only the affected day buckets,
 never a graph walk.
 Every reader of "which file owns this name" takes that order's winner (CM step
 2, I-12): `resolve`, the inventory, `page_named` (also while loading), the
 real-name table behind Linked References (`RealPageOwners::get`; the persisted
-claimant tree is unchanged), and the duplicate-day keeper. A name only aliases
+claimant tree retains all physical entries), and the duplicate-day keeper. A name only aliases
 claim opens its first declarer by relative path (AL2/CI4,
 `AliasRelation::owner_path`), each owner listed once.
 Icons follow the winning ordinary claimant, including absence of an icon;
@@ -812,10 +813,12 @@ map and its checkpoint encoding are unchanged. Proof:
 
 What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
 (`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
-the graph's journal answerer parses (`JournalFormat::parse`: the configured
-title and file-name formats plus the fixed fallbacks, D-20261102-JDL) opens that
-day's journal, else a page file claiming the name, else the alias owner. A
-claimant with no real content (`inventory.rs::content_free` over its parsed
+first takes the opening claimant of that literal name. In particular an
+ordinary date-named file retains its own spelling (D-20261107-KD); another
+accepted spelling can still name the day's journal. Without a literal file,
+the graph's journal answerer (`JournalFormat::parse`: configured formats and
+fixed fallbacks, D-20261102-JDL) tries that day's active journal, then the
+alias owner. An active claimant with no real content (`inventory.rs::content_free` over its parsed
 document: no pre-block text, and no blocks or one block with empty raw text)
 yields the name to the alias owner when some page declares it (D-20261103-CMA,
 OG `page-empty-or-dummy?`); such entries carry `empty_alias: true` and named
@@ -1700,7 +1703,7 @@ checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
 
 Namespace parents have one answerer, `model/namespace_parents.rs` (conceptual
 model rule 1, CM3-3; CM step 2 batch 10). A name `n/y` makes `n` a page: every
-proper `/`-prefix of a non-blank page file's name (journals and twins included;
+proper `/`-prefix of a non-blank active page file's name (journals included;
 a blank file supplies its own page only, as OG's `extract` skips blank content)
 and of every referenced name is a page, unless a file claims it, a page aliases
 it or a reference names it directly. `page_inventory` lists each as an absent

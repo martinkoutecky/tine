@@ -156,7 +156,7 @@ mod tests {
 
     fn cached_first_block(store: &Store, page: &str) -> String {
         let graph = store.whole_graph().unwrap();
-        let corpus = graph.corpus(None);
+        let corpus = graph.corpus(None, false);
         let found = corpus.pages.iter().find(|p| p.name == page).unwrap();
         found.document.roots[0].raw().to_string()
     }
@@ -336,7 +336,7 @@ mod tests {
         }
         store.refresh(crate::Depth::Rebuild).unwrap();
         let graph = store.whole_graph().unwrap();
-        let corpus = graph.corpus(None);
+        let corpus = graph.corpus(None, false);
         let names: Vec<&str> = corpus.pages.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"Fresh"), "created page missing: {names:?}");
         assert!(!names.contains(&"Gone"), "removed page lingers: {names:?}");

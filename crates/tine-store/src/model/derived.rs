@@ -328,14 +328,6 @@ impl Graph {
         }
         let (format, journals) = (self.current_journal_format(), self.journals_path());
         let entry = listed_entry(self, (&format, &journals, config.file_name_format), path)?;
-        if let Some(date) = entry
-            .date_key
-            .map(tine_core::date::JournalDate::from_ordinal)
-        {
-            if entry.kind == PageKind::Journal && self.is_shadow_journal(&entry.path, date) {
-                return None;
-            }
-        }
         Some(entry)
     }
 
@@ -390,21 +382,6 @@ impl Graph {
             return Vec::new();
         };
         let mut changed = Vec::new();
-        {
-            let mut cache = self.derived.cache.write().unwrap();
-            if let Some(pages) = cache.as_mut() {
-                for entry in &entries[1..] {
-                    if pages.positions.contains_key(entry.rel_path_str()) {
-                        self.retire_row(Some(Arc::make_mut(pages)), &entry.path, false);
-                        changed.push(entry.path.clone());
-                    }
-                }
-            }
-            if !changed.is_empty() {
-                let paths: Vec<_> = changed.iter().map(PathBuf::as_path).collect();
-                self.move_generation(cache.is_none(), &paths);
-            }
-        }
         if self.with_cached(&winner.path, |row| row.is_some()) == Some(true) {
             return changed;
         }
@@ -594,6 +571,10 @@ impl Graph {
             }
         }
         Certified(entries)
+    }
+
+    pub(super) fn physical_page_entries(&self) -> Vec<PageEntry> {
+        self.certify(list_graph_pages(self), None).0
     }
 
     /// What a snapshot names the changed `path` (R2): from disk when no host
@@ -935,11 +916,7 @@ impl Graph {
     /// page list memo and the first publication's name inventory.
     pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
         let named = self.certify(named, None);
-        let deduped = dedup_journal_days(
-            named.0.clone(),
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        );
+        let deduped = dedup_journal_days(named.0.clone());
         *self.derived.page_list_cache.write().unwrap() =
             Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));

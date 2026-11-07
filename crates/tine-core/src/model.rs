@@ -434,6 +434,15 @@ impl PageEntry {
     }
 }
 
+/// The opening claimant order (R13 OWN2): ordinary kind preference, then
+/// unsigned UTF-8 graph-relative path bytes. Configured filename/date formats
+/// and a file's text do not rank valid, distinct physical paths.
+pub fn compare_page_claimants(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
+    (a.kind == PageKind::Journal)
+        .cmp(&(b.kind == PageKind::Journal))
+        .then_with(|| a.rel_path_str().as_bytes().cmp(b.rel_path_str().as_bytes()))
+}
+
 mod optional_page_path {
     use super::PageId;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

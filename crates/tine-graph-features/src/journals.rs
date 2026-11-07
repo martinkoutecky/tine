@@ -791,9 +791,10 @@ fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_
 /// Duplicate-day files with first-line previews, the keeper first. The keeper
 /// (`canonical`, one per day) is the file the day opens: the claimant order's
 /// owner that `Store::page_named` reads (CM step 2 OW-2, PQ-1 2026-11-02, I-12),
-/// so a merge keeps the page the user sees. The rest follow canonical date
-/// stems first, then by name. When no file of the group answers the day (its
-/// owner could not be read), the first of that order is the keeper. A file
+/// so a merge keeps the page the user sees. Remaining paths use the shared
+/// claimant order. When its owner could not be read, the first of that order
+/// is the keeper. If an ordinary page owns the name, no journal is canonical;
+/// the complete bucket appears in the name-conflict overview. A file
 /// whose preview cannot be read stays listed with `preview_error` (one bad file
 /// never hides the day, I-22); listing entries that cannot be read at all are
 /// named by the conflict inventory and the journal feed. A failed area scan or
@@ -828,7 +829,7 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                     .to_owned(),
                 path: entry.id.as_str().to_owned(),
                 preview,
-                canonical: stem(&entry).is_some_and(|stem| fmt.is_canonical_stem(stem)),
+                canonical: false,
                 preview_error,
             });
         }
@@ -842,13 +843,19 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
             .map(|read| read.id.as_str().to_owned());
         journal_files.sort_by(|a, b| {
             let opens = |file: &JournalFile| opened.as_deref() == Some(file.path.as_str());
+            let claimant = |file: &JournalFile| tine_core::model::PageEntry {
+                name: title.clone(),
+                kind: tine_core::model::PageKind::Journal,
+                date_key: Some(day.0),
+                rel_path: Some(tine_store::PageId::from(file.path.as_str())),
+                path: Default::default(),
+            };
             opens(b)
                 .cmp(&opens(a))
-                .then_with(|| b.canonical.cmp(&a.canonical))
-                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| tine_core::model::compare_page_claimants(&claimant(a), &claimant(b)))
         });
         for (i, file) in journal_files.iter_mut().enumerate() {
-            file.canonical = i == 0;
+            file.canonical = opened.as_deref().map_or(i == 0, |path| path == file.path);
         }
         conflicts.push(JournalConflict {
             title,

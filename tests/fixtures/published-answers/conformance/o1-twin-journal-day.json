@@ -20,7 +20,7 @@
         "key": "oct 26th, 2026",
         "name": "Oct 26th, 2026",
         "target": {
-          "id": "journals/2026_10_26.md",
+          "id": "journals/2026-10-26.md",
           "kind": "existing",
           "others": []
         }
@@ -49,7 +49,7 @@
       "date_key": 20261026,
       "kind": "journal",
       "name": "Oct 26th, 2026",
-      "path": "journals/2026_10_26.md"
+      "path": "journals/2026-10-26.md"
     }
   ],
   "exported_at": "",
@@ -72,7 +72,7 @@
       "format": "md",
       "kind": "journal",
       "name": "Oct 26th, 2026",
-      "path": "journals/2026_10_26.md",
+      "path": "journals/2026-10-26.md",
       "pre_block": null,
       "read_only": true,
       "title": "Oct 26th, 2026"

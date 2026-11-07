@@ -4994,7 +4994,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_source_page_names_merge_into_one_reference_group() {
+    fn duplicate_source_page_names_only_include_the_active_file() {
         use std::fs;
         let dir = std::env::temp_dir().join(format!("tine-ref-groups-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -5006,8 +5006,9 @@ mod tests {
         let groups = backlinks(&graph, "Target");
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].page, "Note");
-        assert_eq!(groups[0].blocks.len(), 2);
-        assert_eq!(groups[0].evidence.len(), 2);
+        assert_eq!(groups[0].blocks.len(), 1);
+        assert_eq!(groups[0].evidence.len(), 1);
+        assert_eq!(groups[0].blocks[0].raw, "first [[Target]]");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -5089,12 +5090,7 @@ mod tests {
             "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
-            equivalent_page_names(
-                &RealPageOwners::empty(&Default::default()),
-                &AliasEdges::new(&aliases),
-                "Z"
-            )
-            .0,
+            equivalent_page_names(&RealPageOwners::empty(), &AliasEdges::new(&aliases), "Z").0,
             "A"
         );
     }

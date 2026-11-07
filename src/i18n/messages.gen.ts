@@ -352,9 +352,12 @@ export interface MessageArgs {
   "conflict-overview-discard-copy": {};
   "conflict-overview-discarded": { "name": string | number };
   "conflict-overview-duplicate-journal-days": {};
+  "conflict-overview-duplicate-names": {};
   "conflict-overview-each-page-is-resolved-on-the-page-itself": {};
+  "conflict-overview-name-order": {};
   "conflict-overview-no-conflicts-pages-that-need-a-decision-appear": {};
   "conflict-overview-open-the-page-to-resolve-it-shift-click": {};
+  "conflict-overview-opening-file": {};
   "conflict-overview-orphan-source": { "tag": string | number };
   "conflict-overview-sync-conflict-copies": {};
   "conflict-overview-unsaved-drafts": {};
@@ -423,6 +426,7 @@ export interface MessageArgs {
   "conflicts-prose-merged-side": {};
   "conflicts-prose-mine": {};
   "conflicts-prose-mine-short": {};
+  "conflicts-prose-name-files": { "count": string | number };
   "conflicts-prose-proposed-by-your-merge-tool-s-suggested-resolution-still-applied": {};
   "conflicts-prose-pull-in": {};
   "conflicts-prose-skip": {};

@@ -485,7 +485,7 @@ fn issue137_distinct_blocks_and_nested_directories_remain_distinct_rows() {
 }
 
 #[test]
-fn issue137_core_preserves_same_basename_source_groups_before_ui() {
+fn issue137_core_masks_inactive_same_basename_sources_before_ui() {
     let fixture = Fixture::new("same-basename-groups");
     fixture.page("Target", "- target\n");
     fixture.nested_page("a", "Duplicate", "- [[Target]] from A\n");
@@ -493,14 +493,14 @@ fn issue137_core_preserves_same_basename_source_groups_before_ui() {
     let graph = fixture.graph();
     let groups = graph.backlinks("Target");
     assert_eq!(groups.len(), 1);
-    assert_eq!(row_count(groups.as_ref()), 2);
+    assert_eq!(row_count(groups.as_ref()), 1);
     assert!(groups.iter().all(|group| group.page == "Duplicate"));
     let raws = groups
         .iter()
         .flat_map(|group| group.blocks.iter().map(|block| block.raw.as_str()))
         .collect::<Vec<_>>();
     assert!(raws.iter().any(|raw| raw.contains("from A")));
-    assert!(raws.iter().any(|raw| raw.contains("from B")));
+    assert!(!raws.iter().any(|raw| raw.contains("from B")));
 }
 
 #[test]

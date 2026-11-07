@@ -455,7 +455,7 @@ fn publication_event_payloads(
     // A name-only inventory change carries its entries, so the window patches
     // its name maps instead of refetching the inventory (cost-model audit
     // 2026-11-02, row 1). Absent: the window refetches as before.
-    if let Some(delta) = change.inventory_delta() {
+    if let Some(delta) = change.inventory_delta().1 {
         answers["inventoryDelta"] =
             serde_json::to_value(crate::commands::discovery::inventory_delta_wire(delta))
                 .expect("inventory delta serialization");

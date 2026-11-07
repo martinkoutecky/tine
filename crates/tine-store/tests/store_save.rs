@@ -348,7 +348,7 @@ fn own_write_before_initial_load_is_in_first_snapshot() {
     fs::remove_file(fixture.0.join(".tine-test-pause-load")).unwrap();
     let first = store.whole_graph().unwrap();
     assert!(first
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .any(|page| page.id == id.as_str()));

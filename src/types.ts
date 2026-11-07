@@ -455,7 +455,7 @@ export type MergeDecision = "mine" | "theirs" | "both" | "merged";
 /** Where a conflict object came from: a sync tool's copy, VCS markers, an
  *  editor draft whose save was refused because the file changed (og 8e), or a
  *  journal day with more than one file (master 9dc54e4a7). */
-export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save" | "duplicate-journal";
+export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save" | "duplicate-journal" | "duplicate-name";
 
 /** The editor draft of a `live-save` conflict object. */
 export interface LiveConflictDraft {
@@ -469,6 +469,8 @@ export interface ConflictSide {
   label: string;
   /** Graph-root-relative path, when the side is a file of its own. */
   path?: string | null;
+  /** Physical kind for an exact-file name conflict link. */
+  kind?: PageKind | null;
 }
 
 /** One item of the conflict queue: DERIVED from disk on every refresh and never

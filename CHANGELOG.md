@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- When two files claim one page name, Tine opens the ordinary page before a journal, then the file whose graph-relative path sorts first by UTF-8 bytes. Only that file supplies aliases, references and query results; both files are kept (REG-CM-ACTIVE-TWINS).
+
 ### Fixed
 
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).

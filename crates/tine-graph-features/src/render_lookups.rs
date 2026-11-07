@@ -74,7 +74,7 @@ fn keyed_block(whole: &WholeGraph, uuid: &str) -> Result<Option<BlockHit>, ()> {
     let Some(group) = group else {
         return Ok(None);
     };
-    let pages = whole.corpus(Some(&group.page)).pages.into_iter();
+    let pages = whole.corpus(Some(&group.page), true).pages.into_iter();
     for page in pages.filter(|page| page.name == group.page && page.kind == group.kind) {
         let mut path = Vec::new();
         if find(&page.document.roots, uuid, &mut path) {
@@ -114,7 +114,7 @@ impl Lookups {
             match keyed_block(whole, uuid) {
                 Ok(hit) => return hit,
                 // Over the block question's result budget: one corpus copy.
-                Err(()) => self.all_pages.get_or_init(|| whole.corpus(None)),
+                Err(()) => self.all_pages.get_or_init(|| whole.corpus(None, true)),
             }
         } else {
             corpus
@@ -162,7 +162,7 @@ impl Lookups {
         kind: PageKind,
     ) -> Option<Arc<Document>> {
         if self.keyed {
-            return (whole.corpus(Some(name)).pages.into_iter())
+            return (whole.corpus(Some(name), true).pages.into_iter())
                 .filter(|page| page.name == name && page.kind == kind)
                 .last()
                 .map(|page| page.document);
@@ -185,7 +185,7 @@ impl Lookups {
         name: &str,
     ) -> Option<Arc<Document>> {
         if self.keyed {
-            return (whole.corpus(Some(name)).pages.into_iter())
+            return (whole.corpus(Some(name), true).pages.into_iter())
                 .next()
                 .map(|page| page.document);
         }
@@ -212,7 +212,7 @@ impl Lookups {
         // Keyed mode has no corpus to range over: a namespace listing copies
         // the view's page list once (the one graph-sized walk print keeps).
         let corpus = if self.keyed {
-            self.all_pages.get_or_init(|| whole.corpus(None))
+            self.all_pages.get_or_init(|| whole.corpus(None, true))
         } else {
             corpus
         };

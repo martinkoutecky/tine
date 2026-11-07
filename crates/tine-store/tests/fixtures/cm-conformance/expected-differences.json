@@ -311,12 +311,6 @@
         "frontend navigate [[2026-10-22]]: model (\"page\", \"owner\"), frontend (\"journal\", \"2026_22_10\") via (journal, 2026-10-22); backend agrees with the frontend",
         "frontend navigate [[22.10.2026]]: model (\"page\", \"owner\"), frontend (\"journal\", \"2026_22_10\") via (journal, 22.10.2026); backend agrees with the frontend",
         "frontend navigate [[Oct 22nd, 2026]]: model (\"page\", \"owner\"), frontend (\"journal\", \"2026_22_10\") via (journal, Oct 22nd, 2026); backend agrees with the frontend"
-      ],
-      "o2-alias-on-non-owner-twin": [
-        "frontend navigate [[zed]]: model (\"page\", \"zed\"), frontend (\"page\", \"a\") via (page, a); backend agrees with the frontend"
-      ],
-      "o2-date-alias-on-twin": [
-        "frontend navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), frontend (\"page\", \"a\") via (page, A); backend agrees with the frontend"
       ]
     }
   },
@@ -367,27 +361,25 @@
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
       ],
       "o1-twin-file-name-before-folder": [
-        "frontend all pages: row pages/foo.md (count —) owns no model page",
-        "frontend all pages: row pages/sub/Foo.md (count 1) owns no model page"
+        "frontend all pages: row pages/foo.md (count 1) owns no model page",
+        "frontend all pages: row pages/sub/Foo.md (count —) owns no model page"
       ],
       "o1-twin-journal-day": [
-        "frontend all pages: row journals/2026_10_26.md (count 1) owns no model page"
+        "frontend all pages: row journals/2026-10-26.md (count 1) owns no model page"
       ],
       "o1-twin-markdown-first": [
-        "frontend all pages: row pages/Foo.markdown (count —) owns no model page",
-        "frontend all pages: row pages/foo.md (count 1) owns no model page"
+        "frontend all pages: row pages/Foo.markdown (count 1) owns no model page",
+        "frontend all pages: row pages/foo.md (count —) owns no model page"
       ],
       "o1-twin-title-vs-file-name": [
-        "frontend all pages: row pages/a.md (count —) owns no model page",
-        "frontend all pages: row pages/zed.md (count 2) owns no model page"
+        "frontend all pages: row pages/a.md (count 2) owns no model page",
+        "frontend all pages: row pages/zed.md (count —) owns no model page"
       ],
       "o2-alias-on-non-owner-twin": [
         "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: file pages/b.md has no row (hidden as an OG built-in page, A11)",
-        "frontend all pages: model page (\"page\", \"zed\") is reference-only and has no row",
-        "frontend all pages: row pages/a.md (count 1) owns no model page",
-        "frontend all pages: row pages/b.md (count —) owns no model page",
-        "frontend page list: model page \"zed\" is not listed"
+        "frontend all pages: row pages/a.md (count 0) owns no model page",
+        "frontend all pages: row pages/b.md (count —) owns no model page"
       ],
       "o2-date-alias-on-owner": [
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
@@ -398,11 +390,8 @@
       "o2-date-alias-on-twin": [
         "frontend all pages: file pages/2026-10-26.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
-        "frontend all pages: model page (\"journal\", \"oct 26th, 2026\") is reference-only and has no row",
-        "frontend all pages: row pages/2026-10-26.md (count —) owns no model page",
-        "frontend all pages: row pages/A.md (count 1) owns no model page",
-        "frontend linked refs header of (\"journal\", \"oct 26th, 2026\") [[oct 26th, 2026]]: model 1, header 2",
-        "frontend page list: model page \"oct 26th, 2026\" is not listed"
+        "frontend all pages: row pages/2026-10-26.md (count 0) owns no model page",
+        "frontend all pages: row pages/A.md (count —) owns no model page"
       ],
       "q1-duplicate-claim": [
         "frontend all pages: row pages/Foo.md (count 1) owns no model page",
@@ -720,9 +709,6 @@
       ],
       "n7-sync-conflict-names": [
         "pages/foo.md: launch walk \"foo\", answer Some(\"Bar\")"
-      ],
-      "o1-twin-journal-day": [
-        "journals/2026-10-26.md: launch walk \"Oct 26th, 2026\", answer None"
       ],
       "o1-twin-title-vs-file-name": [
         "pages/a.md: launch walk \"a\", answer Some(\"ZED\")"
@@ -1566,13 +1552,8 @@
         "G10/B4a: Favorites exclusion setting changed to Some(\"Saved\")",
         "G10/B4a: computed after-meaning links: model [[[\"page\",\"saved\"],[\"page\",\"target\"]],[[\"page\",\"r\"],[\"page\",\"saved\"]],[[\"page\",\"r\"],[\"page\",\"saved/virtual\"]]], actual writer [[[\"page\",\"r\"],[\"page\",\"saved\"]],[[\"page\",\"r\"],[\"page\",\"saved/virtual\"]]]"
       ],
-      "r13-inactive-journal-anchor: Oct 26th, 2026 -> Later: offers/automatic": [
-        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Later\",\"survivor\":null}]",
-        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
-      ],
-      "r13-inactive-journal-anchor: Oct 26th, 2026 -> Later: {\"destination\":\"Later\",\"survivor\":null}": [
-        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
-      ],
+      "r13-inactive-journal-anchor: Oct 26th, 2026 -> Later: offers/automatic": [],
+      "r13-inactive-journal-anchor: Oct 26th, 2026 -> Later: {\"destination\":\"Later\",\"survivor\":null}": [],
       "r13-journal-parent-loss: A -> B: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":null}], Tine []",
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
@@ -2530,48 +2511,15 @@
       "n5-title-differs-from-stem": [],
       "n6-title-rename": [],
       "n7-sync-conflict-names": [],
-      "o1-twin-file-name-before-folder": [
-        "owner of (page, \"foo\"): model pages/foo.md, Tine pages/sub/Foo.md",
-        "counts of (\"page\", \"foo\") (pages/foo.md): model 1, Tine none (non-owner twin)"
-      ],
-      "o1-twin-journal-day": [
-        "owner of (journal, \"oct 26th, 2026\"): model journals/2026-10-26.md, Tine journals/2026_10_26.md",
-        "counts of (\"journal\", \"oct 26th, 2026\") (journals/2026-10-26.md): model 1, Tine none"
-      ],
-      "o1-twin-markdown-first": [
-        "owner of (page, \"foo\"): model pages/Foo.markdown, Tine pages/foo.md",
-        "counts of (\"page\", \"foo\") (pages/Foo.markdown): model 1, Tine none (non-owner twin)"
-      ],
-      "o1-twin-title-vs-file-name": [
-        "owner of (page, \"zed\"): model pages/a.md, Tine pages/zed.md",
-        "counts of (\"page\", \"zed\") (pages/a.md): model 2, Tine none (non-owner twin)"
-      ],
-      "o2-alias-on-non-owner-twin": [
-        "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"zed\"}",
-        "alias group of (\"page\", \"zed\"): model {\"zed\"}, Tine {\"a\", \"zed\"}",
-        "[[zed]] declared by pages/b.md, which does not own \"a\"",
-        "backlink count of (\"page\", \"a\") (pages/a.md): model 0, Tine 1 (as Tine's Linked References, which differ from the model's)",
-        "Linked References of (\"page\", \"a\"): Tine has block (\"pages/Notes.md\", 0), model does not",
-        "link \"notes\" -> \"a\": Tine has it, model does not",
-        "link \"notes\" -> \"zed\": model has it, Tine does not",
-        "navigate [[zed]]: model (\"page\", \"zed\"), Tine (\"page\", \"a\")",
-        "pages: model has (\"page\", \"zed\"), Tine does not"
-      ],
+      "o1-twin-file-name-before-folder": [],
+      "o1-twin-journal-day": [],
+      "o1-twin-markdown-first": [],
+      "o1-twin-title-vs-file-name": [],
+      "o2-alias-on-non-owner-twin": [],
       "o2-alias-owner-path-order": [],
       "o2-date-alias-on-owner": [],
       "o2-date-alias-on-twin": [
-        "owner of (page, \"a\"): model pages/2026-10-26.md, Tine pages/A.md",
-        "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"oct 26th, 2026\"}",
-        "[[a]] declared by pages/2026-10-26.md, which does not own \"a\"",
-        "counts of (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine none (non-owner twin)",
-        "query \"any(direct_refs, journal = true)\": native list reads [\"2026-10-26\", \"2026-10-26\"] in block (\"pages/A.md\", 0) as a day, the query does not",
-        "query \"any(direct_refs, journal = true)\": block (\"pages/2026-10-26.md\", 0) matches, the native list reads no day in it",
-        "Linked References of (\"journal\", \"oct 26th, 2026\"): Tine has block (\"pages/2026-10-26.md\", 0), model does not",
-        "Linked References of (\"page\", \"a\"): Tine has block (\"pages/Notes.md\", 0), model does not",
-        "link \"notes\" -> \"a\": Tine has it, model does not",
-        "link \"notes\" -> \"oct 26th, 2026\": model has it, Tine does not",
-        "navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), Tine (\"page\", \"a\")",
-        "pages: model has (\"journal\", \"oct 26th, 2026\"), Tine does not"
+        "query \"any(direct_refs, journal = true)\": native list reads [\"2026-10-26\", \"2026-10-26\"] in block (\"pages/A.md\", 0) as a day, the query does not"
       ],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [
@@ -2656,66 +2604,6 @@
     },
     "harnessSkipped": [],
     "random": {
-      "[duplicate claim] O1 owners: model path order vs Tine claimant order": {
-        "detail": "owner of (page, \"a\"): model pages/2026-10-26.md, Tine pages/A.md",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "title:: a\nalias:: a\n",
-            "pages/A.md": "alias:: 2026-10-26\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "x"
-                  },
-                  {
-                    "refs": "x"
-                  }
-                ]
-              },
-              "tine": "(or [[x]] [[x]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "or": [
-                  {
-                    "name": "a"
-                  },
-                  {
-                    "name": "N/y"
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'a' or name = 'N/y')"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] alias group: Tine larger": {
-        "detail": "alias group of (\"page\", \"a\"): model {\"a\"}, Tine {\"a\", \"x\"}",
-        "graph": {
-          "files": {
-            "pages/A.md": "- N/y mentioned\n",
-            "pages/a.md": "alias:: x\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "N/y"
-              },
-              "tine": "[[N/y]]"
-            }
-          ]
-        }
-      },
       "[duplicate claim] alias group: model larger": {
         "detail": "alias group of (\"journal\", \"oct 26th, 2026\"): model {\"oct 26th, 2026\", \"x\"}, Tine {\"oct 26th, 2026\"}",
         "graph": {
@@ -2739,25 +2627,6 @@
                 "name": "n/y"
               },
               "tine": "@page and name = 'n/y'"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] alias owner: declared by a non-owner twin": {
-        "detail": "[[x]] declared by pages/a.md, which does not own \"a\"",
-        "graph": {
-          "files": {
-            "pages/A.md": "- N/y mentioned\n",
-            "pages/a.md": "alias:: x\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "N/y"
-              },
-              "tine": "[[N/y]]"
             }
           ]
         }
@@ -2812,47 +2681,6 @@
                 "name": "n/y"
               },
               "tine": "@page and name = 'n/y'"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] counts: the model's owner is a Tine non-owner twin": {
-        "detail": "counts of (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine none (non-owner twin)",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "title:: a\nalias:: a\n",
-            "pages/A.md": "alias:: 2026-10-26\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "x"
-                  },
-                  {
-                    "refs": "x"
-                  }
-                ]
-              },
-              "tine": "(or [[x]] [[x]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "or": [
-                  {
-                    "name": "a"
-                  },
-                  {
-                    "name": "N/y"
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'a' or name = 'N/y')"
             }
           ]
         }
@@ -2920,25 +2748,6 @@
           ]
         }
       },
-      "[duplicate claim] links: Tine-only": {
-        "detail": "link \"a\" -> \"b\": Tine has it, model does not",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/a.md": "alias:: n/y, n\n\n- note\n  rel:: [[A]]\n- TODO task [[B]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "A"
-              },
-              "tine": "[[A]]"
-            }
-          ]
-        }
-      },
       "[duplicate claim] links: model-only": {
         "detail": "link \"oct 26th, 2026\" -> \"oct 26th, 2026\": model has it, Tine does not",
         "graph": {
@@ -2970,130 +2779,13 @@
           ]
         }
       },
-      "[duplicate claim] navigate: model journal vs Tine page": {
-        "detail": "navigate [[2026-10-26]]: model (\"journal\", \"oct 26th, 2026\"), Tine (\"page\", \"a\")",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "title:: a\nalias:: a\n",
-            "pages/A.md": "alias:: 2026-10-26\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "x"
-                  },
-                  {
-                    "refs": "x"
-                  }
-                ]
-              },
-              "tine": "(or [[x]] [[x]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "or": [
-                  {
-                    "name": "a"
-                  },
-                  {
-                    "name": "N/y"
-                  }
-                ]
-              },
-              "tine": "@page and (name = 'a' or name = 'N/y')"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] navigate: model page vs Tine page": {
-        "detail": "navigate [[x]]: model (\"page\", \"x\"), Tine (\"page\", \"a\")",
-        "graph": {
-          "files": {
-            "pages/A.md": "- N/y mentioned\n",
-            "pages/a.md": "alias:: x\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "N/y"
-              },
-              "tine": "[[N/y]]"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] pages: Tine-only journal": {
-        "detail": "pages: Tine has (\"journal\", \"oct 26th, 2026\"), model does not",
-        "graph": {
-          "files": {
-            "pages/B.md": "title:: x\n\n- [[N/y]] and [[a]]\n  - child [[B]]\n- plain words\n- [#A] priority\n",
-            "pages/x.md": "- [[a]] and [[n/y]]\n- [[a]] and [[2026-10-26]]\n- [#A] priority\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "page": {
-                      "name": "n"
-                    }
-                  },
-                  {
-                    "not": {
-                      "refs": "n/y"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and (page \"n\") (not [[n/y]]))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "2026-10-26"
-              },
-              "tine": "@page and name = '2026-10-26'"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] pages: Tine-only page": {
-        "detail": "pages: Tine has (\"page\", \"b\"), model does not",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/a.md": "alias:: n/y, n\n\n- note\n  rel:: [[A]]\n- TODO task [[B]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "A"
-              },
-              "tine": "[[A]]"
-            }
-          ]
-        }
-      },
       "[duplicate claim] pages: model-only page": {
-        "detail": "pages: model has (\"page\", \"a\"), Tine does not",
+        "detail": "pages: model has (\"page\", \"n\"), Tine does not",
         "graph": {
           "files": {
-            "pages/B.md": "- see [[2026-10-26]]\n",
-            "pages/N%2Fy.md": "- TODO task [[B]]\n- #2026-10-26 tagged\n- TODO task [[a]]\n",
-            "pages/n%2Fy.md": "title:: B\nalias:: A\n\n- [#A] priority\n  - child [[B]]\n"
+            "journals/2026_10_26.md": "alias:: 2026-10-26\n\n- see [[a]]\n",
+            "pages/N%2Fy.md": "",
+            "pages/n%2Fy.md": "alias:: n/y, B\n"
           },
           "queries": [
             {
@@ -3101,48 +2793,15 @@
               "dialect": "og",
               "q": {
                 "or": [
+                  {
+                    "refs": "2026-10-26"
+                  },
                   {
                     "refs": "n"
-                  },
-                  {
-                    "refs": "n/y"
                   }
                 ]
               },
-              "tine": "(or [[n]] [[n/y]])"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] query @block with not: Tine-only block": {
-        "detail": "query \"(not [[a]])\": Tine has block (\"pages/x.md\", 1), model does not",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "",
-            "pages/B.md": "title:: x\n",
-            "pages/a.md": "",
-            "pages/x.md": "alias:: 2026-10-26\n\n- #n/y tagged\n- see [[n]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "a"
-                }
-              },
-              "tine": "(not [[a]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "not": {
-                  "name": "2026-10-26"
-                }
-              },
-              "tine": "@page and not (name = '2026-10-26')"
+              "tine": "(or [[2026-10-26]] [[n]])"
             }
           ]
         }
@@ -3174,25 +2833,6 @@
                 "name": "N/y"
               },
               "tine": "@page and name = 'N/y'"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] query @block: Tine-only block": {
-        "detail": "query \"[[A]]\": Tine has block (\"pages/a.md\", 0), model does not",
-        "graph": {
-          "files": {
-            "pages/A.md": "",
-            "pages/a.md": "alias:: n/y, n\n\n- note\n  rel:: [[A]]\n- TODO task [[B]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "A"
-              },
-              "tine": "[[A]]"
             }
           ]
         }
@@ -3229,117 +2869,6 @@
                 ]
               },
               "tine": "@page and (name = 'N/y' and not (name = 'x'))"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] query @page with not: Tine-only page": {
-        "detail": "query \"@page and not (name = '2026-10-26')\": Tine has page (\"page\", \"n\"), model does not",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "",
-            "pages/B.md": "title:: x\n",
-            "pages/a.md": "",
-            "pages/x.md": "alias:: 2026-10-26\n\n- #n/y tagged\n- see [[n]]\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "not": {
-                  "refs": "a"
-                }
-              },
-              "tine": "(not [[a]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "not": {
-                  "name": "2026-10-26"
-                }
-              },
-              "tine": "@page and not (name = '2026-10-26')"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] query @page: Tine-only page": {
-        "detail": "query \"@page and name = '2026-10-26'\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
-        "graph": {
-          "files": {
-            "pages/B.md": "title:: x\n\n- [[N/y]] and [[a]]\n  - child [[B]]\n- plain words\n- [#A] priority\n",
-            "pages/x.md": "- [[a]] and [[n/y]]\n- [[a]] and [[2026-10-26]]\n- [#A] priority\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "page": {
-                      "name": "n"
-                    }
-                  },
-                  {
-                    "not": {
-                      "refs": "n/y"
-                    }
-                  }
-                ]
-              },
-              "tine": "(and (page \"n\") (not [[n/y]]))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "2026-10-26"
-              },
-              "tine": "@page and name = '2026-10-26'"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] query @page: model-only page": {
-        "detail": "query \"@page and name = 'A'\": model has page (\"page\", \"a\"), Tine does not",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "title:: n\nalias:: 2026-10-26, 2026-10-26\n\n- N/y mentioned\n- [#A] priority\n  - child [[a]]\n",
-            "pages/a.md": "title:: x\n\n- plain words\n",
-            "pages/n.md": "alias:: a\n\n- plain words\n- note\n  rel:: [[N/y]]\n  - child [[n]]\n- plain words\n",
-            "pages/x.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "N/y"
-                  },
-                  {
-                    "not": {
-                      "page": {
-                        "name": "n/y"
-                      }
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[N/y]] (not (page \"n/y\")))"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "A"
-              },
-              "tine": "@page and name = 'A'"
             }
           ]
         }
@@ -3616,45 +3145,16 @@
       "n5-title-differs-from-stem": [],
       "n6-title-rename": [],
       "n7-sync-conflict-names": [],
-      "o1-twin-file-name-before-folder": [
-        "G1/B1: owners: (\"page\", \"foo\"): model \"pages/foo.md\", Tine Some(\"pages/sub/Foo.md\")",
-        "G1/B1: counts: (\"page\", \"foo\") (pages/foo.md): model 1, Tine None"
-      ],
-      "o1-twin-journal-day": [
-        "G1/B1: owners: (\"journal\", \"oct 26th, 2026\"): model \"journals/2026-10-26.md\", Tine Some(\"journals/2026_10_26.md\")",
-        "G1/B1: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026-10-26.md): model 1, Tine None"
-      ],
-      "o1-twin-markdown-first": [
-        "G1/B1: owners: (\"page\", \"foo\"): model \"pages/Foo.markdown\", Tine Some(\"pages/foo.md\")",
-        "G1/B1: counts: (\"page\", \"foo\") (pages/Foo.markdown): model 1, Tine None"
-      ],
-      "o1-twin-title-vs-file-name": [
-        "G1/B1: owners: (\"page\", \"zed\"): model \"pages/a.md\", Tine Some(\"pages/zed.md\")",
-        "G1/B1: counts: (\"page\", \"zed\") (pages/a.md): model 2, Tine None"
-      ],
-      "o2-alias-on-non-owner-twin": [
-        "G1/B1: pages: page (\"page\", \"zed\"): model=true, Tine=false",
-        "G1/B1: navigation: \"zed\": model [\"page\",\"zed\"], Tine (\"page\", \"a\")",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/Notes.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/a.md): model 0, Tine Some(1)",
-        "G1/B1: links: link \"notes\" -> \"a\": model=false, Tine=true",
-        "G1/B1: links: link \"notes\" -> \"zed\": model=true, Tine=false"
-      ],
+      "o1-twin-file-name-before-folder": [],
+      "o1-twin-journal-day": [],
+      "o1-twin-markdown-first": [],
+      "o1-twin-title-vs-file-name": [],
+      "o2-alias-on-non-owner-twin": [],
       "o2-alias-owner-path-order": [],
       "o2-date-alias-on-owner": [],
-      "o2-date-alias-on-twin": [
-        "G1/B1: pages: page (\"journal\", \"oct 26th, 2026\"): model=true, Tine=false",
-        "G1/B1: owners: (\"page\", \"a\"): model \"pages/2026-10-26.md\", Tine Some(\"pages/A.md\")",
-        "G1/B1: navigation: \"2026-10-26\": model [\"journal\",\"oct 26th, 2026\"], Tine (\"page\", \"a\")",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/Notes.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine None",
-        "G1/B1: linked refs: (\"journal\", \"oct 26th, 2026\"): model {(\"pages/Notes.md\", 0)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/Notes.md\", 0)}",
-        "G1/B1: links: link \"notes\" -> \"a\": model=false, Tine=true",
-        "G1/B1: links: link \"notes\" -> \"oct 26th, 2026\": model=true, Tine=false"
-      ],
+      "o2-date-alias-on-twin": [],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/Notes.md\", 0)}",
         "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
         "G11/B2a: links: link \"notes\" -> \"oct 26th, 2026\": model=false, Tine=true"
@@ -3709,9 +3209,7 @@
       "r12-preamble-queries": [],
       "r13-alias-edge-preview": [],
       "r13-alias-image-conflict": [],
-      "r13-configured-date-literal": [
-        "G11/B2a: navigation real file: \"2026-11-06\": model [\"page\",\"2026-11-06\"], Tine (\"journal\", \"nov 6th, 2026\")"
-      ],
+      "r13-configured-date-literal": [],
       "r13-empty-child-gains-parent": [],
       "r13-empty-namespace-output": [],
       "r13-empty-real-opens-self": [
@@ -3720,22 +3218,14 @@
       "r13-favorite-image-conflict": [],
       "r13-fileless-multiple": [],
       "r13-fixed-favorites-setting": [],
-      "r13-inactive-journal-anchor": [
-        "G1/B1: pages: page (\"journal\", \"oct 26th, 2026\"): model=false, Tine=true",
-        "G1/B1: navigation real file: \"Oct 26th, 2026\": model [\"page\",\"oct 26th, 2026\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
+      "r13-inactive-journal-anchor": [],
       "r13-journal-parent-loss": [],
       "r13-moving-child-vacates": [],
       "r13-multiple-declarers": [],
       "r13-org-merge-nested": [],
       "r13-original-conflict": [],
       "r13-own-child-chain": [],
-      "r13-plain-path-claimant-order": [
-        "G1/B1: pages: page (\"page\", \"hidden\"): model=false, Tine=true",
-        "G1/B1: owners: (\"page\", \"same\"): model \"pages/A.org\", Tine Some(\"pages/Same.md\")",
-        "G1/B1: counts: (\"page\", \"same\") (pages/A.org): model 0, Tine None",
-        "G1/B1: links: link \"same\" -> \"hidden\": model=false, Tine=true"
-      ],
+      "r13-plain-path-claimant-order": [],
       "r13-priority-anchor": [],
       "r13-protected-equal-header": [],
       "r13-query-image-conflict": [],
@@ -3745,11 +3235,7 @@
       "r13-singleton-merge": [],
       "r13-task-anchor": [],
       "r13-transitive-component": [],
-      "r13-unrelated-twins": [
-        "G1/B1: pages: page (\"page\", \"masked\"): model=false, Tine=true",
-        "G1/B1: navigation: \"Hidden\": model [\"page\",\"hidden\"], Tine (\"page\", \"z\")",
-        "G1/B1: links: link \"z\" -> \"masked\": model=false, Tine=true"
-      ],
+      "r13-unrelated-twins": [],
       "r13-unsafe-literal-safe-alternate": [],
       "r13-unsupported-query-favorite": [],
       "r13-virtual-capture": [],
@@ -3797,22 +3283,17 @@
       "random-0": [],
       "random-1": [],
       "random-10": [],
-      "random-100": [
-        "G1/B1: owners: (\"page\", \"a\"): model \"pages/N%2Fy.md\", Tine Some(\"pages/a.md\")",
-        "G1/B1: counts: (\"page\", \"a\") (pages/N%2Fy.md): model 0, Tine None"
-      ],
+      "random-100": [],
       "random-101": [],
       "random-102": [],
       "random-103": [],
       "random-104": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: query @page: Tine-only page (journal real): query \"@page and name = '2026-10-26'\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not"
       ],
       "random-105": [],
       "random-106": [],
       "random-107": [],
       "random-108": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
         "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
@@ -3823,40 +3304,20 @@
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
         "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true"
       ],
-      "random-109": [
-        "G1/B1: navigation: \"2026-10-26\": model [\"journal\",\"oct 26th, 2026\"], Tine (\"page\", \"a\")",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"(or (page \\\"N/y\\\") (page \\\"a\\\"))\": Tine has block (\"pages/a.md\", 0), model does not"
-      ],
-      "random-11": [
-        "G1/B1: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/n%2Fy.md\", 0), (\"pages/n%2Fy.md\", 2)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(2)",
-        "G1/B1: links: link \"n/y\" -> \"2026-10-26\": model=false, Tine=true"
-      ],
-      "random-110": [
-        "G1/B1: pages: page (\"journal\", \"oct 26th, 2026\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"n/y\"): model {(\"pages/A.md\", 0)}, Tine {(\"pages/A.md\", 0), (\"pages/a.md\", 0), (\"pages/a.md\", 1)}",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/A.md\", 0), (\"pages/A.md\", 3)}, Tine {(\"pages/A.md\", 0), (\"pages/A.md\", 3), (\"pages/a.md\", 0), (\"pages/a.md\", 1)}",
-        "G1/B1: links: link \"a\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
-      "random-111": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
+      "random-109": [],
+      "random-11": [],
+      "random-110": [],
+      "random-111": [],
       "random-112": [],
       "random-113": [],
       "random-114": [],
       "random-115": [],
       "random-116": [
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/2026-10-26.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 1), (\"pages/x.md\", 1)}",
-        "G1/B1: links: link \"b\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"b\" -> \"rel\": model=false, Tine=true"
+        "G2/B2: navigation real file: \"B\": model [\"page\",\"b\"], Tine (\"page\", \"2026-10-26\")"
       ],
       "random-117": [],
       "random-118": [],
-      "random-119": [
-        "G1/B1: owners: (\"page\", \"n\"): model \"pages/N%2Fy.md\", Tine Some(\"pages/n.md\")",
-        "G1/B1: counts: (\"page\", \"n\") (pages/N%2Fy.md): model 1, Tine None"
-      ],
+      "random-119": [],
       "random-12": [
         "G2/B2: navigation real file: \"N/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"x\")",
         "G2/B2: navigation real file: \"n/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"x\")"
@@ -3870,68 +3331,26 @@
       "random-126": [],
       "random-127": [],
       "random-128": [],
-      "random-129": [
-        "G1/B1: pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "G1/B1: navigation: \"N/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"b\")",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"journals/2026_10_27.md\", 0), (\"journals/2026_10_27.md\", 1), (\"pages/B.md\", 0)}, Tine {(\"journals/2026_10_27.md\", 0), (\"journals/2026_10_27.md\", 1), (\"pages/n%2Fy.md\", 0), (\"pages/n%2Fy.md\", 1), (\"pages/n%2Fy.md\", 2)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/a.md): model 3, Tine Some(6)",
-        "G1/B1: linked refs: (\"journal\", \"oct 26th, 2026\"): model {(\"pages/B.md\", 1)}, Tine {(\"pages/B.md\", 1), (\"pages/n%2Fy.md\", 3)}",
-        "G1/B1: linked refs: (\"page\", \"x\"): model {(\"pages/a.md\", 0)}, Tine {(\"pages/a.md\", 0), (\"pages/n%2Fy.md\", 2)}",
-        "G1/B1: query @block: model-only block (pre-block): query \"(page \\\"B\\\")\": model has block (\"pages/B.md\", 0), Tine does not",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"(page \\\"B\\\")\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(page \\\"B\\\")\": Tine has block (\"pages/n%2Fy.md\", 1), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(page \\\"B\\\")\": Tine has block (\"pages/n%2Fy.md\", 2), model does not",
-        "G1/B1: links: link \"b\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"b\" -> \"x\": model=false, Tine=true"
-      ],
+      "random-129": [],
       "random-13": [],
       "random-130": [],
       "random-131": [],
       "random-132": [
-        "G1/B1: pages: page (\"page\", \"a\"): model=true, Tine=false",
-        "G1/B1: pages: page (\"page\", \"x\"): model=true, Tine=false",
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
-        "G1/B1: navigation: \"A\": model [\"page\",\"a\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: navigation: \"a\": model [\"page\",\"a\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: navigation: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"n/y\")",
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {(\"journals/2026_10_27.md\", 0), (\"pages/N%2Fy.md\", 4)}, Tine {(\"journals/2026_10_27.md\", 0), (\"pages/N%2Fy.md\", 4), (\"pages/N%2Fy.md\", 5)}",
         "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, Tine Some(3)",
         "G11/B2a: linked refs: (\"journal\", \"oct 27th, 2026\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"pages/N%2Fy.md\", 4)}, Tine {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"journals/2026_10_26.md\", 2), (\"pages/N%2Fy.md\", 4), (\"pages/N%2Fy.md\", 5)}",
         "G11/B2a: counts: (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 3, Tine Some(5)",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 1), (\"pages/N%2Fy.md\", 5)}, Tine {(\"pages/N%2Fy.md\", 5)}",
         "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 2, Tine Some(1)",
-        "G1/B1: linked refs: (\"page\", \"n/y\"): model {(\"journals/2026_10_27.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"journals/2026_10_26.md\", 4), (\"journals/2026_10_27.md\", 1), (\"journals/2026_10_27.md\", 2)}",
-        "G1/B1: counts: (\"page\", \"n/y\") (pages/N%2Fy.md): model 1, Tine Some(5)",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"journals/2026_10_27.md\", 2), (\"pages/N%2Fy.md\", 3)}, Tine {(\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"journals/2026_10_26.md\", 4), (\"journals/2026_10_27.md\", 1), (\"journals/2026_10_27.md\", 2)}",
-        "G1/B1: linked refs: (\"page\", \"x\"): model {(\"journals/2026_10_26.md\", 4)}, Tine {(\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"journals/2026_10_26.md\", 4), (\"journals/2026_10_27.md\", 1), (\"journals/2026_10_27.md\", 2)}",
-        "G1/B1: query @block: Tine-only block (): query \"(or [[n/y]] [[n/y]])\": Tine has block (\"journals/2026_10_26.md\", 2), model does not",
-        "G1/B1: query @block: Tine-only block (): query \"(or [[n/y]] [[n/y]])\": Tine has block (\"journals/2026_10_26.md\", 3), model does not",
-        "G1/B1: query @block: Tine-only block (): query \"(or [[n/y]] [[n/y]])\": Tine has block (\"journals/2026_10_27.md\", 2), model does not",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"(or [[n/y]] [[n/y]])\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
         "G11/B2a: query @page with not: Tine-only page (journal real): query \"@page and (name = '2026-10-26' and not (name = 'B'))\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
-        "G1/B1: links: link \"n/y\" -> \"a\": model=true, Tine=false",
-        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false",
-        "G1/B1: links: link \"oct 26th, 2026\" -> \"a\": model=true, Tine=false",
-        "G1/B1: links: link \"oct 26th, 2026\" -> \"n/y\": model=false, Tine=true",
-        "G1/B1: links: link \"oct 26th, 2026\" -> \"x\": model=true, Tine=false",
-        "G1/B1: links: link \"oct 27th, 2026\" -> \"a\": model=true, Tine=false"
+        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
       ],
       "random-133": [],
       "random-134": [],
       "random-135": [],
       "random-136": [],
       "random-137": [],
-      "random-138": [
-        "G1/B1: owners: (\"page\", \"n/y\"): model \"pages/B.md\", Tine Some(\"pages/N%2Fy.md\")",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/n%2Fy.md\", 0), (\"pages/n%2Fy.md\", 1), (\"pages/n%2Fy.md\", 2)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/A.md): model 0, Tine Some(3)",
-        "G1/B1: linked refs: (\"page\", \"n/y\"): model {}, Tine {(\"pages/A.md\", 3)}",
-        "G1/B1: counts: (\"page\", \"n/y\") (pages/B.md): model 0, Tine None",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {}, Tine {(\"pages/N%2Fy.md\", 0)}",
-        "G1/B1: links: link \"a\" -> \"n/y\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"a\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"n\": model=false, Tine=true"
-      ],
+      "random-138": [],
       "random-139": [],
       "random-14": [],
       "random-140": [],
@@ -3952,18 +3371,7 @@
       "random-154": [],
       "random-155": [],
       "random-156": [
-        "G1/B1: navigation: \"B\": model [\"page\",\"b\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: navigation real file: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/N%2Fy.md\", 3)}, Tine {(\"pages/N%2Fy.md\", 3), (\"pages/n%2Fy.md\", 1)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/A.md): model 1, Tine Some(2)",
-        "G1/B1: linked refs: (\"page\", \"x\"): model {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1)}, Tine {(\"pages/N%2Fy.md\", 1), (\"pages/n%2Fy.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"x\") (pages/x.md): model 2, Tine Some(3)",
-        "G1/B1: query @block with not: model-only block (pre-block): query \"(not [[B]])\": model has block (\"pages/N%2Fy.md\", 0), Tine does not",
-        "G1/B1: query @block with not: model-only block (): query \"(not [[B]])\": model has block (\"pages/N%2Fy.md\", 1), Tine does not",
-        "G1/B1: query @block with not: model-only block (): query \"(not [[B]])\": model has block (\"pages/N%2Fy.md\", 2), Tine does not",
-        "G1/B1: query @block with not: model-only block (): query \"(not [[B]])\": model has block (\"pages/N%2Fy.md\", 3), Tine does not",
-        "G1/B1: query @block with not: Tine-only block (pre-block, non-owner file): query \"(not [[B]])\": Tine has block (\"pages/B.md\", 0), model does not",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[B]])\": Tine has block (\"pages/B.md\", 1), model does not"
+        "G2/B2: navigation real file: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"n/y\")"
       ],
       "random-157": [],
       "random-158": [],
@@ -3973,57 +3381,21 @@
       "random-161": [],
       "random-162": [],
       "random-163": [],
-      "random-164": [
-        "G1/B1: pages: page (\"page\", \"b\"): model=false, Tine=true",
-        "G1/B1: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
-        "G1/B1: linked refs: (\"page\", \"todo\"): model {(\"pages/2026-10-26.md\", 0)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/x.md\", 2)}",
-        "G1/B1: query @block with not: Tine-only block (pre-block, non-owner file): query \"(not [[A]])\": Tine has block (\"pages/x.md\", 0), model does not",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/x.md\", 1), model does not",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/x.md\", 2), model does not",
-        "G1/B1: query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"b\"), model does not",
-        "G1/B1: links: link \"2026-10-26\" -> \"b\": model=false, Tine=true"
-      ],
+      "random-164": [],
       "random-165": [],
       "random-166": [],
       "random-167": [],
       "random-168": [],
       "random-169": [],
       "random-17": [],
-      "random-170": [
-        "G1/B1: pages: page (\"page\", \"a\"): model=true, Tine=false",
-        "G1/B1: navigation: \"A\": model [\"page\",\"a\"], Tine (\"page\", \"b\")",
-        "G1/B1: navigation: \"a\": model [\"page\",\"a\"], Tine (\"page\", \"b\")",
-        "G1/B1: linked refs: (\"page\", \"b\"): model {(\"pages/N%2Fy.md\", 0)}, Tine {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2)}",
-        "G1/B1: counts: (\"page\", \"b\") (pages/B.md): model 1, Tine Some(2)",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/N%2Fy.md\", 2)}, Tine {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2)}",
-        "G1/B1: links: link \"n/y\" -> \"a\": model=true, Tine=false"
-      ],
+      "random-170": [],
       "random-171": [],
-      "random-172": [
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/A.md\", 0), (\"pages/A.md\", 1)}, Tine {(\"pages/A.md\", 1), (\"pages/a.md\", 0)}"
-      ],
+      "random-172": [],
       "random-173": [],
-      "random-174": [
-        "G1/B1: pages: page (\"journal\", \"oct 26th, 2026\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"b\"): model {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2), (\"pages/N%2Fy.md\", 3)}, Tine {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2), (\"pages/N%2Fy.md\", 3), (\"pages/n%2Fy.md\", 0)}",
-        "G1/B1: query @page: Tine-only page (journal ref-only): query \"@page and name = '2026-10-26'\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
-        "G1/B1: links: link \"n/y\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "random-174": [],
       "random-175": [],
       "random-176": [],
-      "random-177": [
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: owners: (\"page\", \"n/y\"): model \"pages/2026-10-26.md\", Tine Some(\"pages/N%2Fy.md\")",
-        "G1/B1: counts: (\"page\", \"n/y\") (pages/2026-10-26.md): model 4, Tine None",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/2026-10-26.md\", 3), (\"pages/a.md\", 0), (\"pages/a.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/2026-10-26.md\", 3), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/N%2Fy.md\", 3), (\"pages/a.md\", 0), (\"pages/a.md\", 1)}",
-        "G1/B1: counts: (\"page\", \"n\") (pages/A.md): model 5, Tine Some(8)",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/2026-10-26.md\", 3), (\"pages/A.md\", 0), (\"pages/A.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/2026-10-26.md\", 3), (\"pages/A.md\", 0), (\"pages/A.md\", 1), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/N%2Fy.md\", 3)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/a.md): model 5, Tine Some(8)",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(or [[a]] [[A]])\": Tine has block (\"pages/N%2Fy.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file, own alias by link): query \"(or [[a]] [[A]])\": Tine has block (\"pages/N%2Fy.md\", 1), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file, own direct by priority): query \"(or [[a]] [[A]])\": Tine has block (\"pages/N%2Fy.md\", 2), model does not",
-        "G1/B1: links: link \"n/y\" -> \"rel\": model=false, Tine=true"
-      ],
+      "random-177": [],
       "random-178": [],
       "random-179": [],
       "random-18": [],
@@ -4044,20 +3416,7 @@
       "random-190": [],
       "random-191": [],
       "random-192": [],
-      "random-193": [
-        "G1/B1: navigation: \"n\": model [\"page\",\"x\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: linked refs: (\"page\", \"b\"): model {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2)}, Tine {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2), (\"pages/N%2Fy.md\", 4), (\"pages/n%2Fy.md\", 0), (\"pages/x.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"b\") (pages/B.md): model 2, Tine Some(5)",
-        "G1/B1: linked refs: (\"page\", \"n/y\"): model {(\"pages/B.md\", 0)}, Tine {(\"pages/B.md\", 0), (\"pages/x.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"n/y\") (pages/N%2Fy.md): model 1, Tine Some(2)",
-        "G1/B1: linked refs: (\"page\", \"x\"): model {(\"pages/B.md\", 0), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 4)}, Tine {(\"pages/B.md\", 0), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2), (\"pages/N%2Fy.md\", 4), (\"pages/n%2Fy.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"x\") (pages/x.md): model 3, Tine Some(5)",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 3)}, Tine {(\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 3), (\"pages/n%2Fy.md\", 2)}",
-        "G1/B1: query @block with not: model-only block (via owner page key): query \"(and [[n/y]] (not [[n]]))\": model has block (\"pages/N%2Fy.md\", 1), Tine does not",
-        "G1/B1: query @block with not: model-only block (via owner page key): query \"(and [[n/y]] (not [[n]]))\": model has block (\"pages/N%2Fy.md\", 3), Tine does not",
-        "G1/B1: links: link \"x\" -> \"b\": model=false, Tine=true",
-        "G1/B1: links: link \"x\" -> \"n/y\": model=false, Tine=true"
-      ],
+      "random-193": [],
       "random-194": [],
       "random-195": [],
       "random-196": [],
@@ -4065,19 +3424,9 @@
       "random-198": [],
       "random-199": [],
       "random-2": [],
-      "random-20": [
-        "G1/B1: pages: page (\"journal\", \"oct 26th, 2026\"): model=false, Tine=true",
-        "G1/B1: owners: (\"page\", \"x\"): model \"pages/B.md\", Tine Some(\"pages/x.md\")",
-        "G1/B1: counts: (\"page\", \"x\") (pages/B.md): model 0, Tine None",
-        "G1/B1: linked refs: (\"page\", \"n/y\"): model {(\"pages/B.md\", 1)}, Tine {(\"pages/B.md\", 1), (\"pages/x.md\", 0)}",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/B.md\", 1)}, Tine {(\"pages/B.md\", 1), (\"pages/x.md\", 0)}",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/B.md\", 1), (\"pages/B.md\", 4)}, Tine {(\"pages/B.md\", 1), (\"pages/B.md\", 4), (\"pages/x.md\", 0), (\"pages/x.md\", 1), (\"pages/x.md\", 2)}",
-        "G1/B1: query @page: Tine-only page (journal ref-only): query \"@page and name = '2026-10-26'\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
-        "G1/B1: links: link \"x\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "random-20": [],
       "random-200": [],
       "random-201": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/N%2Fy.md\", 2), (\"pages/a.md\", 2)}",
         "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(2)",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"pages/a.md\", 2)}, Tine {(\"pages/N%2Fy.md\", 2), (\"pages/a.md\", 2)}",
@@ -4089,86 +3438,20 @@
       "random-202": [],
       "random-203": [],
       "random-204": [],
-      "random-205": [
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/A.md\", 1)}, Tine {(\"pages/A.md\", 1), (\"pages/B.md\", 1)}",
-        "G1/B1: counts: (\"page\", \"n\") (pages/n.md): model 1, Tine Some(2)"
-      ],
+      "random-205": [],
       "random-206": [],
       "random-207": [],
       "random-208": [],
-      "random-209": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
-      "random-21": [
-        "G1/B1: pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"n/y\"): model=false, Tine=true",
-        "G1/B1: owners: (\"page\", \"x\"): model \"pages/B.md\", Tine Some(\"pages/x.md\")",
-        "G1/B1: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"page\", \"x\")",
-        "G1/B1: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/B.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(1)",
-        "G1/B1: counts: (\"page\", \"x\") (pages/B.md): model 0, Tine None",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[a]])\": Tine has block (\"pages/x.md\", 1), model does not",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[a]])\": Tine has block (\"pages/x.md\", 2), model does not",
-        "G1/B1: query @page with not: Tine-only page (page ref-only): query \"@page and not (name = '2026-10-26')\": Tine has page (\"page\", \"n\"), model does not",
-        "G1/B1: query @page with not: Tine-only page (page ref-only): query \"@page and not (name = '2026-10-26')\": Tine has page (\"page\", \"n/y\"), model does not",
-        "G1/B1: links: link \"x\" -> \"2026-10-26\": model=false, Tine=true",
-        "G1/B1: links: link \"x\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"x\" -> \"n/y\": model=false, Tine=true"
-      ],
+      "random-209": [],
+      "random-21": [],
       "random-210": [],
       "random-211": [],
-      "random-212": [
-        "G1/B1: pages: page (\"page\", \"b\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"todo\"): model=false, Tine=true",
-        "G1/B1: navigation: \"n\": model [\"page\",\"n\"], Tine (\"page\", \"a\")",
-        "G1/B1: navigation: \"n/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"a\")",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"[[A]]\": Tine has block (\"pages/a.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file, own direct by link): query \"[[A]]\": Tine has block (\"pages/a.md\", 1), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"[[A]]\": Tine has block (\"pages/a.md\", 2), model does not",
-        "G1/B1: links: link \"a\" -> \"b\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"rel\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"todo\": model=false, Tine=true"
-      ],
+      "random-212": [],
       "random-213": [],
-      "random-214": [
-        "G1/B1: pages: page (\"page\", \"a\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"n/y\"): model=false, Tine=true",
-        "G1/B1: owners: (\"page\", \"x\"): model \"pages/n%2Fy.md\", Tine Some(\"pages/x.md\")",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {}, Tine {(\"pages/x.md\", 0), (\"pages/x.md\", 1)}",
-        "G1/B1: counts: (\"page\", \"n\") (pages/2026-10-26.md): model 0, Tine Some(2)",
-        "G1/B1: counts: (\"page\", \"x\") (pages/n%2Fy.md): model 0, Tine None",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(and [[x]] (not [[N/y]]))\": Tine has block (\"pages/x.md\", 0), model does not",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(and [[x]] (not [[N/y]]))\": Tine has block (\"pages/x.md\", 2), model does not",
-        "G1/B1: query @page with not: Tine-only page (page ref-only): query \"@page and (name = 'n/y' and not (name = '2026-10-26'))\": Tine has page (\"page\", \"n/y\"), model does not",
-        "G1/B1: links: link \"x\" -> \"a\": model=false, Tine=true",
-        "G1/B1: links: link \"x\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"x\" -> \"n/y\": model=false, Tine=true"
-      ],
-      "random-215": [
-        "G1/B1: pages: page (\"journal\", \"oct 26th, 2026\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"b\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"(or [[x]] [[A]])\": Tine has block (\"pages/B.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(or [[x]] [[A]])\": Tine has block (\"pages/B.md\", 1), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(or [[x]] [[A]])\": Tine has block (\"pages/B.md\", 2), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file, own direct by priority): query \"(or [[x]] [[A]])\": Tine has block (\"pages/B.md\", 3), model does not",
-        "G1/B1: links: link \"a\" -> \"b\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"oct 26th, 2026\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"rel\": model=false, Tine=true"
-      ],
+      "random-214": [],
+      "random-215": [],
       "random-216": [],
-      "random-217": [
-        "G1/B1: pages: page (\"page\", \"todo\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"x\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"b\"): model {(\"pages/A.md\", 2), (\"pages/A.md\", 4)}, Tine {(\"pages/A.md\", 2), (\"pages/A.md\", 4), (\"pages/a.md\", 3)}",
-        "G1/B1: counts: (\"page\", \"b\") (pages/B.md): model 2, Tine Some(3)",
-        "G1/B1: linked refs: (\"journal\", \"oct 26th, 2026\"): model {(\"pages/A.md\", 3)}, Tine {(\"pages/A.md\", 3), (\"pages/a.md\", 1)}",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"[[n]]\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file, own alias|ns-prefix by link): query \"[[n]]\": Tine has block (\"pages/n%2Fy.md\", 1), model does not",
-        "G1/B1: links: link \"a\" -> \"todo\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"x\": model=false, Tine=true"
-      ],
+      "random-217": [],
       "random-218": [],
       "random-219": [],
       "random-22": [],
@@ -4183,25 +3466,12 @@
       "random-228": [],
       "random-229": [],
       "random-23": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
         "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(1)",
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true"
       ],
       "random-230": [],
-      "random-231": [
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/n%2Fy.md\", 2)}",
-        "G1/B1: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"journals/2026_10_26.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 1), (\"pages/n%2Fy.md\", 1)}",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"journals/2026_10_26.md\", 1), (\"journals/2026_10_26.md\", 2)}, Tine {(\"journals/2026_10_26.md\", 1), (\"journals/2026_10_26.md\", 2), (\"pages/n%2Fy.md\", 0), (\"pages/n%2Fy.md\", 4)}",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
-        "G1/B1: query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/n%2Fy.md\", 3), model does not",
-        "G1/B1: links: link \"n/y\" -> \"a\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"oct 26th, 2026\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"rel\": model=false, Tine=true"
-      ],
+      "random-231": [],
       "random-232": [],
       "random-233": [
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
@@ -4211,16 +3481,10 @@
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
         "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true"
       ],
-      "random-234": [
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/N%2Fy.md\", 0)}, Tine {(\"pages/N%2Fy.md\", 0), (\"pages/n%2Fy.md\", 1), (\"pages/n%2Fy.md\", 3), (\"pages/n%2Fy.md\", 5)}",
-        "G1/B1: linked refs: (\"page\", \"todo\"): model {(\"pages/N%2Fy.md\", 1)}, Tine {(\"pages/N%2Fy.md\", 1), (\"pages/n%2Fy.md\", 4)}",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {}, Tine {(\"pages/n%2Fy.md\", 4)}",
-        "G1/B1: links: link \"n/y\" -> \"n\": model=false, Tine=true"
-      ],
+      "random-234": [],
       "random-235": [],
       "random-236": [],
       "random-237": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
         "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
@@ -4228,26 +3492,8 @@
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
         "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true"
       ],
-      "random-238": [
-        "G1/B1: pages: page (\"page\", \"n/y\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/x.md\", 2)}, Tine {(\"pages/x.md\", 0), (\"pages/x.md\", 1), (\"pages/x.md\", 2)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/A.md): model 1, Tine Some(3)",
-        "G1/B1: linked refs: (\"page\", \"x\"): model {}, Tine {(\"pages/a.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"x\") (pages/x.md): model 0, Tine Some(1)",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"journals/2026_10_26.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 1), (\"pages/a.md\", 2), (\"pages/a.md\", 3), (\"pages/a.md\", 5)}",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"(or [[N/y]] (page \\\"a\\\"))\": Tine has block (\"pages/a.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(or [[N/y]] (page \\\"a\\\"))\": Tine has block (\"pages/a.md\", 1), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(or [[N/y]] (page \\\"a\\\"))\": Tine has block (\"pages/a.md\", 2), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(or [[N/y]] (page \\\"a\\\"))\": Tine has block (\"pages/a.md\", 4), model does not",
-        "G1/B1: links: link \"a\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"n/y\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"x\": model=false, Tine=true"
-      ],
-      "random-239": [
-        "G1/B1: pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"(page \\\"A\\\")\": Tine has block (\"pages/n.md\", 1), model does not",
-        "G1/B1: links: link \"a\" -> \"n\": model=false, Tine=true"
-      ],
+      "random-238": [],
+      "random-239": [],
       "random-24": [],
       "random-240": [],
       "random-241": [],
@@ -4255,14 +3501,12 @@
       "random-243": [],
       "random-244": [],
       "random-245": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"pages/n.md\", 0), (\"pages/n.md\", 1), (\"pages/n.md\", 2), (\"pages/n.md\", 4)}, Tine {(\"pages/n%2Fy.md\", 2), (\"pages/n.md\", 0), (\"pages/n.md\", 1), (\"pages/n.md\", 2), (\"pages/n.md\", 4)}",
         "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/n%2Fy.md): model 7, Tine Some(5)",
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
         "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
       ],
       "random-246": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}",
         "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 7, Tine Some(6)",
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
@@ -4280,7 +3524,6 @@
       "random-253": [],
       "random-254": [],
       "random-255": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"pages/N%2Fy.md\", 0)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/N%2Fy.md\", 0)}",
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
         "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
@@ -4289,35 +3532,16 @@
       "random-257": [],
       "random-258": [],
       "random-259": [],
-      "random-26": [
-        "G1/B1: pages: page (\"page\", \"b\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"todo\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"n/y\"): model {(\"pages/A.md\", 0)}, Tine {(\"pages/a.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"n/y\") (pages/n%2Fy.md): model 1, Tine Some(2)",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {}, Tine {(\"pages/a.md\", 1)}",
-        "G1/B1: query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n')\": Tine has page (\"page\", \"b\"), model does not",
-        "G1/B1: query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n')\": Tine has page (\"page\", \"todo\"), model does not",
-        "G1/B1: links: link \"a\" -> \"b\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"n\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"todo\": model=false, Tine=true"
-      ],
+      "random-26": [],
       "random-260": [],
       "random-261": [],
       "random-262": [],
-      "random-263": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
+      "random-263": [],
       "random-264": [],
       "random-265": [],
       "random-266": [],
       "random-267": [],
-      "random-268": [
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: linked refs: (\"page\", \"b\"): model {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/A.md\", 1), (\"pages/A.md\", 2), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 3)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/A.md\", 1), (\"pages/A.md\", 2), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 3), (\"pages/a.md\", 0)}",
-        "G1/B1: counts: (\"page\", \"b\") (pages/B.md): model 6, Tine Some(7)",
-        "G1/B1: query @block: Tine-only block (non-owner file, own alias by link): query \"(or [[N/y]] [[a]])\": Tine has block (\"pages/a.md\", 0), model does not",
-        "G1/B1: links: link \"a\" -> \"rel\": model=false, Tine=true"
-      ],
+      "random-268": [],
       "random-269": [],
       "random-27": [],
       "random-270": [],
@@ -4335,21 +3559,14 @@
       "random-279": [],
       "random-28": [],
       "random-280": [],
-      "random-281": [
-        "G1/B1: owners: (\"page\", \"a\"): model \"pages/N%2Fy.md\", Tine Some(\"pages/a.md\")",
-        "G1/B1: counts: (\"page\", \"a\") (pages/N%2Fy.md): model 1, Tine None"
-      ],
+      "random-281": [],
       "random-282": [],
       "random-283": [],
       "random-284": [],
       "random-285": [],
       "random-286": [],
       "random-287": [],
-      "random-288": [
-        "G1/B1: owners: (\"page\", \"a\"): model \"pages/2026-10-26.md\", Tine Some(\"pages/A.md\")",
-        "G1/B1: navigation: \"2026-10-26\": model [\"journal\",\"oct 26th, 2026\"], Tine (\"page\", \"a\")",
-        "G1/B1: counts: (\"page\", \"a\") (pages/2026-10-26.md): model 0, Tine None"
-      ],
+      "random-288": [],
       "random-289": [],
       "random-29": [],
       "random-290": [
@@ -4372,9 +3589,7 @@
       "random-30": [],
       "random-31": [],
       "random-32": [],
-      "random-33": [
-        "G1/B1: navigation: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"a\")"
-      ],
+      "random-33": [],
       "random-34": [],
       "random-35": [],
       "random-36": [],
@@ -4393,17 +3608,7 @@
       "random-48": [],
       "random-49": [],
       "random-5": [],
-      "random-50": [
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: navigation: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/x.md\", 2)}",
-        "G1/B1: counts: (\"page\", \"a\") (pages/A.md): model 0, Tine Some(1)",
-        "G1/B1: linked refs: (\"page\", \"b\"): model {(\"pages/A.md\", 0)}, Tine {(\"pages/A.md\", 0), (\"pages/n%2Fy.md\", 0), (\"pages/n%2Fy.md\", 1)}",
-        "G1/B1: query @block: Tine-only block (non-owner file, own direct by priority): query \"(or [[a]] [[a]])\": Tine has block (\"pages/x.md\", 2), model does not",
-        "G1/B1: links: link \"n/y\" -> \"a\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"b\": model=false, Tine=true",
-        "G1/B1: links: link \"n/y\" -> \"rel\": model=false, Tine=true"
-      ],
+      "random-50": [],
       "random-51": [],
       "random-52": [],
       "random-53": [],
@@ -4413,13 +3618,11 @@
       "random-57": [],
       "random-58": [],
       "random-59": [],
-      "random-6": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
+      "random-6": [],
       "random-60": [],
       "random-61": [
-        "G1/B1: navigation real file: \"A\": model [\"page\",\"a\"], Tine (\"journal\", \"oct 26th, 2026\")",
-        "G1/B1: navigation real file: \"a\": model [\"page\",\"a\"], Tine (\"journal\", \"oct 26th, 2026\")"
+        "G2/B2: navigation real file: \"A\": model [\"page\",\"a\"], Tine (\"journal\", \"oct 26th, 2026\")",
+        "G2/B2: navigation real file: \"a\": model [\"page\",\"a\"], Tine (\"journal\", \"oct 26th, 2026\")"
       ],
       "random-62": [],
       "random-63": [],
@@ -4440,18 +3643,9 @@
       "random-77": [],
       "random-78": [],
       "random-79": [
-        "G1/B1: navigation real file: \"n\": model [\"page\",\"n\"], Tine (\"page\", \"a\")",
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/A.md\", 0), (\"pages/A.md\", 1)}, Tine {(\"pages/A.md\", 1), (\"pages/n%2Fy.md\", 0), (\"pages/n%2Fy.md\", 2), (\"pages/n%2Fy.md\", 3)}",
-        "G1/B1: counts: (\"page\", \"n\") (pages/n.md): model 2, Tine Some(4)",
-        "G1/B1: linked refs: (\"page\", \"rel\"): model {(\"pages/A.md\", 1)}, Tine {(\"pages/A.md\", 1), (\"pages/n%2Fy.md\", 2)}",
-        "G1/B1: query @block: model-only block (pre-block, own alias|direct by linkableValue): query \"[[n]]\": model has block (\"pages/A.md\", 0), Tine does not",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file): query \"[[n]]\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file): query \"[[n]]\": Tine has block (\"pages/n%2Fy.md\", 1), model does not",
-        "G1/B1: query @block: Tine-only block (non-owner file, own alias by link): query \"[[n]]\": Tine has block (\"pages/n%2Fy.md\", 2), model does not"
+        "G2/B2: navigation real file: \"n\": model [\"page\",\"n\"], Tine (\"page\", \"a\")"
       ],
-      "random-8": [
-        "G1/B1: linked refs: (\"page\", \"n\"): model {(\"pages/A.md\", 0)}, Tine {(\"pages/a.md\", 0), (\"pages/a.md\", 3)}"
-      ],
+      "random-8": [],
       "random-80": [],
       "random-81": [],
       "random-82": [],
@@ -4462,30 +3656,9 @@
       "random-87": [],
       "random-88": [],
       "random-89": [],
-      "random-9": [
-        "G1/B1: pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "G1/B1: navigation: \"B\": model [\"page\",\"b\"], Tine (\"page\", \"n/y\")",
-        "G1/B1: query @block: Tine-only block (pre-block, non-owner file, own ns-prefix by linkableValue): query \"(or [[2026-10-26]] [[n]])\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
-        "G1/B1: links: link \"n/y\" -> \"n\": model=false, Tine=true"
-      ],
+      "random-9": [],
       "random-90": [],
-      "random-91": [
-        "G1/B1: pages: page (\"page\", \"a\"): model=true, Tine=false",
-        "G1/B1: pages: page (\"page\", \"n/y\"): model=false, Tine=true",
-        "G1/B1: pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "G1/B1: owners: (\"page\", \"n\"): model \"pages/2026-10-26.md\", Tine Some(\"pages/n.md\")",
-        "G1/B1: owners: (\"page\", \"x\"): model \"pages/a.md\", Tine Some(\"pages/x.md\")",
-        "G1/B1: navigation: \"A\": model [\"page\",\"a\"], Tine (\"page\", \"n\")",
-        "G1/B1: navigation: \"a\": model [\"page\",\"a\"], Tine (\"page\", \"n\")",
-        "G1/B1: counts: (\"page\", \"n\") (pages/2026-10-26.md): model 0, Tine None",
-        "G1/B1: counts: (\"page\", \"x\") (pages/a.md): model 0, Tine None",
-        "G1/B1: linked refs: (\"page\", \"a\"): model {(\"pages/2026-10-26.md\", 2), (\"pages/2026-10-26.md\", 3)}, Tine {}",
-        "G1/B1: query @block with not: Tine-only block (non-owner file, own direct by link): query \"(and [[N/y]] (not (page \\\"n/y\\\")))\": Tine has block (\"pages/n.md\", 2), model does not",
-        "G1/B1: query @page: model-only page (page ref-only): query \"@page and name = 'A'\": model has page (\"page\", \"a\"), Tine does not",
-        "G1/B1: links: link \"n\" -> \"a\": model=true, Tine=false",
-        "G1/B1: links: link \"n\" -> \"n/y\": model=false, Tine=true",
-        "G1/B1: links: link \"n\" -> \"rel\": model=false, Tine=true"
-      ],
+      "random-91": [],
       "random-92": [],
       "random-93": [],
       "random-94": [],
@@ -4493,14 +3666,13 @@
       "random-96": [],
       "random-97": [],
       "random-98": [
-        "G11/B2a: navigation real file: \"2026-10-26\": model [\"page\",\"2026-10-26\"], Tine (\"journal\", \"oct 26th, 2026\")",
         "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/A.md\", 1)}",
         "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(2)",
         "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"pages/A.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/A.md\", 1)}",
         "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 2, Tine Some(3)",
         "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
         "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true",
-        "G1/B1: links: link \"a\" -> \"oct 26th, 2026\": model=false, Tine=true",
+        "G11/B2a: links: link \"a\" -> \"oct 26th, 2026\": model=false, Tine=true",
         "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
       ],
       "random-99": []

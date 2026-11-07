@@ -569,7 +569,7 @@ fn unreadable_files_reports_skipped_non_utf8_page() {
         .iter()
         .any(|(id, reason)| id.as_str() == "pages/Bad.md" && !reason.is_empty()));
     assert!(view
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .all(|page| page.id != "pages/Bad.md"));

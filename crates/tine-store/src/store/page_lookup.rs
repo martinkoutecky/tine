@@ -93,19 +93,20 @@ mod tests {
         }
         let store = Store::open(root.path(), Default::default()).unwrap().0;
         let view = store.whole_graph_reconciled().unwrap();
-        let corpus = view.corpus(None);
+        let corpus = view.corpus(None, false);
         for name in ["Twin", "twin", "TWIN", "Other", "Oct 2nd, 2026", "Absent"] {
             let key = tine_core::refs::page_key(name);
             let scanned: Vec<_> = (corpus.pages.iter())
                 .filter(|page| tine_core::refs::page_key(&page.name) == key)
                 .map(|page| page.id.as_str().to_owned())
                 .collect();
-            let keyed: Vec<_> = (view.corpus(Some(name)).pages.into_iter())
+            let keyed: Vec<_> = (view.corpus(Some(name), false).pages.into_iter())
                 .map(|page| page.id.as_str().to_owned())
                 .collect();
             assert_eq!(keyed, scanned, "{name}");
         }
-        let first = corpus
+        let active = view.corpus(None, true);
+        let first = active
             .pages
             .iter()
             .find(|page| {
@@ -114,11 +115,9 @@ mod tests {
                     .iter()
                     .any(|b| b.property("id").as_deref() == Some(id))
                     || page.document.roots.iter().any(|b| {
-                        b.children.iter().any(|c| {
-                            c.children
-                                .iter()
-                                .any(|d| d.property("id").as_deref() == Some(id))
-                        })
+                        b.children
+                            .iter()
+                            .any(|c| c.property("id").as_deref() == Some(id))
                     })
             })
             .unwrap();

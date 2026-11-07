@@ -17,6 +17,86 @@ use tine_store::{FileId, Store};
 const KEEPER: &str = "journals/2026_06_26.md";
 const STRAY: &str = "journals/Friday, 26-06-2026.md";
 
+#[test]
+fn name_conflicts_list_ordinary_and_cross_kind_files_without_writing() {
+    let _guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["pages", "journals"] {
+        fs::create_dir(dir.path().join(folder)).unwrap();
+    }
+    let first = "#+title: Nov 6th, 2026\n* first\n";
+    let second = "title:: Nov 6th, 2026\n- second\n";
+    let journal = "- journal\n";
+    for (path, text) in [
+        ("pages/A.org", first),
+        ("pages/Z.md", second),
+        ("journals/2026_11_06.md", journal),
+        ("journals/2026-11-06.md", "- another journal\n"),
+    ] {
+        fs::write(dir.path().join(path), text).unwrap();
+    }
+    let store = Store::open(
+        dir.path(),
+        tine_store::OpenOptions {
+            watch: tine_store::WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
+    let queue = ConflictQueue::default();
+    let check = |count| {
+        let inventory = queue.inventory(&store).unwrap();
+        assert_eq!(inventory.queue.len(), 1);
+        let object = inventory
+            .queue
+            .iter()
+            .find(|o| o.source == ConflictSource::DuplicateName)
+            .unwrap();
+        assert_eq!(object.sides.len(), count);
+        assert_eq!(object.page_path, "pages/A.org");
+        assert_eq!(object.sides[0].kind, Some(PageKind::Page));
+        assert!(object
+            .sides
+            .iter()
+            .any(|side| side.kind == Some(PageKind::Journal)));
+    };
+    check(4);
+    let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert!(days[0].files.iter().all(|file| !file.canonical));
+    fs::remove_file(dir.path().join("pages/Z.md")).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    queue
+        .refresh_files(&store, &[FileId::from("pages/Z.md".to_owned())])
+        .unwrap();
+    check(3);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/A.org")).unwrap(),
+        first
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("journals/2026_11_06.md")).unwrap(),
+        journal
+    );
+    // Ordinary-only events can restore or mask the journal conflict too.
+    fs::remove_file(dir.path().join("pages/A.org")).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    queue
+        .refresh_files(&store, &[FileId::from("pages/A.org".to_owned())])
+        .unwrap();
+    let promoted = queue.inventory(&store).unwrap();
+    assert_eq!(promoted.queue.len(), 1);
+    assert_eq!(promoted.queue[0].source, ConflictSource::DuplicateJournal);
+    assert_eq!(promoted.queue[0].page_path, "journals/2026-11-06.md");
+    fs::write(dir.path().join("pages/A.org"), first).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    queue
+        .refresh_files(&store, &[FileId::from("pages/A.org".to_owned())])
+        .unwrap();
+    check(3);
+    store.close();
+}
+
 fn graph(label: &str) -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
@@ -468,8 +548,8 @@ fn the_duplicate_day_keeper_is_the_file_the_day_opens() {
     for dir in ["pages", "journals", "assets"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    let opened_file = "journals/2026_10_26.md";
-    let iso_file = "journals/2026-10-26.md";
+    let opened_file = "journals/2026-10-26.md";
+    let iso_file = "journals/2026_10_26.md";
     fs::write(
         root.join(opened_file),
         "- shared line\n- only in underscore\n",

@@ -11,6 +11,10 @@ conflict-overview-sync-conflict-copies = 同步冲突副本
 conflict-overview-version-control-merge-markers = 版本控制合并标记
 
 conflict-overview-duplicate-journal-days = 同一天的重复日记
+conflict-overview-duplicate-names = 页面名称冲突
+conflicts-prose-name-files = { NUMBER($count, useGrouping: 0) } 个文件使用此名称
+conflict-overview-opening-file = 此名称打开的文件
+conflict-overview-name-order = 普通页面优先于日记；同一类型中打开路径按 UTF-8 字节顺序排列最前的文件。只有该文件提供别名和引用。所有文件都会保留，可在下面逐个打开。
 
 conflict-overview-conflicts = 冲突
 

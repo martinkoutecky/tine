@@ -753,10 +753,8 @@ fn random_alias_edits_equal_a_fresh_build() {
             "not vacuous: the relation holds rows"
         );
         assert!(
-            log.lines().any(|line| line.starts_with("row ")
-                && line.contains("rel: \"pages/Twin")
-                && line.contains("name: \"Page ")),
-            "not vacuous: a file that only claims another page's name by title:: declares aliases"
+            log.contains("create pages/Twin"),
+            "not vacuous: title twins with physical alias declarations were created; inactive declarations stay masked"
         );
     }
 }

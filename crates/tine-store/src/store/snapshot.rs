@@ -51,12 +51,9 @@ impl Store {
                 if listed.iter().any(|claimant| claimant.path == entry.path) {
                     return listed[0].path == entry.path;
                 }
-                let format = self.graph.current_journal_format();
-                let name_format = self.graph.current_config().file_name_format;
-                return listed.iter().all(|claimant| {
-                    crate::model::compare_page_claimants(entry, claimant, &format, name_format)
-                        .is_lt()
-                });
+                return listed
+                    .iter()
+                    .all(|claimant| crate::model::compare_page_claimants(entry, claimant).is_lt());
             }
         }
         self.graph
@@ -66,8 +63,16 @@ impl Store {
 }
 
 impl WholeGraph {
-    pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> &[PageEntry] {
-        name_claimants(&self.claimants, name, kind)
+    pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
+        name_claimants(&self.claimants, name, kind).to_vec()
+    }
+    pub(super) fn all_name_claimants(&self, name: &str) -> Vec<PageEntry> {
+        let mut entries: Vec<_> = [PageKind::Page, PageKind::Journal]
+            .into_iter()
+            .flat_map(|kind| name_claimants(&self.claimants, name, kind).iter().cloned())
+            .collect();
+        entries.sort_by(|a, b| crate::model::compare_page_claimants(a, b));
+        entries
     }
 }
 
@@ -261,14 +266,7 @@ impl Snapshot {
                     }
                     let bucket = buckets.get_mut(&key).unwrap();
                     bucket.push(entry.clone());
-                    bucket.sort_by(|a, b| {
-                        crate::model::compare_page_claimants(
-                            a,
-                            b,
-                            &journal_format,
-                            config.config.file_name_format,
-                        )
-                    });
+                    bucket.sort_by(|a, b| crate::model::compare_page_claimants(a, b));
                 }
                 let list = Arc::make_mut(&mut list);
                 list.remove_path(&path);
@@ -373,6 +371,9 @@ impl Snapshot {
             }
             Arc::new(evaluator)
         };
+        changed_paths.extend(evaluator.semantic_changed_paths.iter().cloned());
+        changed_paths.sort();
+        changed_paths.dedup();
         let mut snapshot = Self {
             graph: evaluator,
             rev,
@@ -532,7 +533,7 @@ impl ChangeFeed {
             });
             if old.is_none() || config_changed || rebuild || journal_set_changed {
                 *self.journal_ids.lock().unwrap() =
-                    journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+                    journal_ids_from_entries(self.graph.list_pages_shared().as_ref());
             }
             // Under the writer, so a panic that reached it would poison every
             // later save: the graph fails instead, `refresh()` retries, and
@@ -549,10 +550,7 @@ impl ChangeFeed {
             Some(old) if !config_changed && !rebuild => {
                 self.patch_journal_ids(old, &snapshot, &journal_files(&pending))
             }
-            _ => {
-                *self.journal_ids.lock().unwrap() =
-                    journal_ids_from_entries(&self.graph, snapshot.list.iter())
-            }
+            _ => *self.journal_ids.lock().unwrap() = journal_ids_from_entries(snapshot.list.iter()),
         }
         self.graph.adopt_name_index(
             old.as_ref().map(|old| old.cache_generation),

@@ -99,7 +99,9 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 26 (CM step 2 batch 20): query facts retain the header AND prose pre-blocks
 /// instead of only the optional header. Block queries now return matching
 /// preambles, so both old query indexes and memoized answers must rebuild.
-pub(crate) const FORMAT: u32 = 26;
+// 27 (R13 G1 / OWN2): only active claimants supply semantic indexes and
+// answers; every physical file is retained. Older answers rebuild once.
+pub(crate) const FORMAT: u32 = 27;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
@@ -599,7 +601,7 @@ impl ChangeFeed {
         let (evaluator, list) = self
             .graph
             .checkpoint_install(graph, (*config.config).clone())?;
-        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(&self.graph, list.iter());
+        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(list.iter());
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let mut snapshot = Snapshot {
