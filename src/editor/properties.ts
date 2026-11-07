@@ -33,6 +33,23 @@ export function acceptedPropertyLine(line: string): { key: string; value: string
   return pair ? { key: pair[0], value: pair[1] } : null;
 }
 
+/** Markdown value position accepted by the persisted line parser. The caller
+ * excludes fenced lines. Org has no OG value-search trigger (6e7afa8eb,
+ * handler/editor.cljs:1907-1924,2211-2226), so drawer authoring stays literal.
+ * Intentional OG difference: Markdown values need no prior name selection.
+ * Parse only the current line, never the whole block on each keystroke. */
+export function propertyValuePosition(raw: string, caret: number, format: Format): { key: string; start: number } | null {
+  if (format !== "md") return null;
+  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
+  const lineEnd = raw.indexOf("\n", caret);
+  const line = raw.slice(lineStart, lineEnd === -1 ? raw.length : lineEnd);
+  if (!line.includes("::")) return null;
+  const property = acceptedPropertyLine(line);
+  if (!property || !line.startsWith(property.key) || !isEditablePropertyKey(property.key)) return null;
+  const start = lineStart + property.key.length + 2;
+  return caret > start ? { key: property.key, start } : null;
+}
+
 /** Whether the properties panel may write `key` (GH #164): letters, marks,
  *  digits, `_`, `.`, `/` or `-` — the intersection of Tine's Markdown page
  *  header, Org drawer/directive readers and lsdoc. The Rust block-property

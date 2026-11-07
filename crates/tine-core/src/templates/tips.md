@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Tips & shortcuts
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- In **Settings → Shortcuts**, use **Add keybinding** to keep a command's default and add another key. Click a binding to replace it, or remove one binding while keeping the others. Every alternative runs the same command; conflicts with other commands are shown beside it. Changes are saved on this device. In a graph's `config.edn`, OG-compatible alternatives use a vector, for example `:shortcuts {:go/search ["mod+k" "mod+shift+k"]}`.
 	- On desktop, the formatting toolbar follows your selection, even near the bottom of a long block. It appears below the selection when there is no room above; choose an action there to format the selected words.
 	- With a non-Latin keyboard layout, shortcuts and recording use the physical key's Latin letter or digit: **Ctrl+K** still works when that key types **л**. Latin layouts such as AZERTY and Dvorak keep their letter-based shortcuts. Text you type keeps the selected language.
 - ## Find anything — Ctrl+K

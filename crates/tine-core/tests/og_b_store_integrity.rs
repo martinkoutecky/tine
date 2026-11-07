@@ -1,4 +1,4 @@
-use tine_core::config::{Config, FileNameFormat};
+use tine_core::config::{Config, FileNameFormat, ShortcutBinding};
 use tine_core::edn::{self, Edn};
 
 #[test]
@@ -20,7 +20,10 @@ fn config_reads_only_direct_entries_at_each_map_level() {
     assert_eq!(config.favorites, ["Real"]);
     assert_eq!(config.pages_dir, "real-pages");
     assert_eq!(config.preferred_format, tine_core::model::Format::Md);
-    assert_eq!(config.shortcuts["cmd"], "real");
+    assert_eq!(
+        config.shortcuts["cmd"],
+        ShortcutBinding::Single("real".into())
+    );
     assert_eq!(config.macros["x"], "real");
     assert_eq!(config.hidden, ["real"]);
     assert_eq!(config.start_of_week, 3);
@@ -43,7 +46,7 @@ fn config_strings_share_the_edn_decoder() {
     assert_eq!(config.pages_dir, "pages");
     assert_eq!(config.default_home.as_deref(), Some("A"));
     assert_eq!(config.default_journal_template.as_deref(), Some("A"));
-    assert_eq!(config.shortcuts["cmd"], "A");
+    assert_eq!(config.shortcuts["cmd"], ShortcutBinding::Single("A".into()));
     assert_eq!(config.macros["A"], "\t\n\u{8}\u{c}\r");
 }
 
