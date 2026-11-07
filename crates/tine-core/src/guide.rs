@@ -2321,6 +2321,15 @@ mod og_20d_guide_tests {
             vec!["tine.author::", "agent", "--author", "tine_author"],
             // #840: an edit keeps properties; removal has its own verb.
             vec!["tine edit", "properties stay", "tine prop remove"],
+            vec![
+                "tine prop set --page",
+                "tine prop remove --page",
+                "--journal",
+                "alias",
+                "title",
+                "--rev",
+                "no author property",
+            ],
             vec!["app open", "typed", "saved first", "window", "stale"],
             vec!["--journal", "creating", "standard input"],
             vec!["broken", "references", "delete"],
