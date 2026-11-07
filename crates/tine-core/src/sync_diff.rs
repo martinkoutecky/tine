@@ -292,14 +292,19 @@ fn collect_base_pairs<'a>(base: &'a [DocBlock], side: &'a [DocBlock], out: &mut 
     walk(&align_nodes(base, side, ""), out);
 }
 
-/// GH #901: when one block (same body) is suggested away as a winner-only row
-/// ("theirs deleted it": drop) AND as a copy-only row ("mine deleted it":
-/// skip), neither side deleted it. The sibling alignment split a move on one
-/// side, beside an edit on the other, into two one-sided rows, and taking both
-/// suggestions lost the block from the page. The winner-only occurrence loses
-/// its suggestion instead and is flagged for review, so the opening choices keep
-/// exactly one. A genuine move (pull in at the new place, drop at the old) is
-/// unaffected: only one of its rows is a deletion. Iterative (I-22).
+/// GH #901: a block whose body the opening suggestions discard on BOTH sides
+/// was deleted by neither side: the sibling alignment split a move on one side,
+/// beside an edit on the other, into rows that each discard one occurrence.
+/// Mine's occurrence is discarded by a winner-only row suggested away (drop) or
+/// by the theirs-choice of a Modified row; theirs' by a copy-only row suggested
+/// away (skip) or by the mine-choice of a Modified row. Taking all suggestions
+/// lost the block, and so did choosing either whole side on its parent. The
+/// one-sided row then loses its suggestion and is flagged for review, so the
+/// opening choices keep it: winner-only rows first, then copy-only rows whose
+/// body only a Modified row discards on mine's side. A genuine move (pull in at
+/// the new place, drop at the old) is unaffected: only one of its occurrences
+/// is discarded. Equal bodies are not identity (two blocks may share a body), so
+/// this errs toward keeping a block for review. Iterative (I-22).
 fn keep_one_of_a_block_suggested_away_twice(rows: &mut [DiffRow]) {
     fn each(rows: &mut [DiffRow], visit: &mut dyn FnMut(&mut DiffRow)) {
         let mut pending: Vec<&mut DiffRow> = rows.iter_mut().collect();
@@ -308,27 +313,47 @@ fn keep_one_of_a_block_suggested_away_twice(rows: &mut [DiffRow]) {
             pending.extend(row.children.iter_mut());
         }
     }
-    let mut skipped = std::collections::HashSet::new();
-    each(rows, &mut |row| {
-        if row.kind == RowKind::Removed && row.suggestion.as_deref() == Some("mine") {
-            if let Some(theirs) = &row.theirs {
-                skipped.insert(theirs.text.clone());
+    let flag = |row: &mut DiffRow| {
+        row.suggestion = None;
+        row.verdict = Some(Diff3Verdict::BothChanged);
+    };
+    let (mut theirs_away, mut mine_away_by_modified) = (
+        std::collections::HashSet::new(),
+        std::collections::HashSet::new(),
+    );
+    each(
+        rows,
+        &mut |row| match (row.kind, row.suggestion.as_deref()) {
+            (RowKind::Removed | RowKind::Modified, Some("mine")) => {
+                if let Some(theirs) = &row.theirs {
+                    theirs_away.insert(theirs.text.clone());
+                }
             }
-        }
-    });
-    if skipped.is_empty() {
+            (RowKind::Modified, Some("theirs")) => {
+                if let Some(mine) = &row.mine {
+                    mine_away_by_modified.insert(mine.text.clone());
+                }
+            }
+            _ => {}
+        },
+    );
+    if theirs_away.is_empty() {
         return;
     }
     each(rows, &mut |row| {
-        if row.kind == RowKind::Added
-            && row.suggestion.as_deref() == Some("theirs")
-            && row
-                .mine
-                .as_ref()
-                .is_some_and(|mine| skipped.contains(&mine.text))
-        {
-            row.suggestion = None;
-            row.verdict = Some(Diff3Verdict::BothChanged);
+        let body = |side: &Option<BlockView>| side.as_ref().map(|s| s.text.clone());
+        match (row.kind, row.suggestion.as_deref()) {
+            (RowKind::Added, Some("theirs"))
+                if body(&row.mine).is_some_and(|t| theirs_away.contains(&t)) =>
+            {
+                flag(row)
+            }
+            (RowKind::Removed, Some("mine"))
+                if body(&row.theirs).is_some_and(|t| mine_away_by_modified.contains(&t)) =>
+            {
+                flag(row)
+            }
+            _ => {}
         }
     });
 }
