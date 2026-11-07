@@ -61,12 +61,14 @@ const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   journey: "scripts/e2e-beta-win-863-809.mjs", platform: process.platform, app, issues, stage: "launch", steps: [], status: "running",
+  scalingEnvironment: { GDK_SCALE: env.GDK_SCALE ?? null, GDK_DPI_SCALE: env.GDK_DPI_SCALE ?? null,
+    expectedNativeScale: process.env.E2E_EXPECT_NATIVE_SCALE ?? null },
   expected: syncGap ? "The refused pinned route opens its restored physical file without another navigation or graph switch, preserving file bytes"
     : "Existing journal opens; a page search result opens in a usable window and main stays responsive" };
 const write = () => fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(report, null, 2) + "\n");
 const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, at: Date.now(), detail }); write(); console.log(`ok: ${stage}`); };
 write();
-let target, driver, browser, log, wm;
+let target, driver, browser, log, wm, mainHandle;
 const { xdo } = x11Tools(env);
 async function shot(name) {
   // WebKitWebDriver cannot screenshot a related popup (its automation flag
@@ -83,6 +85,32 @@ async function diagnostics() {
   });
   if (result.error) throw new Error(`Diagnostic capture failed: ${result.error}`);
   return JSON.parse(result.text);
+}
+// Record the actual native scale as well as CSS geometry: setting a runner's
+// DPI environment alone does not demonstrate that the app uses that scale.
+// Native queries run from main, since workspace popups have no IPC capability.
+async function nativeGeometry(label) {
+  return browser.executeAsync((label, done) => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    Promise.all(["scale_factor", "inner_size", "outer_position"].map(command =>
+      invoke(`plugin:window|${command}`, { label })))
+      .then(([scale, size, position]) => done({ label, scale, size, position }),
+        error => done({ label, error: String(error) }));
+  }, label);
+}
+async function cssGeometry() {
+  return browser.execute(() => ({ name: window.name, dpr: window.devicePixelRatio,
+    inner: { width: innerWidth, height: innerHeight }, outer: { width: outerWidth, height: outerHeight },
+    position: { x: screenX, y: screenY },
+    screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight } }));
+}
+function assertRequestedScale(geometry) {
+  const expected = process.env.E2E_EXPECT_NATIVE_SCALE;
+  if (expected && (!Number.isFinite(Number(expected)) || Number(expected) <= 0 ||
+    typeof geometry.scale !== "number" || Math.abs(geometry.scale - Number(expected)) > 0.01)) {
+    report.classification = "infrastructure";
+    throw new Error(`Requested native scale ${expected} was not established: ${JSON.stringify(geometry)}`);
+  }
 }
 function stop() {
   if (driver?.pid) {
@@ -115,8 +143,13 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
-  const main = await browser.getWindowHandle();
+  const main = await browser.getWindowHandle(); mainHandle = main;
   step("app-ready", await browser.execute(() => ({ title: document.title, ua: navigator.userAgent })));
+  if (issues.includes("809")) {
+    const native = await nativeGeometry("main");
+    step("809-main-geometry", { native, css: await cssGeometry() });
+    assertRequestedScale(native);
+  }
 
   if (issues.some(issue => issue.startsWith("863"))) {
     await openPageByName(browser, pageName); // The route starts on an ordinary page.
@@ -246,6 +279,12 @@ try {
     await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("GH809 original page body")),
       { timeout: 15_000, timeoutMsg: "Popup stayed blank instead of showing the selected page" });
     step("809-popup-rendered", await browser.getTitle());
+    const popupCss = await cssGeometry();
+    await browser.switchToWindow(main);
+    const popupNative = await nativeGeometry(popupCss.name);
+    step("809-popup-geometry", { native: popupNative, css: popupCss });
+    assertRequestedScale(popupNative);
+    await browser.switchToWindow(popup);
     await shot("809-popup.png");
     // Use the ordinary editor/save journey to demonstrate usable popup input.
     // Related WebKit popups cannot serialize WebDriver element handles either.
@@ -277,6 +316,15 @@ try {
     await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("GH809 edited in popup")),
       { timeout: 10_000, timeoutMsg: "Main did not remain responsive and show the popup edit" });
     await shot("809-main.png");
+    const flight = await diagnostics();
+    fs.writeFileSync(path.join(out, "809-diagnostics.json"), JSON.stringify(flight, null, 2));
+    const stages = flight.sessions.current.filter(event => event.event === "workspace.open");
+    const sequence = stages.find(event => event.stage === "frontend.focus-done")?.sequence;
+    for (const stage of ["native.prepare-received", "native.prepared", "native.request-received", "native.builder-entry",
+      "native.build-returned", "native.created-geometry", "native.response-create", "frontend.prepare-done", "frontend.open-called",
+      "frontend.open-returned", "frontend.document-ready", "frontend.bootstrap-done", "frontend.focus-called", "frontend.focus-done"]) {
+      if (!stages.some(event => event.sequence === sequence && event.stage === stage)) throw new Error(`Missing flight milestone ${stage}`);
+    }
     step("809-pass", "Popup rendered the page, saved its edit, and main showed the edit");
   }
   fixture.verify(); report.status = "passed"; write();
@@ -286,6 +334,18 @@ try {
   try {
     report.dom = await browser?.execute(() => document.body.textContent?.slice(0, 6000));
     if (issues.some(issue => issue.startsWith("863"))) fs.writeFileSync(path.join(out, "failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
+  } catch { /* A frozen renderer cannot provide a screenshot or DOM. */ }
+  // GH #809: the failing window may be a popup whose webview vanished; record the
+  // handles and read the flight recorder (workspace.open stages, liveness) from main.
+  try {
+    if (issues.includes("809") && browser && mainHandle) {
+      report.windowHandles = await Promise.race([browser.getWindowHandles(), sleep(5000).then(() => "timeout")]);
+      await browser.switchToWindow(mainHandle);
+      await sleep(12_000); // let liveness probes and window stages land in the recorder
+      fs.writeFileSync(path.join(out, "809-failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
+    }
+  } catch (diagError) { report.diagnosticsError = String(diagError); }
+  try {
     await shot("failure.png");
   } catch { /* A frozen renderer cannot provide a screenshot or DOM. */ }
   write(); process.exitCode = 1; console.error(error);

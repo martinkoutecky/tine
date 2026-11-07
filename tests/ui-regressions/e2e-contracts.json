@@ -26,6 +26,12 @@
       "nonRequirements": ["No private graph, Windows certification from a Linux result, exact pixels, fixed timing performance or release burn-in. The #863 lifecycle reproduction establishes a shared virtual-target defect; the affected Windows graph and #809's root cause remain unverified."],
       "stability":"burn-in"
     },
+    "scripts/e2e-workspace-flight-hang.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After a test-only native UI-thread block during Ctrl+K result > Open in new window, a background flush retains open stages and native liveness stalls. Force-kill and relaunch on the same scratch profile exposes them in the diagnostics report's previous unclean session.","blocking":false,"authority":"GH #809; ADR 0058 workspace-window stages"}],
+      "acceptableVariations": ["Window geometry, event interleaving and background flush scheduling may vary. The journey waits for persisted milestones rather than exact latency."],
+      "nonRequirements": ["No private graph, shipped hang hook, Windows multi-monitor reproduction, root-cause proof or release acceptance. Requires the Linux unit-test executable with custom-protocol assets."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-beta-editor-862-865.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"On routed pages Enter after closed standalone math creates a writable next block, and Escape from Markdown or Org code reveals editable raw source that saves durably.","blocking":false,"authority":"GH #862, GH #865"}],
       "acceptableVariations": ["Editor geometry and save latency may vary."],

@@ -117,9 +117,30 @@ pub(crate) fn place(saved: Option<Geometry>, monitors: &[Area]) -> Placement {
     }
 }
 
-/// The one armed open per opener label: (popup label, placement).
+#[derive(Clone, Copy)]
+struct OpenTrace {
+    sequence: u64,
+    started: Instant,
+}
+
+impl OpenTrace {
+    fn record(self, stage: &'static str, facts: serde_json::Map<String, serde_json::Value>) {
+        crate::flight::record_workspace_open(
+            self.sequence,
+            stage,
+            self.started.elapsed().as_millis() as u64,
+            facts,
+        );
+    }
+
+    fn stage(self, stage: &'static str) {
+        self.record(stage, serde_json::Map::new());
+    }
+}
+
+/// The one armed open per opener label: (popup label, placement, diagnostics).
 #[derive(Default)]
-pub(crate) struct Pending(Mutex<HashMap<String, (String, Placement)>>);
+pub(crate) struct Pending(Mutex<HashMap<String, (String, Placement, OpenTrace)>>);
 
 /// Close requests already handed to an opener: popup label -> first request.
 #[derive(Default)]
@@ -156,10 +177,10 @@ fn popups_of<R: tauri::Runtime>(
 }
 
 #[cfg(desktop)]
-fn monitor_areas<R: tauri::Runtime>(window: &tauri::Window<R>) -> Vec<Area> {
-    window
-        .available_monitors()
-        .unwrap_or_default()
+fn monitor_areas<R: tauri::Runtime>(window: &tauri::Window<R>) -> (Vec<Area>, Vec<f64>) {
+    let monitors = window.available_monitors().unwrap_or_default();
+    let scales = monitors.iter().map(|m| m.scale_factor()).collect();
+    let areas = monitors
         .iter()
         .map(|m| {
             let scale = m.scale_factor().max(0.1);
@@ -172,7 +193,8 @@ fn monitor_areas<R: tauri::Runtime>(window: &tauri::Window<R>) -> Vec<Area> {
                 height: size.height,
             }
         })
-        .collect()
+        .collect();
+    (areas, scales)
 }
 
 /// Arm one `window.open("about:blank")` from the calling window and return the
@@ -195,6 +217,11 @@ pub(crate) fn workspace_window_prepare(
 
 #[cfg(desktop)]
 fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<String, String> {
+    let trace = OpenTrace {
+        sequence: NEXT_POPUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        started: Instant::now(),
+    };
+    trace.stage("native.prepare-received");
     let opener = window.label().to_string();
     if opener != "main" && !opener.starts_with("graph-") {
         return Err("only a graph window can open a workspace window".into());
@@ -205,16 +232,31 @@ fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<
             "at most {MAX_WORKSPACE_WINDOWS} workspace windows can be open"
         ));
     }
-    let label = format!(
-        "ws-{opener}-{}",
-        NEXT_POPUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    let label = format!("ws-{opener}-{}", trace.sequence);
+    let (areas, scales) = monitor_areas(&window);
+    let placement = place(geometry, &areas);
+    // Without a requested position the OS chooses the monitor. Do not call
+    // the opener's monitor the target; the actual target is read after build.
+    let target_scale = placement.position.and_then(|(x, y)| {
+        areas.iter().zip(scales).find_map(|(area, scale)| {
+            (x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height)
+                .then_some(scale)
+        })
+    });
+    trace.record(
+        "native.prepared",
+        crate::flight::workspace_display_fields(
+            Some((placement.width, placement.height)),
+            Some(areas.len()),
+            target_scale,
+            None,
+        ),
     );
-    let placement = place(geometry, &monitor_areas(&window));
     app.state::<Pending>()
         .0
         .lock()
         .map_err(|_| "workspace window state unavailable".to_string())?
-        .insert(opener, (label.clone(), placement));
+        .insert(opener, (label.clone(), placement, trace));
     Ok(label)
 }
 
@@ -254,12 +296,16 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
                 .ok()
                 .and_then(|mut map| map.remove(&opener))
         });
-        let Some((label, placement)) = armed else {
+        let Some((label, placement, trace)) = armed else {
             return tauri::webview::NewWindowResponse::Deny;
         };
+        trace.stage("native.request-received");
         if url.as_str() != "about:blank" {
             return tauri::webview::NewWindowResponse::Deny;
         }
+        trace.stage("native.builder-entry");
+        #[cfg(test)]
+        block_window_open_for_test();
         let builder =
             tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(url))
                 .window_features(features)
@@ -267,6 +313,12 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
                 .decorations(true)
                 .min_inner_size(MIN_SIZE.0, MIN_SIZE.1)
                 .inner_size(placement.width, placement.height)
+                .on_page_load(move |_webview, payload| {
+                    trace.stage(match payload.event() {
+                        tauri::webview::PageLoadEvent::Started => "native.page-load-started",
+                        tauri::webview::PageLoadEvent::Finished => "native.page-load-finished",
+                    });
+                })
                 .on_document_title_changed(|window, title| {
                     let _ = window.set_title(&title);
                 });
@@ -275,13 +327,37 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
             None => builder,
         };
         match builder.build() {
-            Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+            Ok(window) => {
+                trace.stage("native.build-returned");
+                let scale = window.scale_factor().ok();
+                let size = window.inner_size().ok().map(|s| (s.width, s.height));
+                trace.record(
+                    "native.created-geometry",
+                    crate::flight::workspace_display_fields(None, None, scale, size),
+                );
+                // SetNewWindow and deferral Complete happen inside Wry after
+                // this return. Tine cannot observe them; do not claim it can.
+                trace.stage("native.response-create");
+                tauri::webview::NewWindowResponse::Create { window }
+            }
             Err(error) => {
+                trace.stage("native.build-failed");
                 crate::debug::diag_private("workspace-window-build-failed", error.to_string());
                 tauri::webview::NewWindowResponse::Deny
             }
         }
     })
+}
+
+/// Compiled only in the unit-test executable used by the Linux hang journey.
+/// No environment switch or blocking hook exists in a shipped binary.
+#[cfg(test)]
+fn block_window_open_for_test() {
+    if std::env::var_os("TINE_TEST_BLOCK_WORKSPACE_OPEN").is_some() {
+        loop {
+            std::thread::park();
+        }
+    }
 }
 
 /// WebKitGTK refuses a script `window.open` without a recent user gesture by
@@ -442,6 +518,16 @@ pub(crate) fn page_load(webview: &tauri::Webview, payload: &tauri::webview::Page
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Launched only by scripts/e2e-workspace-flight-hang.mjs through a wrapper
+    /// around this test executable. The script supplies scratch HOME/XDG.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "real GUI child for the killed-window-open flight recorder journey"]
+    fn flight_hang_app() {
+        assert!(std::env::var_os("TINE_TEST_FLIGHT_APP").is_some());
+        crate::run();
+    }
 
     const SCREEN: Area = Area {
         x: 0.0,

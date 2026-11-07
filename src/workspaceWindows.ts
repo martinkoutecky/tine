@@ -45,9 +45,27 @@ export type WorkspaceCloseReason = "user" | "native" | "quit" | "reload" | "grap
 
 /** Tauri's invoke, loaded once on first use (absent outside Tauri). */
 let coreModule: Promise<typeof import("@tauri-apps/api/core")> | undefined;
+let flightInvoke: typeof import("@tauri-apps/api/core")["invoke"] | undefined;
 async function nativeInvoke<T = unknown>(command: string, args: Record<string, unknown>): Promise<T> {
   const { invoke } = await (coreModule ??= import("@tauri-apps/api/core"));
+  flightInvoke = invoke;
   return invoke<T>(command, args);
+}
+
+type OpenStage = "prepare-done" | "open-called" | "open-returned" | "document-ready"
+  | "bootstrap-done" | "focus-called" | "focus-done" | "failed";
+
+function recordOpenStage(label: string | null, stage: OpenStage, started: number): void {
+  // Only the native-generated trailing counter crosses the privacy boundary.
+  // Invoke directly: awaiting even a resolved module promise would defer the
+  // open-called dispatch until AFTER the synchronous window.open returned.
+  const sequence = Number(label?.match(/-(\d+)$/)?.[1]);
+  if (!Number.isSafeInteger(sequence) || sequence < 1) return;
+  try {
+    void flightInvoke?.("diagnostic_workspace_open", {
+      sequence, stage, openElapsedMs: Math.max(0, Math.round(performance.now() - started)),
+    }).catch(() => {});
+  } catch { /* Diagnostics cannot prevent a window opening. */ }
 }
 
 interface Entry {
@@ -126,20 +144,31 @@ export function openRouteInNewWindow(route: Route): string | null {
 }
 
 async function launch(entry: Entry, geometry: WindowGeometry | null, activate: boolean): Promise<void> {
+  const started = performance.now();
   try {
     const label = await nativeInvoke<string>("workspace_window_prepare", { geometry });
     if (entry.disposed) return;
     entry.label = label;
+    recordOpenStage(label, "prepare-done", started);
     // The target name is the fresh native label: WebView2 hangs reopening a
     // reused name (spike OG-SPIKEMW, Windows).
+    recordOpenStage(label, "open-called", started);
     const popup = mainWindow.open("about:blank", label, "popup") as Realm | null;
+    recordOpenStage(label, "open-returned", started);
     if (!popup) throw new Error("window.open returned no window");
     entry.popup = popup;
     await documentReady(popup);
+    recordOpenStage(label, "document-ready", started);
     if (entry.disposed) return void destroyNative(entry);
     bootstrap(entry, popup);
-    if (activate) popup.focus();
+    recordOpenStage(label, "bootstrap-done", started);
+    if (activate) {
+      recordOpenStage(label, "focus-called", started);
+      popup.focus();
+      recordOpenStage(label, "focus-done", started);
+    }
   } catch {
+    recordOpenStage(entry.label, "failed", started);
     console.error("workspace window failed to open");
     if (!entry.disposed) {
       pushToast(msg("workspace-windows-couldn-t-open-a-new-window"), "error");
