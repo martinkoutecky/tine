@@ -1384,3 +1384,121 @@ fn precomputed_anchors_are_exactly_anchor_eq() {
         }
     }
 }
+
+/// The resolver's opening decisions (`seedSuggestedOrNoLoss` in DiffRows.tsx):
+/// the suggestion where there is one, else the no-loss choice for the kind.
+fn opening_decisions(rows: &[DiffRow], out: &mut HashMap<String, String>) {
+    for r in rows {
+        let no_loss = match r.kind {
+            RowKind::Added => "mine",
+            RowKind::Removed => "theirs",
+            _ => "both",
+        };
+        if r.kind != RowKind::Unchanged {
+            out.insert(
+                r.id.clone(),
+                r.suggestion.clone().unwrap_or_else(|| no_loss.to_owned()),
+            );
+        }
+        opening_decisions(&r.children, out);
+    }
+}
+
+fn all_raws(blocks: &[DocBlock]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut pending: Vec<&DocBlock> = blocks.iter().rev().collect();
+    while let Some(b) = pending.pop() {
+        out.push(b.raw.lines().next().unwrap_or("").to_string());
+        pending.extend(b.children.iter().rev());
+    }
+    out
+}
+
+#[test]
+fn gh901_a_moved_block_is_never_suggested_away_on_both_sides() {
+    // Mine moved the task above Alpha; theirs edited it. Neither side deleted
+    // Alpha, but the sibling alignment splits it into a copy-only row before the
+    // task and a winner-only row after it. Each used to be classified "unchanged
+    // from base, gone on the other side" and suggested away: Alpha was lost.
+    let id = "  id:: 11111111-1111-4111-8111-111111111111";
+    let base = parse(&format!(
+        "- Anchor alpha\n- Prepare a detailed weekly report\n{id}\n- Anchor omega\n"
+    ));
+    let mine = parse(&format!(
+        "- Prepare a detailed weekly report\n{id}\n- Anchor alpha\n- Anchor omega\n"
+    ));
+    let theirs = parse(&format!(
+        "- Anchor alpha\n- Prepare a detailed monthly report\n{id}\n- Anchor omega\n"
+    ));
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    let lines = all_raws(&merged);
+    assert!(lines.iter().any(|l| l == "Anchor alpha"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "Anchor omega"), "{lines:?}");
+    assert!(
+        lines.iter().any(|l| l.contains("weekly")) && lines.iter().any(|l| l.contains("monthly")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn gh901_a_real_deletion_is_still_suggested() {
+    let base = parse("- Anchor alpha\n- Delete me please now\n- Anchor omega\n");
+    let mine = parse("- Anchor alpha\n- Anchor omega\n");
+    let theirs = base.clone();
+    let d = diff3_docs(&base, &mine, &theirs);
+    let rows = table(&d.rows);
+    assert!(
+        rows.iter()
+            .any(|(k, _, s)| *k == RowKind::Removed && s.as_deref() == Some("mine")),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn gh901_an_equal_body_parent_keeps_one_section_and_its_child_decisions() {
+    // Each device edited a different child. The parent's own text is the same
+    // on both sides; "both" on it used to copy both whole sections, ignoring
+    // the child rows' decisions and suggestions shown below it.
+    let base = parse("- Projects\n  - Prepare a detailed weekly report\n  - Publish the status notes every Monday\n");
+    let mine = parse("- Projects\n  - Prepare a detailed monthly report\n  - Publish the status notes every Monday\n");
+    let theirs = parse("- Projects\n  - Prepare a detailed weekly report\n  - Publish the status notes every Friday\n");
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    assert_eq!(dec.get(&d.rows[0].id).map(String::as_str), Some("both"));
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    assert_eq!(
+        all_raws(&merged),
+        vec![
+            "Projects",
+            "Prepare a detailed monthly report",
+            "Publish the status notes every Friday"
+        ]
+    );
+    // Without a base nothing is suggested: one section, both versions of each child.
+    let two_way = diff_docs(&mine, &theirs);
+    let merged = merge_blocks(&mine.roots, &theirs.roots, &HashMap::new()).unwrap();
+    assert_eq!(two_way.rows.len(), 1);
+    assert_eq!(merged.len(), 1, "{:?}", all_raws(&merged));
+    assert_eq!(
+        all_raws(&merged)
+            .iter()
+            .filter(|l| *l == "Projects")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn gh901_both_on_a_parent_whose_text_differs_still_keeps_both_sections() {
+    let mine = parse("- Projects for this week\n  - one\n");
+    let theirs = parse("- Projects for this wek\n  - two\n");
+    let d = diff_docs(&mine, &theirs);
+    let mut dec = HashMap::new();
+    dec.insert(d.rows[0].id.clone(), "both".to_owned());
+    let merged = merge_blocks(&mine.roots, &theirs.roots, &dec).unwrap();
+    assert_eq!(merged.len(), 2, "{:?}", all_raws(&merged));
+}
