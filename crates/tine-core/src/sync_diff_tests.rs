@@ -1506,3 +1506,28 @@ fn gh901_a_moved_block_keeps_its_id_under_the_opening_choices() {
     }
     assert!(has_id(&merged, id), "{:?}", all_raws(&merged));
 }
+
+#[test]
+fn gh901_a_block_both_sides_have_survives_either_whole_side_on_its_parent() {
+    // Review fixture again: the opening suggestion dropped mine's Delta because
+    // the alignment paired theirs' Delta with mine's Beta. Choosing Mine or
+    // Theirs on the parent then lost Delta, though both sides kept it.
+    let base = parse("- Inbox\n  - Delta task\n");
+    let mine = parse("- Inbox\n  - Beta task\n  - Alpha task\n  - Delta task\n");
+    let theirs = parse("- Inbox\n  - Delta task\n  - Alpha task\n");
+    for (a, b) in [(&mine, &theirs), (&theirs, &mine)] {
+        let d = diff3_docs(&base, a, b);
+        for parent in ["mine", "theirs", "both"] {
+            let mut dec = HashMap::new();
+            opening_decisions(&d.rows, &mut dec);
+            dec.insert(d.rows[0].id.clone(), parent.to_string());
+            let merged = merge_blocks3(Some(&base.roots), &a.roots, &b.roots, None, &dec).unwrap();
+            let raws = all_raws(&merged);
+            assert!(
+                raws.iter().any(|r| r == "Delta task"),
+                "{parent}: {raws:?} {:?}",
+                d.rows
+            );
+        }
+    }
+}
