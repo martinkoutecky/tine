@@ -17,6 +17,9 @@
 //! store harness asserts the copy equals the original on every file it sees.
 #![allow(dead_code)]
 
+#[path = "cm_conformance_r13_shared.rs"]
+pub mod r13;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -82,7 +85,79 @@ fn block_json(raw: &str, level: usize, block: &DocBlock, config: &Config) -> Val
         .filter(|r| visit_reference_targets(r, config, |_| true))
         .map(|r| json!([occ_kind(r.rule), r.name]))
         .collect();
-    json!({"text": raw, "level": level, "occ": occ})
+    json!({"text": raw, "level": level, "occ": occ, "stored": stored_queries(raw, block.is_org())})
+}
+
+/// Parser-owned query syntax, independent of reference occurrences. Leaves
+/// outside the model's name algebra retain their complete IR as opaque tokens.
+fn stored_queries(raw: &str, org: bool) -> Vec<Value> {
+    use tine_core::query::ir::{Attr, CmpOp, Filter, Leaf, Quant, Rel};
+    use tine_core::query::macro_text::{query_macro_extents, FormFamily};
+    fn page_scope(q: Value) -> Value {
+        for op in ["and", "or"] {
+            if let Some(a) = q[op].as_array() {
+                return json!({op: a.iter().cloned().map(page_scope).collect::<Vec<_>>()});
+            }
+        }
+        if let Some(n) = q.get("not") {
+            return json!({"not": page_scope(n.clone())});
+        }
+        json!({"page": q})
+    }
+    fn syntax(f: &Filter) -> Value {
+        match f {
+            Filter::And { items } | Filter::Or { items } if !items.is_empty() => {
+                let op = if matches!(f, Filter::And { .. }) {
+                    "and"
+                } else {
+                    "or"
+                };
+                items
+                    .iter()
+                    .map(syntax)
+                    .reduce(|a, b| json!({op: [a, b]}))
+                    .unwrap()
+            }
+            Filter::Not { inner } => json!({"not": syntax(inner)}),
+            Filter::Leaf {
+                leaf:
+                    Leaf::Attr {
+                        attr: Attr::Name,
+                        op: CmpOp::Eq,
+                        value,
+                    },
+            } if value.as_text().is_some() => json!({"name": value.as_text().unwrap()}),
+            Filter::Leaf {
+                leaf:
+                    Leaf::Rel {
+                        rel,
+                        quant: Quant::Any,
+                        pred,
+                    },
+            } => {
+                let p = syntax(pred);
+                match rel {
+                    Rel::Page => page_scope(p),
+                    Rel::Refs if p["name"].is_string() => json!({"refs": p["name"]}),
+                    _ => json!({"given": serde_json::to_string(f).unwrap()}),
+                }
+            }
+            _ => json!({"given": serde_json::to_string(f).unwrap()}),
+        }
+    }
+    let regions = tine_core::block_regions::parse(raw, org);
+    query_macro_extents(raw)
+        .into_iter()
+        .filter(|extent| !regions.literal_at(extent.start))
+        .map(|extent| {
+            let dialect = match FormFamily::for_macro_name(&extent.name) {
+                FormFamily::Edn => QueryDialect::Og,
+                FormFamily::Tql => QueryDialect::Tql,
+            };
+            let (q, _) = parse_query_text(&extent.argument, dialect, JournalDate::from_days(0));
+            syntax(&q.filter)
+        })
+        .collect()
 }
 
 fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>, config: &Config) {
@@ -757,12 +832,148 @@ pub fn run_bridge(bridge: &Path, input: &Value) -> Result<Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("cm-bridge output: {e}"))
 }
 
+/// Round 13 keeps literal claims separate from the configured date target.
+/// All claimant inputs are parser/config answers; no chosen owner is supplied.
+pub fn model_input_r13(view: &WholeGraph, spec: &GraphSpec) -> Value {
+    let mut input = model_input(view, spec, alias_spellings, &[]);
+    let journal = spec.journal_format();
+    let config = spec.config();
+    input["favorites"] = json!(config.favorites);
+    input["queries"] = json!(spec
+        .queries
+        .iter()
+        .map(|q| {
+            let dialect = if q.dialect == "tql" {
+                QueryDialect::Tql
+            } else {
+                QueryDialect::Og
+            };
+            let (parsed, _) = parse_query_text(&q.tine, dialect, JournalDate::from_days(0));
+            json!({"anchor": q.anchor, "q": q.q,
+            "showHeaders": parsed.anchor == tine_core::query::ir::Anchor::Block,
+            "removeBlockChildren": parsed.removes_block_children()})
+        })
+        .collect::<Vec<_>>());
+    for file in input["files"].as_array_mut().unwrap() {
+        let rel = file["path"].as_str().unwrap().to_owned();
+        let raw = Path::new(&rel).file_stem().unwrap().to_str().unwrap();
+        file["rawStem"] = json!(raw);
+        // Do not obtain journal names through an inventory/owner answer.
+        file["stem"] = json!(if rel.starts_with("journals/") {
+            journal
+                .parse(raw)
+                .map(|d| journal.title(d))
+                .unwrap_or_else(|| raw.to_owned())
+        } else {
+            decode_page_name(raw, spec.name_format())
+        });
+    }
+    let mut extra = spec.navigate.clone();
+    extra.extend(config.favorites.iter().cloned());
+    for q in &spec.queries {
+        query_args(&q.q, &mut extra);
+    }
+    for (old, new) in &spec.renames {
+        extra.extend([old.clone(), new.clone()]);
+    }
+    for file in input["files"].as_array().unwrap() {
+        for b in file["blocks"].as_array().unwrap() {
+            for q in b["stored"].as_array().unwrap() {
+                query_args(q, &mut extra);
+            }
+        }
+    }
+    let before = spellings(&input, &extra);
+    // Finite closure of every candidate substitution, including alternate
+    // real members. Key/date/codec tables are functions on spellings only.
+    let destinations: BTreeSet<String> = spec
+        .renames
+        .iter()
+        .map(|(_, new)| new.clone())
+        .chain(input["files"].as_array().unwrap().iter().map(|f| {
+            f["title"]
+                .as_str()
+                .filter(|_| f["dir"] == "pages")
+                .unwrap_or_else(|| f["stem"].as_str().unwrap())
+                .to_owned()
+        }))
+        .collect();
+    let mut all = before.clone();
+    let mut output_paths = Vec::new();
+    for (old, _) in &spec.renames {
+        for new in &destinations {
+            let map = std::collections::HashMap::from([(page_key(old), new.clone())]);
+            for name in &before {
+                if let Some(mapped) = tine_core::refs::renamed_page_name(name, &map) {
+                    all.insert(mapped.into_owned());
+                }
+            }
+            for file in input["files"].as_array().unwrap() {
+                let name = file["title"]
+                    .as_str()
+                    .filter(|_| file["dir"] == "pages")
+                    .unwrap_or_else(|| file["stem"].as_str().unwrap());
+                let mapped = tine_core::refs::renamed_page_name(name, &map)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|| name.to_owned());
+                let rel = file["path"].as_str().unwrap();
+                let ext = Path::new(rel).extension().unwrap().to_str().unwrap();
+                output_paths.push(json!({"source": rel, "name": mapped,
+                    "path": format!("pages/{}.{ext}", encode_page_name(&mapped, spec.name_format()))}));
+            }
+        }
+    }
+    // Namespace parents of output names and canonical date titles are keyed too.
+    let more: Vec<_> = all
+        .iter()
+        .flat_map(|s| {
+            let mut names = tine_core::refs::namespace_refs(s)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if let Some(day) = journal.parse(s) {
+                names.extend(journal.spellings(day));
+                names.push(journal.title(day));
+            }
+            names
+        })
+        .collect();
+    all.extend(more);
+    input["literalKeys"] = json!(all
+        .iter()
+        .map(|s| (s, page_key(s)))
+        .collect::<BTreeMap<_, _>>());
+    input["keys"] = input["literalKeys"].clone();
+    input["canonicalDates"] = json!(all
+        .iter()
+        .filter_map(|s| journal
+            .parse(s)
+            .map(|d| (page_key(s), page_key(&journal.title(d)))))
+        .collect::<BTreeMap<_, _>>());
+    input["claimantConfig"] = json!({
+        "kindPref": "page", "order": "unsigned-utf8-relative-path",
+        "fileNameFormat": spec.file_name_format.as_deref().unwrap_or("legacy"),
+        "journalFileFormat": journal.file_format(), "journalTitleFormat": journal.title_format(),
+        "stems": input["files"].as_array().unwrap().iter().map(|f| json!({
+            "path": f["path"], "raw": f["rawStem"], "decoded": f["stem"]
+        })).collect::<Vec<_>>()
+    });
+    input["outputPaths"] = json!(output_paths);
+    input["urls"] = json!(all
+        .iter()
+        .filter(|s| tine_core::refs::url_has_origin(s))
+        .collect::<Vec<_>>());
+    input
+}
+
 /// One difference: a stable class (no names; used to deduplicate random
 /// graphs) and the concrete detail.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Diff {
     pub class: String,
     pub detail: String,
+    /// Structured witnesses used only by r13 attribution; historical rows stay unchanged.
+    pub keys: BTreeSet<String>,
+    pub blocks: Vec<BlockId>,
 }
 
 impl Diff {
@@ -770,7 +981,17 @@ impl Diff {
         Diff {
             class: class.into(),
             detail: detail.into(),
+            keys: BTreeSet::new(),
+            blocks: Vec::new(),
         }
+    }
+    pub fn at_key(mut self, name: &str) -> Self {
+        self.keys.insert(page_key(name));
+        self
+    }
+    pub fn at_block(mut self, block: &BlockId) -> Self {
+        self.blocks.push(block.clone());
+        self
     }
     pub fn is_harness(&self) -> bool {
         self.class.starts_with("harness")
@@ -965,7 +1186,11 @@ impl<'a> Ctx<'a> {
     }
 
     pub fn key(&self, s: &str) -> String {
-        fold(&self.journal, s)
+        if self.model["round"] == "r13" {
+            page_key(s)
+        } else {
+            fold(&self.journal, s)
+        }
     }
 
     pub fn class_of(&self, k: &str) -> BTreeSet<String> {
@@ -1885,34 +2110,46 @@ pub fn compare_queries(ctx: &Ctx, queries: &[QuerySpec]) -> Vec<Diff> {
             feats.join(", ")
         };
         for b in model_blocks.difference(&tine_blocks) {
-            diffs.push(Diff::new(
-                format!(
-                    "query {shape}: model-only block ({})",
-                    block_feature(b, &model_blocks)
-                ),
-                format!("query {:?}: model has block {b:?}, Tine does not", q.tine),
-            ));
+            diffs.push(
+                Diff::new(
+                    format!(
+                        "query {shape}: model-only block ({})",
+                        block_feature(b, &model_blocks)
+                    ),
+                    format!("query {:?}: model has block {b:?}, Tine does not", q.tine),
+                )
+                .at_block(b),
+            );
         }
         for b in tine_blocks.difference(&model_blocks) {
-            diffs.push(Diff::new(
-                format!(
-                    "query {shape}: Tine-only block ({})",
-                    block_feature(b, &tine_blocks)
-                ),
-                format!("query {:?}: Tine has block {b:?}, model does not", q.tine),
-            ));
+            diffs.push(
+                Diff::new(
+                    format!(
+                        "query {shape}: Tine-only block ({})",
+                        block_feature(b, &tine_blocks)
+                    ),
+                    format!("query {:?}: Tine has block {b:?}, model does not", q.tine),
+                )
+                .at_block(b),
+            );
         }
         for p in model_pages.difference(&tine_pages) {
-            diffs.push(Diff::new(
-                format!("query {shape}: model-only page ({})", ctx.page_feature(p)),
-                format!("query {:?}: model has page {p:?}, Tine does not", q.tine),
-            ));
+            diffs.push(
+                Diff::new(
+                    format!("query {shape}: model-only page ({})", ctx.page_feature(p)),
+                    format!("query {:?}: model has page {p:?}, Tine does not", q.tine),
+                )
+                .at_key(&p.1),
+            );
         }
         for p in tine_pages.difference(&model_pages) {
-            diffs.push(Diff::new(
-                format!("query {shape}: Tine-only page ({})", ctx.page_feature(p)),
-                format!("query {:?}: Tine has page {p:?}, model does not", q.tine),
-            ));
+            diffs.push(
+                Diff::new(
+                    format!("query {shape}: Tine-only page ({})", ctx.page_feature(p)),
+                    format!("query {:?}: Tine has page {p:?}, model does not", q.tine),
+                )
+                .at_key(&p.1),
+            );
         }
     }
     diffs
