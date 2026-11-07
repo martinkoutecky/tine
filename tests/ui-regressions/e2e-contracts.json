@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-page-write-flash.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A large open page retains its outline, unchanged blocks, scroll and focused editor selection during real CLI writes to other pages, hidden blocks and a visible block; the visible change arrives live. E2E_PANES=1 checks main, split pane and sidebar together; revealing the hidden block proves its edit arrived.","blocking":false,"authority":"GH #911; UI-GH911-OPEN-PAGE-FLASH"}],
+      "acceptableVariations": ["Page size, layout, watcher and CLI latency may vary. The optional approved corpus is copied to a scratch graph before use."],
+      "nonRequirements": ["No exact pixels, fixed timing budget, macOS certification or manager release acceptance."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-beta-page-paths.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A page moved into a subfolder while Tine is closed opens its real content after a checkpoint restart with a stale sidebar session; GUI saves, CLI reads and tine://block links agree on the real file. Live sync-style moves and a manually repaired flattened rename also recover; CLI rename retains the folder.","blocking":false,"authority":"GH #904; GH #905; docs/storage-contract.md; REG-GH904-RENAME-SUBFOLDER; REG-GH905-MOVED-PAGE-CHECKPOINT"}],
       "acceptableVariations": ["Watcher, save and checkpoint latency; navigation and notice layout."],

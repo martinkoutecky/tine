@@ -459,7 +459,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           }}
         >
           <Show
-            when={editing()}
+            when={editing() ? node() : undefined} keyed
             fallback={
               <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0}>
                 {() => <Rendered
