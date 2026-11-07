@@ -157,7 +157,10 @@ fn guide_explains_grid_edit_first() {
         "keeps your text",
         "ruling",
     ] {
-        assert!(sheets.markdown.contains(instruction), "missing {instruction}");
+        assert!(
+            sheets.markdown.contains(instruction),
+            "missing {instruction}"
+        );
     }
 }
 
