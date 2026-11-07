@@ -159,6 +159,8 @@ const suites = {
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
     // GH #719: not in the default fan-out lists yet (burn-in); dispatch it by name.
     ["windows-portable", "scripts/e2e-windows-portable.mjs", {}],
+    // GH #809: new-window stage diagnostics on WebView2; dispatch by name.
+    ["beta-win-809", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809" }],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
   ],
