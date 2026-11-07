@@ -8,6 +8,8 @@ import { appendSheetCellChild } from "../sheet/mutations";
 import { cellBlockId, cellOwner, cellSurfaceKey, moveCellAfterEdit, selectCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
 import { SHEET_CELL_HIDE, splitProps } from "./properties";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
+import { editsLikeOutline, openGridTarget } from "../sheet/gridEditMove";
+import { gridNeighbour } from "../sheet/gridNeighbour";
 
 const blockedCommands = new Set([
   "editor/comment", "editor/indent", "editor/outdent", "editor/move-block-up", "editor/move-block-down",
@@ -62,6 +64,21 @@ export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: stri
       return true;
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) return true;
+    // A grid edits like an outline (GH #874): arrows at the text's edge walk reading order
+    // into the neighbouring cell, keeping the caret column on Up/Down. Table title cells and
+    // board cards keep the selection-mode moves below.
+    if (plain && !e.shiftKey && s.empty && editsLikeOutline(cell)) {
+      const leave = cm6ArrowLeave(e.key, v);
+      const rowStart = v.moveToLineBoundary(EditorSelection.cursor(s.head), false).head;
+      const up = e.key === "ArrowUp" && rowStart === 0;
+      const down = e.key === "ArrowDown" && v.moveToLineBoundary(EditorSelection.cursor(s.head), true).head === raw.length;
+      if (leave || up || down) {
+        const move = leave ? (leave === "forward" ? "right" : "left") : up ? "up" : "down";
+        const target = gridNeighbour(id, cell, move, s.head - rowStart);
+        if (target) { commit(raw); openGridTarget(target, cell.surfaceId); }
+        return true;
+      }
+    }
     if (plain && !e.shiftKey && s.empty) {
       if (cm6ArrowLeave(e.key, v)) {
         commit(raw); moveCellAfterEdit(cell, e.key === "ArrowLeft" ? "left" : "right"); return true;

@@ -813,7 +813,7 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
-  it("ArrowDown from the last editor line descends into a hosted sub-grid top seam", async () => {
+  it("ArrowDown from the last editor line enters a hosted sub-grid's first cell in Edit (GH #874)", async () => {
     loadSheetDocWithSubgrid();
     disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <Block id="grid" />);
@@ -827,12 +827,11 @@ describe("SheetGrid interaction", () => {
     keydown(editor, "ArrowDown");
     await tick();
 
-    expect(editingId()).toBeNull();
-    expect(cellSel()).toEqual(rowSeamSel("c2", 0, 0));
+    expect(editingId()).toBe("n11");
+    expect(activeEditor(root).value()).toBe("Inner");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "c2", row: 0, col: 0 });
     const innerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="c2"]') as HTMLElement | null;
-    expect(innerGrid?.querySelector(":scope > .sheet-seam-selected")).not.toBeNull();
-    const outerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement | null;
-    expect(outerGrid?.querySelector(":scope > .sheet-seam-selected")).toBeNull();
+    expect(innerGrid?.querySelector(":scope > .sheet-seam-selected")).toBeNull();
 
     dispose();
   });
@@ -914,6 +913,88 @@ describe("SheetGrid interaction", () => {
 
     expect(editingId()).toBe("c2");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    dispose();
+  });
+
+  it("Left/Right at a cell's text edge walk reading order in Edit, across a row's end (GH #874)", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    const first = activeEditor(root);
+    first.select(first.value().length, first.value().length);
+    keydown(first, "ArrowRight");
+    await tick();
+
+    expect(editingId()).toBe("c2");
+    expect(activeEditor(root).selection()).toEqual([0, 0]);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    const second = activeEditor(root);
+    second.select(second.value().length, second.value().length);
+    keydown(second, "ArrowRight");
+    await tick();
+
+    expect(editingId()).toBe("c3");
+    expect(activeEditor(root).selection()).toEqual([0, 0]);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
+
+    keydown(activeEditor(root), "ArrowLeft");
+    await tick();
+
+    expect(editingId()).toBe("c2");
+    expect(activeEditor(root).selection()).toEqual([4, 4]);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    dispose();
+  });
+
+  it("Up/Down at a cell's edge go to the cell above/below in Edit and leave the grid at its edges (GH #874)", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    const top = activeEditor(root);
+    top.select(top.value().length, top.value().length);
+    keydown(top, "ArrowDown");
+    await tick();
+
+    expect(editingId()).toBe("c3");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
+
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "ArrowUp");
+    await tick();
+
+    expect(editingId()).toBe("c1");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "ArrowUp");
+    await tick();
+
+    // Up from the top row: the grid block's own text, an ordinary outline edit.
+    expect(editingId()).toBe("grid");
+    expect(cellSel()).toBeNull();
+
+    setCellSel({ gridId: "grid", row: 1, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    const bottom = activeEditor(root);
+    bottom.select(bottom.value().length, bottom.value().length);
+    keydown(bottom, "ArrowDown");
+    await tick();
+
+    // Down from the bottom row: the block after the grid.
+    expect(editingId()).toBe("after");
+    expect(cellSel()).toBeNull();
 
     dispose();
   });

@@ -160,6 +160,8 @@ import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, 
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
+import { editsLikeOutline, openGridTarget } from "../sheet/gridEditMove";
+import { gridNeighbour } from "../sheet/gridNeighbour";
 import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
 import { applySheetViewSlashAction } from "./block/sheetViewSlash";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -2172,6 +2174,22 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     if (plain && e.key === "Backspace" && start === 0 && end === 0) {
       e.preventDefault();
       return true;
+    }
+    // A grid edits like an outline (GH #874): the same reading-order routing as the CM6
+    // editor (src/sheet/gridEditMove.ts). Table title cells and board cards keep the
+    // selection-mode moves below.
+    if (plain && !e.shiftKey && start === end && editsLikeOutline(sheetCell)) {
+      const leave = arrowLeave(e.key, ref, start, end, raw.length);
+      const up = e.key === "ArrowUp" && !raw.slice(0, start).includes("\n") && caretAtFirstRow(ref, start);
+      const down = e.key === "ArrowDown" && !raw.slice(start).includes("\n") && caretAtLastRow(ref, start);
+      if (leave || up || down) {
+        e.preventDefault();
+        const move = leave ? (leave === "forward" ? "right" : "left") : up ? "up" : "down";
+        const sourceCol = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
+        const target = gridNeighbour(props.id, sheetCell, move, caretColumnOnVisualRow(ref, start) ?? sourceCol);
+        if (target) { commit(raw); openGridTarget(target, sheetCell.surfaceId); }
+        return true;
+      }
     }
     if (plain && !e.shiftKey && arrowLeave(e.key, ref, start, end, raw.length)) {
       e.preventDefault();
