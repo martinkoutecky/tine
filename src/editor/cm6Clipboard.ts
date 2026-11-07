@@ -12,6 +12,8 @@ import { reportUiFailure } from "../uiFailure";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 import { structuralSheetPasteNode } from "../sheet/mutations";
+import type { SheetCellCtx } from "../sheet/context";
+import { runGridOutline } from "../sheet/gridEditMove";
 import { caretInDisplayMath, caretInFence, caretOnOpeningFence } from "./fences";
 import { codeFenceOnly } from "./codeFence";
 import { calcSource } from "./calc";
@@ -24,6 +26,7 @@ import { plainTextPaste } from "./plainTextPaste";
 import { autoEmbedVideoLinks } from "../pasteSettings";
 
 interface ClipboardContext {
+  cell?: SheetCellCtx | null;
   id: string;
   format: "md" | "org";
   sheet: boolean;
@@ -80,7 +83,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
         return (empty ? replaceEmptyBlockWithOutline(ctx.id, prepared) : insertOutlineAfter(ctx.id, prepared)) ?? false;
       });
       if (!lastId) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
-      else if (node(lastId)) startEditing(lastId, node(lastId).raw.length);
+      else if (node(lastId)) runGridOutline(ctx.cell, () => startEditing(lastId, node(lastId).raw.length));
     };
     const prepared = sanitizeOutlineIdsForPaste(ctx.id, nodes);
     if (prepared instanceof Promise) void prepared.then(insert).catch(error => reportUiFailure("clipboard-association", error));
@@ -145,7 +148,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
       void readOwned(graphOwner(() => ctx.current()), pasteClipboardPayload(ctx.id, slot)).then(result => {
         if (result.kind === "stale") return;
         const lastId = result.value;
-        if (lastId && node(lastId)) startEditing(lastId, node(lastId).raw.length);
+        if (lastId && node(lastId)) runGridOutline(ctx.cell, () => startEditing(lastId, node(lastId).raw.length));
       }).catch(error => reportUiFailure("clipboard-association", error));
       return true;
     }

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-grid-edit-first.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed page, Down from grid text edits its top-left cell; caret arrows cross cells and Right wraps a row. Enter creates a cell's child outline, Tab indents inside it, and Esc keeps the typed text on disk while switching to Cell Selection.","blocking":false,"authority":"GH #874; D-20261105-GE; UI-GH874-GRID-EDIT-FIRST"}],
+      "acceptableVariations": ["Cell geometry, wrapping, editor implementation and save latency may vary."],
+      "nonRequirements": ["No exact pixels, private graph, release burn-in, macOS/Windows, IME or RTL certification; cell and key boundaries are covered in both editor render suites."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-search-properties.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Typing a user property value into Ctrl+K shows highlighted property evidence; Enter reveals the owning block or page header in Markdown and Org, without changing graph files.","blocking":false,"authority":"GH #870; D-20261105-SP"}],
       "acceptableVariations": ["Snippet wrapping, highlight geometry, result timing and page layout may vary."],
@@ -1278,7 +1284,7 @@
       "stability": "stable"
     },
     "scripts/e2e-sheets.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, field rename migrates dependent data atomically, and dragging a board card from outside block-editor focus saves its new task marker.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "A grid click enters Edit and Esc keeps the text and enters Cell Selection. Selection arrows still step through seams; cell edits commit before navigation, field rename migrates dependent data atomically, and dragging a board card from outside block-editor focus saves its new task marker.", "blocking": true }],
       "acceptableVariations": ["Grid dimensions, cell styling, and focus-ring presentation may evolve."],
       "nonRequirements": ["Exact cell pixel size, column widths, or formula-editor layout."],
       "stability": "stable"

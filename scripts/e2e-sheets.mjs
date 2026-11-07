@@ -1,7 +1,7 @@
 // E2E smoke for Sheets Phase 2a: drives the REAL Tine binary (real backend,
 // real save path) under Xvfb via tauri-driver. Seeds a journal with a 2x2 grid,
-// clicks into a cell, types, commits, and asserts the on-disk markdown changed
-// exactly as expected (cell text edited; structure intact; Enter did not split).
+// clicks into a cell, types, Esc-selects, and asserts the on-disk markdown changed
+// exactly as expected (cell text kept; structure intact).
 // Usage: DISPLAY=:99 node scripts/e2e-sheets.mjs
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
@@ -10,6 +10,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TMP_ROOT = path.resolve(process.env.E2E_TMP_ROOT || process.env.TMPDIR || "/tmp");
@@ -81,13 +83,16 @@ fs.mkdirSync(`${G}/logseq`, { recursive: true });
 fs.writeFileSync(`${G}/logseq/config.edn`, "{:preferred-workflow :todo :tine/guide-announced? true}\n");
 fs.writeFileSync(JFILE, GRID_MD);
 
-for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });
+for (const d of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });
+const fixture = accountHomeFixture(TMP, TMP);
 const env = {
-  ...process.env,
+  ...fixture.env,
+  HOME: `${TMP}/xdg/home`,
   TINE_GRAPH: G,
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
   XDG_CACHE_HOME: `${TMP}/xdg/cache`,
+  XDG_STATE_HOME: `${TMP}/xdg/state`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
@@ -107,7 +112,10 @@ let checks = 0;
 const check = (name, ok, extra = "") => {
   checks++;
   console.log(`${ok ? "PASS" : "FAIL"}: ${name}${ok ? "" : "  " + extra}`);
-  if (!ok) failures++;
+  if (!ok) {
+    failures++;
+    fs.appendFileSync(path.join(TMP, "failure.txt"), `Tested: 0053ba0bc + worktree diff\nJourney: e2e-sheets / ${name}\nExpected: ${name}\nObserved: ${extra || "semantic check returned false"}\nClassification: ambiguous until diagnosed\n\n`);
+  }
 };
 
 let browser;
@@ -127,17 +135,18 @@ try {
   });
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 20000 });
+  await assertAppLease(fixture);
 
   // The journals feed shows today's journal — the grid should be rendered.
   const cell = await browser.$('.sheet-cell[data-row="0"][data-col="0"]');
   await cell.waitForExist({ timeout: 10000 });
   check("grid renders in real app", true);
 
-  // Click selects; Enter edits; Esc returns to selection; double-click edits.
+  // Click edits; Esc keeps text and selects; Enter edits the selected cell.
   await cell.click();
   await sleep(400);
   let editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
-  check("clicking a cell selects without editing", !editing);
+  check("clicking a cell enters Edit", editing);
   let selectedCells = await browser.$$(".sheet-cell-selected");
   check("click selected exactly one cell", selectedCells.length === 1);
   const firstColVisible = await browser.execute(() => {
@@ -157,45 +166,32 @@ try {
   });
   check("first-column click selects with visible sticky ring", firstColVisible.ok, JSON.stringify(firstColVisible));
 
-  await browser.keys(["Enter"]);
-  await sleep(300);
-  editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
-  check("Enter edits selected cell", editing);
-
   await browser.keys(["Escape"]);
   await sleep(250);
   editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
   selectedCells = await browser.$$(".sheet-cell-selected");
   check("Esc from cell edit returns to selection", !editing && selectedCells.length === 1);
 
-  const dblClicked = await browser.execute(() => {
-    const el = document.querySelector('.sheet-cell[data-row="0"][data-col="0"]');
-    if (!el) return false;
-    el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
-    return true;
-  });
+  await browser.keys(["Enter"]);
   await sleep(300);
   editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
-  check("double-click edits selected cell", dblClicked && editing);
+  check("Enter edits selected cell", editing);
 
-  // Move to end of the cell text (double-click-to-caret can land mid-word at the click
-  // point — correct, but make the expected text deterministic), type, then
-  // Enter — must COMMIT (not split the block).
+  // Type at the end, then Esc keeps it and selects the cell.
   await browser.keys(["End"]);
   await browser.keys(["-", "e", "d", "i", "t", "e", "d"]);
   await sleep(200);
-  await browser.keys(["Enter"]);
+  await browser.keys(["Escape"]);
   await sleep(300);
   const stillEditing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
-  check("Enter commits (editor closed)", !stillEditing);
+  check("Esc keeps text and closes the editor", !stillEditing);
   const selRing = await browser.$$(".sheet-cell-selected");
-  check("Enter returns to cell selection", selRing.length === 1);
+  check("Esc returns to cell selection", selRing.length === 1);
 
   // Wait out the save debounce, then verify the disk state.
-  await sleep(2500);
-  const disk = fs.readFileSync(JFILE, "utf8");
+  const disk = await waitForFileText(JFILE, text => text.includes("alpha-edited"));
   check("edited text saved to disk", disk.includes("alpha-edited"), JSON.stringify(disk));
-  // Seeded file has 18 bullets; an Enter-split would add one.
+  // Esc changes no outline structure.
   const bulletCount = (disk.match(/^\s*-/gm) || []).length;
   check("no block was split/created (18 bullets)", bulletCount === 18, `got ${bulletCount}: ${JSON.stringify(disk)}`);
   check("grid config intact", disk.includes("tine.view:: grid"), JSON.stringify(disk));
@@ -212,6 +208,7 @@ try {
   // NEW row materializes with the typed char; then undo removes it fully.
   const cell00 = await browser.$('.sheet-cell[data-row="0"][data-col="0"]');
   await cell00.click();
+  await browser.keys(["Escape"]);
   await sleep(300);
   await browser.keys(["ArrowDown"]); // cell -> row seam (seam stepping ON)
   await sleep(200);
@@ -219,9 +216,8 @@ try {
   check("ArrowDown lands on a seam", seamShown.length === 1);
   await browser.keys(["z"]); // type on seam → insert row + overtype edit
   await sleep(400);
-  await browser.keys(["Enter"]); // commit
-  await sleep(2500);
-  const disk3 = fs.readFileSync(JFILE, "utf8");
+  await browser.keys(["Escape"]); // keep the inserted text; select the cell
+  const disk3 = await waitForFileText(JFILE, text => /-\s*z\s*$/m.test(text));
   const bullets3 = (disk3.match(/^\s*-/gm) || []).length;
   check("seam-typing inserted a row on disk (20 bullets: +row +cell)", bullets3 === 20, `got ${bullets3}: ${JSON.stringify(disk3)}`);
   check("inserted cell holds the typed char", /-\s*z\s*$/m.test(disk3), JSON.stringify(disk3));
@@ -230,17 +226,12 @@ try {
   await browser.keys(["Control", "z"]);
   await sleep(400);
   await browser.keys(["Control", "z"]);
-  await sleep(2500);
-  const disk4 = fs.readFileSync(JFILE, "utf8");
+  const disk4 = await waitForFileText(JFILE, text => text === disk2);
   check("two undos fully revert the seam insert (text, then structure)", disk4 === disk2, JSON.stringify(disk4));
 
-  const ladderStart = await browser.execute(() => {
-    const cell = document.querySelector('.sheet-grid .sheet-cell[data-row="0"][data-col="1"]');
-    if (!cell) return false;
-    cell.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 15 }));
-    cell.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 15 }));
-    return true;
-  });
+  await browser.$('.sheet-grid > .sheet-cell[data-row="0"][data-col="1"]').click();
+  await browser.keys(["Escape"]);
+  const ladderStart = await browser.$('.sheet-grid > .sheet-cell-selected[data-row="0"][data-col="1"]').isExisting();
   await sleep(200);
   await browser.keys(["ArrowLeft"]);
   await sleep(150);
@@ -275,12 +266,12 @@ try {
   // --- Fill down (phase 2c) --------------------------------------------------
   const cellA = await browser.$('.sheet-cell[data-row="0"][data-col="1"]');
   await cellA.click();
+  await browser.keys(["Escape"]);
   await sleep(300);
   await browser.keys(["Shift", "ArrowDown"]); // range (0,1)-(1,1)... shift over seam? range extension skips seams
   await sleep(150);
   await browser.keys(["Control", "d"]); // fill down
-  await sleep(2500);
-  const disk5 = fs.readFileSync(JFILE, "utf8");
+  const disk5 = await waitForFileText(JFILE, text => (text.match(/- beta/g) || []).length === 2);
   const betaCount = (disk5.match(/- beta/g) || []).length;
   check("Ctrl+D filled beta into the row below", betaCount === 2, JSON.stringify(disk5));
 
@@ -994,10 +985,12 @@ try {
   failures++;
   console.error("E2E error:", e && e.message);
   console.error("E2E artifacts:", TMP);
+  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: 0053ba0bc + worktree diff\nJourney: e2e-sheets\nExpected: grid Edit/Selection journey and existing table/board outcomes\nObserved: ${e.stack ?? e}\nClassification: ambiguous until diagnosed\n`);
   try { await browser?.saveScreenshot(path.join(TMP_ROOT, "sheets-e2e-failure.png")); } catch {}
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
+  fixture.close?.();
   if (failures === 0 && process.env.E2E_KEEP_TMP !== "1") fs.rmSync(TMP, { recursive: true, force: true });
 }
 console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILURES (${checks} checks)`);

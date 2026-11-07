@@ -3592,7 +3592,8 @@ html[data-system-insets="native-viewport"] {
 .block-main.dragging {
   opacity: 0.4;
 }
-.block-main.selected {
+.block-main.selected,
+.sheet-cell-line.selected {
   background: var(--block-select-bg);
   border-radius: 4px;
 }

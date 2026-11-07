@@ -64,6 +64,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Grids edit like an outline: click or arrow into a cell, keep editing across cells, and use Enter and Tab to build its child outline; Esc keeps your text and selects the cell (GH #874).
 - Block and page embed toolbars use compact icons for **Edit link** and **Open source**, with translated tooltips and accessible names. **Remove** keeps its text beside an icon, and touch screens keep all labels (#847).
 - Renaming a page now also updates bare `alias::` and `aliases::` values naming it, so aliases stay attached after a reload. You can rename a name that exists only as an alias: its declaring lines and references change without renaming the declaring pages or creating a file for the alias. Such a name can merge into an existing page or alias owner, with no “make it its own page” choice.
 - PDF viewer updated to pdf.js 6.5.438 (#867). Its compatible image decoder also removes the Emscripten SDK requirement for building Tine.
