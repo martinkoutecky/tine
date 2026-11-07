@@ -62,7 +62,7 @@ const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd:
 const write = () => fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(report, null, 2) + "\n");
 const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, detail }); write(); console.log(`ok: ${stage}`); };
 write();
-let target, driver, browser, log, wm;
+let target, driver, browser, log, wm, mainHandle;
 const { xdo } = x11Tools(env);
 async function shot(name) {
   // WebKitWebDriver cannot screenshot a related popup (its automation flag
@@ -137,7 +137,7 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
-  const main = await browser.getWindowHandle();
+  const main = await browser.getWindowHandle(); mainHandle = main;
   step("app-ready", await browser.execute(() => ({ title: document.title, ua: navigator.userAgent })));
   if (issues.includes("809")) {
     const native = await nativeGeometry("main");
@@ -291,6 +291,18 @@ try {
   try {
     report.dom = await browser?.execute(() => document.body.textContent?.slice(0, 6000));
     if (issues.some(issue => issue.startsWith("863"))) fs.writeFileSync(path.join(out, "failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
+  } catch { /* A frozen renderer cannot provide a screenshot or DOM. */ }
+  // GH #809: the failing window may be a popup whose webview vanished; record the
+  // handles and read the flight recorder (workspace.open stages, liveness) from main.
+  try {
+    if (issues.includes("809") && browser && mainHandle) {
+      report.windowHandles = await Promise.race([browser.getWindowHandles(), sleep(5000).then(() => "timeout")]);
+      await browser.switchToWindow(mainHandle);
+      await sleep(12_000); // let liveness probes and window stages land in the recorder
+      fs.writeFileSync(path.join(out, "809-failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
+    }
+  } catch (diagError) { report.diagnosticsError = String(diagError); }
+  try {
     await shot("failure.png");
   } catch { /* A frozen renderer cannot provide a screenshot or DOM. */ }
   write(); process.exitCode = 1; console.error(error);
