@@ -76,6 +76,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Remappable **Quit Tine** command, with **Ctrl+Q** on Linux and Windows, saving pending edits before closing every graph window (GH #805).
+- Drag the frameless desktop window from empty space in the left sidebar header; workspace controls stay clickable (GH #815).
 - **Settings → Editor → Auto-embed pasted video links** can be turned off to keep YouTube, Vimeo, Loom and Bilibili URLs as plain links in both editors, including Quick Capture. Automatic embedding stays on by default; no video titles are fetched on paste (#861).
 - **Toggle embed breadcrumbs** in the command palette switches the saved Block embed breadcrumbs setting. Assign a shortcut under Settings → Keyboard shortcuts; it has no default key (GH #860).
 - The prompt before opening another app's link offers **Always open <scheme> links** (#503). The choice applies to that exact scheme on this device, across graphs. **Settings → Editor → Remembered app links** lets you forget each choice and ask again.
