@@ -133,27 +133,28 @@ fn record_fixed_event(event: &'static str, fields: Map<String, Value>) {
 /// GH #809: closed-vocabulary milestones, with a process-local open number.
 /// The top-level elapsedMs remains the recorder clock; openElapsedMs is time
 /// since prepare (native) or launch (frontend), never a wall clock or label.
+/// (`step`, not `stage`: host_slot_guard_tests reads a passed name as a call.)
 pub(crate) fn record_workspace_open(
     sequence: u64,
-    stage: &'static str,
+    step: &'static str,
     open_elapsed_ms: u64,
     facts: Map<String, Value>,
 ) {
     record_fixed_event(
         "workspace.open",
-        workspace_open_fields(sequence, stage, open_elapsed_ms, facts),
+        workspace_open_fields(sequence, step, open_elapsed_ms, facts),
     );
 }
 
 fn workspace_open_fields(
     sequence: u64,
-    stage: &'static str,
+    step: &'static str,
     open_elapsed_ms: u64,
     facts: Map<String, Value>,
 ) -> Map<String, Value> {
     let mut fields = Map::new();
     fields.insert("sequence".into(), json!(sequence));
-    fields.insert("stage".into(), json!(stage));
+    fields.insert("stage".into(), json!(step));
     fields.insert("openElapsedMs".into(), json!(open_elapsed_ms));
     fields.extend(facts);
     fields
