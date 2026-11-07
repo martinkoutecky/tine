@@ -15,11 +15,13 @@ export function isCommentId(id: string, format: Format = formatForBlock(id)): bo
   return !!n && MAY_QUOTE.test(n.raw) && isCommentBlock(facetsOf(n.raw, format).properties, n.parent !== null);
 }
 
-/** The nearest quoted comment containing `id`, including itself, or null.
- * This is the one predicate for whether a block belongs to a comment thread. */
+/** The comment whose thread holds `id`: itself or its outermost quoted comment
+ * ancestor (DESIGN §2: a quoted reply stays in its root's thread), or null for
+ * an ordinary block. This is the one predicate for thread membership. O(depth). */
 export function threadRootOf(id: string, format: Format = formatForBlock(id)): string | null {
+  let root: string | null = null;
   for (let at: string | null = id; at !== null; at = doc.byId[at]?.parent ?? null) {
-    if (isCommentId(at, format)) return at;
+    if (isCommentId(at, format)) root = at;
   }
-  return null;
+  return root;
 }
