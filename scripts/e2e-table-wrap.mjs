@@ -9,7 +9,7 @@ import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const artifacts = path.join(root, "target/artifacts/og-tables-802");
+const artifacts = process.env.TABLE_WRAP_OUT || path.join(root, "target/artifacts/og-tables-802");
 fs.mkdirSync(artifacts, { recursive: true });
 const out = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(out, "graph");
@@ -63,10 +63,21 @@ async function checkReading(selector, name, count = 4) {
     const pane = wrap.closest(".rs-item-body, .main-content");
     const r = wrap.getBoundingClientRect(), p = pane.getBoundingClientRect();
     return { width: r.width, scroll: wrap.scrollWidth - wrap.clientWidth,
+      classes: wrap.className, inline: wrap.style.cssText,
       contained: r.left >= p.left - 1 && r.right <= p.right + 1,
       paneScroll: pane.scrollWidth - pane.clientWidth };
   }), selector);
   evidence.push({ name, metrics });
+  fs.writeFileSync(path.join(out, `${name}-layout.json`), JSON.stringify(await browser.execute(selector =>
+    [...document.querySelectorAll(`${selector} .md-table-wrap`)].map(wrap => {
+      const table = wrap.querySelector("table"), style = getComputedStyle(table);
+      return { classes: wrap.className, inline: wrap.style.cssText, width: wrap.clientWidth,
+        table: { width: table.getBoundingClientRect().width, minWidth: style.minWidth, maxWidth: style.maxWidth },
+        cells: [...table.querySelectorAll("th, td")].map(cell => ({ text: cell.textContent, classes: cell.className,
+          width: cell.getBoundingClientRect().width, overflowWrap: getComputedStyle(cell).overflowWrap })),
+        ancestors: [...(function* () { for (let node = wrap.parentElement; node; node = node.parentElement) yield node; })()]
+          .map(node => ({ classes: node.className, width: node.clientWidth })) };
+    }), selector), null, 2));
   screenshot(name);
   for (const metric of metrics) {
     assert.ok(metric.contained && metric.paneScroll <= 1, `${name}: table escapes pane: ${JSON.stringify(metric)}`);

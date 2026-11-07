@@ -33,6 +33,9 @@ try {
     ['mixed', 1000, 560, 0, 0, words],
     ['many-columns', 1000, 560, 0, 0, 'short cell words'],
     ['many-columns-mobile', 390, 390, 0, 0, 'short cell words'],
+    // Linked References can insert another sidebar copy between frames. Its
+    // prose must fit even before TableWrap's first geometry measurement.
+    ['many-columns-initial-sidebar', 600, 359, 0, 0, 'short cell words'],
     ['long-url', 390, 390, 0, 0, `https://example.test/${'segment/'.repeat(24)}`],
     ['reported', 390, 390, 0, 0],
   ];
@@ -47,7 +50,16 @@ try {
     const raw = name === 'reported' ? `| - | - |- |\n|---|${'-'.repeat(402)}|-----------|`
       : `${row(i => `Col ${i}`)}\n${name === 'org' ? '|-------+--------|' : row(() => '---')}\n${row(i => name === 'mixed' ? (i === 0 ? 'Status column words' : `${words} ${words} ${words} ${words}`) : cell ?? (i ? 'b' : 'a').repeat(length))}`;
     const surface = name.endsWith('-sidebar') ? 'sidebar' : name.endsWith('-embed') ? 'embed' : name;
-    await page.evaluate(async ({ raw, depth, pane, format, surface, cell }) => { await window.qbgMount(raw, depth, pane, format, surface, cell); }, { raw, depth, pane, format: name === 'org' ? 'org' : 'md', surface, cell: cell ?? 'a'.repeat(length) });
+    const initialScroll = await page.evaluate(async ({ raw, depth, pane, format, surface, cell, eager }) => {
+      await window.qbgMount(raw, depth, pane, format, surface, cell, eager);
+      const wrap = document.querySelector('.md-table-wrap');
+      if (eager && !wrap) throw new Error('First-layout fixture did not mount its table eagerly');
+      return wrap ? wrap.scrollWidth - wrap.clientWidth : 0;
+    }, { raw, depth, pane, format: name === 'org' ? 'org' : 'md', surface, cell: cell ?? 'a'.repeat(length), eager: name === 'many-columns-initial-sidebar' });
+    if (name === 'many-columns-initial-sidebar') {
+      console.log(name, 'initial-scroll', initialScroll);
+      if (initialScroll > 1) failures.push(`${name}: newly inserted prose needs horizontal scrolling before measurement (${initialScroll}px)`);
+    }
     await page.locator(name === 'sheet' ? '.sheet-table' : '.md-table').waitFor();
     await sleep(600);
     const geometry = await page.evaluate(() => {

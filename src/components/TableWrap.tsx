@@ -45,7 +45,10 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
   const setup = (): (() => void) => {
     const parent = el.parentElement;
     const pane = el.closest<HTMLElement>(".main-content, .rs-item-body, .right-sidebar-body");
-    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) return () => {};
+    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) {
+      el.classList.remove("md-table-tight");
+      return () => {};
+    }
     const surface = el.firstElementChild as HTMLElement;
     const column = el.closest<HTMLElement>(".main-content-inner") ?? parent;
     let frame: (() => void) | undefined;
@@ -82,5 +85,8 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
     schedule();
     return () => { observer?.disconnect(); frame?.(); stopResize(); };
   };
-  return <div ref={el} class="md-table-wrap">{props.children}</div>;
+  // Reading copies can be inserted between layout frames (Linked References
+  // in the sidebar). Fit prose immediately, before the observer/first frame
+  // supplies pane geometry; measure() restores whole words whenever they fit.
+  return <div ref={el} class="md-table-wrap md-table-tight">{props.children}</div>;
 }
