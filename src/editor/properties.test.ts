@@ -94,6 +94,9 @@ describe("property line helpers", () => {
     expect(pagePropertyEntries(updated, "org").map((e) => [e.key, e.value])).toEqual([["title", "Book"], ["status", "new"]]);
     expect(pagePartsWithProperty([updated], "org", "status", null)).toEqual(["#+TITLE: Book\nIntro"]);
     expect(pagePartsWithProperty([""], "org", "tags", "x")).toEqual(["#+tags: x"]);
+    // A key or value the shared edit refuses leaves every part unchanged instead of throwing (GH #839).
+    expect(pagePartsWithProperty(["tags:: a"], "md", "bad:key", "x")).toEqual(["tags:: a"]);
+    expect(pagePartsWithProperty(["tags:: a"], "md", "tags", "two\nlines")).toEqual(["tags:: a"]);
   });
   it("reads a value case-insensitively", () => {
     expect(readPropertyValue("alias:: Foo, Bar\npublic:: true", "alias")).toBe("Foo, Bar");

@@ -9,7 +9,7 @@ import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
-import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json } from "../render/wasm/lsdoc_wasm.js";
+import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -31,6 +31,23 @@ export function acceptedPropertyLine(line: string): { key: string; value: string
   if (!line) return null;
   const pair = JSON.parse(property_line_json(line)) as [string, string] | null;
   return pair ? { key: pair[0], value: pair[1] } : null;
+}
+
+/** Markdown value position accepted by the persisted line parser. The caller
+ * excludes fenced lines. Org has no OG value-search trigger (6e7afa8eb,
+ * handler/editor.cljs:1907-1924,2211-2226), so drawer authoring stays literal.
+ * Intentional OG difference: Markdown values need no prior name selection.
+ * Parse only the current line, never the whole block on each keystroke. */
+export function propertyValuePosition(raw: string, caret: number, format: Format): { key: string; start: number } | null {
+  if (format !== "md") return null;
+  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
+  const lineEnd = raw.indexOf("\n", caret);
+  const line = raw.slice(lineStart, lineEnd === -1 ? raw.length : lineEnd);
+  if (!line.includes("::")) return null;
+  const property = acceptedPropertyLine(line);
+  if (!property || !line.startsWith(property.key) || !isEditablePropertyKey(property.key)) return null;
+  const start = lineStart + property.key.length + 2;
+  return caret > start ? { key: property.key, start } : null;
 }
 
 /** Whether the properties panel may write `key` (GH #164): letters, marks,
@@ -458,40 +475,14 @@ export function pageHeaderKeys(raw: string): string[] {
  *  would otherwise detach the rest of the header. Returns the new texts, same
  *  length as `parts`. Cost O(total text). */
 export function pagePartsWithProperty(parts: string[], format: PropFormat, key: string, value: string | null): string[] {
-  const v = value?.trim() || null;
-  const lower = key.toLowerCase();
-  const hits = parts.flatMap((text, part) =>
-    pagePropertyEntries(text, format).filter((e) => e.key.toLowerCase() === lower).map((e) => ({ part, line: e.line, key: e.key })));
-  const lines = parts.map((text) => (text === "" ? [] : text.split("\n")));
-  const dropped = parts.map(() => new Set<number>());
-  hits.forEach(({ part, line, key: spelling }, i) => {
-    if (i > 0 || !v) {
-      dropped[part].add(line);
-      return;
-    }
-    const old = lines[part][line];
-    const indent = old.slice(0, old.length - old.trimStart().length);
-    lines[part][line] = format === "org"
-      ? `${indent}${old.trimStart().startsWith("#+") ? `#+${lower}: ` : `:${lower}: `}${v}`
-      : `${spelling}:: ${v}`;
-  });
-  if (!hits.length && v) lines[0].unshift(format === "org" ? `#+${lower}: ${v}` : `${key}:: ${v}`);
-  return lines.map((all, part) => {
-    if (!dropped[part].size) return all.join("\n");
-    const entryLines = new Set(pagePropertyEntries(parts[part], format).map((e) => e.line));
-    let kept = all.map((line, i) => ({ line, i })).filter(({ i }) => !dropped[part].has(i));
-    if (format === "org") {
-      // A drawer is "emptied" only when one of OUR removals lay inside it.
-      const emptied = (open?: { line: string; i: number }, end?: { line: string; i: number }) =>
-        !!open && !!end && /^:PROPERTIES:$/i.test(open.line.trim()) && /^:END:$/i.test(end.line.trim())
-        && [...dropped[part]].some((d) => open.i < d && d < end.i);
-      kept = kept.filter((_, k) => !emptied(kept[k], kept[k + 1]) && !emptied(kept[k - 1], kept[k]));
-    } else if (dropped[part].has(0)) {
-      const first = kept.findIndex(({ line }) => line.trim() !== "");
-      if (first > 0 && entryLines.has(kept[first].i)) kept = kept.slice(first);
-    }
-    return kept.map(({ line }) => line).join("\n");
-  });
+  try {
+    return JSON.parse(page_parts_with_property(JSON.stringify(parts), format === "org", key, value ?? undefined));
+  } catch (error) {
+    // The shared Rust edit refuses an invalid key/value or an unparseable header (and a parser
+    // trap lands here too): leave every part unchanged, so the caller writes nothing, and say so (I-9).
+    reportUiFailure("page-property-edit", error);
+    return parts;
+  }
 }
 
 /** The page-level properties we surface in the page-properties panel, with a
