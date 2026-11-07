@@ -608,7 +608,7 @@ export function PageView(): JSX.Element {
         setLoadedRoute(r);
         setLoadError(String(e));
         setReady(true);
-        if (pathRefusal) cancelRetry = pinnedPath.refuse(publication, pathRefusal, r, routeOwner);
+        if (pathRefusal) cancelRetry = pinnedPath.refuse(publication, pathRefusal, r, owned);
       }
     })();
   });
