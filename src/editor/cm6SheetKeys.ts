@@ -8,6 +8,7 @@ import { appendSheetCellChild } from "../sheet/mutations";
 import { cellBlockId, cellOwner, cellSurfaceKey, moveCellAfterEdit, selectCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
 import { SHEET_CELL_HIDE, splitProps } from "./properties";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
+import { editsLikeOutline, gridBlocksCommand, gridEditKey } from "../sheet/gridEditMove";
 
 const blockedCommands = new Set([
   "editor/comment", "editor/indent", "editor/outdent", "editor/move-block-up", "editor/move-block-down",
@@ -48,6 +49,17 @@ export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: stri
   const keydown = (e: KeyboardEvent, v: EditorView): boolean => {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (editsLikeOutline(cell)) {
+      const leave = cm6ArrowLeave(e.key, v);
+      const rowStart = e.key === "ArrowUp" || e.key === "ArrowDown"
+        ? v.moveToLineBoundary(EditorSelection.cursor(s.head), false).head : 0;
+      const up = e.key === "ArrowUp" && rowStart === 0;
+      const down = e.key === "ArrowDown" && v.moveToLineBoundary(EditorSelection.cursor(s.head), true).head === raw.length;
+      return gridEditKey(e, { id, cell, raw, start: s.from, end: s.to, commit,
+        softNewline: () => v.dispatch(v.state.replaceSelection("\n"), { scrollIntoView: true, userEvent: "input" }),
+        edge: leave ? (leave === "forward" ? "right" : "left") : up ? "up" : down ? "down" : null,
+        col: s.head - rowStart });
+    }
     if (!e.ctrlKey && !e.metaKey && e.altKey && e.key === "Enter") {
       commit(raw);
       const child = appendSheetCellChild(cellBlockId(cell) ?? id);
@@ -88,5 +100,5 @@ export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: stri
     const cmd = editorCommandFor(e);
     return !!cmd && blockedCommands.has(cmd);
   };
-  return { keydown, blocks: (command: string) => blockedCommands.has(command) };
+  return { keydown, blocks: (command: string) => editsLikeOutline(cell) ? gridBlocksCommand(id, cell, command) : blockedCommands.has(command) };
 }

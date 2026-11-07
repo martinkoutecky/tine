@@ -43,6 +43,11 @@ icon:: ▦
 	- 3. Already have an outline? Right-click its parent bullet and choose **Show children as → Grid** (or run `/Grid` on that block) to turn the existing bullets into a grid in place.
 	- 4. What you should see: a live grid whose cells are still ordinary Logseq bullets.
 	- 5. Under the hood: the block just carries `tine.view:: grid` (plus optional `tine.header:: true` for a label row and `tine.col-widths::`). You never have to type those by hand.
+- ### Editing a grid
+	- Single-click a cell to edit at the click point. Down from the grid block's text enters its top-left cell; Up from the block below enters the last block of its bottom-left cell. Enter or Right on a selected grid block also enters Edit.
+	- Arrows move through text. At its edge, Left and Right continue in reading order, including from the last cell of a row to the first cell of the next row. Up and Down walk the cell's outline, then the cell above or below, keeping the caret column. Up from the top row reaches the grid block's text; Down from the bottom row reaches the block after the grid.
+	- Enter on the cell's own text creates its first child, moving text after the caret into it. Alt+Enter works too. Inside a cell's child outline, Enter splits blocks and Tab / Shift+Tab indent / outdent as on a page; children stay inside their cell. On the cell's own text, Tab / Shift+Tab move to the next / previous cell in Edit.
+	- Esc keeps your text and switches to Cell Selection. Enter, F2 or typing edits again; another Esc selects the grid block. In Cell Selection, arrows step through seams, Shift+arrow extends a range, and typing replaces the selection. Drag across cells to select a range, or click a ruling to select a seam for row and column changes.
 - ## Task table
   tine.view:: table
   tine.col-aggregates:: prop:estimate=sum

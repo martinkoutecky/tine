@@ -27,7 +27,9 @@ import { captureKeyIntent } from "../editor/captureKeys";
 import { cm6CommandHandlers } from "../editor/cm6Commands";
 import { marginNavigation } from "./blockComments";
 import { SheetCellContext } from "../sheet/context";
+import { cellOwner } from "../sheet/selection";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
+import { editsLikeOutline, gridNestedBlock, gridOutlineScope, runGridOutline } from "../sheet/gridEditMove";
 import { cm6Clipboard } from "../editor/cm6Clipboard";
 import { editorAssets } from "../editor/editorAssets";
 import { cm6Completions } from "../editor/cm6Completions";
@@ -154,10 +156,11 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     view.focus();
   };
   const embedExit = useContext(EmbedNavExitContext);
-  const structure = cm6Structure({ ...props, format, current, commit, embedExit, code: () => code() !== null, calc: isCalc,
+  const scope = cell && editsLikeOutline(cell) ? gridOutlineScope(cell) : props.scope;
+  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, embedExit, code: () => code() !== null, calc: isCalc,
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
-    ...marginNavigation(props.id, props.scope, props.surface, () => format),
+    ...marginNavigation(props.id, scope, props.surface, () => format),
   });
   const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
   const assets = editorAssets({ id: props.id, element: () => view!.contentDOM, mounted: current, capture: !!capture,
@@ -167,7 +170,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.focus();
     },
   });
-  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, assets, sheet: !!cell, hiddenProperties });
+  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, assets, cell, sheet: !!cell && !gridNestedBlock(props.id, cell), hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, literal, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit,
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     assets,
@@ -183,6 +186,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const typing = cm6Typing({ id: props.id, format, current, view: () => view, commit,
     literal, scaffold: completion.scaffold, refresh: completion.refresh, pauseCompletion: completion.pause });
   const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
+    owner: cell && editsLikeOutline(cell) ? cellOwner(cell) : null,
     closeCompletion: completion.close, refreshCompletion: completion.refresh });
   const submitCapture = () => {
     if (!capture || !view) return false;
@@ -205,7 +209,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     capture: submitCapture, upload: () => { void assets.uploadAsset(); },
     photo: () => { void assets.capturePhotoCmd(); }, voice: () => { void assets.voiceMemoToggle(); },
   });
-  const command = (id: string) => sheet?.blocks(id) || commands[id]?.() || false;
+  const command = (id: string) => runGridOutline(cell, () => sheet?.blocks(id) || commands[id]?.() || false);
   const registerCommandBridge = () => {
     removeCommandBridge?.();
     removeCommandBridge = registerFocusedEditorCommandBridge({
@@ -395,7 +399,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       const s = view.state.selection.main;
       const leave = codeView.leaveRange(event, view.state.doc.toString(), s.from, s.to);
       if (leave) showText(view, visible(), leave.anchor, leave.head);
-      if (leave || clipboard.keydown(event, view) || sheet?.keydown(event, view) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view)) {
+      if (runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(event, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view!))) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }

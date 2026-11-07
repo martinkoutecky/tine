@@ -14,7 +14,7 @@ import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, type OutlineChange, type OutlinePlace } from "../kernel";
 import { outlineMaxDepth, outlineDepth, type OutlineNode } from "../../editor/outline";
-import { isEditorEmpty, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
+import { isEditorEmpty, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte, type HidePolicy } from "../../editor/properties";
 import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
 import { batch } from "solid-js";
 import { isBlockMoving, setBlockMoving } from "./moves";
@@ -195,13 +195,14 @@ export function splitBlock(
   forceChild: boolean = false,
   keepStartInScope: boolean = false,
   editingSurface: string | null = null,
+  hiddenProperties: HidePolicy = BUILTIN_HIDE,
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
   const change = outlineChange({
     verb: "split",
     key: id,
-    raw_offset: visibleOffsetToRawByte(node.raw, offset, BUILTIN_HIDE, formatForBlock(id)),
+    raw_offset: visibleOffsetToRawByte(node.raw, offset, hiddenProperties, formatForBlock(id)),
     force_child: forceChild,
     children_visible: node.children.length > 0 && !node.collapsed,
     keep_start_in_scope: keepStartInScope,

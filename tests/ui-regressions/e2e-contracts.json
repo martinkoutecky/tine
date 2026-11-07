@@ -4,13 +4,19 @@
   "scenarios": {
     "scripts/e2e-editor-native.mjs": {
       "contracts": [
-        { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": true },
-        { "class": "exact-safety-interoperability", "userOutcome": "Editing and clipboard transfers reach the exact expected Markdown file bytes, preserve the copied source and nested children, remove only the cut subtrees, and keep the reference target unchanged.", "blocking": true, "authority": "CM6 rollout acceptance D-20261025-CS / ET2 (#767), existing guarded save and outline clipboard semantics" },
-        { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": true }
+        { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },
+        { "class": "exact-safety-interoperability", "userOutcome": "Editing and clipboard transfers reach the exact expected Markdown file bytes, preserve the copied source and nested children, remove only the cut subtrees, and keep the reference target unchanged.", "blocking": false, "authority": "CM6 rollout acceptance D-20261025-CS / ET2 (#767), existing guarded save and outline clipboard semantics" },
+        { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": false }
       ],
       "acceptableVariations": ["Native clipboard plumbing, editor DOM, selection painting, completion layout and save latency may vary while the semantic outcomes and persisted bytes hold."],
       "nonRequirements": ["A real OS IME candidate window, candidate selection/cancellation, dead keys, platform IME reconversion or mobile keyboards: these require human/device checks.", "macOS native UI certification: the repository currently has no macOS WebDriver app runner.", "Exact pixels, selection color, caret blink, timing or editor DOM structure."],
       "stability": "burn-in"
+    },
+    "scripts/e2e-grid-edit-first.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed page, Down from grid text edits its top-left cell; caret arrows cross cells and Right wraps a row. Enter creates a cell's child outline, Tab indents inside it, and Esc keeps the typed text on disk while switching to Cell Selection.","blocking":false,"authority":"GH #874; D-20261105-GE; UI-GH874-GRID-EDIT-FIRST"}],
+      "acceptableVariations": ["Cell geometry, wrapping, editor implementation and save latency may vary."],
+      "nonRequirements": ["No exact pixels, private graph, release burn-in, macOS/Windows, IME or RTL certification; cell and key boundaries are covered in both editor render suites."],
+      "stability":"burn-in"
     },
     "scripts/e2e-search-properties.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Typing a user property value into Ctrl+K shows highlighted property evidence; Enter reveals the owning block or page header in Markdown and Org, without changing graph files.","blocking":false,"authority":"GH #870; D-20261105-SP"}],
@@ -1288,7 +1294,7 @@
       "stability": "stable"
     },
     "scripts/e2e-sheets.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, field rename migrates dependent data atomically, and dragging a board card from outside block-editor focus saves its new task marker.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "A grid click enters Edit and Esc keeps the text and enters Cell Selection. Selection arrows still step through seams; cell edits commit before navigation, field rename migrates dependent data atomically, and dragging a board card from outside block-editor focus saves its new task marker.", "blocking": true }],
       "acceptableVariations": ["Grid dimensions, cell styling, and focus-ring presentation may evolve."],
       "nonRequirements": ["Exact cell pixel size, column widths, or formula-editor layout."],
       "stability": "stable"

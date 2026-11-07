@@ -13,6 +13,8 @@ import { doc, setDoc } from "../document/model";
 import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { setFocusedPaneId } from "../panes";
+import { resetCommentAuthorNameForTests } from "../commentIdentity";
+import { commentNameRequest, resetCommentNamePromptForTests } from "../commentNamePrompt";
 import {
   cellSel,
   colSeamSel,
@@ -29,8 +31,11 @@ beforeAll(async () => {
 let disposeKeys: (() => void) | null = null;
 let restoreCaretRange: (() => void) | null = null;
 let restoreClipboard: (() => void) | null = null;
+const mountedRoots = new Set<() => void>();
 
 afterEach(() => {
+  for (const dispose of mountedRoots) dispose();
+  mountedRoots.clear();
   disposeKeys?.();
   disposeKeys = null;
   restoreCaretRange?.();
@@ -38,6 +43,8 @@ afterEach(() => {
   restoreClipboard?.();
   restoreClipboard = null;
   resetCellSelectionForTests();
+  resetCommentAuthorNameForTests();
+  resetCommentNamePromptForTests();
   setFocusedPaneId("main");
   resetStore();
   document.body.innerHTML = "";
@@ -46,7 +53,9 @@ afterEach(() => {
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const dispose = render(node, root);
+  const unmount = render(node, root);
+  const dispose = () => { mountedRoots.delete(dispose); unmount(); };
+  mountedRoots.add(dispose);
   return { root, dispose };
 }
 
@@ -254,10 +263,6 @@ function inputText(textarea: EditorDriver, text: string): void {
   } else textarea.input(text);
 }
 
-function childrenSnapshot(): Record<string, string[]> {
-  return Object.fromEntries(Object.entries(doc.byId).map(([id, n]) => [id, [...n.children]]));
-}
-
 function mockClipboard(): string[] {
   const writes: string[] = [];
   const desc = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -368,7 +373,6 @@ describe("SheetGrid interaction", () => {
     expect(selected).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
     expect(selected?.surfaceId).toBe("pane:pane-2");
 
-    keydown(window, "Enter");
     await tick();
     const editors = editorsIn(root);
     expect(editors).toHaveLength(1);
@@ -382,9 +386,8 @@ describe("SheetGrid interaction", () => {
     disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <Block id="grid" />);
     selectBlock("grid");
-    keydown(window, "Enter"); // outline selection → cell selection
+    keydown(window, "Enter"); // outline selection → cell edit
     expect(cellSel()?.kind).toBe("cell");
-    keydown(window, "Enter"); // cell selection → cell editor
     await tick();
     const textarea = activeEditor(root);
     expect(textarea.value().length).toBeGreaterThan(0);
@@ -423,7 +426,6 @@ describe("SheetGrid interaction", () => {
     expect(selected).toEqual({ kind: "cell", gridId: "c2", row: 0, col: 0 });
     expect(selected?.surfaceId).toBe(surface);
 
-    keydown(window, "Enter");
     await tick();
     expect(editingId()).toBe("n11");
     expect(editorsIn(root)).toHaveLength(1);
@@ -562,27 +564,23 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
-  it("single-click selects and double-click enters edit with click-point caret", async () => {
+  it("single-click edits with click-point caret (GH874)", async () => {
     const { root, dispose } = setup();
 
     stubCaretRange(null);
     cell(root, 0, 1).dispatchEvent(pointer("pointerdown", 20, 15));
+    window.dispatchEvent(pointer("pointerup", 20, 15));
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
     expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
-    expect(editingId()).toBeNull();
+    expect(editingId()).toBe("c2");
 
     const calls = stubCaretRange(textRange(cell(root, 0, 0), "Alpha", 2));
     cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 20, 15));
-    await tick();
-
-    expect(calls()).toBe(0);
-    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
-    expect(editingId()).toBeNull();
-
-    doubleClick(cell(root, 0, 0));
+    window.dispatchEvent(pointer("pointerup", 20, 15));
     await tick();
 
     expect(calls()).toBe(1);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
     expect(editingId()).toBe("c1");
     expect(activeEditor(root).selection()[0]).toBe(2);
 
@@ -702,6 +700,182 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("GH874: Tab stays in Edit at the next cell's start, and stops at grid ends", async () => {
+    const { root, dispose } = setup();
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    keydown(activeEditor(root), "Tab", { shiftKey: true });
+    await tick();
+    expect(editingId()).toBe("c1");
+    keydown(activeEditor(root), "Tab");
+    await tick();
+    expect(editingId()).toBe("c2");
+    expect(activeEditor(root).selection()).toEqual([0, 0]);
+    keydown(activeEditor(root), "Tab");
+    await tick();
+    expect(editingId()).toBe("c3");
+    keydown(activeEditor(root), "Tab");
+    await tick();
+    expect(editingId()).toBe("c3");
+    dispose();
+  });
+
+  it("GH874: Enter splits cell text into its first child and keeps metadata and the row", async () => {
+    loadSheetDocWithOutlineChild();
+    setDoc("byId", "c1", "raw", "Alpha\nid:: keep-me");
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(2, 2);
+    keydown(activeEditor(root), "Enter");
+    await tick();
+    const first = doc.byId.c1.children[0];
+    expect(doc.byId.c1.raw).toBe("Al\nid:: keep-me");
+    expect(doc.byId[first].raw).toBe("pha");
+    expect(doc.byId.c1.children[1]).toBe("c1child");
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    expect(editingId()).toBe(first);
+    expect(activeEditor(root).value()).toBe("pha");
+    keydown(activeEditor(root), "Enter");
+    await tick();
+    expect(doc.byId.c1.children).toHaveLength(3);
+    expect(doc.byId[editingId()!].parent).toBe("c1");
+    dispose();
+  });
+
+  it("GH874: nested Tab/outdent and move keys stay inside the cell and keep editing", async () => {
+    loadSheetDocWithOutlineChild();
+    setDoc("byId", "other", node("other", "Other", "c1"));
+    setDoc("byId", "c1", "children", ["c1child", "other"]);
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    keydown(activeEditor(root), "Tab", { shiftKey: true });
+    expect(doc.byId.c1child.parent).toBe("c1");
+    keydown(activeEditor(root), "ArrowDown", { altKey: true, shiftKey: true });
+    await tick();
+    expect(doc.byId.c1.children).toEqual(["other", "c1child"]);
+    keydown(activeEditor(root), "ArrowDown", { altKey: true, shiftKey: true });
+    expect(doc.byId.c1child.parent).toBe("c1");
+    keydown(activeEditor(root), "Tab");
+    await tick();
+    expect(doc.byId.c1child.parent).toBe("other");
+    expect(editingId()).toBe("c1child");
+    expect(activeEditor(root).value()).toBe("Child");
+    keydown(activeEditor(root), "Tab", { shiftKey: true });
+    await tick();
+    expect(doc.byId.c1child.parent).toBe("c1");
+    expect(editingId()).toBe("c1child");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    dispose();
+  });
+
+  it("GH874: Backspace protects the cell's first child and merges later nested blocks", async () => {
+    loadSheetDocWithOutlineChild();
+    setDoc("byId", "other", node("other", "Other", "c1"));
+    setDoc("byId", "c1", "children", ["c1child", "other"]);
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "Backspace");
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "Backspace");
+    expect(doc.byId.c1child.raw).toBe("Child");
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "Backspace");
+    await tick();
+    expect(doc.byId.c1child.raw).toBe("ChildOther");
+    expect(doc.byId.other).toBeUndefined();
+    expect(editingId()).toBe("c1child");
+    expect(activeEditor(root).value()).toBe("ChildOther");
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    dispose();
+  });
+
+  it("GH874: nested multiline paste creates an outline within the cell", async () => {
+    loadSheetDocWithOutlineChild();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    pasteInto(activeEditor(root), "- One\n- Two");
+    await tick();
+    const kids = doc.byId.c1.children;
+    expect(kids.map(id => doc.byId[id].raw)).toEqual(["Child", "One", "Two"]);
+    expect(editingId()).toBe(kids[2]);
+    expect(activeEditor(root).value()).toBe("Two");
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    dispose();
+  });
+
+  it("GH874: nested Enter uses the sheet's visible caret when hidden properties precede text", async () => {
+    loadSheetDocWithOutlineChild();
+    setDoc("byId", "c1child", "raw", "tine.marker:: retained\nChild");
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    expect(activeEditor(root).value()).toBe("Child");
+    activeEditor(root).select(2, 2);
+    keydown(activeEditor(root), "Enter");
+    await tick();
+    expect(doc.byId.c1child.raw).toContain("Ch");
+    expect(doc.byId.c1child.raw).toContain("tine.marker:: retained");
+    expect(activeEditor(root).value()).toBe("ild");
+    expect(doc.byId[editingId()!].parent).toBe("c1");
+    dispose();
+  });
+
+  it("GH874: vertical outline entry edits top-left and bottom-left's last child", async () => {
+    loadSheetDoc();
+    setDoc("byId", "last", node("last", "Last child", "c3"));
+    setDoc("byId", "c3", "children", ["last"]);
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <><Block id="grid" /><Block id="after" /></>);
+    selectBlock("grid");
+    // Use the ordinary block editor entry, independent of grid selection.
+    const { startEditing } = await import("../editorController");
+    startEditing("grid", 4);
+    await tick();
+    activeEditor(root).select(activeEditor(root).value().length, activeEditor(root).value().length);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    expect(editingId()).toBe("c1");
+    expect(activeEditor(root).selection()).toEqual([5, 5]);
+    startEditing("after", 2);
+    await tick();
+    keydown(activeEditor(root), "ArrowUp");
+    await tick();
+    expect(editingId()).toBe("last");
+    expect(activeEditor(root).selection()).toEqual([2, 2]);
+    dispose();
+  });
+
   it("tabs across cells with row wrap but not past the grid edges", () => {
     const { root, dispose } = setup();
 
@@ -720,6 +894,126 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("GH874: empty nested Enter, Delete and cell structure commands preserve the cell boundary", async () => {
+    loadSheetDocWithOutlineChild();
+    setDoc("byId", "c1child", "raw", "");
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    keydown(activeEditor(root), "ArrowDown", { altKey: true, shiftKey: true });
+    keydown(activeEditor(root), "Tab", { shiftKey: true });
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "Delete");
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(doc.byId.c1child).toBeDefined();
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    keydown(activeEditor(root), "Enter");
+    await tick();
+    expect(doc.byId[editingId()!].parent).toBe("c1");
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    keydown(activeEditor(root), "Delete");
+    expect(doc.byId.c2.raw).toBe("Beta");
+    dispose();
+  });
+
+  it("GH874: nested clicks edit that block and nested drags select a cell range", async () => {
+    loadSheetDocWithOutlineChild();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    const body = cell(root, 0, 0).querySelector<HTMLElement>(".sheet-nested-line .sheet-cell-body")!;
+    const previous = document.elementFromPoint;
+    document.elementFromPoint = () => cell(root, 0, 1);
+    body.dispatchEvent(pointer("pointerdown", 20, 20));
+    window.dispatchEvent(pointer("pointermove", 100, 20));
+    window.dispatchEvent(pointer("pointerup", 100, 20));
+    expect(cellSel()).toEqual({ kind: "range", gridId: "grid", anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
+    expect(editingId()).toBeNull();
+    document.elementFromPoint = previous;
+    stubCaretRange(textRange(body, "Child", 2));
+    body.dispatchEvent(pointer("pointerdown", 20, 20));
+    window.dispatchEvent(pointer("pointerup", 20, 20));
+    await tick();
+    expect(editingId()).toBe("c1child");
+    expect(activeEditor(root).selection()).toEqual([2, 2]);
+    dispose();
+  });
+
+  it("GH874: collapsed nested blocks hide descendants and caret moves skip them", async () => {
+    loadSheetDocWithOutlineChild();
+    setDoc("byId", "grandchild", node("grandchild", "Grandchild", "c1child"));
+    setDoc("byId", "c1child", "children", ["grandchild"]);
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    keydown(activeEditor(root), "ArrowUp", { ctrlKey: true });
+    await tick();
+    expect(doc.byId.c1child.collapsed).toBe(true);
+    expect(cell(root, 0, 0).textContent).not.toContain("Grandchild");
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    expect(editingId()).toBe("c3");
+    dispose();
+  });
+
+  it("GH874: nested block selection stays inside the cell and Enter edits the selected block", async () => {
+    loadSheetDocWithOutlineChild();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "ArrowUp", { shiftKey: true });
+    await tick();
+    expect(isSelected("c1child")).toBe(true);
+    expect(isSelected("c1")).toBe(false);
+    expect(cell(root, 0, 0).querySelector(".sheet-cell-line.selected")).not.toBeNull();
+    keydown(window, "Tab", { shiftKey: true });
+    keydown(window, "ArrowUp", { altKey: true, shiftKey: true });
+    expect(doc.byId.c1child.parent).toBe("c1");
+    keydown(window, "Enter");
+    await tick();
+    expect(editingId()).toBe("c1child");
+    expect(activeEditor(root).value()).toBe("Child");
+    dispose();
+  });
+
+  it("GH874: a nested comment keeps its cell owner after the name prompt", async () => {
+    loadSheetDocWithOutlineChild();
+    resetCommentAuthorNameForTests("", true);
+    resetCommentNamePromptForTests({ repository: true, loaded: true });
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "ArrowDown");
+    await tick();
+    keydown(activeEditor(root), "r", { ctrlKey: true });
+    expect(commentNameRequest()).not.toBeNull();
+    commentNameRequest()!.finish(null);
+    await tick();
+    const comment = doc.byId.c1child.children[0];
+    expect(comment).toBeDefined();
+    expect(editingId()).toBe(comment);
+    expect(activeEditor(root).element.closest('.sheet-cell[data-row="0"][data-col="0"]')).not.toBeNull();
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    dispose();
+  });
+
   it("tabs from an actively edited cell through the block-editor ownership path", async () => {
     const { root, dispose } = setup();
 
@@ -733,25 +1027,22 @@ describe("SheetGrid interaction", () => {
     await tick();
     expect(forward.defaultPrevented).toBe(true);
     expect(doc.byId.c2.raw).toBe("Edited Beta");
-    expect(editingId()).toBeNull();
+    expect(editingId()).toBe("c3");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
     expect(selectedCell(root)).toBe(cell(root, 1, 0));
-
-    keydown(window, "Enter");
-    await tick();
+    expect(activeEditor(root).selection()).toEqual([0, 0]);
     const reverse = keydown(activeEditor(root), "Unidentified", { code: "Tab", shiftKey: true });
     await tick();
     expect(reverse.defaultPrevented).toBe(true);
-    expect(editingId()).toBeNull();
+    expect(editingId()).toBe("c2");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
     expect(selectedCell(root)).toBe(cell(root, 0, 1));
 
     dispose();
   });
 
-  it("overtype edits through the mounted editor and Enter commits without structural mutation", async () => {
+  it("overtype edits through the mounted editor and Enter creates a child without moving cells", async () => {
     const { root, dispose } = setup();
-    const beforeChildren = childrenSnapshot();
     const beforeRaws = Object.fromEntries(Object.entries(doc.byId).map(([id, n]) => [id, n.raw]));
 
     setCellSel({ gridId: "grid", row: 0, col: 0 });
@@ -765,10 +1056,12 @@ describe("SheetGrid interaction", () => {
     keydown(activeEditor(root), "Enter");
     await tick();
 
-    expect(editingId()).toBeNull();
+    const child = doc.byId.c1.children[0];
+    expect(editingId()).toBe(child);
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
-    expect(childrenSnapshot()).toEqual(beforeChildren);
-    expect(Object.keys(doc.byId).sort()).toEqual(Object.keys(beforeRaws).sort());
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    expect(doc.byId[child].raw).toBe("");
+    expect(Object.keys(doc.byId).sort()).toEqual([...Object.keys(beforeRaws), child].sort());
     for (const [id, raw] of Object.entries(beforeRaws)) {
       if (id === "c1") expect(doc.byId[id].raw).toBe("Z");
       else expect(doc.byId[id].raw).toBe(raw);
@@ -777,7 +1070,7 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
-  it("sheet-cell editing hides tine and built-in props, rejoins them on commit, and restores raw on Escape", async () => {
+  it("sheet-cell editing hides tine and built-in props, rejoins them on commit, and keeps raw on Escape (GH874)", async () => {
     loadSheetDoc();
     setDoc("byId", "c1", "raw", "Visible body\ntine.view:: grid\nid:: abc-123");
     disposeKeys = installKeybindings();
@@ -792,7 +1085,7 @@ describe("SheetGrid interaction", () => {
     inputText(editor, "Changed body");
     expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
 
-    keydown(editor, "Enter");
+    keydown(editor, "Escape");
     await tick();
     expect(editingId()).toBeNull();
     expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
@@ -808,12 +1101,12 @@ describe("SheetGrid interaction", () => {
 
     expect(editingId()).toBeNull();
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
-    expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
+    expect(doc.byId.c1.raw).toBe("Scratch\ntine.view:: grid\nid:: abc-123");
 
     dispose();
   });
 
-  it("ArrowDown from the last editor line descends into a hosted sub-grid top seam", async () => {
+  it("ArrowDown from the last editor line enters a hosted sub-grid's first cell in Edit (GH #874)", async () => {
     loadSheetDocWithSubgrid();
     disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <Block id="grid" />);
@@ -827,12 +1120,11 @@ describe("SheetGrid interaction", () => {
     keydown(editor, "ArrowDown");
     await tick();
 
-    expect(editingId()).toBeNull();
-    expect(cellSel()).toEqual(rowSeamSel("c2", 0, 0));
+    expect(editingId()).toBe("n11");
+    expect(activeEditor(root).value()).toBe("Inner");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "c2", row: 0, col: 0 });
     const innerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="c2"]') as HTMLElement | null;
-    expect(innerGrid?.querySelector(":scope > .sheet-seam-selected")).not.toBeNull();
-    const outerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement | null;
-    expect(outerGrid?.querySelector(":scope > .sheet-seam-selected")).toBeNull();
+    expect(innerGrid?.querySelector(":scope > .sheet-seam-selected")).toBeNull();
 
     dispose();
   });
@@ -918,6 +1210,88 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("Left/Right at a cell's text edge walk reading order in Edit, across a row's end (GH #874)", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    const first = activeEditor(root);
+    first.select(first.value().length, first.value().length);
+    keydown(first, "ArrowRight");
+    await tick();
+
+    expect(editingId()).toBe("c2");
+    expect(activeEditor(root).selection()).toEqual([0, 0]);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    const second = activeEditor(root);
+    second.select(second.value().length, second.value().length);
+    keydown(second, "ArrowRight");
+    await tick();
+
+    expect(editingId()).toBe("c3");
+    expect(activeEditor(root).selection()).toEqual([0, 0]);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
+
+    keydown(activeEditor(root), "ArrowLeft");
+    await tick();
+
+    expect(editingId()).toBe("c2");
+    expect(activeEditor(root).selection()).toEqual([4, 4]);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    dispose();
+  });
+
+  it("Up/Down at a cell's edge go to the cell above/below in Edit and leave the grid at its edges (GH #874)", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    const top = activeEditor(root);
+    top.select(top.value().length, top.value().length);
+    keydown(top, "ArrowDown");
+    await tick();
+
+    expect(editingId()).toBe("c3");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
+
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "ArrowUp");
+    await tick();
+
+    expect(editingId()).toBe("c1");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+
+    activeEditor(root).select(0, 0);
+    keydown(activeEditor(root), "ArrowUp");
+    await tick();
+
+    // Up from the top row: the grid block's own text, an ordinary outline edit.
+    expect(editingId()).toBe("grid");
+    expect(cellSel()).toBeNull();
+
+    setCellSel({ gridId: "grid", row: 1, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+    const bottom = activeEditor(root);
+    bottom.select(bottom.value().length, bottom.value().length);
+    keydown(bottom, "ArrowDown");
+    await tick();
+
+    // Down from the bottom row: the block after the grid.
+    expect(editingId()).toBe("after");
+    expect(cellSel()).toBeNull();
+
+    dispose();
+  });
+
   it("multiline paste inside a cell editor inserts plain text and creates no blocks", async () => {
     loadSheetDoc();
     disposeKeys = installKeybindings();
@@ -961,7 +1335,7 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
-  it("Alt+Enter on a compact-grid cell wraps the grid then appends a bullet", async () => {
+  it("Alt+Enter on a compact-grid cell wraps the grid and inserts the first child (GH874)", async () => {
     loadSheetDocWithSubgrid();
     disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <Block id="grid" />);
@@ -975,7 +1349,7 @@ describe("SheetGrid interaction", () => {
 
     expect(doc.byId.c2.raw).toBe("Nested grid");
     expect(doc.byId.c2.children).toHaveLength(2);
-    const [host, bullet] = doc.byId.c2.children;
+    const [bullet, host] = doc.byId.c2.children;
     expect(doc.byId[host].raw).toBe("tine.view:: grid");
     expect(doc.byId[host].children).toEqual(["nr1"]);
     expect(doc.byId[bullet].raw).toBe("");
@@ -1082,11 +1456,13 @@ describe("SheetGrid interaction", () => {
     selectBlock("grid");
     keydown(window, "Enter");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    expect(editingId()).toBe("c1");
 
     setCellSel(null);
     selectBlock("grid");
     keydown(window, "ArrowRight");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    expect(editingId()).toBe("c1");
 
     dispose();
   });
