@@ -120,10 +120,9 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
 }) as typeof writeDoc;
 
 // Monotonic per-block count of SOURCE collapse writes (writeCollapsed and the
-// descendants batch). An embed occurrence keeps an ephemeral local fold for
-// nested rows (GH #360); the fold records the epoch at fold time, and once the
-// source writes again the epoch has moved, the fold is stale and the source
-// reclaims authority. Never persisted; cleared with the working set.
+// descendants batch). Query bulk-fold requests capture these generations so a
+// delayed result cannot apply an old fold over a newer source change (GH #792).
+// Never persisted; cleared with the working set. Embeds follow source folds.
 const [collapseEpochState, setCollapseEpochState] = createStore<{ byId: Record<string, number> }>({ byId: {} });
 export const collapseEpochOf = (id: string): number => collapseEpochState.byId[id] ?? 0;
 export function bumpCollapseEpochs(ids: readonly string[]): void {

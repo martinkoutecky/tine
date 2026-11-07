@@ -7,15 +7,16 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { embedFoldJourney } from "./lib/e2e-gh868-embed-folds.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const out = path.join(root, "target/artifacts/fix-beta-embed-868");
+const out = path.join(root, process.env.E2E_FOLDS === "1" ? "target/artifacts/fix-beta-embed-fold-868b" : "target/artifacts/fix-beta-embed-868");
 fs.mkdirSync(out, { recursive: true });
 const run = fs.mkdtempSync(path.join(out, `${process.env.E2E_LABEL || "native"}-`));
 const graph = path.join(run, "graph");
 const corpus = process.env.E2E_CORPUS;
 const surface = process.env.E2E_SURFACE || "main";
-const surfaceSelector = surface === "sidebar" ? ".right-sidebar" : surface === "references" ? ".main-content .linked-references" : ".main-content";
+let surfaceSelector = surface === "sidebar" ? ".right-sidebar" : surface === "references" ? ".main-content .linked-references" : '[data-pane-id="main"]';
 const host = process.env.E2E_HOST || "Embed host";
 const source = process.env.E2E_SOURCE || "Outline source";
 const parent = process.env.E2E_PARENT || (surface === "references" ? "Surveys Linked target" : "Surveys");
@@ -37,7 +38,7 @@ if (corpus) {
 } else {
   for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
   fs.writeFileSync(path.join(graph, "pages/Outline source.md"),
-    `tags:: Example\n\n- Survey trial\n  id:: ${sourceRoot}\n  - Trial child\n- Review together\n  - TODO Prepare questions\n  - LATER Review answers\n    id:: ${later}\n- Open questions\n  collapsed:: true\n  - Hidden question\n- Definitions\n  collapsed:: true\n  - Hidden definition\n- Archive\n  collapsed:: true\n  - Old notes\n`);
+    `tags:: Example\n\n- Survey trial\n  id:: ${sourceRoot}\n  - Trial child\n    - Existing grandchild\n- Review together\n  - TODO Prepare questions\n  - LATER Review answers\n    id:: ${later}\n- Open questions\n  collapsed:: true\n  - Hidden question\n- Definitions\n  collapsed:: true\n  - Hidden definition\n- Archive\n  collapsed:: true\n  - Old notes\n`);
   if (kind === "block") {
     const file = path.join(graph, "pages/Outline source.md");
     const body = fs.readFileSync(file, "utf8").split("\n\n")[1].replace(`  id:: ${sourceRoot}\n`, "");
@@ -110,7 +111,7 @@ async function sourceOutline() {
     if (!block.collapsed) block.children.forEach(child => visit(child, depth + 1));
   };
   result.page.blocks.forEach(block => visit(block, 0));
-  return { rows, file: path.join(graph, result.page.id) };
+  return { rows, page: result.page, file: path.join(graph, result.page.id) };
 }
 async function clickContent(id) {
   const selector = `${scope} [data-block-id="${id}"] > .block-main .block-content`;
@@ -156,6 +157,13 @@ try {
     await browser.waitUntil(() => browser.execute(() => Number(document.querySelector(".linked-references .references-count")?.textContent.trim()) > 0), { timeout: 20000 });
     if (!(await browser.$(".linked-references .reference-group").isExisting())) await browser.$(".linked-references .references-header").click();
   } else await openPageByName(browser, host);
+  if (surface === "split") {
+    await browser.keys(["Control", "Alt", "\\", "NULL"]);
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll("[data-pane-id]").length === 2), { timeout: 10000 });
+    const pane = await browser.execute(() => [...document.querySelectorAll("[data-pane-id]")].find(el => el.dataset.paneId !== "main")?.dataset.paneId);
+    assert(pane, "split pane opened");
+    surfaceSelector = `[data-pane-id="${pane}"]`;
+  }
   stage = "expand host";
   let parentId;
   await browser.waitUntil(async () => (parentId = await browser.execute(args => {
@@ -175,6 +183,10 @@ try {
   if (kind === "page") assert.deepEqual(original.map(({ id, depth, collapsed }) => ({ id, depth, collapsed })), expected.rows,
     "page embed must equal the source page's visible outline");
   const originalBytes = fs.readFileSync(expected.file, "utf8");
+  if (process.env.E2E_FOLDS === "1") {
+    stage = "fold embedded descendants and insert a visible sibling";
+    await embedFoldJourney({ browser, scope, expected, original, sourceOutline, capture, clickContent, pause, run });
+  } else {
   stage = "open nested task references";
   const badge = await browser.$(`${scope} [data-block-ref="${later}"] > .block-main .block-refs-count`);
   await badge.waitForExist({ timeout: 20000 }); await badge.scrollIntoView({ block: "center" });
@@ -213,6 +225,7 @@ try {
     await browser.keys(["Control", "z"]); await pause(); await browser.$("h1.page-title").click(); await pause();
     assert.deepEqual(shape(await capture("07-undone-sibling")), shape(original), "Undo restores source outline");
   }
+  }
   fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "pass", testedCommit, stage, corpus: !!corpus,
     kind, surface, width: process.env.E2E_WIDTH || 1200, cssDisabled: process.env.E2E_NO_CSS === "1", evidence }, null, 2));
   console.log(`PASS GH #868 ${run}`);
@@ -221,8 +234,9 @@ try {
     try { await capture("failure"); } catch {}
     try { fs.writeFileSync(path.join(run, "failure-document.html"), await browser.execute(() => document.documentElement.outerHTML)); } catch {}
   }
-  fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "fail", testedCommit, journey: "GH #868 references then embedded edit",
-    expected: "source outline order, depth and folds survive edit entry/exit", observed: String(error), stage,
+  fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "fail", testedCommit,
+    journey: process.env.E2E_FOLDS === "1" ? "GH #868 embedded guide fold then new block" : "GH #868 references then embedded edit",
+    expected: process.env.E2E_FOLDS === "1" ? "inner folds save the source, both panes agree, and Enter inserts a visible sibling" : "source outline order, depth and folds survive edit entry/exit", observed: String(error), stage,
     classification: error.code === "ERR_ASSERTION" ? "product" : "harness", evidence }, null, 2));
   console.error(`FAIL ${stage}: ${error}\n${run}`); process.exitCode = 1;
 } finally {
