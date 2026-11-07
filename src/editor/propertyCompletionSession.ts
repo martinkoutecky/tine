@@ -9,15 +9,13 @@ import { graphOwner, readOwned } from "../owned";
  * graph binding changes under it.
  *
  * Same answers as the full-facet fetch it replaces: keys are the same list in
- * the same order; a key's values are offered only once this editor has run a
- * property-name session (before, values came from the facets that session
- * fetched, kept for the editor's lifetime), and are read when first needed.
- * Cost per session: one keys request (O(blocks) in the graph, keys only) plus
+ * the same order; a key's values are read when first needed, including when
+ * the key was authored without a property-name session.
+ * Cost per session: at most one keys request (O(blocks) in the graph, keys only) plus
  * one values request per completed key. */
 export function propertyCompletionSession() {
   type Keys = { value: Promise<string[] | null>; owner: () => boolean };
   let keys: Keys | null = null;
-  let named = false;
   let generation = 0;
   // Each key's values with the owner of the request that read them: a list
   // read under another graph binding is never offered.
@@ -55,7 +53,6 @@ export function propertyCompletionSession() {
         const value = readOwned(owner, backend().queryFacets(true, { keys: true }))
           .then((result) => {
             if (result.kind === "stale") return null;
-            named = true;
             return result.value.map(([key]) => key);
           });
         const cached = { value, owner };
@@ -74,16 +71,17 @@ export function propertyCompletionSession() {
       return entry?.owner() ? entry.list : [];
     },
     /** Load the key's values once per session. Resolves true when values
-     *  arrived for the current session; false when nothing was fetched (no
-     *  property-name session yet, already loaded, a failed request) or the
+     *  arrived for the current session; false when nothing was fetched
+     *  (already loaded, a failed request) or the
      *  session ended meanwhile. */
     load(key: string): Promise<boolean> {
-      if (!named) return Promise.resolve(false);
       const held = values.get(key);
       if (held?.owner()) return Promise.resolve(false);
       if (held) values.delete(key);
       const pending = loading.get(key);
-      if (pending) return pending.then(() => false);
+      // Every query waiting for this answer must refresh on arrival, including
+      // a query typed after the request started. The request is still shared.
+      if (pending) return pending;
       const request = readValues(key);
       loading.set(key, request);
       return request;
