@@ -110,6 +110,17 @@ A routed load refused by the working-set gate retries when that owner becomes
 replaceable, including a host close still in flight after leaving a feed edit.
 The retry belongs to that route and graph; leaving either cancels it. Reads and
 exact-path checks run again, and unsaved or conflicted owners remain protected.
+A pinned route whose file is temporarily missing during sync retries when its
+page's publication changes. While the exact path remains missing, silent reads
+probe it after 3 seconds, then double the delay after each completed probe
+(6, 12, 24, 48, then at most 60 seconds). A publication resets this backoff.
+A byte-identical replacement or a missed OS event need not publish a content
+change (GH #863). Probes preserve the visible refusal and only trigger the full
+loader when path, name and kind match. Each probe finishes before the next
+delay starts; no graph scan, repeated toast or flight event is added. Opening
+the page, leaving the route/graph or retiring the surface cancels the retry.
+Every load retains the same path and identity checks; a same-name sibling is
+never substituted for the selected physical file.
 
 Several files claiming one name (including duplicate journal days) are an
 invalid graph state (D-20261019-ZY2, narrowed by AL1); alias equivalence is
