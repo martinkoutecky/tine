@@ -5716,8 +5716,7 @@ body.file-drop-active::after {
    paints above them on an opaque pane background, so no guide runs through
    its header or rows. The selection tint stays layered on top of it. */
 .md-table-wrap[data-bleed] {
-  position: relative;
-  z-index: 2;
+  position: relative; z-index: 2;
   background: var(--table-bleed-tint, linear-gradient(transparent, transparent)), var(--bg-primary);
 }
 .right-sidebar .md-table-wrap[data-bleed] {
