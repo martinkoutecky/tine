@@ -529,6 +529,19 @@ fixture measures 10 bytes for one block and 541 bytes for 60 blocks per edit:
 one page temporary file, two fsyncs and zero directory enumerations, with
 zero additional checkpoint bytes or files per edit.
 
+A disk-sourced name publication must confirm that its path still exists after
+name discovery (GH #905). A late change or retired sidebar path whose file is
+gone removes its old claim; the filename fallback used for proposed or
+unreadable paths is never evidence of a physical file. A held page continues
+to use its owner's published bytes under the existing ownership rule.
+
+A checkpoint's stamp baseline must cover every physical cached page, list
+entry, claimant and path-to-name entry (GH #905). Otherwise its launch diff
+cannot retire an absent path; the loader declines the entire disposable cache
+with `decode` and builds from the current files. An external move with a
+complete baseline reconciles normally. This adds no persisted field or
+per-edit work, and never deletes or overwrites a graph file to repair a cache.
+
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
