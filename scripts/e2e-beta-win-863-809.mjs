@@ -2,7 +2,8 @@
 // ONLY=863 or ONLY=809 runs one report, so a native freeze cannot hide the other.
 // #863 lifecycle cases: 863-created, 863-created-blur,
 // 863-created-unreferenced, 863-external, 863-external-alternate,
-// 863-external-alternate-blur, and 863-custom. Each starts a fresh fixture.
+// 863-external-alternate-blur, 863-custom, 863-sync-gap and 863-page-sync-gap.
+// Each starts a fresh fixture.
 // Fixture data only. A passing Linux run does not establish a Windows fix.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -31,6 +32,8 @@ const journalCase = issues.find(issue => issue.startsWith("863")) ?? "863";
 const creates = journalCase.startsWith("863-created");
 const external = journalCase.startsWith("863-external");
 const custom = journalCase === "863-custom";
+const syncGap = journalCase.endsWith("sync-gap");
+const ordinaryGap = journalCase === "863-page-sync-gap";
 const virtual = creates || external;
 const referenced = virtual && journalCase !== "863-created-unreferenced";
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
@@ -42,6 +45,8 @@ const journalFile = path.join(graph, journalRel);
 const journalBytes = "- GH863 existing journal body\n";
 const pageName = "Probe Alpha";
 const pageFile = path.join(graph, `pages/${pageName}.md`);
+const gapFile = ordinaryGap ? pageFile : journalFile;
+const gapTemp = path.join(path.dirname(gapFile), `.syncthing.${path.basename(gapFile)}.tmp`);
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), `{:journal/page-title-format "yyyy-MM-dd"${custom ? ' :journal/file-name-format "yyyy-MM-dd"' : ""}}\n`);
 if (!virtual) fs.writeFileSync(journalFile, journalBytes);
 fs.writeFileSync(pageFile, "- GH809 original page body\n");
@@ -56,9 +61,10 @@ const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   journey: "scripts/e2e-beta-win-863-809.mjs", platform: process.platform, app, issues, stage: "launch", steps: [], status: "running",
-  expected: "Existing journal opens; a page search result opens in a usable window and main stays responsive" };
+  expected: syncGap ? "The refused pinned route opens its restored physical file without another navigation or graph switch, preserving file bytes"
+    : "Existing journal opens; a page search result opens in a usable window and main stays responsive" };
 const write = () => fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(report, null, 2) + "\n");
-const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, detail }); write(); console.log(`ok: ${stage}`); };
+const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, at: Date.now(), detail }); write(); console.log(`ok: ${stage}`); };
 write();
 let target, driver, browser, log, wm;
 const { xdo } = x11Tools(env);
@@ -120,7 +126,7 @@ try {
     });
     if (!clicked) throw new Error("Journals toolbar button was absent");
     await browser.waitUntil(() => browser.execute(() => !!document.querySelector("h1.journal-title")), { timeout: 15_000 });
-    let openedFile = journalFile;
+    let openedFile = ordinaryGap ? pageFile : journalFile;
     let expectedBytes = journalBytes;
     let expectedBody = "GH863 existing journal body";
     if (virtual) {
@@ -154,11 +160,48 @@ try {
       titles: [...document.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim()),
       body: document.querySelector(".main-content")?.textContent,
     })));
-    await browser.execute((title) => {
+    if (syncGap) {
+      // Start after the launch/reference publications settle, like a user
+      // returning to a graph that has already been open for a while.
+      await sleep(3500);
+      // A real delayed watcher, no fake page replies: leave the title's file
+      // briefly absent during a sync replacement, then restore it before the
+      // poll's next inventory. All state belongs to this scratch fixture.
+      const watchError = await browser.executeAsync(done => window.__TAURI_INTERNALS__.invoke("set_watch_mode", { mode: "poll" })
+        .then(() => done(null), error => done(String(error))));
+      if (watchError) throw new Error(`Could not select the scratch fixture's poll watcher: ${watchError}`);
+      fs.renameSync(gapFile, gapTemp);
+    }
+    if (ordinaryGap) await browser.keys(["Alt", "ArrowLeft"]);
+    else await browser.execute((title) => {
       const heading = [...document.querySelectorAll("h1.journal-title")].find(el => el.textContent?.trim() === title);
       if (!heading) throw new Error(`Journal title ${title} absent`);
       heading.click();
     }, day);
+    if (syncGap) {
+      await browser.waitUntil(() => browser.execute(() => document.querySelector(".main-content")?.textContent.includes("no longer available at that path")),
+        { timeout: 5000, timeoutMsg: "Sync gap did not reach the physical-path refusal" });
+      step("863-sync-gap-refusal", "The pinned route correctly refused the temporarily absent file");
+      const batches = (await diagnostics()).sessions.current.filter(event => event.event === "watcher.batch").length;
+      if (process.env.SYNC_SAME_BYTES !== "1") {
+        expectedBody = ordinaryGap ? "GH863 routed page delivered after refusal" : "GH863 journal delivered after refusal";
+        expectedBytes = `- ${expectedBody}\n`;
+      }
+      fs.writeFileSync(gapTemp, expectedBytes);
+      fs.renameSync(gapTemp, gapFile);
+      await shot("863-sync-gap-refused.png");
+      // Wait for the user outcome, without another click, route or graph switch.
+      await browser.waitUntil(() => browser.execute(body =>
+        !!document.querySelector("h1.page-title") && document.querySelector(".main-content")?.textContent.includes(body), expectedBody),
+      { timeout: 15_000, timeoutMsg: "The physical file returned but the refused route did not recover" }).catch(error => {
+        report.classification = "product";
+        throw error;
+      });
+      const restored = await diagnostics();
+      fs.writeFileSync(path.join(out, "restored-diagnostics.json"), JSON.stringify(restored, null, 2));
+      step("863-sync-gap-recovered", { outcome: "The pinned route opened the delivered file automatically",
+        watcherBatchesAfterRestore: restored.sessions.current.filter(event => event.event === "watcher.batch").length - batches });
+    }
     let outcome;
     await browser.waitUntil(async () => {
       outcome = await browser.execute((body) => {
