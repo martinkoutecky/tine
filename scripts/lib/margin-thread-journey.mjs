@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { openPageByName } from "./e2e-navigation.mjs";
 import { waitForFileText } from "../e2e-file-poll.mjs";
+import { saveJourneyScreenshot } from "./e2e-comment-structure.mjs";
 
 const PAGE = "Margin Thread Order";
 const IDS = {
@@ -68,7 +69,7 @@ export async function checkMarginThreads(browser, graph, artifact) {
       }, css);
       proof.reconstruction = "assigned-base comment stylesheet over candidate app";
     }
-    await browser.saveScreenshot(path.join(shots, "threads-initial.png"));
+    await saveJourneyScreenshot(browser, path.join(shots, "threads-initial.png"));
     const initial = await browser.execute((ids) => {
       const row = id => document.querySelector('.ls-block[data-block-ref="' + id + '"]');
       const thread = id => row(id).closest(".margin-thread");
@@ -110,7 +111,7 @@ export async function checkMarginThreads(browser, graph, artifact) {
       const mark = document.querySelector('.page-blocks [data-comment-id="' + thread.dataset.threadId + '"]');
       return Math.abs(thread.getBoundingClientRect().top - mark.getBoundingClientRect().top) <= 2;
     }, IDS), { timeout: 5000, timeoutMsg: "focused thread moved away from its anchor" });
-    await browser.saveScreenshot(path.join(shots, "threads-focused.png"));
+    await saveJourneyScreenshot(browser, path.join(shots, "threads-focused.png"));
     const cards = await browser.execute(() => [...document.querySelectorAll(".margin-thread")].map(el => {
       const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom };
     }));
@@ -147,7 +148,7 @@ export async function checkMarginThreads(browser, graph, artifact) {
     const indentOf = text => saved.split("\n").find(line => line.trim() === "- " + text)?.match(/^[ \t]*/)[0];
     assert(indentOf(body) === indentOf("First reply"), "in-thread Comment nested its reply under the selected response", saved);
     assert(saved.includes("      - Deep reply\n        id:: " + IDS.deep), "existing nested reply was moved", saved);
-    await browser.saveScreenshot(path.join(shots, "threads-new-reply.png"));
+    await saveJourneyScreenshot(browser, path.join(shots, "threads-new-reply.png"));
     proof.steps.push("Ctrl+R in a deep reply saves a root child and leaves existing nesting intact");
     proof.persistedBytes = { before: Buffer.byteLength(RAW), after: Buffer.byteLength(saved), replyDelta: Buffer.byteLength(saved) - Buffer.byteLength(RAW) };
     proof.result = "pass";
@@ -155,7 +156,7 @@ export async function checkMarginThreads(browser, graph, artifact) {
   } catch (error) {
     proof.result = "fail";
     proof.failure = { message: String(error), classification: error.classification ?? "ambiguous", expected: "stable passage order, flat replies, root-child writes, pinned focus", observed: String(error) };
-    await browser.saveScreenshot(path.join(shots, "threads-failure.png")).catch(() => {});
+    await saveJourneyScreenshot(browser, path.join(shots, "threads-failure.png")).catch(() => {});
     throw error;
   } finally {
     fs.writeFileSync(path.join(artifact, "thread-proof.json"), JSON.stringify(proof, null, 2) + "\n");

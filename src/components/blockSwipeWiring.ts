@@ -9,6 +9,7 @@ import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../edi
 import { touchGestures } from "../inputCapability";
 import type { Format } from "../render/ast";
 import { openContextMenu } from "../ui";
+import { threadRootOf } from "../document";
 
 /** A block's own refs for OG's `:mobile :gestures/disabled-in-block-with-tags`,
  *  case-folded: OG's `with-page-refs` joins headline tags, references, property
@@ -79,6 +80,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
       if (!block || pageByName(block.page)?.guide) return false;
       if (deps.editing() && focusedEditorCommandBridge()?.blockId !== (deps.editorId ?? deps.id)) return false;
       if (action === "actions") return true;
+      if (threadRootOf(deps.id) !== null) return false;
       if (action === "outdent") return block.parent !== null && deps.scope?.forceExpandedRoot !== block.parent;
       const siblings = block.parent === null ? pageRoots(block.page) : childIds(block.parent);
       const index = siblings.indexOf(deps.id);

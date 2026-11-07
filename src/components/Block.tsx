@@ -27,7 +27,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -119,6 +119,7 @@ import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenu
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, type RowHost } from "./block/embedRowHost";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { bodyNeighbor, threadRootOf } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
@@ -132,6 +133,7 @@ import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -1434,46 +1436,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   onCleanup(unregisterFocusedEditor);
   let sheetCanceling = false;
 
-  const sheetFaceGridId = (id: string): string | null => {
-    if (blockIsGridView(id)) return id;
-    return (docNode(id)?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
-  };
   const sheetVisibleLength = (id: string): number =>
     splitProps(docNode(id)?.raw ?? "", SHEET_CELL_HIDE).visible.length;
-  const deepestLastSheetOutline = (id: string): string => {
-    let cur = id;
-    for (;;) {
-      if (sheetFaceGridId(cur)) return cur;
-      const children = docNode(cur)?.children ?? [];
-      if (!children.length) return cur;
-      cur = children[children.length - 1];
-    }
-  };
-  const nextSheetOutline = (id: string, hostId: string): string | null => {
-    if (!sheetFaceGridId(id)) {
-      const firstChild = docNode(id)?.children[0];
-      if (firstChild) return firstChild;
-    }
-    let cur = id;
-    while (cur !== hostId) {
-      const parent = docNode(cur)?.parent ?? null;
-      if (!parent) return null;
-      const siblings = docNode(parent)?.children ?? [];
-      const idx = siblings.indexOf(cur);
-      if (idx >= 0 && idx + 1 < siblings.length) return siblings[idx + 1];
-      cur = parent;
-    }
-    return null;
-  };
-  const prevSheetOutline = (id: string, hostId: string): string | "host" | null => {
-    const parent = docNode(id)?.parent ?? null;
-    if (!parent) return null;
-    const siblings = docNode(parent)?.children ?? [];
-    const idx = siblings.indexOf(id);
-    if (idx > 0) return deepestLastSheetOutline(siblings[idx - 1]);
-    if (parent === hostId) return "host";
-    return parent;
-  };
 
   const handleSheetCellKey = (e: KeyboardEvent, start: number, end: number, raw: string): boolean => {
     if (!sheetCell) return false;
@@ -1505,9 +1469,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       commit(raw);
       const hostId = cellBlockId(sheetCell);
       if (hostId && props.id !== hostId) {
-        const prev = prevSheetOutline(props.id, hostId);
-        if (prev === "host") commitAndStartSheetEdit(hostId, sheetVisibleLength(hostId));
-        else if (prev) commitAndStartSheetEdit(prev, sheetVisibleLength(prev));
+        const prev = sheetOutlineNeighbor(props.id, hostId, -1);
+        if (prev) commitAndStartSheetEdit(prev, sheetVisibleLength(prev));
         else moveCellAfterEdit(sheetCell, "up");
         return;
       }
@@ -1524,9 +1487,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       else {
         const hostId = cellBlockId(sheetCell);
         const next = hostId
-          ? props.id === hostId
-            ? docNode(hostId)?.children[0] ?? null
-            : nextSheetOutline(props.id, hostId)
+          ? sheetOutlineNeighbor(props.id, hostId, 1)
           : null;
         if (next) commitAndStartSheetEdit(next, 0);
         else moveCellAfterEdit(sheetCell, "down");
@@ -1601,9 +1562,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const end = ref.selectionEnd;
     const raw = ref.value;
     // Empty code payloads can leave their wrapper through the existing delete door.
-    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0) {
+    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0 && threadRootOf(props.id) === null) {
       e.preventDefault();
-      const adjacent = [prevVisible(props.id, structuralScope), nextVisible(props.id, structuralScope)].find(id => id && docNode(id)?.page === node().page);
+      const adjacent = [bodyNeighbor(props.id, -1, structuralScope), bodyNeighbor(props.id, 1, structuralScope)].find(id => id && docNode(id)?.page === node().page);
       if (adjacent) {
         deleteBlock(props.id);
         startEditing(adjacent, 0, null, editSurface());
@@ -1870,7 +1831,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         // Never merge a highlight, calc, or body-only code block away (their
         // structure must stay; a merge would smuggle raw wrapper bytes into the
         // previous block's text).
-        if (isAnnot() || isCalc() || codeShown()) return;
+        if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
         // Own-numbered state is a block property, never an in-block `1.` marker.
         // At offset zero OG removes only that property and preserves the text
         // (`src/main/frontend/handler/editor.cljs:2752-2764`, 6e7afa8eb).
@@ -1886,7 +1847,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           return;
         }
         const n = docNode(props.id);
-        const next = nextVisible(props.id, structuralScope);
+        const next = bodyNeighbor(props.id, 1, structuralScope);
         if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
@@ -1894,12 +1855,10 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         }
       }
     } else if (e.key === "Delete" && end === start && start === raw.length) {
-      // GH #213: forward-delete merges with the NEXT block — the mirror of
-      // Backspace's merge with the previous one. Never merge a highlight, calc,
-      // or body-only code block itself (same rule as Backspace), and never
-      // absorb an annotation/calc block's raw text into this one.
-      if (isAnnot() || isCalc() || codeShown()) return;
-      const next = nextVisible(props.id, structuralScope);
+      // Delete merges with the next body block (GH #213, #891); annotations,
+      // calc and code wrappers keep their structure, as on Backspace.
+      if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
+      const next = bodyNeighbor(props.id, 1, structuralScope);
       if (next) {
         const nextRaw = docNode(next)?.raw ?? "";
         if (isAnnotationBlock(nextRaw, pageFmt()) || calcSource(nextRaw) !== null) return;
@@ -1948,7 +1907,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         // og has no embed-scoped outline (master GH #341), so the source page's
         // predecessor of the embed root is not "none": the root itself is the test.
         const exitingEmbed = embedNavExit !== null && (!prev || embedNavExit.firstRoot() === props.id);
-        if (exitingEmbed) prev = prevVisible(embedNavExit!.hostBlockId);
+        if (exitingEmbed) prev = bodyNeighbor(embedNavExit!.hostBlockId, -1);
         // A canonical page header is not normally an outline node. Materialize
         // its transient ordinary-editor representation only when the primary
         // page/pane caret crosses the first-body boundary; reference, embed and

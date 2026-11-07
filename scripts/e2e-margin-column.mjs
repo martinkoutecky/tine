@@ -14,7 +14,8 @@ import { fileURLToPath } from "node:url";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { seedMarginThreads, checkMarginThreads } from "./lib/margin-thread-journey.mjs";
-import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { checkCommentStructure, saveJourneyScreenshot, STRUCTURE_INITIAL, STRUCTURE_PAGE } from "./lib/e2e-comment-structure.mjs";
+import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -35,20 +36,22 @@ if (process.env.E2E_MARGIN_TMP) {
 } else fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
+fs.mkdirSync(`${TMP}/home`, { recursive: true });
+fs.mkdirSync(`${TMP}/xdg/state`, { recursive: true });
+fs.mkdirSync(`${TMP}/xdg/runtime`, { recursive: true, mode: 0o700 });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 // Isolate git discovery from a checkout containing the scratch fixture.
 execFileSync("git", ["-C", GRAPH, "init", "-q", "-b", "main"]);
 fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n`);
 seedMarginThreads(GRAPH);
-fs.mkdirSync(`${TMP}/home`, { recursive: true });
+fs.writeFileSync(`${GRAPH}/pages/${STRUCTURE_PAGE}.md`, STRUCTURE_INITIAL);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- open [[${PAGE_NAME}]]\n`);
-const account = installAccountHome(TMP);
-
+const account = accountHomeFixture(TMP, TMP);
 const env = {
-  ...process.env,
-  HOME: `${TMP}/home`,
+  ...account.env,
+  HOME: `${TMP}/home`, XDG_STATE_HOME: `${TMP}/xdg/state`, XDG_RUNTIME_DIR: `${TMP}/xdg/runtime`,
   TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
@@ -158,8 +161,8 @@ try {
       && ![...document.querySelectorAll(".page-blocks .ls-block")].some((b) => b.textContent.includes(reply)), REPLY), {
     timeout: 5_000, timeoutMsg: "the reply is not drawn in the margin thread",
   });
-  // Slice 2b: the thread (comment and reply) draws no bullets, only author chips as
-  // handles; the commented block in the outline keeps its bullet.
+  // The thread draws no bullets; its author chips keep the block menu, while
+  // the commented body block keeps its bullet and drag handle (DESIGN §1).
   const bullets = await browser.execute(() => ({
     inThread: document.querySelectorAll(".margin-thread .bullet-container, .margin-thread .collapse-toggle").length,
     handles: document.querySelectorAll(".margin-thread .comment-handle").length,
@@ -197,16 +200,20 @@ try {
   if (fs.readFileSync(PAGE_FILE, "utf8") !== saved) throw new Error("showing the margin changed the page file");
   console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk; t m hides and shows every thread, across a reload, without touching the file");
   }
+  await checkCommentStructure(browser, `${GRAPH}/pages/${STRUCTURE_PAGE}.md`, TMP);
 } catch (error) {
-  await browser?.saveScreenshot(path.join(TMP, "failure.png")).catch(() => {});
+  try { if (browser) await saveJourneyScreenshot(browser, `${TMP}/failure.png`); } catch {}
   fs.writeFileSync(path.join(TMP, "failure.json"), JSON.stringify({
     journey: "scripts/e2e-margin-column.mjs",
-    expected: "Comment creation, editing, guarded persistence and margin-thread regressions complete",
+    expected: "Comment creation, editing, guarded persistence, margin threads and body structure preserve whole comment threads",
     observed: String(error), classification: error.classification ?? "ambiguous",
+    testedCommit: process.env.E2E_COMMIT ?? "see invocation log",
   }, null, 2) + "\n");
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
   fs.closeSync(log);
+  account.close?.();
+  account.verify();
 }
