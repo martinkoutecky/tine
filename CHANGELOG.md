@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A sync copy identical to its page no longer sticks as a conflict that says there is nothing to decide: identical copies go to Tine's trash on their own, including the second of two identical copies after the first is resolved, and a copy that only looks identical offers Discard copy (GH #875).
 - Renaming a page keeps its file in its current subfolder, including Org files and namespace children (GH #904).
 - An externally moved page no longer stays hidden behind a stale path: late page-index updates drop absent files, and an incomplete launch checkpoint rebuilds from disk (GH #905).
+- Page embeds keep the source outline's order after structural edits, and preserve folded branches while the source page is loading (GH #868).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
