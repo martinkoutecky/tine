@@ -1321,7 +1321,10 @@ mod rename_guide_tests {
             format!("separate **{beta}** app"),
             format!("**On My iPhone → {beta}** and **iCloud Drive → {beta}**"),
         ] {
-            assert!(mobile.contains(&outcome), "missing iOS Guide outcome: {outcome}");
+            assert!(
+                mobile.contains(&outcome),
+                "missing iOS Guide outcome: {outcome}"
+            );
         }
         for outcome in [
             "[App Store](https://apps.apple.com/us/app/tineoutline/id6804403687) as **TineOutline**",
