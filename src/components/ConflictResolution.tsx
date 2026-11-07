@@ -36,6 +36,7 @@ import {
   collectRows,
   countSuggestions,
   humanizeSideLabel,
+  noLossDecision,
   seedSuggestedExceptArtifact,
   seedSuggestedOrNoLoss,
   visibleDiffRows,
@@ -249,7 +250,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const setDecision = (id: string, d: MergeDecision) => setDecisions((m) => ({ ...m, [id]: d }));
   const setAll = (d: MergeDecision) => {
     const next: Record<string, MergeDecision> = {};
-    for (const { id } of pending()) next[id] = d;
+    // GH #901: a one-sided row has no "both" button; keeping both there means
+    // keeping the block, so the active choice stays visible.
+    for (const { id, kind } of pending()) next[id] = d === "both" ? noLossDecision(kind) : d;
     setDecisions(next);
     setPreChoice(d === "mine" || d === "theirs" ? d : "union");
   };
@@ -474,7 +477,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
             <div class="sync-merge-toolbar">
               <span class="settings-hint">
                 <Show
-                  when={suggestedCount()}
+                  when={suggestedCount() || diffValue()?.three_way}
                   fallback={<>{t("conflict-resolution-nothing-was-pre-selected-no-common-version-is")}</>}
                 >
                   {t("conflict-resolution-suggested-summary", { suggested: String(suggestedCount()), total: String(pending().length) })}</Show>

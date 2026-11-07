@@ -231,6 +231,7 @@ pub fn diff3_docs_with_artifact(
     }
     let artifacts = artifact.map(|_| (&art_of_mine, &art_of_theirs));
     annotate_rows(&mut rows, &nodes, &base_of_mine, &base_of_theirs, artifacts);
+    keep_one_of_a_block_suggested_away_twice(&mut rows);
     let blocks_identical = rows.iter().all(|r| r.kind == RowKind::Unchanged);
     let mine_pre = normalize_pre(mine.pre_block.as_deref());
     let theirs_pre = normalize_pre(theirs.pre_block.as_deref());
@@ -289,6 +290,47 @@ fn collect_base_pairs<'a>(base: &'a [DocBlock], side: &'a [DocBlock], out: &mut 
         }
     }
     walk(&align_nodes(base, side, ""), out);
+}
+
+/// GH #901: when one block (same body) is suggested away as a winner-only row
+/// ("theirs deleted it": drop) AND as a copy-only row ("mine deleted it":
+/// skip), neither side deleted it. The sibling alignment split a move on one
+/// side, beside an edit on the other, into two one-sided rows, and taking both
+/// suggestions lost the block from the page. The winner-only occurrence loses
+/// its suggestion instead and is flagged for review, so the opening choices keep
+/// exactly one. A genuine move (pull in at the new place, drop at the old) is
+/// unaffected: only one of its rows is a deletion. Iterative (I-22).
+fn keep_one_of_a_block_suggested_away_twice(rows: &mut [DiffRow]) {
+    fn each(rows: &mut [DiffRow], visit: &mut dyn FnMut(&mut DiffRow)) {
+        let mut pending: Vec<&mut DiffRow> = rows.iter_mut().collect();
+        while let Some(row) = pending.pop() {
+            visit(row);
+            pending.extend(row.children.iter_mut());
+        }
+    }
+    let mut skipped = std::collections::HashSet::new();
+    each(rows, &mut |row| {
+        if row.kind == RowKind::Removed && row.suggestion.as_deref() == Some("mine") {
+            if let Some(theirs) = &row.theirs {
+                skipped.insert(theirs.text.clone());
+            }
+        }
+    });
+    if skipped.is_empty() {
+        return;
+    }
+    each(rows, &mut |row| {
+        if row.kind == RowKind::Added
+            && row.suggestion.as_deref() == Some("theirs")
+            && row
+                .mine
+                .as_ref()
+                .is_some_and(|mine| skipped.contains(&mine.text))
+        {
+            row.suggestion = None;
+            row.verdict = Some(Diff3Verdict::BothChanged);
+        }
+    });
 }
 
 /// Classify each aligned row against the base. `rows` and `nodes` have the same
@@ -875,7 +917,9 @@ const NOT_MERGEABLE: &str = "the two edits no longer merge cleanly";
 ///   - Unchanged  → the block, as-is.
 ///   - Modified   → mine/theirs body with recursively-merged children; `both`
 ///                  keeps both whole subtrees (the conflict copy's `id::`s
-///                  stripped so they don't collide with the winner's).
+///                  stripped so they don't collide with the winner's), except
+///                  when the two bodies are the same text: then it is one body
+///                  with recursively-merged children (GH #901).
 ///   - Added      → kept unless explicitly dropped (`theirs`).
 ///   - Removed    → pulled in only on `theirs`/`both`.
 /// `merged` is the fourth Modified outcome and needs a base — see
@@ -1014,6 +1058,13 @@ fn nodes_to_merged(nodes: &[Node], ctx: &MergeCtx) -> Result<Vec<DocBlock>, Merg
                 match decision_for(decisions, id) {
                     Decision::Mine => out.push(rebuild(mine, nodes_to_merged(children, ctx)?)),
                     Decision::Theirs => out.push(rebuild(theirs, nodes_to_merged(children, ctx)?)),
+                    // GH #901: the two bodies are the same text, so "both" has no
+                    // second version of THIS block to keep; only its children
+                    // differ. Copying both whole subtrees duplicated the section
+                    // and ignored every child decision shown below it.
+                    Decision::Both if mine.raw == theirs.raw => {
+                        out.push(rebuild(mine, nodes_to_merged(children, ctx)?))
+                    }
                     Decision::Both => {
                         out.push((*mine).clone());
                         // Fresh block — must not duplicate the winner's id:: on disk.
