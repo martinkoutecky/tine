@@ -30,7 +30,13 @@ if (editorMode) {
   // home. It proves typing/save/window lifecycle, not the WebDriver journey's
   // pointer, clipboard or synthetic composition cases.
   env.HOME = path.join(out, "home");
-  fs.mkdirSync(env.HOME, { recursive: true });
+  // Seed the device preference the Settings switch writes (tine-settings.json
+  // under the app data dir). The switch itself is driven through Settings by
+  // the Linux/Windows WebDriver journey (e2e-editor-native.mjs).
+  const identifier = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).identifier;
+  const appData = path.join(env.HOME, "Library/Application Support", identifier);
+  fs.mkdirSync(appData, { recursive: true });
+  fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({ experimental_cm6_editor: editorMode === "cm6" }) + "\n");
 }
 if (process.platform === "linux") {
   for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
@@ -285,64 +291,6 @@ await check("launch", async () => {
   } catch { log(`main never took the graph title: ${JSON.stringify(windows())}`); }
   await sleep(4000); // the graph's first paint; nothing below depends on it beyond keyboard routing
   return `main window "${main.title}"`;
-});
-
-if (editorMode) await check("editor-preference", async () => {
-  activate(main);
-  chord(",");
-  const tell = body => osa(`tell application "System Events" to tell ${MAC_PROC}\n${body}\nend tell`);
-  await until(() => tell(`repeat with e in (entire contents of front window)
-    try
-      if description of e is "Search settings" then
-        set focused of e to true
-        return "focused"
-      end if
-    end try
-  end repeat
-  return "missing"`) === "focused", 15_000, "Settings search was not accessible");
-  typeText("CodeMirror");
-  await until(() => tell(`repeat with e in (entire contents of front window)
-    try
-      if role of e is "AXButton" and name of e contains "Experimental: CodeMirror editor" then
-        perform action "AXPress" of e
-        return "opened"
-      end if
-    end try
-  end repeat
-  return "missing"`) === "opened", 15_000, "CodeMirror Settings search result was not accessible");
-  // WKWebView exposes role=switch as AXCheckBox. Locate the switch beside the
-  // visible setting label, using AX positions only to choose its row. The
-  // assertion is its checked value, never a particular coordinate.
-  const switchScript = (change = false) => `set labelY to missing value
-  set elements to entire contents of front window
-  repeat with e in elements
-    try
-      if role of e is "AXStaticText" and value of e is "Experimental: CodeMirror editor" then set labelY to item 2 of position of e
-    end try
-  end repeat
-  if labelY is missing value then return "missing label"
-  set nearest to missing value
-  set best to 1000000
-  repeat with e in elements
-    try
-      if role of e is "AXCheckBox" or role of e is "AXSwitch" then
-        set distance to (item 2 of position of e) - labelY
-        if distance < 0 then set distance to -distance
-        if distance < best then
-          set best to distance
-          set nearest to contents of e
-        end if
-      end if
-    end try
-  end repeat
-  if nearest is missing value then return "missing switch"
-  ${change ? `if (value of nearest as integer) is not ${editorMode === "cm6" ? 1 : 0} then perform action "AXPress" of nearest` : ""}
-  return value of nearest as text`;
-  tell(switchScript(true));
-  await until(() => tell(switchScript()) === (editorMode === "cm6" ? "1" : "0"), 10_000, "CodeMirror preference did not reach the requested checked state");
-  screenshot(`editor-${editorMode}`);
-  press("escape");
-  return `Selected ${editorMode} through ordinary Settings; following native window/edit/save checks use this preference`;
 });
 
 await check("open", async () => {

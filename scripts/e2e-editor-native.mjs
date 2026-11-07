@@ -39,7 +39,7 @@ for (const [name, text] of Object.entries({
 })) fs.writeFileSync(file(name), text);
 const app = process.env.TINE_APP || path.join(root, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
 const fixture = accountHomeFixture(out, out, { ...process.env,
-  HOME: path.join(out, "home"), USERPROFILE: path.join(out, "home"), TINE_GRAPH: graph,
+  HOME: path.join(out, "home"), TINE_GRAPH: graph,
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"),
   XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
   APPDATA: path.join(out, "appdata"), LOCALAPPDATA: path.join(out, "localappdata"),
