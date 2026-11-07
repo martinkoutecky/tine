@@ -5712,9 +5712,8 @@ body.file-drop-active::after {
   width: var(--table-bleed-width, 100%);
   margin-block: 1rem; margin-inline: calc(-1 * var(--table-bleed-shift, 0px)) 0;
 }
-/* GH #909: a table bled left over the ancestors' outline guides (z-index 1)
-   paints above them on an opaque pane background, so no guide runs through
-   its header or rows. The selection tint stays layered on top of it. */
+/* GH #909: a table bled left over the ancestors' outline guides (z-index 1) paints above them on an
+   opaque pane background, so no guide runs through its rows. The selection tint stays on top. */
 .md-table-wrap[data-bleed] {
   position: relative; z-index: 2;
   background: var(--table-bleed-tint, linear-gradient(transparent, transparent)), var(--bg-primary);
