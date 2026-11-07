@@ -457,7 +457,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           }}
         >
           <Show
-            when={editing()}
+            when={editing() ? node() : undefined} keyed
             fallback={
               <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0}>
                 {() => <Rendered
@@ -641,10 +641,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
   const node = () => docNode(props.id);
-  // The node this editor instance was built to show. A page replacement (an
-  // external change, the host's answer to an Open) purges the page's nodes and
-  // builds new ones, often under the same ids (runtime ids are structural), and
-  // remounts the outline; `upsertPage` carries the editor to the new copy.
+  // The node this editor instance was built to show. Reloads retain unchanged
+  // nodes; a changed node gets a new object, often under the same structural
+  // id. The keyed editor remounts; `upsertPage` carries its context to the copy.
   // Chromium-family webviews then fire `blur` on this instance's removed,
   // focused textarea. Such an instance is stale: its text is the pre-reload
   // block, so writing it would silently revert the external change, and
