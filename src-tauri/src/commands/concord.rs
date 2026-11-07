@@ -192,13 +192,12 @@ pub(crate) async fn conflict_inventory(
         state.window.label().to_owned(),
     );
     tauri::async_runtime::spawn_blocking(move || {
-        let inventory = slot
-            .conflict_queue
-            .inventory(&slot.store)
-            .map_err(|error| error.to_string());
-        // Copies that were already identical when the graph opened.
+        // Copies that were already identical when the graph opened, first,
+        // so the inventory below no longer lists them.
         trash_identical_copies(&app, &label, &slot);
-        inventory
+        slot.conflict_queue
+            .inventory(&slot.store)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -206,8 +205,10 @@ pub(crate) async fn conflict_inventory(
 
 /// GH #875: a sync copy whose bytes equal its page's (delivered that way, or
 /// made so by a save or a resolve) holds nothing to decide, so it is trashed
-/// recoverably, off the calling thread; the window then re-reads the queue on
-/// `conflicts-changed`. Nothing to do costs one in-memory queue scan.
+/// recoverably and the window re-reads the queue on `conflicts-changed`.
+/// Synchronous, on a thread that already owns blocking work (I-21: no new
+/// worker): the inventory command's awaited blocking task, or the watcher's
+/// subscription bridge. Nothing to do costs one in-memory queue scan.
 pub(crate) fn trash_identical_copies(
     app: &tauri::AppHandle,
     label: &str,
@@ -217,19 +218,16 @@ pub(crate) fn trash_identical_copies(
     if slot.conflict_queue.undecided_copies().is_empty() {
         return;
     }
-    let (app, label, slot) = (app.clone(), label.to_owned(), slot.clone());
-    std::thread::spawn(move || {
-        match tine_graph_features::conflicts::trash_identical_sync_copies(
-            &slot.store,
-            &slot.conflict_queue,
-        ) {
-            Ok(trashed) if !trashed.is_empty() => {
-                let _ = app.emit_to(label.as_str(), "conflicts-changed", ());
-            }
-            Ok(_) => {}
-            Err(error) => crate::debug::diag_private("conflict-refresh-failed", error.to_string()),
+    match tine_graph_features::conflicts::trash_identical_sync_copies(
+        &slot.store,
+        &slot.conflict_queue,
+    ) {
+        Ok(trashed) if !trashed.is_empty() => {
+            let _ = app.emit_to(label, "conflicts-changed", ());
         }
-    });
+        Ok(_) => {}
+        Err(error) => crate::debug::diag_private("conflict-refresh-failed", error.to_string()),
+    }
 }
 
 /// Block diff of a marker-bearing page's own sides (3-way when the markers

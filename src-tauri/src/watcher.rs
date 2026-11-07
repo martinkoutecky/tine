@@ -484,6 +484,7 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
     crate::spotlight::observe(app, label, slot, spotlight_events(&change));
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
     if conflicts_dirty {
+        // Synchronous on this subscription bridge thread (I-21: no new worker).
         crate::concord::trash_identical_copies(app, label, slot);
     }
     let pages = events.len();
