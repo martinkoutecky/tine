@@ -11,7 +11,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Conflict review no longer suggests removing a block that both versions still contain when one device moved it and the other edited a neighbour, which lost that block when the suggestions were applied (GH #901).
-- Conflict review no longer duplicates a whole section when only its children differ: **Both** on a parent whose own text is the same keeps one parent and applies the choices shown for its children (GH #901).
 - **Apply all suggested** no longer resets your choices on rows Tine has no suggestion for; **Keep both everywhere** shows the active choice on blocks only one side has; a review that knows the common version no longer says none is known (GH #901).
 - Journal days and split panes use the same width rule for margin comments as single pages; comment and reply editors hide every `tine.*` property on all platforms while preserving its bytes on save (GH #891).
 - Editing an authored block keeps its author mark visible while hiding and preserving `tine.author::`; the chip menu offers Remove author. Author metadata no longer appears inside blockquotes (GH #894, GH #895).
