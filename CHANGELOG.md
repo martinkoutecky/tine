@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Body editing skips whole margin-comment threads: Backspace, Delete, Enter, arrows, indentation, drag and paste preserve comments and their replies (GH #891, GH #110).
 - iOS Betas install as the separate amber Tine Beta app, with their own settings, graph folders and share inbox, alongside the App Store app (GH #890).
 - A sync copy identical to its page no longer sticks as a conflict that says there is nothing to decide: identical copies go to Tine's trash on their own, including the second of two identical copies after the first is resolved, and a copy that only looks identical offers Discard copy (GH #875).
+- On Android, opening the keyboard leaves about three body lines below the caret so children of short blocks stay visible, while keeping the edited line below pinned parents (GH #783).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).

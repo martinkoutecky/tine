@@ -139,13 +139,16 @@ function visible(g) {
   assert(Math.abs(g.visibleTop - (g.pinsBottom + 8 * g.zoom)) <= 1, "Visible top must be the painted pins' bottom plus the margin: " + JSON.stringify(g));
   assert(g.lineTop >= g.pinsBottom - 1 && g.lineBottom <= Math.min(g.scrollerBottom, g.toolbarTop) + 1,
     "Edited line must be visible below the pinned parents and above the keyboard toolbar: " + JSON.stringify(g));
-  // GH #783 (beta.4 report): a line brought back goes as low as it can, just above the toolbar
-  // (0.7.4's place), not to the top edge under the pins. Every journey here moves it out of view first.
-  assert(g.lineBottom >= g.toolbarTop - 8 * g.zoom - 48 * g.zoom,
-    "Edited line brought back must sit just above the keyboard toolbar, not high under the pins: " + JSON.stringify(g));
+  // GH #783 comment 14: leave three body lines below the caret for children/following blocks.
+  if (g.editorHeight < 100) assert(g.childTop >= g.lineBottom && g.childBottom < g.toolbarTop,
+    "A short parent's first child must remain visible above the keyboard toolbar: " + JSON.stringify(g));
+  // At large zoom the pins can leave less than three lines; the caret must stay below them.
+  const target = Math.max(g.visibleTop + g.lineBottom - g.lineTop, g.toolbarTop - 3 * g.bodyLine * g.zoom);
+  assert(Math.abs(g.lineBottom - target) <= 2,
+    "Edited line brought back must leave three zoomed body lines, bounded by the pinned parents: " + JSON.stringify(g));
 }
 try {
-  for (const journey of ["late-scroll", "late-scroll-below", "tall-late-scroll", "late-focus", "user-scroll", "keyboard-close", "zoom-late-scroll", "zoom150-late-scroll", "zoom-under-pins", "zoom150-under-pins"]) {
+  for (const journey of ["keyboard-open", "two-line-keyboard-open", "zoom-keyboard-open", "late-scroll", "late-scroll-below", "tall-late-scroll", "late-focus", "user-scroll", "keyboard-close", "zoom-late-scroll", "zoom150-late-scroll", "zoom-under-pins", "zoom150-under-pins"]) {
     const context = await browser.newContext({ viewport: { width: 412, height: 840 }, hasTouch: true });
     const page = await context.newPage();
     page.on("pageerror", error => failures.push(journey + ": " + error.message));
@@ -153,7 +156,7 @@ try {
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`);
       await page.waitForFunction(() => !!window.fixture);
       if (journey.startsWith("zoom")) await page.evaluate(scale => window.fixture.zoom(scale), journey.startsWith("zoom150") ? 1.5 : 1.25);
-      if (journey !== "late-focus") await page.evaluate(tall => window.fixture.focus(tall), journey === "tall-late-scroll");
+      if (journey !== "late-focus") await page.evaluate(journey => window.fixture.focus(journey === "tall-late-scroll", journey === "two-line-keyboard-open"), journey);
       await page.evaluate(() => window.fixture.ime(true));
       for (const height of [690, 550, 430]) {
         await page.setViewportSize({ width: 412, height });
@@ -163,7 +166,7 @@ try {
         await page.evaluate(() => { window.fixture.scroll(500); window.fixture.focus(); });
       } else if (journey.endsWith("under-pins")) {
         await page.evaluate(() => window.fixture.parkUnderPins());
-      } else {
+      } else if (!journey.endsWith("keyboard-open")) {
         // Native focus scroll arrives AFTER beta.2's two-frame reveal stopped.
         await page.evaluate(delta => window.fixture.scroll(delta), journey === "late-scroll-below" ? -300 : 500);
       }
