@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+- A wide table in a nested block no longer has the outline guide lines of its parent blocks drawn through its header and rows on narrow windows, split panes and the sidebar (GH #909).
 
 ## [0.9.0-beta.8] - 2026-11-06
 

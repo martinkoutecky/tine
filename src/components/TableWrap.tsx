@@ -42,6 +42,8 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
       const { width, shift } = tableBleedGeometry(normalLeft, normalWidth, surface.scrollWidth, m.left, pane.clientWidth, (c.left + c.right) / 2);
       el.style.setProperty("--table-bleed-width", `${width}px`);
       el.style.setProperty("--table-bleed-shift", `${shift}px`);
+      // GH #909: a table that bleeds left covers the ancestors' outline guides.
+      el.toggleAttribute("data-bleed", shift > 0.5);
     };
     const schedule = () => { if (!frame) frame = requestFrame(el, () => { frame = undefined; measure(); }); };
     const observer = newResizeObserver(el, schedule);
