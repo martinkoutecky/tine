@@ -8,11 +8,24 @@
       "nonRequirements": ["Wrap setting, user column widths, release burn-in, Windows/macOS/mobile device certification. A narrow desktop WebKit window is not a mobile device."],
       "stability":"burn-in"
     },
+    "scripts/e2e-multiple-hotkeys.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Settings adds a second key while keeping the default. Each opens search before and after reloading the app; both alternatives from an OG config.edn vector also open help. Note and config bytes stay unchanged.", "blocking": false, "authority": "GH #878; OG shortcut vectors" }],
+      "acceptableVariations": ["Shortcut control markup, keycap styling, timing and window geometry may vary while both alternatives run and persist."],
+      "nonRequirements": ["No exact pixels, private graph, macOS/Windows certification or release burn-in; unit and component tests cover parsing, matching, conflicts, removing, replacing and resetting."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-code-edit-toolbar.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"In both block editors, on a routed page and the journal, Copy code is available on desktop hover while editing and on touch while the caret is in code; it copies the current body and preserves the caret, then hides when the caret leaves.","blocking":false,"authority":"GH #879 items 2–3; UI-GH879-CODE-EDIT-TOOLBAR"}],
+      "acceptableVariations": ["Code card geometry, syntax highlighting, icon styling and copy notification timing may vary."],
+      "nonRequirements": ["No new Source/Delete or language buttons; no real Android keyboard, native clipboard or other platform certification. Uses the built app with its synthetic browser graph."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-editor-native.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },
         { "class": "exact-safety-interoperability", "userOutcome": "Editing and clipboard transfers reach the exact expected Markdown file bytes, preserve the copied source and nested children, remove only the cut subtrees, and keep the reference target unchanged.", "blocking": false, "authority": "CM6 rollout acceptance D-20261025-CS / ET2 (#767), existing guarded save and outline clipboard semantics" },
-        { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": false }
+        { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": false },
+        { "class": "core-operation", "userOutcome": "Typed and clipboard-pasted Markdown property lines, and typing inside an existing value, offer their key's known values without choosing a property name; accepting a value updates the correct span and saves it on a routed page in either editor.", "blocking": false, "authority": "D-20261102-PERF follow-up 3; UI-PROPERTY-VALUES-TYPED" }
       ],
       "acceptableVariations": ["Native clipboard plumbing, editor DOM, selection painting, completion layout and save latency may vary while the semantic outcomes and persisted bytes hold."],
       "nonRequirements": ["A real OS IME candidate window, candidate selection/cancellation, dead keys, platform IME reconversion or mobile keyboards: these require human/device checks.", "macOS native UI certification: the repository currently has no macOS WebDriver app runner.", "Exact pixels, selection color, caret blink, timing or editor DOM structure."],

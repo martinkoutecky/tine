@@ -7927,17 +7927,18 @@ img.emoji {
   /* GH #847: familiar actions are compact; destructive Remove keeps its text.
      No-hover devices keep all labels, including at narrow mobile widths. */
   .embed-action-label { display: none; }
-  .embed-block:hover > .embed-actions { opacity: 1; pointer-events: auto; }
+  /* GH #879: reading and editing code cards use the embed visibility rule. */
+  :is(.embed-block, .code-block, .code-editor-region):hover > :is(.embed-actions, .code-copy) { opacity: 1; pointer-events: auto; }
   .embed-block:has(.embed-block:hover) > .embed-actions { opacity: 0; pointer-events: none; }
 }
 @media (hover: none) {
-  .embed-block:focus-within > .embed-actions { opacity: 1; pointer-events: auto; }
+  :is(.embed-block, .code-block, .code-editor-region):focus-within > :is(.embed-actions, .code-copy) { opacity: 1; pointer-events: auto; }
   .embed-block:has(.embed-block:focus-within) > .embed-actions { opacity: 0; pointer-events: none; }
   .embed-actions button { padding: 6px 12px; }
 }
 /* Keyboard: the buttons stay in the Tab order while transparent, and the
    toolbar shows while one of them has focus, whatever the pointer does. */
-.embed-block > .embed-actions:focus-within { opacity: 1; pointer-events: auto; }
+:is(.embed-block, .code-block, .code-editor-region) > :is(.embed-actions, .code-copy):focus-within { opacity: 1; pointer-events: auto; }
 
 /* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,
    class on <html>): the shade goes, the accent bullet and guide stay. It sits
@@ -8072,11 +8073,11 @@ html.tine-embed-shading-accent .embed-block {
   position: absolute;
   top: 6px;
   inset-inline-end: 6px;
+  pointer-events: none;
+  z-index: 1;
 }
-.code-block:hover .code-copy,
-.code-copy:focus-visible {
-  opacity: 1;
-}
+.code-editor-region > .code-copy { top: calc(14px + var(--ls-block-content-pad-y)); }
+.mixed-code-region > .code-copy { top: 14px; }
 
 /* Inline code + links: float the icon just past the token, no layout reflow. */
 .inline-copy-wrap,

@@ -4,7 +4,8 @@ import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-
 import { openExternal } from "./primitives";
 import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
 import { graphMeta } from "../graphSession";
-import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
+import { BUILTIN_KEYS, shortcutBindingsConflict, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
+import { bindingAlternatives, type ShortcutBinding } from "../shortcutBindings";
 import { EmojiText } from "../render/emoji";
 import { openGuide } from "../guide";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
@@ -109,7 +110,7 @@ export interface ShortcutSettingRow {
    *  binding so it is discoverable, but not remappable and not its own row: it
    *  disappears the moment the user binds the command themselves. */
   alias?: string;
-  effective: string;
+  effective: ShortcutBinding;
   overridden: boolean;
   scope: ShortcutScope;
 }
@@ -152,7 +153,7 @@ export function buildShortcutPaneData(shortcuts: ShortcutSettingRow[], search = 
     ...group,
     title: render(group.title),
     description: render(group.description),
-    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.english, s.id, s.effective, s.binding)),
+    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.english, s.id, bindingAlternatives(s.effective).join(" "), s.binding)),
     builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope && matches(render(s.label), renderEnglish(s.label), s.id, s.binding, s.details && render(s.details), s.details && renderEnglish(s.details))),
   }));
 }
@@ -161,11 +162,18 @@ export function shortcutPaneCommandIds(sections: ShortcutPaneSection[]): string[
   return sections.flatMap((section) => section.commands.map((row) => row.id));
 }
 
-function displayBinding(binding: string): string {
-  const b = binding.trim();
-  if (!b) return t("help-unbound");
-  if (b === "false") return t("help-unbound");
-  return b;
+function displayBinding(binding: ShortcutBinding): string {
+  return bindingAlternatives(binding).join(", ") || t("help-unbound");
+}
+
+/** Check every command: selection-labelled globals can run while editing after
+ * a modifier remap, and several editor commands also handle block selection. */
+export function shortcutConflicts(row: ShortcutSettingRow, rows: ShortcutSettingRow[]): ShortcutSettingRow[] {
+  const effective = (item: ShortcutSettingRow) => [
+    ...bindingAlternatives(item.effective), ...(item.alias && !item.overridden ? [item.alias] : []),
+  ];
+  return rows.filter((other) => other.id !== row.id
+    && shortcutBindingsConflict(effective(row), effective(other)));
 }
 
 function bindingFor(shortcuts: ShortcutSettingRow[], id: string, fallback: string): string {
@@ -302,28 +310,44 @@ function SyntaxTable(): JSX.Element {
 function ShortcutRow(props: {
   row: ShortcutSettingRow;
   recording: string | null;
-  onRecord: (id: string) => void;
+  recordingIndex?: number | null;
+  onRecord: (id: string, index: number | null) => void;
+  onRemove: (id: string, index: number) => void;
+  conflicts: ShortcutSettingRow[];
   onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
-  const recording = () => props.recording === props.row.id;
+  const recording = (index: number | null) => props.recording === props.row.id
+    && (props.recordingIndex === undefined ? 0 : props.recordingIndex) === index;
   return (
-    <div class="help-shortcut-row">
-      <span class="help-shortcut-label">{props.row.label}</span>
+    <div class="help-shortcut-row" data-shortcut-id={props.row.id}>
+      <span class="help-shortcut-label">{props.row.label}
+        <Show when={props.conflicts.length}>
+          <span class="help-shortcut-detail" role="status">{t("help-shortcut-conflicts", { commands: props.conflicts.map((row) => row.label).join(", ") })}</span>
+        </Show>
+      </span>
       <span class="help-shortcut-keys">
-        <button
-          class="help-keycap help-keycap-button"
-          classList={{ recording: recording(), overridden: props.row.overridden, disabled: props.row.effective === "false" }}
-          onClick={() => props.onRecord(props.row.id)}
-          title={t("help-click-to-remap")}
-        >{recording() ? t("help-press-keys") : displayBinding(props.row.effective)}
-        </button>
+        <For each={bindingAlternatives(props.row.effective).length ? bindingAlternatives(props.row.effective) : [""]}>
+          {(binding, index) => <>
+            <button
+              class="help-keycap help-keycap-button"
+              classList={{ recording: recording(index()), overridden: props.row.overridden, disabled: !binding }}
+              onClick={() => props.onRecord(props.row.id, index())}
+              title={t("help-click-to-remap")}
+            >{recording(index()) ? t("help-press-keys") : displayBinding(binding)}
+            </button>
+            <Show when={binding}>
+              <button class="help-reset" title={t("help-remove-this-keybinding")} aria-label={`${t("help-remove-this-keybinding")}: ${binding}`} onClick={() => props.onRemove(props.row.id, index())}>×</button>
+            </Show>
+          </>}
+        </For>
+        <button class="help-reset" title={t("help-add-keybinding")} onClick={() => props.onRecord(props.row.id, null)}>{recording(null) ? t("help-press-keys") : t("help-add-keybinding")}</button>
         <Show when={props.row.alias && !props.row.overridden}>
           <span class="help-shortcut-alias"><Rich message={msg("help-or", { alias: displayBinding(props.row.alias!) })} slots={{ "span": (children) => <span class="help-keycap help-keycap-static">{children}</span> }} /></span>
         </Show>
       </span>
       <span class="help-shortcut-tail">
-        <Show when={props.row.effective.trim() && props.row.effective !== "false"}><button class="help-reset" title={t("help-remove-this-keybinding")} onClick={() => props.onUnbind(props.row.id)}>{t("help-unbind")}</button>
+        <Show when={bindingAlternatives(props.row.effective).length}><button class="help-reset" title={t("help-remove-this-keybinding")} onClick={() => props.onUnbind(props.row.id)}>{t("help-unbind")}</button>
         </Show>
         <Show when={props.row.overridden}>
           <button
@@ -359,7 +383,9 @@ export function ShortcutsSettingsPane(props: {
   shortcuts: ShortcutSettingRow[];
   search: string;
   recording: string | null;
-  onRecord: (id: string) => void;
+  recordingIndex?: number | null;
+  onRecord: (id: string, index: number | null) => void;
+  onRemove: (id: string, index: number) => void;
   onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
@@ -394,7 +420,10 @@ export function ShortcutsSettingsPane(props: {
                     <ShortcutRow
                       row={row}
                       recording={props.recording}
+                      recordingIndex={props.recordingIndex}
                       onRecord={props.onRecord}
+                      onRemove={props.onRemove}
+                      conflicts={shortcutConflicts(row, props.shortcuts)}
                       onUnbind={props.onUnbind}
                       onReset={props.onReset}
                     />
