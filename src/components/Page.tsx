@@ -14,7 +14,8 @@ import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
-import { changed, pageChangeKey } from "../changeKeys";
+import { changed } from "../changeKeys";
+import { PageLoadError, createPinnedPathRecovery, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableResource } from "../tagTable";
@@ -442,18 +443,8 @@ export function PageView(): JSX.Element {
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
-  // A sync delivery can briefly remove a pinned file while its title still
-  // shows in the feed. Keep that exact target, but retry its refused read when
-  // publication changes its page (GH #863). Successful routes do not reload.
-  const pinnedPublication = createMemo(() => {
-    const route = currentRoute();
-    return route.kind === "page" && route.path ? changed(pageChangeKey(route.name)) : null;
-  });
-  const [refusedPathPublication, setRefusedPathPublication] = createSignal<string | null>(null);
-  createEffect(() => {
-    const refused = refusedPathPublication();
-    if (refused !== null && pinnedPublication() !== refused) setLoadRetry(value => value + 1);
-  });
+  // A refused path-pinned route recovers when its exact file returns (GH #863).
+  const pinnedPath = createPinnedPathRecovery(currentRoute, () => setLoadRetry(value => value + 1));
   // Leaving a routed page marks it seen (ADR 0079).
   markSeenOnLeave(() => { const r = currentRoute(); return r.kind === "page" ? r.name : null; });
   const journalOwner = (route = currentRoute(), epoch = graphEpoch(), tabId = router.activeId(), revision = router.routeIntentRevision()): JournalsFeedOwner => ({
@@ -472,18 +463,14 @@ export function PageView(): JSX.Element {
     const epoch = graphEpoch(); // reload when the open graph changes
     const tabId = router.activeId();
     const revision = router.routeIntentRevision();
-    const publication = untrack(pinnedPublication);
-    let pathUnavailable = false;
-    let pathMissing = false;
-    let requestLive = true;
+    let pathRefusal: PinnedPathRefusal | undefined; let requestLive = true;
     const owned = () => requestLive && surfaceAlive && epoch === graphEpoch()
       && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), r);
     const routeOwner = graphOwner(owned);
-    let cancelRetry: (() => void) | undefined;
-    onCleanup(() => { requestLive = false; cancelRetry?.(); });
+    let cancelRetry: (() => void) | undefined; onCleanup(() => { requestLive = false; cancelRetry?.(); });
     setReady(false);
     setLoadError(null);
-    setRefusedPathPublication(null);
+    const publication = pinnedPath.begin();
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
     // value — Solid context values don't react to route changes): the main
     // pane is "main" whatever it shows, every other pane is pane:{id}.
@@ -581,8 +568,7 @@ export function PageView(): JSX.Element {
             return;
           }
           if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
-            pathUnavailable = true;
-            pathMissing = !dto;
+            pathRefusal = dto ? "mismatch" : "missing";
             throw new Error("The selected physical page is no longer available at that path.");
           }
           // Core page identity is Unicode-case-insensitive while display names
@@ -622,39 +608,7 @@ export function PageView(): JSX.Element {
         setLoadedRoute(r);
         setLoadError(String(e));
         setReady(true);
-        if (pathUnavailable) setRefusedPathPublication(publication);
-        if (pathMissing && r.kind === "page" && r.path && owned()) {
-          // Missing/late OS events and byte-identical sync replacements need
-          // not publish a revision. Probe without changing the refusal UI;
-          // only a matching file warrants the full loader/admission checks.
-          // Delay from each completion, doubling to 60 s. A publication runs
-          // a fresh load and resets the backoff; cleanup revokes pending reads.
-          const path = r.path;
-          let delay = 3000;
-          const armProbe = () => {
-            const timer = setTimeout(() => { void probe(); }, delay);
-            cancelRetry = () => clearTimeout(timer);
-          };
-          const probe = async () => {
-            if (!owned()) return;
-            try {
-              const result = await readOwned(routeOwner, backend().getPageByPath(path));
-              if (result.kind === "stale") return;
-              const dto = result.value;
-              if (dto?.id === path && dto.name === r.name && dto.kind === r.pageKind) {
-                setLoadRetry(value => value + 1);
-                return;
-              }
-            } catch {
-              // Retain the original refusal on a probe failure, without a
-              // repeated toast or flight event. Publication can still recover.
-            }
-            if (!owned()) return;
-            delay = Math.min(delay * 2, 60_000);
-            armProbe();
-          };
-          armProbe();
-        }
+        if (pathRefusal) cancelRetry = pinnedPath.refuse(publication, pathRefusal, r, routeOwner);
       }
     })();
   });
@@ -834,14 +788,7 @@ export function PageView(): JSX.Element {
   </PageSection>;
 
   return (
-    <Show when={!loadError()} fallback={
-      <div class="page">
-        <div class="page-load-error">
-          <Rich message={msg("page-open-failed", { error: loadError() ?? "" })} />
-          <div class="page-load-error-hint">{t("page-ui-tine-did-not-modify-the-file-try-reopening-or")}</div>
-        </div>
-      </div>
-    }>
+    <Show when={!loadError()} fallback={<PageLoadError error={loadError() ?? ""} />}>
     <Show when={contentReady()} fallback={
       <div class="page-loading" role="status" aria-live="polite">
         <span class="page-loading-spinner" aria-hidden="true" />
