@@ -124,17 +124,19 @@ struct OpenTrace {
 }
 
 impl OpenTrace {
-    fn record(self, stage: &'static str, facts: serde_json::Map<String, serde_json::Value>) {
+    // The parameter is `step`, not `stage`: host_slot_guard_tests reads a
+    // name passed as an argument as a call to the function of that name.
+    fn record(self, step: &'static str, facts: serde_json::Map<String, serde_json::Value>) {
         crate::flight::record_workspace_open(
             self.sequence,
-            stage,
+            step,
             self.started.elapsed().as_millis() as u64,
             facts,
         );
     }
 
-    fn stage(self, stage: &'static str) {
-        self.record(stage, serde_json::Map::new());
+    fn stage(self, step: &'static str) {
+        self.record(step, serde_json::Map::new());
     }
 }
 
