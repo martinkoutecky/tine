@@ -278,6 +278,14 @@ impl Fixture {
                 if path.is_dir() {
                     visit(root, &path, out);
                 } else {
+                    // A save in flight (a relaunched host completing its
+                    // operation) renames its temp file away between the
+                    // listing and the read: that file is gone, not unread.
+                    let bytes = match fs::read(&path) {
+                        Ok(bytes) => bytes,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(err) => panic!("read {}: {err}", path.display()),
+                    };
                     // Key by the `/`-separated graph-relative id, as on
                     // every platform (Windows lists `pages\\New.md`).
                     out.insert(
@@ -285,7 +293,7 @@ impl Fixture {
                             .unwrap()
                             .to_string_lossy()
                             .replace('\\', "/"),
-                        fs::read(path).unwrap(),
+                        bytes,
                     );
                 }
             }
