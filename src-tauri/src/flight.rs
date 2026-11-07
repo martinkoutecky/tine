@@ -130,6 +130,107 @@ fn record_fixed_event(event: &'static str, fields: Map<String, Value>) {
     DIRTY.store(true, Ordering::Release);
 }
 
+/// GH #809: closed-vocabulary milestones, with a process-local open number.
+/// The top-level elapsedMs remains the recorder clock; openElapsedMs is time
+/// since prepare (native) or launch (frontend), never a wall clock or label.
+pub(crate) fn record_workspace_open(
+    sequence: u64,
+    stage: &'static str,
+    open_elapsed_ms: u64,
+    facts: Map<String, Value>,
+) {
+    record_fixed_event("workspace.open", workspace_open_fields(sequence, stage, open_elapsed_ms, facts));
+}
+
+fn workspace_open_fields(
+    sequence: u64,
+    stage: &'static str,
+    open_elapsed_ms: u64,
+    facts: Map<String, Value>,
+) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("sequence".into(), json!(sequence));
+    fields.insert("stage".into(), json!(stage));
+    fields.insert("openElapsedMs".into(), json!(open_elapsed_ms));
+    fields.extend(facts);
+    fields
+}
+
+/// Only numeric display facts; unknown or implausible values become null.
+pub(crate) fn workspace_display_fields(
+    logical: Option<(f64, f64)>,
+    monitor_count: Option<usize>,
+    target_scale: Option<f64>,
+    physical: Option<(u32, u32)>,
+) -> Map<String, Value> {
+    let mut fields = Map::new();
+    let logical = logical.filter(|(w, h)| {
+        w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0
+            && *w <= 16_384.0 && *h <= 16_384.0
+    });
+    fields.insert("logicalWidth".into(), json!(logical.map(|v| v.0.round() as u32)));
+    fields.insert("logicalHeight".into(), json!(logical.map(|v| v.1.round() as u32)));
+    fields.insert("monitorCount".into(), json!(monitor_count.filter(|n| *n <= 64)));
+    fields.insert("targetScaleMilli".into(), json!(target_scale
+        .filter(|s| s.is_finite() && *s >= 0.1 && *s <= 16.0)
+        .map(|s| (s * 1000.0).round() as u32)));
+    let physical = physical.filter(|(w, h)| *w > 0 && *h > 0 && *w <= 262_144 && *h <= 262_144);
+    fields.insert("physicalWidth".into(), json!(physical.map(|v| v.0)));
+    fields.insert("physicalHeight".into(), json!(physical.map(|v| v.1)));
+    fields
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WorkspaceFrontendStage {
+    PrepareDone,
+    OpenCalled,
+    OpenReturned,
+    DocumentReady,
+    BootstrapDone,
+    FocusCalled,
+    FocusDone,
+    Failed,
+}
+
+impl WorkspaceFrontendStage {
+    fn token(self) -> &'static str {
+        match self {
+            Self::PrepareDone => "frontend.prepare-done",
+            Self::OpenCalled => "frontend.open-called",
+            Self::OpenReturned => "frontend.open-returned",
+            Self::DocumentReady => "frontend.document-ready",
+            Self::BootstrapDone => "frontend.bootstrap-done",
+            Self::FocusCalled => "frontend.focus-called",
+            Self::FocusDone => "frontend.focus-done",
+            Self::Failed => "frontend.failed",
+        }
+    }
+}
+
+/// Async so logging can reach the recorder even while the native loop is
+/// blocked constructing a webview. No frontend string enters the recorder.
+#[tauri::command]
+pub(crate) async fn diagnostic_workspace_open(
+    sequence: u64,
+    stage: WorkspaceFrontendStage,
+    open_elapsed_ms: u64,
+) {
+    record_workspace_open(sequence, stage.token(), open_elapsed_ms, Map::new());
+}
+
+pub(crate) fn record_main_thread_stall(threshold_ms: u64, delay_ms: u64, recovered: bool) {
+    record_fixed_event("runtime.main_thread_stall", main_thread_stall_fields(threshold_ms, delay_ms, recovered));
+}
+
+fn main_thread_stall_fields(threshold_ms: u64, delay_ms: u64, recovered: bool) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("thresholdMs".into(), json!(threshold_ms));
+    fields.insert("delayMs".into(), json!(delay_ms));
+    fields.insert("recovered".into(), json!(recovered));
+    fields
+}
+
 /// Start the recorder's clock and record which build this run is: fixed tokens
 /// only, so a report can tell an x86 session from an x64 one (GH #594). Call
 /// once, first thing in `run()`.
@@ -355,8 +456,9 @@ pub(crate) fn record_watch_refused(refused: bool) {
 }
 
 /// Commands whose own timing would only describe the recorder.
-const SELF_COMMANDS: [&str; 9] = [
+const SELF_COMMANDS: [&str; 10] = [
     "diagnostic_timing_event",
+    "diagnostic_workspace_open",
     "diagnostic_ipc_event",
     "diagnostic_frontend_event",
     "diagnostic_report",
@@ -942,6 +1044,55 @@ pub(crate) async fn clear_diagnostics() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_open_event_has_only_the_fixed_stage_sequence_and_clocks() {
+        for token in ["prepare-done", "open-called", "open-returned", "document-ready",
+            "bootstrap-done", "focus-called", "focus-done", "failed"] {
+            let stage: WorkspaceFrontendStage = serde_json::from_value(json!(token)).unwrap();
+            let line = encode("workspace.open", workspace_open_fields(7, stage.token(), 42, Map::new())).unwrap();
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 6);
+            assert_eq!(value["event"], "workspace.open");
+            assert_eq!(value["sequence"], 7);
+            assert_eq!(value["stage"], format!("frontend.{token}"));
+            assert_eq!(value["openElapsedMs"], 42);
+            assert_eq!(value["schemaVersion"], 1);
+            assert!(value["elapsedMs"].is_u64());
+        }
+        for private in ["/private/graph", "Secret page", "native.build-returned", ""] {
+            assert!(serde_json::from_value::<WorkspaceFrontendStage>(json!(private)).is_err());
+        }
+    }
+
+    #[test]
+    fn workspace_display_facts_are_numeric_bounded_and_unknown_is_null() {
+        let fields = workspace_display_fields(Some((900.0, 760.0)), Some(6), Some(1.5), Some((1350, 1140)));
+        assert_eq!(json!(fields), json!({"logicalWidth":900,"logicalHeight":760,
+            "monitorCount":6,"targetScaleMilli":1500,"physicalWidth":1350,"physicalHeight":1140}));
+        let line = encode("workspace.open", workspace_open_fields(8, "native.prepared", 12, fields)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["monitorCount"], 6);
+        for fields in [
+            workspace_display_fields(None, None, None, None),
+            workspace_display_fields(Some((f64::NAN, 760.0)), Some(65), Some(f64::INFINITY), Some((0, 1140))),
+            workspace_display_fields(Some((16_385.0, 760.0)), Some(65), Some(17.0), Some((262_145, 1140))),
+        ] {
+            assert!(fields.values().all(Value::is_null));
+        }
+    }
+
+    #[test]
+    fn main_thread_stall_event_has_a_fixed_numeric_shape() {
+        for recovered in [false, true] {
+            let line = encode("runtime.main_thread_stall", main_thread_stall_fields(2000, 2100, recovered)).unwrap();
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 6);
+            assert_eq!(value["thresholdMs"], 2000);
+            assert_eq!(value["delayMs"], 2100);
+            assert_eq!(value["recovered"], recovered);
+            assert_eq!(value["event"], "runtime.main_thread_stall");
+        }
+    }
 
     #[test]
     fn renderer_export_bounds_samples_and_redacts_script_paths() {

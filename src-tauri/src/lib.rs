@@ -35,6 +35,7 @@ mod experiment_config_seed;
 mod file_lock;
 mod flight;
 mod flight_store;
+mod main_thread_liveness;
 mod git_settings;
 mod git_setup;
 mod graph;
@@ -708,6 +709,9 @@ pub fn run() {
         .register_uri_scheme_protocol("tine-media", |ctx, request| {
             media_protocol::respond(ctx, request)
         });
+    // The ignored Linux hang journey runs the real app from a libtest thread.
+    #[cfg(all(test, target_os = "linux"))]
+    let builder = builder.any_thread();
 
     // The frontend's platform identity. It cannot be derived from the WebView's
     // user agent: iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X`
@@ -916,6 +920,7 @@ pub fn run() {
                 settings::note_app_data(&dir);
                 flight::persist_init(dir.join("diagnostics"));
             }
+            main_thread_liveness::start(app.handle());
             diag("setup() begin");
             if let Err(error) = css_files::install_global_css_watcher(app.handle()) {
                 debug::diag_private("global-css-watch", error);
@@ -1217,6 +1222,7 @@ pub fn run() {
             flight::diagnostic_report,
             flight::diagnostic_session_active,
             flight::diagnostic_timing_event,
+            flight::diagnostic_workspace_open,
             flight::save_diagnostic_report,
             defender::defender_hint,
             defender::dismiss_defender_hint,

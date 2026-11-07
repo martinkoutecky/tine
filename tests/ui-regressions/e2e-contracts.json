@@ -78,6 +78,12 @@
       "nonRequirements": ["No pixel assertions, no enumeration of scripts or block kinds (scripts/shot-rtl-notes.mjs and component tests hold those), no CM6 run, no platform other than Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-workspace-flight-hang.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After a test-only native UI-thread block during Ctrl+K result > Open in new window, a background flush retains open stages and native liveness stalls. Force-kill and relaunch on the same scratch profile exposes them in the diagnostics report's previous unclean session.","blocking":false,"authority":"GH #809; ADR 0058 workspace-window stages"}],
+      "acceptableVariations": ["Window geometry, event interleaving and background flush scheduling may vary. The journey waits for persisted milestones rather than exact latency."],
+      "nonRequirements": ["No private graph, shipped hang hook, Windows multi-monitor reproduction, root-cause proof or release acceptance. Requires the Linux unit-test executable with custom-protocol assets."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-beta-editor-862-865.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"On routed pages Enter after closed standalone math creates a writable next block, and Escape from Markdown or Org code in classic and CodeMirror editors reveals editable raw source that saves durably; the next Escape selects the block and reopening restores the code view.","blocking":false,"authority":"GH #862, GH #865"}],
       "acceptableVariations": ["Editor geometry and save latency may vary."],
