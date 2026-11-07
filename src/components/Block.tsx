@@ -244,9 +244,9 @@ export interface CollapseSurfaceApi {
 }
 // Deliberate Tine divergence from OG Logseq: a block embed's root follows the
 // source until its macro host records an explicit occurrence-owned collapse
-// override; folds below it are the source's (D-20261030-EMB). Reference/query
-// surfaces and page embeds keep local presentation state. Keep the surface
-// contract explicit when changing collapse parity.
+// override; all inner page/block embed folds are the source's (D-20261030-EMB,
+// GH #868). Reference/query results and read-only sources keep presentation
+// folds. Keep the surface contract explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 /** Render and edit one document block through the document door. Work scales

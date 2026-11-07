@@ -9,10 +9,10 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh868-embed-outline.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed host page, expand a page embed, open a nested task's references, enter and leave the preceding TODO, then edit embedded siblings: the source outline retains its order, depth, folded branches and editable rows.","blocking":false,"authority":"GH #868 comments 4 and 5; UI-GH868-EMBED-OUTLINE"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed host page, expand a page embed, open a nested task's references, enter and leave the preceding TODO, then edit embedded siblings: the source outline retains its order, depth, folded branches and editable rows. E2E_FOLDS=1 opens the source alongside the embed, folds descendants through the indent guide, checks source collapsed:: bytes and both views, then adds a visible sibling with Enter and retains it through indent/outdent. Embedded and source bullet arrows synchronize in both directions.","blocking":false,"authority":"GH #868 comments 4–6; UI-GH868-EMBED-OUTLINE; UI-GH868-PAGE-EMBED-SOURCE-FOLDS"}],
       "acceptableVariations": ["Theme, spacing, window size, reference panel placement and rendering latency may vary."],
       "nonRequirements": ["No exact pixel coordinates, reporter attachments, macOS certification or final release acceptance."],
-      "variants": ["EMBED_KIND=page|block", "E2E_SURFACE=main|sidebar|references", "E2E_STRUCTURAL=1 additionally proves reparenting and Undo", "E2E_CORPUS supplies a read-only corpus that is copied before use; CSS, window size, reference placement and click timing are configurable"],
+      "variants": ["EMBED_KIND=page|block", "E2E_SURFACE=main|sidebar|split|references", "E2E_FOLDS=1 checks source-backed folds and insertion; E2E_SOURCE_VIEW=sidebar|split opens the source alongside a main-pane host; main opens the source beside a sidebar host", "E2E_STRUCTURAL=1 additionally proves reparenting and Undo", "E2E_CORPUS supplies a read-only corpus that is copied before use; CSS, window size, reference placement and click timing are configurable"],
       "stability":"burn-in"
     },
     "scripts/e2e-gh906-delete-rendered.mjs": {
@@ -347,7 +347,7 @@
     "scripts/e2e-embed-look.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"One block embedded on two pages shows one bullet, at the host's place. Folding its root on page A saves collapsed:: on A's host only and page B stays open; after an app restart A is still folded and B open. Folding a block below the root saves the source's collapsed:: and shows on page B, page A and the source page. Tab and Shift+Tab on the edited root move the host on its page; Move block up/down on the edited root swaps page A's host with its sibling and back while page B and the source stay byte-identical; and the bullet's Delete block removes only the host; Undo restores it (D-20261030-EMB, #417, #748).","blocking":true}],
       "acceptableVariations":["Bullet styling, menu placement, the restored tab after restart and save latency may vary while the saved bytes and the visible folds agree."],
-      "nonRequirements":["Exact pixels, page-embed folds (unchanged), drag-and-drop (component tests cover the drag owner), or native certification outside Linux WebKitGTK."],
+      "nonRequirements":["Exact pixels, page-embed folds (covered by the GH #868 journey), drag-and-drop (component tests cover the drag owner), or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh726-embeds.mjs": {
@@ -453,7 +453,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-embed-find.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; nested keyboard folds affect the occurrence and preserve both embedded source files; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; keyboard folds inside an embed save the nested macro host's source fold while preserving the deeper embedded page; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
