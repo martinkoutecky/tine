@@ -10,46 +10,24 @@ import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
-import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
-import { backend } from "../backend";
-import { propertyCompletionSession } from "../editor/propertyCompletionSession";
-import { pinyinMatchingEnabled } from "../launcherRanking";
+import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, untrack, onMount, onCleanup, type JSX } from "solid-js";
+import { editorCompletions, propertyNameInputCaret } from "../editor/editorCompletions";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
 import {
-  detectTrigger,
-  applyCompletion,
-  refCompletionEnd,
-  withRefCompletionSpace,
   autoPairEdit,
   applyFullWidthRefReplace,
   applyFullWidthCloserThrough,
-  pageInsert,
-  tagInsert,
-  orderAcItems,
-  COMMANDS,
-  advancedBlockInsertion,
-  filterAdvancedBlockCommands,
-  commandScore,
-  codeLanguageItems,
-  fuzzyScore, aliasOfLabel,
-  propertyKeyFold,
-  propertyValueKeyAfterBoundary,
-  type Trigger,
 } from "../editor/autocomplete";
-import { navigationName } from "../pageIndex";
 import { pluginManager } from "../plugins/manager";
-import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
 import { typoTypeReplace } from "../render/typography";
 import { rangeInLiteral } from "../editor/inlineLiteral";
-import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -73,7 +51,6 @@ import {
   wrapLink,
   isPasteableUrl,
   videoPasteMacro,
-  setPriority,
   type Edit,
   type InlineFormat,
 } from "../editor/format";
@@ -87,32 +64,27 @@ import {
 import { selectionActionLabel } from "./SelectionActionLabel";
 import { effectiveHeadingLevel, facetsOf, headingPropertyFacets, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
-import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
-import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
+import { openJournalDatePicker } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
-import { youtubeTimestampMacroFor, insertYoutubeTimestamp } from "./youtubeTimestampEdit";
+import { insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
 import { SeenRemoved, useSeenRow } from "../seen/SeenHeader";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
-import { dbg } from "../debug";
-import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { pushToast } from "../toasts";
-import { acceptBlockRefPick, blockPickItems } from "../editor/blockRefPick";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
 import { clipboardEventFlavors } from "../editor/clipboardFlavors";
 import { captureBinding, bindingCurrent } from "../binding";
-import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
+import { graphOwner, readOwned } from "../owned";
 import { EditorAutocomplete } from "./EditorAutocomplete";
-import { getTemplates, templateToOutline, type AcItem } from "../editor/completionItems";
 import { parserReady } from "../render/parse";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
-import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 import {
   caretAtFirstRow,
@@ -126,7 +98,6 @@ import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
-import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
@@ -151,7 +122,7 @@ import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, rendered
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -161,7 +132,6 @@ import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
-import { applySheetViewSlashAction } from "./block/sheetViewSlash";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
 
 // (The rendered-property hidden predicate is render/block.ts isRenderHiddenProp,
@@ -571,11 +541,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   let ref!: HTMLTextAreaElement;
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
   onCleanup(() => pendingScrollAnchor?.cancel());
-  let pluginSlashInvocation = 0;
   let editorMounted = true;
   onCleanup(() => {
     editorMounted = false;
-    pluginSlashInvocation++;
   });
   const autocompleteLayerId = `block-completion-${createUniqueId()}`;
   const selectionOverflowLayerId = `block-selection-overflow-${createUniqueId()}`;
@@ -637,19 +605,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
   const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
-  let completionOriginalRaw: string | null = null;
-  let completionLease: { pageName: string; blockId: string; originalRaw: string; session: string } | null = null;
-  const releaseLease = (lease: NonNullable<typeof completionLease>) => {
-    // Releasing an ephemeral resource must finish even after its editor dies.
-    void readOwned(ownedWhen(() => true), backend().quickSwitch("", 0, lease, false))
-      .catch(error => dbg(`completion baseline release: ${String(error)}`));
-  };
-  const releaseCompletionLease = () => {
-    const lease = completionLease;
-    completionLease = null;
-    if (lease) releaseLease(lease);
-  };
-  onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
   const markerBaseline = editorMarkerBaseline(node().raw, pageFmt());
   const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode, () => ref.value);
@@ -705,11 +660,55 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     }
   };
 
-  const [ac, setAc] = createSignal<Trigger | null>(null);
-  const [acItems, setAcItems] = createSignal<AcItem[]>([]);
-  const [acBlockState, setAcBlockState] = createSignal<"pending" | "error" | "ready" | null>(null);
-  const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
-  const [acIndex, setAcIndex] = createSignal(0);
+  const completion = editorCompletions({
+    id: props.id, format: pageFmt,
+    current: () => editorMounted && !!node() && !!ref?.isConnected,
+    composing: () => compositionActive,
+    // Census D9: retain the shipped textarea's code-body completion policy.
+    suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell,
+    text: () => ref.value, caret: () => ref.selectionStart,
+    selection: () => [ref.selectionStart, ref.selectionEnd],
+    rawBeforeCommit: () => rawBeforeLastCommit, visible: editorValue,
+    apply: (raw, start, end = start, focus = true, restoreGuard) => {
+      commit(raw);
+      queueMicrotask(() => {
+        if (!editorMounted || (restoreGuard && !restoreGuard())) return;
+        syncTextareaToStore(ref, raw, textareaValue(), start, end);
+        if (focus) ref.focus();
+        autosize();
+        updateAcRect();
+      });
+    },
+    replace: (raw, caret, close) => replaceCompletion(raw, caret, close),
+    // DOM selection settles after Solid mirrors the committed text.
+    afterEdit: callback => queueMicrotask(() => { if (editorMounted) { callback(); updateAcRect(); } }),
+    languagePicker: active => { scaffoldLanguagePicker = active; },
+    closed: () => {
+      const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null;
+      scaffoldLanguagePicker = false;
+      if (scaffold) {
+        codeView.enter(scaffold.open.length);
+        queueMicrotask(() => {
+          ref.value = scaffold.body;
+          ref.setSelectionRange(0, 0);
+          autosize();
+        });
+      }
+    },
+    element: () => ref, resultTarget: () => resultTarget(props.id),
+    openJournal: () => queueMicrotask(() => {
+      if (editorMounted) openJournalDatePicker(ref, commit, () => editorMounted, autosize);
+    }),
+    assets: {
+      uploadAsset: () => assets.uploadAsset(),
+      desktopVoiceMemoToggle: () => assets.desktopVoiceMemoToggle(),
+      createDrawioDiagram: () => assets.createDrawioDiagram(),
+    },
+    quickSwitch: cap ? (query, limit) => cap.quickSwitch(query, limit) : undefined,
+    refOwner: () => { const binding = captureBinding(); return () => bindingCurrent(binding); },
+  });
+  const { ac, acItems, acBlockState, acIndex, setAcIndex, acVisible, closeAc,
+    selectAc, updateAutocomplete, refresh: refreshAutocompleteAfterInput } = completion;
   const codeView = createCodeBodyEditor(editorValue, pageFmt, () => !sheetCell && !isCalc() && ac()?.kind !== "code-language", () => node().raw);
   const codeShown = codeView.shown;
   const mixedCodeContext = createMemo(() => {
@@ -726,25 +725,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // view so the opener line stays visible; choosing a language, or Escape,
   // then drops into the body-only view.
   let scaffoldLanguagePicker = false;
-  const openFenceLanguagePicker = (raw: string, fenceEnd: number) => {
-    scaffoldLanguagePicker = true;
-    setAc({ kind: "code-language", query: "", start: fenceEnd, end: fenceEnd });
-    setAcIndex(0);
-    setAcItems(codeLanguageItems("").map((language) => ({
-      get label() { return language.label; },
-      sub: [language.id, ...language.aliases].join(" · "),
-      insert: language.id,
-      caret: language.id.length + 1,
-    })));
-    queueMicrotask(() => {
-      ref.value = raw;
-      ref.setSelectionRange(fenceEnd, fenceEnd);
-      ref.focus();
-      autosize();
-    });
-  };
-  const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
-  const propertyCompletion = propertyCompletionSession();
+  const openFenceLanguagePicker = (raw: string, fenceEnd: number) =>
+    completion.openLanguagePicker(raw, fenceEnd);
   let acListRef: HTMLDivElement | undefined;
   // The autocomplete popup is rendered through a Portal (fixed-positioned), so a
   // clipping ancestor — the right sidebar's `overflow:auto`, a modal — can't cut
@@ -790,53 +772,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     onCleanup(listen(ref, "resize", reanchor));
   });
 
-  const closeAc = () => {
-    const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null;
-    scaffoldLanguagePicker = false;
-    releaseCompletionLease();
-    completionOriginalRaw = null;
-    setAc(null);
-    setAcBlockState(null);
-    setAcItems([]);
-    setAcIndex(0);
-    setPropertyValueKey(null);
-    propertyCompletion.end();
-    if (scaffold) {
-      codeView.enter(scaffold.open.length);
-      queueMicrotask(() => {
-        ref.value = scaffold.body;
-        ref.setSelectionRange(0, 0);
-        autosize();
-      });
-    }
-  };
-  const sameAcTrigger = (left: Trigger | null, right: Trigger): boolean =>
-    left !== null &&
-    left.kind === right.kind &&
-    left.query === right.query &&
-    left.start === right.start &&
-    left.end === right.end &&
-    left.property === right.property &&
-    (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
-  const detectEditorTrigger = (value = ref.value, caret = ref.selectionStart): Trigger | null =>
-    isCalc() || isAnnot() || !!sheetCell
-      ? null
-      : detectTrigger(value, caret, propertyValueKey(), pageFmt());
-  const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
-    const values = propertyCompletion.values(key);
-    const q = query.trim();
-    const excluded = new Set(used.map((value) => value.toLocaleLowerCase()));
-    const ranked = values
-      .map((value, index) => ({ value, index, score: q ? fuzzyScore(q, value) : 1 }))
-      .filter(({ value, score }) => score > 0 && !excluded.has(value.toLocaleLowerCase()))
-      .sort((left, right) => right.score - left.score || left.index - right.index)
-      .slice(0, 100)
-      .map(({ value }) => ({ label: value, propertyValue: value }));
-    if (q && !values.some((value) => value.toLowerCase() === q.toLowerCase())) {
-      ranked.push({ get label() { return translate("editor-block-create", { name: String(q) }); }, propertyValue: q });
-    }
-    return ranked;
-  };
   // Page/block/tag/command/code completion is a real transient above its editor
   // and, on mobile, above the drawer. One Escape peels only this popup.
   createEffect(() => {
@@ -849,183 +784,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     });
     onCleanup(unregister);
   });
-
-  const autocompleteScope = {};
-  const updateAutocomplete = async () => {
-    if (!editorMounted || !node()) return;
-    const t = detectEditorTrigger();
-    if (!t) {
-      closeAc();
-      return;
-    }
-    setAc(t);
-    setAcBlockState(null);
-    setAcIndex(0);
-    const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => editorMounted && sameAcTrigger(ac(), t)));
-    if (t.kind === "property-name") {
-      let keys: string[] | null;
-      try {
-        keys = await propertyCompletion.keys();
-      } catch (error) {
-        // Completion is an optional aid: a transient facet-query failure must
-        // never reject the editor input event or pile up global error toasts.
-        dbg(`property-autocomplete: ${String(error)}`);
-        if (sameAcTrigger(ac(), t)) setAcItems([]);
-        return;
-      }
-      const cur = ac();
-      if (!keys || !sameAcTrigger(cur, t)) return;
-      const q = t.query.trim();
-      const ranked = keys
-        .map((key, index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
-        .filter(({ score }) => score > 0)
-        .sort((left, right) => right.score - left.score || left.index - right.index)
-        .slice(0, 100)
-        .map(({ key }) => ({ label: key, propertyName: key }));
-      const created = propertyKeyFold(t.query);
-      if (created && !keys.includes(created)) {
-        ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
-      }
-      setAcItems(ranked);
-      return;
-    }
-    if (t.kind === "property-value") {
-      setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
-      void propertyCompletion.load(t.property!).then((loaded) => {
-        if (loaded && sameAcTrigger(ac(), t)) setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
-      });
-      return;
-    }
-    if (t.kind === "code-language") {
-      setAcItems(codeLanguageItems(t.query).map((language) => ({
-        get label() { return language.label; },
-        sub: [language.id, ...language.aliases].join(" · "),
-        insert: language.id,
-        // If a completed fence scaffold already follows, land on its code line;
-        // a hand-typed one-line fence stays at the end and Enter behaves normally.
-        caret: language.id.length + (ref.value[t.end] === "\n" ? 1 : 0),
-      })));
-      return;
-    }
-    if (t.kind === "advanced-command") {
-      const fmt = formatForBlockId(props.id);
-      setAcItems(filterAdvancedBlockCommands(t.query).map((command) => {
-        const insertion = advancedBlockInsertion(command, fmt);
-        return { get label() { return command.label; }, insert: insertion.insert, caret: insertion.caret };
-      }));
-      return;
-    }
-    if (t.kind === "command") {
-      const q = t.query;
-      const tmpls = await getTemplates();
-      const cur = ac();
-      if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
-      // Commands AND templates in one fuzzy-ranked list, so a strong template
-      // match can outrank a weak command (and vice-versa). Empty query (bare `/`)
-      // lists all commands in defined order, no templates. `idx` preserves the
-      // defined order — commands before templates — as the stable tiebreaker.
-      const showAllTemplates = !!q && "template".startsWith(q.toLowerCase()); // /t…/template lists them all
-      const scored: { item: AcItem; s: number; idx: number }[] = [];
-      COMMANDS.forEach((c) => {
-        // /drawio launches an external editor — desktop only (GH #38).
-        if (c.action === "drawio" && isMobilePlatform) return;
-        const s = q ? commandScore(q, c) : 1;
-        if (s > 0)
-          scored.push({ item: { get label() { return c.label; }, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
-      });
-      pluginManager.slashCommands().forEach(({ pluginId, contribution }, i) => {
-        const s = q ? fuzzyScore(q, contribution.title) : 1;
-        if (s > 0) {
-          scored.push({
-            item: {
-              label: contribution.title,
-              sub: "Plugin",
-              plugin: { pluginId, contributionId: contribution.id, insertText: contribution.insertText },
-            },
-            s,
-            idx: COMMANDS.length + i,
-          });
-        }
-      });
-      if (q) {
-        tmpls.forEach((tp, j) => {
-          const s = showAllTemplates ? 1 : fuzzyScore(q, tp.name);
-          if (s > 0)
-            scored.push({
-              item: { get label() { return translate("editor-block-template", { name: String(tp.name) }); }, templateNodes: tp.blocks },
-              s,
-              idx: COMMANDS.length + pluginManager.slashCommands().length + j,
-            });
-        });
-      }
-      scored.sort((a, b) => b.s - a.s || a.idx - b.idx);
-      setAcItems(scored.map((x) => x.item));
-      return;
-    }
-    if (t.kind === "block") {
-      // `((` searches blocks by page; bare `((` stays hidden. Selection inserts
-      // the target's durable external ID (see selectAc).
-      setAcItems([]);
-      setAcBlockState("pending");
-      let result: import("../owned").Owned<import("../types").RefGroup[]>;
-      try {
-        result = await readOwned(requestOwner, backend().search(t.query, 20, "block-picker"));
-      } catch (error) {
-        if (requestOwner()) {
-          dbg(`block-picker: ${String(error)}`);
-          setAcBlockState("error");
-        }
-        return;
-      }
-      if (result.kind === "stale") return;
-      setAcBlockState("ready");
-      setAcItems(blockPickItems(result.value, props.id));
-      return;
-    }
-    // OG leaves blank page/tag search active but renders no rows and does not
-    // ask the backend for its legacy all-pages result.
-    const q = t.query.trim();
-    if (!q) {
-      setAcItems([]);
-      return;
-    }
-    completionOriginalRaw ??= node().raw;
-    const editor = { pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw };
-    if (!cap && pinyinMatchingEnabled() && !completionLease) {
-      completionLease = { ...editor, session: crypto.randomUUID() };
-    }
-    const lease = completionLease;
-    // Closing can overtake a blocking native query. Release again after its
-    // reply (including failure) so it cannot retain obsolete baseline keys.
-    let result: import("../owned").Owned<import("../types").PageEntry[]>;
-    try {
-      result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
-    } finally {
-      if (lease && lease !== completionLease) releaseLease(lease);
-    }
-    if (result.kind === "stale") return;
-    const pageItem = (name: string): AcItem =>
-      t.kind === "page"
-        ? { label: name, insert: pageInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }
-        : { label: `#${name}`, insert: tagInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }; // tag context reads "#name"
-    const createItem: AcItem =
-      t.kind === "page"
-        ? { get label() { return translate("editor-block-create", { name: String(q) }); }, insert: pageInsert(q) }
-        : { get label() { return translate("editor-block-create-tag", { name: String(q) }); }, insert: tagInsert(q) };
-    setAcItems(orderAcItems(
-      result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
-      { name: q, item: createItem },
-      { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
-    ));
-  };
-
-  createEffect(on(pinyinMatchingEnabled, () => {
-    const trigger = untrack(ac);
-    if (trigger?.kind === "page" || trigger?.kind === "tag") {
-      if (!pinyinMatchingEnabled()) releaseCompletionLease();
-      void updateAutocomplete();
-    }
-  }, { defer: true }));
 
   // Apply a pure text edit (format toggle / kill motion) to the textarea and
   // restore the resulting selection.
@@ -1059,14 +817,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // OG `close-autocomplete-if-outside` (editor.cljs, on click and keyup): page,
   // tag and block search end once the caret leaves their reference; a stale
   // popup would keep Arrow/Enter and rewrite the earlier link.
-  const closeAutocompleteIfOutside = () => {
-    const open = ac();
-    if (!open || (open.kind !== "page" && open.kind !== "tag" && open.kind !== "block")) return;
-    const here = detectEditorTrigger();
-    if (here && here.kind === open.kind && here.start === open.start) return;
-    clearTimeout(acTimer);
-    closeAc();
-  };
+  const closeAutocompleteIfOutside = completion.selectionChanged;
   onMount(() => {
     const owner = ref.ownerDocument;
     const syncNativeSelection = () => {
@@ -1106,41 +857,25 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     queueMicrotask(updateSel);
   };
 
-  // Insert `text` in place of the active trigger and restore the caret. If the
-  // completion ends with a closing pair (`]]`/`))`/`}}`) and the same pair
-  // sits at or later on this line after the caret (e.g. from a `[[ ]]` autopair
-  // or editing inside an existing ref), swallow it to avoid duplicate closers.
-  const replaceTrigger = (text: string, caret?: number) => {
-    const t = ac();
-    if (!t) return;
-    const end = refCompletionEnd(ref.value, t.end, text);
-    const r = applyCompletion(ref.value, t.start, end, text, caret);
-    // GH #35: after a page/block-ref completion whose caret lands at the natural end
-    // (right after the closing `]]`/`))`), optionally insert a trailing space so the
-    // next word flows on without reaching past the brackets. Tine default ON; toggle
-    // off in Settings → Editor to match Logseq. Skipped when an explicit caret was
-    // requested. commit() trims a block-final trailing space, so it never persists.
-    const spaced =
-      caret === undefined
-        ? withRefCompletionSpace(r.raw, r.caret, text, spaceAfterRefCompletion())
-        : r;
+  // A completed raw region maps back into its body-only code/calc projection.
+  const replaceCompletion = (raw: string, caret: number, close: () => void) => {
     // Let a calculator completion enter calc mode in the mounted editor (GH #57).
-    const enteredCalc = !editingCalc() ? calcSource(spaced.raw) : null;
+    const enteredCalc = !editingCalc() ? calcSource(raw) : null;
     // A completion that lands a COMPLETE code wrapper (the language pick on the
     // opener line) swaps to the body-only view: map the caret from raw into body
     // space, the same transition as calc above.
-    const codeWrap = enteredCalc === null ? codeBodyProjection(spaced.raw, pageFmt()) : null;
-    commit(spaced.raw);
+    const codeWrap = enteredCalc === null ? codeBodyProjection(raw, pageFmt()) : null;
+    commit(raw);
     if (enteredCalc !== null) setEditingCalc(true);
-    closeAc();
+    close();
     if (codeWrap) codeView.enter(codeWrap.open.length);
     queueMicrotask(() => {
-      const shown = enteredCalc ?? codeWrap?.body ?? spaced.raw;
+      const shown = enteredCalc ?? codeWrap?.body ?? raw;
       const openingEnd =
-        enteredCalc !== null ? spaced.raw.indexOf("\n") + 1 : codeWrap ? codeWrap.open.length : 0;
+        enteredCalc !== null ? raw.indexOf("\n") + 1 : codeWrap ? codeWrap.open.length : 0;
       const shownCaret = enteredCalc !== null || codeWrap
-        ? Math.max(0, Math.min(shown.length, spaced.caret - openingEnd))
-        : spaced.caret;
+        ? Math.max(0, Math.min(shown.length, caret - openingEnd))
+        : caret;
       ref.value = shown;
       ref.setSelectionRange(shownCaret, shownCaret);
       ref.focus();
@@ -1164,7 +899,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       });
     },
   });
-  const { uploadAsset, capturePhotoCmd, voiceMemoToggle, desktopVoiceMemoToggle, createDrawioDiagram, pasteClipboardFiles } = assets;
+  const { uploadAsset, capturePhotoCmd, voiceMemoToggle, pasteClipboardFiles } = assets;
 
   const plainPaste = plainTextPaste();
   const clearPasteRaw = plainPaste.clearRaw;
@@ -1191,319 +926,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     };
   };
 
-  const selectAc = (item: AcItem) => {
-    const t = ac();
-    if (!t) return;
-    if (item.propertyName) {
-      const key = propertyKeyFold(item.propertyName);
-      const inserted = `${key}:: `;
-      const result = applyCompletion(ref.value, t.start, t.end, inserted);
-      const valueTrigger: Trigger = {
-        kind: "property-value",
-        query: "",
-        start: result.caret,
-        end: result.caret,
-        property: key,
-      };
-      commit(result.raw);
-      setPropertyValueKey(key);
-      setAc(valueTrigger);
-      setAcIndex(0);
-      setAcItems(propertyValueItems(key, ""));
-      void propertyCompletion.load(key).then((loaded) => {
-        if (loaded && sameAcTrigger(ac(), valueTrigger)) setAcItems(propertyValueItems(key, ""));
-      });
-      queueMicrotask(() => {
-        ref.value = result.raw;
-        ref.setSelectionRange(result.caret, result.caret);
-        ref.focus();
-        autosize();
-        updateAcRect(); // the value popup stays open: re-anchor on the settled caret
-      });
-      return;
-    }
-    if (item.propertyValue !== undefined) {
-      replaceTrigger(item.propertyValue);
-      return;
-    }
-    if (item.blockRef) {
-      const binding = captureBinding(), trigger = ac(), editorValue = ref.value;
-      acceptBlockRefPick(item.blockRef, {
-        intended: () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue,
-        current: () => bindingCurrent(binding),
-        triggerOpen: () => ac() === trigger,
-        sourcePage: () => docNode(props.id)?.page,
-        insert: (text) => replaceTrigger(text),
-      });
-      return;
-    }
-    if (item.plugin) {
-      const textarea = ref;
-      const before = textarea.value;
-      const selectionStart = textarea.selectionStart;
-      const selectionEnd = textarea.selectionEnd;
-      const node = docNode(props.id);
-      if (!node) return;
-      let depth = 0;
-      let parentId = node.parent;
-      while (parentId && docNode(parentId) && depth < 1_000) {
-        depth++;
-        parentId = docNode(parentId).parent;
-      }
-      const plugin = item.plugin;
-      const ownedBlock = bindPluginBlockSnapshot({
-        id: node.id,
-        raw: node.raw,
-        parentId: node.parent,
-        depth,
-        format: pageByName(node.page)?.format === "org" ? "org" : "md",
-      });
-      if (!ownedBlock) return;
-      const token = ++pluginSlashInvocation;
-      const capturedEditingId = editingId();
-      const capturedEditingOwner = editingOwner();
-      const capturedEditingSurface = editingSurface();
-      const capturedSurfaceKey = surfaceKey;
-      const trigger = { ...t };
-      const editorIsCurrent = () => {
-        const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart, propertyValueKey(), pageFmt());
-        const liveNode = docNode(props.id);
-        return editorMounted
-          && token === pluginSlashInvocation
-          && isPluginGraphOwnerCurrent(ownedBlock.owner)
-          && ref === textarea
-          && textarea.isConnected
-          && editingId() === capturedEditingId
-          && editingOwner() === capturedEditingOwner
-          && editingSurface() === capturedEditingSurface
-          && surfaceKey === capturedSurfaceKey
-          && textarea.value === before
-          && textarea.selectionStart === selectionStart
-          && textarea.selectionEnd === selectionEnd
-          && !!liveTrigger
-          && liveTrigger.kind === trigger.kind
-          && liveTrigger.start === trigger.start
-          && liveTrigger.end === trigger.end
-          && liveTrigger.query === trigger.query
-          && liveNode?.id === ownedBlock.block.id
-          && liveNode.raw === ownedBlock.block.raw;
-      };
-      closeAc();
-      void pluginManager
-        .invokeSlashCommand(plugin.pluginId, plugin.contributionId, ownedBlock)
-        .then((effects) => {
-          if (!editorIsCurrent()) {
-            if (isPluginGraphOwnerCurrent(ownedBlock.owner) && textarea.isConnected && textarea.value !== before) {
-              pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
-            }
-            return;
-          }
-          if (textarea.value !== before) {
-            pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
-            return;
-          }
-          const effect = effects.find((candidate) => candidate.kind === "insert-at-caret");
-          const text = effect?.kind === "insert-at-caret" ? effect.text : plugin.insertText;
-          if (text === undefined) return;
-          const result = applyCompletion(before, t.start, t.end, text);
-          commit(result.raw);
-          queueMicrotask(() => {
-            if (!editorMounted
-              || token !== pluginSlashInvocation
-              || !isPluginGraphOwnerCurrent(ownedBlock.owner)
-              || ref !== textarea
-              || !textarea.isConnected
-              || editingId() !== capturedEditingId
-              || editingOwner() !== capturedEditingOwner
-              || editingSurface() !== capturedEditingSurface
-              || textarea.value !== result.raw) return;
-            textarea.value = result.raw;
-            textarea.setSelectionRange(result.caret, result.caret);
-            textarea.focus();
-            autosize();
-          });
-        })
-        .catch((error) => pushToast(msg("editor-block-plugin-slash-command-failed", { detail: String(error) }), "error"));
-      return;
-    }
-    if (item.templateNodes) {
-      // Drop the "/name" trigger text, then insert the template's blocks (with
-      // dynamic vars resolved). If the host block is now empty, replace it.
-      const r = applyCompletion(ref.value, t.start, t.end, "");
-      commit(r.raw);
-      closeAc();
-      const nodes = item.templateNodes.map((n) => templateToOutline(n, docNode(props.id)?.page));
-      const wasEmpty =
-        docNode(props.id).raw.trim() === "" && docNode(props.id).children.length === 0;
-      const lastId = insertOutlineAfter(props.id, nodes);
-      if (!lastId) { pushToast(msg("editor-block-outline-is-too-deep-to-insert"), "error"); return; }
-      if (wasEmpty) deleteBlock(props.id);
-      startEditing(lastId, docNode(lastId).raw.length);
-      return;
-    }
-    switch (item.action) {
-      case "task-marker": {
-        if (!item.taskMarker) return;
-        // OG clears the slash query, sets/replaces the leading task marker, and
-        // then moves to the end. Treat this as one semantic edit: literal
-        // insertion leaves the old marker intact when invoked mid-block (GH
-        // #225) and also bypasses the shared marker grammar.
-        const removed = applyCompletion(ref.value, t.start, t.end, "");
-        const next = setMarker(removed.raw, item.taskMarker);
-        commit(next);
-        closeAc();
-        queueMicrotask(() => {
-          syncTextareaToStore(ref, next, textareaValue(), next.length);
-          ref.focus();
-          autosize();
-        });
-        return;
-      }
-      case "heading-auto":
-      case "heading-1":
-      case "heading-2":
-      case "heading-3":
-      case "heading-4": {
-        const state = item.action === "heading-auto"
-          ? true
-          : Number(item.action.slice("heading-".length)) as 1 | 2 | 3 | 4;
-        const removed = applyCompletion(ref.value, t.start, t.end, "");
-        withUndoUnit(`heading:${props.id}`, [node().page], () => {
-          commit(removed.raw);
-          setHeading(props.id, state);
-        });
-        closeAc();
-        queueMicrotask(() => {
-          const visible = splitProps(node().raw, hideFn(), pageFmt()).visible;
-          ref.value = visible;
-          const caret = Math.min(visible.length, removed.caret + (state === true ? 0 : state + 1));
-          ref.setSelectionRange(caret, caret);
-          ref.focus();
-          autosize();
-        });
-        return;
-      }
-      case "scheduled":
-      case "deadline": {
-        replaceTrigger("");
-        const r = ref.getBoundingClientRect();
-        openDatePicker(props.id, item.action, r.left, r.bottom + 4, resultTarget(props.id));
-        return;
-      }
-      case "now-time":
-        replaceTrigger(timeStamp());
-        return;
-      case "youtube-timestamp": {
-        replaceTrigger(youtubeTimestampMacroFor(ref) ?? "");
-        return;
-      }
-      case "page-reference":
-        // Page reference is a chained command: no GH #35 continuation space,
-        // then the ordinary trigger detector owns the blank page lifecycle.
-        replaceTrigger("[[]]", 2);
-        queueMicrotask(() => void updateAutocomplete());
-        return;
-      case "insert-link": {
-        const removed = applyCompletion(ref.value, t.start, t.end, "", 0);
-        const edit = insertLink(removed.raw, t.start, t.start, pageFmt());
-        commit(edit.text);
-        closeAc();
-        queueMicrotask(() => {
-          ref.value = edit.text;
-          ref.setSelectionRange(edit.start, edit.end);
-          ref.focus();
-          autosize();
-        });
-        return;
-      }
-      case "query-builder": {
-        // Insert an empty query, commit it, and drop straight to the rendered
-        // view so the visual builder appears — then flag this block so the
-        // builder opens its sheet on the empty condition list. The field chooser stays CLOSED: opening it is an
-        // explicit user action (Martin 2026-10-03, GH #619 comment 2: a properties dialog that opens by itself
-        // "without doing anything" reads as a bug).
-        const r = applyCompletion(ref.value, t.start, t.end, QUERY_MACRO_SCAFFOLD);
-        commit(r.raw);
-        closeAc();
-        setQueryBuilderAutoOpen(props.id);
-        endEdit("query-builder");
-        return;
-      }
-      case "code-block": {
-        // Keep the familiar complete fence scaffold, but open the language
-        // picker immediately even though an empty hand-typed fence stays quiet.
-        const scaffold = "```\n\n```";
-        const result = applyCompletion(ref.value, t.start, t.end, scaffold, 3);
-        commit(result.raw);
-        openFenceLanguagePicker(result.raw, result.caret);
-        return;
-      }
-      case "page-props": {
-        replaceTrigger("");
-        const rect = ref.getBoundingClientRect();
-        openPageProps(docNode(props.id).page, rect.left, rect.bottom + 4);
-        return;
-      }
-      case "sheet-grid":
-      case "sheet-table":
-      case "sheet-board": {
-        const view = item.action === "sheet-grid" ? "grid" : item.action === "sheet-table" ? "table" : "board";
-        replaceTrigger("");
-        closeAc();
-        applySheetViewSlashAction(props.id, view);
-        return;
-      }
-      case "date-picker":
-        replaceTrigger("");
-        queueMicrotask(() => { if (editorMounted) openJournalDatePicker(ref, commit, () => editorMounted, autosize); });
-        return;
-      case "tomorrow":
-      case "yesterday":
-      case "today":
-      case "thatday":
-        runJournalSlash(item.action, docNode(props.id).page, replaceTrigger);
-        return;
-      case "upload-asset":
-        replaceTrigger(""); // drop the "/upload" trigger text
-        uploadAsset();
-        return;
-      case "record":
-        replaceTrigger(""); // drop the "/record" trigger text
-        void desktopVoiceMemoToggle();
-        return;
-      case "drawio":
-        replaceTrigger(""); // drop the "/drawio" trigger text
-        void createDrawioDiagram();
-        return;
-      case "priority-a":
-      case "priority-b":
-      case "priority-c": {
-        // Drop the "/A" trigger, then set the priority token on the first line
-        // (placed after any task marker).
-        const level: "A" | "B" | "C" =
-          item.action === "priority-a" ? "A" : item.action === "priority-b" ? "B" : "C";
-        const base = ref.value.slice(0, t.start) + ref.value.slice(t.end);
-        const lines = base.split("\n");
-        // OG inserts `[#A] ` with a trailing space and moves the caret past it, so
-        // the next word or `/command` flows without manually adding a space (the
-        // slash menu needs a whitespace boundary before `/`). The space is a
-        // live-editing convenience only — `commit` trims it so it never persists.
-        lines[0] = setPriority(lines[0], level) + " ";
-        const next = lines.join("\n");
-        commit(next);
-        closeAc();
-        const caret = lines[0].length; // after the trailing space
-        queueMicrotask(() => {
-          ref.value = next;
-          ref.setSelectionRange(caret, caret);
-          ref.focus();
-          autosize();
-        });
-        return;
-      }
-    }
-    replaceTrigger(item.insert ?? "", item.caret);
-  };
   // Coalesce layout measurements; mount uses the immediate version.
   const resizeNow = () => resizeBlockEditor(ref);
   let autosizeRaf: (() => void) | undefined;
@@ -1624,46 +1046,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     }
   });
 
-  let acTimer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(acTimer));
-  const refreshAutocompleteAfterInput = () => {
-    // Close the popup synchronously when the trigger ends (instant), but debounce
-    // the page/template IPC fetch so holding down a key doesn't fire a backend
-    // round-trip per character.
-    const next = detectEditorTrigger();
-    if (!next) {
-      clearTimeout(acTimer);
-      closeAc();
-      return;
-    }
-    // Keep replacement span current during debounce: otherwise Enter can accept
-    // an old row/range and leave a new suffix behind (`[[Parity Target]]arity Tar`).
-    // Rows survive refinement of the same trigger, never a new family/location
-    // or a now-blank page/tag lifecycle.
-    const previous = ac();
-    if (next.kind !== "page" && next.kind !== "tag") releaseCompletionLease();
-    // OG save-current-block! withholds references while page-search is active.
-    // Preserve autosave and give the read-only picker its pre-trigger baseline.
-    if ((next.kind === "page" || next.kind === "tag") &&
-        (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
-      releaseCompletionLease();
-      completionOriginalRaw = rawBeforeLastCommit;
-    }
-    setAc(next);
-    setAcIndex(0);
-    setAcBlockState(next.kind === "block" ? "pending" : null);
-    if (next.kind === "block") setAcItems([]);
-    if (
-      !previous ||
-      previous.kind !== next.kind ||
-      previous.start !== next.start ||
-      ((next.kind === "page" || next.kind === "tag") && !next.query.trim())
-    ) {
-      setAcItems([]);
-    }
-    clearTimeout(acTimer);
-    acTimer = setTimeout(() => void updateAutocomplete(), 90);
-  };
   // IMEs replace the textarea's transient composition range many times before
   // committing. Keep that range DOM-local: every setRaw() also dirties the page
   // and starts its save/reparse work. The finalized value has one canonical
@@ -1682,7 +1064,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const beginComposition = () => {
     compositionActive = true;
     compositionEndValue = null;
-    clearTimeout(acTimer);
+    completion.pause();
     releaseCompositionHold ??= pinPageWhileDrafting(() => docNode(props.id)?.page ?? null);
   };
   const onCompositionStart = () => beginComposition();
@@ -1711,13 +1093,10 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       // OG parity: typing `::` at the beginning of a property line places the
       // caret before the delimiter. Subsequent property-name characters are
       // authored as `name|::`, not the malformed `::name` that caused GH #306.
-      if (ch === ":" && ref.selectionStart >= 2) {
-        const caret = ref.selectionStart;
-        const lineStart = ref.value.lastIndexOf("\n", caret - 3) + 1;
-        if (caret - lineStart === 2 && ref.value.slice(lineStart, caret) === "::") {
-          ref.setSelectionRange(lineStart, lineStart);
-          handled = true;
-        }
+      const propertyCaret = propertyNameInputCaret(ref.value, ref.selectionStart, ch);
+      if (propertyCaret !== null) {
+        ref.setSelectionRange(propertyCaret, propertyCaret);
+        handled = true;
       }
       if (ch === "【" || ch === "（" || ch === "〈") handled = applyFullWidthRefReplace(ref);
       else if (ch === "】" || ch === "）") handled = applyFullWidthCloserThrough(ref, autoPairing());
@@ -1765,8 +1144,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           ref.setSelectionRange(r.caret, r.caret);
         }
       }
-      const valueKey = propertyValueKeyAfterBoundary(ref.value, ref.selectionStart, ch);
-      if (valueKey) setPropertyValueKey(valueKey);
+      completion.noteInput(ch);
       // Only a whole visible block `1. ` becomes own numbered-list state.
       // Projected code/calc bodies are literal; their hidden wrappers must survive.
       // OG: src/main/frontend/handler/editor.cljs:1888-1892 (6e7afa8eb).
