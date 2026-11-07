@@ -59,6 +59,9 @@ use tine_store as store_crate;
 #[path = "../../tine-store/src/cm_conformance_shared_tests.rs"]
 mod shared;
 
+#[path = "cm_conformance_r13_rename.rs"]
+mod r13_rename;
+
 use shared::{Ctx, Diff, GraphSpec, Section};
 
 const RANDOM_DEFAULT: usize = 200;
@@ -76,17 +79,30 @@ fn later_drop<T: Send + 'static>(droppers: &Droppers, value: T) {
 /// The graph's page and journal files after the rename.
 fn read_graph(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    for dir in ["pages", "journals"] {
-        let Ok(entries) = fs::read_dir(root.join(dir)) else {
-            continue;
+    fn visit(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
         };
-        for e in entries {
-            let p = e.unwrap().path();
-            if p.is_file() && p.extension().is_some_and(|x| x == "md") {
-                let rel = format!("{dir}/{}", p.file_name().unwrap().to_string_lossy());
-                out.insert(rel, fs::read_to_string(&p).unwrap());
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, out);
+            } else if path
+                .extension()
+                .is_some_and(|x| x == "md" || x == "markdown" || x == "org")
+            {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace('\\', "/");
+                out.insert(rel, fs::read_to_string(&path).unwrap());
             }
         }
+    }
+    for dir in ["pages", "journals"] {
+        visit(root, &root.join(dir), &mut out);
     }
     out
 }
@@ -974,10 +990,18 @@ fn rename_fixtures() -> Vec<GraphSpec> {
 fn conceptual_model_rename_conformance() {
     let _integration_guard = crate::integration_lock();
     let Ok(bridge) = std::env::var("CM_BRIDGE") else {
+        assert!(
+            std::env::var_os("CM_REQUIRE_BRIDGE").is_none(),
+            "the r13 gate requires CM_BRIDGE"
+        );
         eprintln!("CM_BRIDGE unset: conceptual model rename conformance skipped");
         return;
     };
     let bridge = Path::new(&bridge);
+    if shared::r13::is_bridge(bridge) {
+        r13_rename::run(bridge);
+        return;
+    }
     let started = Instant::now();
     let droppers = Droppers::default();
     // Meaning classes the store harness already records (its random part,

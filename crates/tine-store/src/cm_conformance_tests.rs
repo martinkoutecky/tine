@@ -38,7 +38,9 @@ use crate::Store;
 
 /// The store names the shared code uses (`super::store_crate` there).
 mod store_crate {
-    pub(crate) use crate::{Cancel, InventoryScope, IrAnswer, IrRequest, Resolved, WholeGraph};
+    pub(crate) use crate::{
+        Cancel, InventoryEntry, InventoryScope, IrAnswer, IrRequest, Resolved, Store, WholeGraph,
+    };
 }
 
 #[path = "cm_conformance_shared_tests.rs"]
@@ -636,10 +638,52 @@ fn check_frontend_cases(subdir: &str, cases: BTreeMap<String, Value>, hint: &str
 #[test]
 fn conceptual_model_conformance() {
     let Ok(bridge) = std::env::var("CM_BRIDGE") else {
+        assert!(
+            std::env::var_os("CM_REQUIRE_BRIDGE").is_none(),
+            "the r13 gate requires CM_BRIDGE; conformance must actually run"
+        );
         eprintln!("CM_BRIDGE unset: conceptual model conformance skipped");
         return;
     };
     let bridge = Path::new(&bridge);
+    if shared::r13::is_bridge(bridge) {
+        shared::r13::store_conformance(
+            bridge,
+            fixture_specs(),
+            env!("CARGO_MANIFEST_DIR"),
+            |view, input, model| {
+                let mut diffs = Vec::new();
+                let actual = link_pairs(view, input, &mut diffs);
+                let expected: BTreeSet<_> = model["links"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|edge| {
+                        (
+                            edge[0][1].as_str().unwrap().to_owned(),
+                            edge[1][1].as_str().unwrap().to_owned(),
+                        )
+                    })
+                    .collect();
+                for (source, target) in actual.symmetric_difference(&expected) {
+                    diffs.push(
+                        Diff::new(
+                            "links",
+                            format!(
+                                "link {source:?} -> {target:?}: model={}, Tine={}",
+                                expected.contains(&(source.clone(), target.clone())),
+                                actual.contains(&(source.clone(), target.clone()))
+                            ),
+                        )
+                        .at_key(source)
+                        .at_key(target),
+                    );
+                }
+                diffs
+            },
+        );
+        return;
+    }
     let started = Instant::now();
     let mut section = Section::default();
     let mut report = BTreeMap::new();
