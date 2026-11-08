@@ -14,8 +14,8 @@ export function hostFolded(surface: CollapseSurfaceApi | null, id: string): bool
 /** A query's results fold. GH #619 Q8: for a query block this IS the bullet's
  *  fold, one state with two controls (OG query.cljs `custom-query*` reads the
  *  block's `:block/collapsed?`), so the query's arrow reads and writes the
- *  bullet's `collapsed::` (or the surface's local fold in a reference or embed
- *  surface). The `:collapsed?` option stays the default of a block that has no
+ *  bullet's `collapsed::` (or a reference/query result's local fold). The `:collapsed?`
+ *  option stays the default of a block that has no
  *  `collapsed::` of its own; expanding such a block writes `collapsed:: false`.
  *
  *  A read-only host shares the bullet's session-only presentation fold. A

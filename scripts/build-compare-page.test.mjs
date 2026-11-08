@@ -42,8 +42,8 @@ test("claims require reasons and are visibly marked", () => {
 test("distribution evidence requires a matching excerpt in the download page source", () => {
   const input = data();
   input.rows[0].tine = {
-    text: "TestFlight beta",
-    evidence: { path: "website/index.html", contains: "https://testflight.apple.com/join/rpGGpTVW" },
+    text: "On the App Store",
+    evidence: { path: "website/index.html", contains: "https://apps.apple.com/us/app/tineoutline/id6804403687" },
   };
   assert.match(renderComparison({ data: input }), /Distribution source/);
   input.rows[0].tine.evidence.contains = "missing distribution evidence";

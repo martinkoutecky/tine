@@ -1,6 +1,6 @@
 import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { blockIsGridView, node, setRaw } from "../document";
+import { node, setRaw } from "../document";
 import { startEditing } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import type { SheetCellCtx } from "../sheet/context";
@@ -9,6 +9,7 @@ import { cellBlockId, cellOwner, cellSurfaceKey, moveCellAfterEdit, selectCellAf
 import { SHEET_CELL_HIDE, splitProps } from "./properties";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { editsLikeOutline, gridBlocksCommand, gridEditKey } from "../sheet/gridEditMove";
+import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 
 const blockedCommands = new Set([
   "editor/comment", "editor/indent", "editor/outdent", "editor/move-block-up", "editor/move-block-down",
@@ -19,32 +20,7 @@ const blockedCommands = new Set([
  * Sheet selection and mutations remain owned by the existing sheet commands. */
 export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: string) => void) {
   const initial = node(id).raw;
-  const grid = (key: string): string | null => blockIsGridView(key) ? key
-    : node(key)?.children.find(child => blockIsGridView(child)) ?? null;
   const length = (key: string) => splitProps(node(key)?.raw ?? "", SHEET_CELL_HIDE).visible.length;
-  const deepest = (key: string): string => {
-    let cur = key;
-    while (!grid(cur) && node(cur)?.children.length) cur = node(cur).children.at(-1)!;
-    return cur;
-  };
-  const previous = (key: string, host: string): string | null => {
-    const parent = node(key)?.parent;
-    if (!parent) return null;
-    const siblings = node(parent)?.children ?? [], index = siblings.indexOf(key);
-    return index > 0 ? deepest(siblings[index - 1]) : parent === host ? host : parent;
-  };
-  const next = (key: string, host: string): string | null => {
-    if (!grid(key) && node(key)?.children[0]) return node(key).children[0];
-    let cur = key;
-    while (cur !== host) {
-      const parent = node(cur)?.parent;
-      if (!parent) return null;
-      const siblings = node(parent)?.children ?? [], index = siblings.indexOf(cur);
-      if (index >= 0 && index + 1 < siblings.length) return siblings[index + 1];
-      cur = parent;
-    }
-    return null;
-  };
   const open = (key: string, offset: number) => startEditing(key, offset, cellOwner(cell));
   const keydown = (e: KeyboardEvent, v: EditorView): boolean => {
     const s = v.state.selection.main, raw = v.state.doc.toString();
@@ -80,17 +56,17 @@ export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: stri
       }
       if (e.key === "ArrowUp" && v.moveToLineBoundary(EditorSelection.cursor(s.head), false).head === 0) {
         commit(raw);
-        const host = cellBlockId(cell), prev = host && id !== host ? previous(id, host) : null;
+        const host = cellBlockId(cell), prev = host && id !== host ? sheetOutlineNeighbor(id, host, -1) : null;
         if (prev) open(prev, length(prev));
         else moveCellAfterEdit(cell, "up");
         return true;
       }
       if (e.key === "ArrowDown" && v.moveToLineBoundary(EditorSelection.cursor(s.head), true).head === raw.length) {
-        const nestedGrid = grid(id);
+        const nestedGrid = sheetFaceGridId(id);
         commit(raw);
         if (nestedGrid) selectTopRowSeamAfterEdit(nestedGrid, 0, cellSurfaceKey(cell.gridId, cell.surfaceId));
         else {
-          const host = cellBlockId(cell), following = host ? id === host ? node(host)?.children[0] : next(id, host) : null;
+          const host = cellBlockId(cell), following = host ? sheetOutlineNeighbor(id, host, 1) : null;
           if (following) open(following, 0);
           else moveCellAfterEdit(cell, "down");
         }

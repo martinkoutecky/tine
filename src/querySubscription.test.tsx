@@ -75,6 +75,25 @@ it("a registered reader uses only its query key, with full and gap fallback", as
   rev += 2; publish(); await vi.advanceTimersByTimeAsync(0); expect(read).toHaveBeenCalledTimes(3);
 });
 
+it("a Search action ticket sees a relevant staged publication before its coalesced revision releases", async () => {
+  let subscription!: ReturnType<typeof createQuerySubscription>;
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => {
+    subscription = createQuerySubscription(() => ({ kind: "search", source: "needle", page_match_scope: "names", transliteration: false }));
+    return <div />;
+  }, root);
+  await vi.advanceTimersByTimeAsync(0);
+  const id = registration.mock.calls[0][0];
+  expect(subscription.current()).toBe(true);
+  applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false,
+    full: false, queryTo: [id] });
+  expect(subscription.current()).toBe(false);
+  bumpDataRev(true);
+  expect(subscription.current()).toBe(false);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(subscription.current()).toBe(true);
+});
+
 it("coalesces a typing burst, waits past the quiet boundary for the latest publication, and runs once", async () => {
   const read = mount({ kind: "registry" }); await vi.advanceTimersByTimeAsync(0); read.mockClear();
   const id = registration.mock.calls[0][0];

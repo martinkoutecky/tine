@@ -8,10 +8,10 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, useCo
 import { MarginContext } from "./marginContext";
 import { DialogActions } from "./DialogActions";
 import { t } from "../i18n";
-import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
-import { facetsOf } from "../render/facets";
+import { anchorQuote, type QuoteSelector } from "../comments";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
-import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
+import { blockWritable, formatForBlock, node as docNode } from "../document";
+import { threadRootOf } from "../document";
 import { registerReplyDraft } from "../commentMargin";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { runWithCommentName } from "../commentNamePrompt";
@@ -19,20 +19,13 @@ import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { commentMarginHidden } from "../commentMarginPref";
 import { openContextMenu } from "../ui";
-import { beginDrag } from "./blockGestures";
 import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
 
 /** Whether the block under `parentId` belongs to a comment's thread: some
  * ancestor (from `parentId` up) is a comment. O(depth) facet lookups. */
 export function inCommentThread(parentId: string | null, format: Format): boolean {
-  for (let id = parentId; id !== null;) {
-    const n = docNode(id);
-    if (!n) return false;
-    if (n.parent !== null && quoteSelectorOf(facetsOf(n.raw, format).properties) !== null) return true;
-    id = n.parent;
-  }
-  return false;
+  return parentId !== null && threadRootOf(parentId, format) !== null;
 }
 
 /** The muted quote line above a comment: the quoted passage, "whole block", or
@@ -44,7 +37,10 @@ export function CommentQuoteHeader(props: { parentId: string | null; selector: Q
 function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.Element {
   const anchor = createMemo(() => {
     const parent = docNode(props.parentId);
-    return parent ? anchorQuote(parent.raw, props.selector) : { kind: "stale" as const };
+    // In-thread quotes are compact historical excerpts of another response.
+    // New responses attach to the root, so their source need not be their parent.
+    if (inCommentThread(props.parentId, formatForBlock(props.parentId))) return { kind: "compact" as const };
+    return parent ? anchorQuote(parent.raw, props.selector, formatForBlock(props.parentId)) : { kind: "stale" as const };
   });
   return (
     <div class="comment-quote" classList={{ stale: anchor().kind === "stale" }}>
@@ -56,6 +52,9 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
         </span>
         <Show when={anchor().kind === "stale"}>
           <span class="comment-quote-stale">{t("comment-quote-changed")}</span>
+        </Show>
+        <Show when={anchor().kind === "ambiguous"}>
+          <span class="comment-quote-stale">{t("comment-quote-ambiguous")}</span>
         </Show>
       </Show>
     </div>
@@ -72,19 +71,16 @@ export function CommentHeader(props: { id: string; author: string | null }): JSX
 }
 
 /** Who wrote a block: the `tine.author::` value, or "you" for the graph owner. On a
- * comment block (`handleOf` set) the chip also takes over what the bullet did:
- * it starts the block drag (the same gesture contract as the bullet), and its
- * long press opens the block menu (contextMenuPolicy). Right-click anywhere on
+ * comment block (`handleOf` set) its long press opens the block menu
+ * (contextMenuPolicy). Right-click anywhere on
  * the row already opens the menu, where "Zoom into block" lives. */
-export function AuthorChip(props: { author: string | null; handleOf?: string }): JSX.Element {
+export function AuthorChip(props: { author: string | null; handleOf?: string; menuOf?: string }): JSX.Element {
   const onMouseDown = (e: MouseEvent) => {
     const id = props.handleOf;
-    if (id === undefined) return;
+    if (id === undefined) { if (props.menuOf) { e.stopPropagation(); if (e.button === 0) e.preventDefault(); } return; }
     // Not an edit gesture: keep the row's caret placement out of it.
     e.stopPropagation();
     internalLinkMouseDown(e);
-    if (e.button !== 0) return;
-    if (!blockPageReadOnly(id)) beginDrag(id, e);
   };
   return (
     <span
@@ -92,11 +88,16 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
       classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined, ...tintClasses(props.author) }}
       title={props.author !== null ? t("comment-written-by", { author: props.author }) : t("comment-written-by-you")}
       onMouseDown={onMouseDown}
+      role={props.menuOf ? "button" : undefined}
+      tabIndex={props.menuOf ? 0 : undefined}
+      onKeyDown={e => { if (props.menuOf && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openContextMenu(r.left, r.bottom, props.menuOf); } }}
+      onClick={e => { if (props.menuOf) { e.stopPropagation(); openContextMenu(e.clientX, e.clientY, props.menuOf); } }}
       onContextMenu={e => {
-        if (props.handleOf === undefined || !shouldOpenBlockContextMenu(e.target)) return;
+        const id = props.menuOf ?? props.handleOf;
+        if (id === undefined || (!props.menuOf && !shouldOpenBlockContextMenu(e.target))) return;
         e.preventDefault();
         e.stopPropagation();
-        openContextMenu(e.clientX, e.clientY, props.handleOf);
+        openContextMenu(e.clientX, e.clientY, id);
       }}
     >
       {props.author ?? t("comment-author-you")}

@@ -8,6 +8,16 @@
 
 use std::collections::HashMap;
 
+/// OG shortcut values retain a single string or all vector alternatives over IPC.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ShortcutBinding {
+    /// One binding, including the legacy "false" disabled sentinel.
+    Single(String),
+    /// Alternative bindings, in user order; an empty vector disables the command.
+    Multiple(Vec<String>),
+}
+
 /// Effective graph configuration derived from `logseq/config.edn`. Missing or
 /// unrecognized individual values use defaults.
 #[deny(missing_docs)]
@@ -37,9 +47,8 @@ pub struct Config {
     pub hidden_parse_failed_closed: bool,
     /// Preferred task marker cycle.
     pub preferred_workflow: Workflow,
-    /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
-    /// bindings only; vectors take the first binding, `false` disables).
-    pub shortcuts: HashMap<String, String>,
+    /// User keybinding overrides from OG `:shortcuts`: strings, vectors or false.
+    pub shortcuts: HashMap<String, ShortcutBinding>,
     /// `:publishing/all-pages-public?` — when true, HTML export publishes every
     /// page; otherwise only pages with `public:: true`.
     pub all_pages_public: bool,
@@ -1142,8 +1151,8 @@ fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
 }
 
 /// The `:shortcuts {…}` map as command-id → binding. Values: `"binding"` |
-/// `false` (disable) | `["b1" "b2"]` (first wins). String/brace-aware.
-fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
+/// `false` (disable) | `["b1" "b2"]` (all alternatives). String/brace-aware.
+fn parse_shortcuts(edn: &str) -> HashMap<String, ShortcutBinding> {
     let mut map = HashMap::new();
     let Some(start) = read_keyword(edn, ":shortcuts") else {
         return map;
@@ -1173,33 +1182,38 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
         match b[vfrom] {
             b'"' => {
                 if let Some(value) = read_string_at(edn, vfrom) {
-                    map.insert(key, value);
+                    map.insert(key, ShortcutBinding::Single(value));
                 }
                 i = edn_str_end(edn, vfrom);
             }
             b'[' => {
                 let vclose = match_close_bracket(edn, vfrom);
-                let mut k = vfrom + 1;
-                while k < vclose {
-                    if b[k] == b';' {
-                        while k < vclose && b[k] != b'\n' {
-                            k += 1; // skip a `;` comment before the first binding
-                        }
-                        continue;
+                if let Some(crate::edn::Edn::Vec(values)) =
+                    edn.get(vfrom..=vclose).and_then(crate::edn::parse_strict)
+                {
+                    // A malformed alternative cannot silently become a key.
+                    if values
+                        .iter()
+                        .all(|value| matches!(value, crate::edn::Edn::Str(_)))
+                    {
+                        let bindings = values
+                            .into_iter()
+                            .filter_map(|value| {
+                                if let crate::edn::Edn::Str(value) = value {
+                                    Some(value)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        map.insert(key, ShortcutBinding::Multiple(bindings));
                     }
-                    if b[k] == b'"' {
-                        if let Some(value) = read_string_at(edn, k) {
-                            map.insert(key.clone(), value);
-                        }
-                        break;
-                    }
-                    k += 1;
                 }
                 i = vclose + 1;
             }
             _ => {
                 if edn[vfrom..close].starts_with("false") {
-                    map.insert(key, "false".to_string());
+                    map.insert(key, ShortcutBinding::Single("false".to_string()));
                 }
                 let mut k = vfrom;
                 while k < close && !matches!(b[k], b' ' | b'\t' | b'\n' | b'\r' | b',') {
@@ -1607,12 +1621,12 @@ mod tests {
                                   :ui/toggle-theme "t d"}}"#;
         let cfg = Config::parse(edn);
         assert_eq!(
-            cfg.shortcuts.get("go/search").map(String::as_str),
-            Some("mod+shift+k")
+            cfg.shortcuts.get("go/search"),
+            Some(&ShortcutBinding::Single("mod+shift+k".into()))
         );
         assert_eq!(
-            cfg.shortcuts.get("ui/toggle-theme").map(String::as_str),
-            Some("t d")
+            cfg.shortcuts.get("ui/toggle-theme"),
+            Some(&ShortcutBinding::Single("t d".into()))
         );
     }
 
@@ -1674,13 +1688,42 @@ mod tests {
                                   :editor/indent ["tab" "mod+]"]}}"#;
         let cfg = Config::parse(edn);
         assert_eq!(
-            cfg.shortcuts.get("go/search").map(String::as_str),
-            Some("false")
+            cfg.shortcuts.get("go/search"),
+            Some(&ShortcutBinding::Single("false".into()))
         );
         assert_eq!(
-            cfg.shortcuts.get("editor/indent").map(String::as_str),
-            Some("tab")
+            cfg.shortcuts.get("editor/indent"),
+            Some(&ShortcutBinding::Multiple(vec![
+                "tab".into(),
+                "mod+]".into()
+            ]))
         );
+    }
+
+    #[test]
+    fn shortcut_vectors_preserve_sequences_comments_escapes_and_empty_disable() {
+        let cfg = Config::parse(
+            r#"{:shortcuts {:go/search [; first
+            "mod+k" ; second
+            "g s" "mod+\u006a"] :ui/toggle-theme [] :invalid ["a" false]}}"#,
+        );
+        assert_eq!(
+            cfg.shortcuts["go/search"],
+            ShortcutBinding::Multiple(vec!["mod+k".into(), "g s".into(), "mod+j".into(),])
+        );
+        assert_eq!(
+            cfg.shortcuts["ui/toggle-theme"],
+            ShortcutBinding::Multiple(vec![])
+        );
+        assert!(!cfg.shortcuts.contains_key("invalid"));
+        let json = serde_json::to_value(&cfg.shortcuts).unwrap();
+        assert_eq!(
+            json["go/search"],
+            serde_json::json!(["mod+k", "g s", "mod+j"])
+        );
+        assert_eq!(json["ui/toggle-theme"], serde_json::json!([]));
+        let restored: HashMap<String, ShortcutBinding> = serde_json::from_value(json).unwrap();
+        assert_eq!(restored, cfg.shortcuts);
     }
 
     #[test]

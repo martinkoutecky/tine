@@ -231,6 +231,7 @@ pub fn diff3_docs_with_artifact(
     }
     let artifacts = artifact.map(|_| (&art_of_mine, &art_of_theirs));
     annotate_rows(&mut rows, &nodes, &base_of_mine, &base_of_theirs, artifacts);
+    keep_one_of_a_block_suggested_away_twice(&mut rows);
     let blocks_identical = rows.iter().all(|r| r.kind == RowKind::Unchanged);
     let mine_pre = normalize_pre(mine.pre_block.as_deref());
     let theirs_pre = normalize_pre(theirs.pre_block.as_deref());
@@ -289,6 +290,72 @@ fn collect_base_pairs<'a>(base: &'a [DocBlock], side: &'a [DocBlock], out: &mut 
         }
     }
     walk(&align_nodes(base, side, ""), out);
+}
+
+/// GH #901: a block whose body the opening suggestions discard on BOTH sides
+/// was deleted by neither side: the sibling alignment split a move on one side,
+/// beside an edit on the other, into rows that each discard one occurrence.
+/// Mine's occurrence is discarded by a winner-only row suggested away (drop) or
+/// by the theirs-choice of a Modified row; theirs' by a copy-only row suggested
+/// away (skip) or by the mine-choice of a Modified row. Taking all suggestions
+/// lost the block, and so did choosing either whole side on its parent. The
+/// one-sided row then loses its suggestion and is flagged for review, so the
+/// opening choices keep it: winner-only rows first, then copy-only rows whose
+/// body only a Modified row discards on mine's side. A genuine move (pull in at
+/// the new place, drop at the old) is unaffected: only one of its occurrences
+/// is discarded. Equal bodies are not identity (two blocks may share a body), so
+/// this errs toward keeping a block for review. Iterative (I-22).
+fn keep_one_of_a_block_suggested_away_twice(rows: &mut [DiffRow]) {
+    fn each(rows: &mut [DiffRow], visit: &mut dyn FnMut(&mut DiffRow)) {
+        let mut pending: Vec<&mut DiffRow> = rows.iter_mut().collect();
+        while let Some(row) = pending.pop() {
+            visit(row);
+            pending.extend(row.children.iter_mut());
+        }
+    }
+    let flag = |row: &mut DiffRow| {
+        row.suggestion = None;
+        row.verdict = Some(Diff3Verdict::BothChanged);
+    };
+    let (mut theirs_away, mut mine_away_by_modified) = (
+        std::collections::HashSet::new(),
+        std::collections::HashSet::new(),
+    );
+    each(
+        rows,
+        &mut |row| match (row.kind, row.suggestion.as_deref()) {
+            (RowKind::Removed | RowKind::Modified, Some("mine")) => {
+                if let Some(theirs) = &row.theirs {
+                    theirs_away.insert(theirs.text.clone());
+                }
+            }
+            (RowKind::Modified, Some("theirs")) => {
+                if let Some(mine) = &row.mine {
+                    mine_away_by_modified.insert(mine.text.clone());
+                }
+            }
+            _ => {}
+        },
+    );
+    if theirs_away.is_empty() {
+        return;
+    }
+    each(rows, &mut |row| {
+        let body = |side: &Option<BlockView>| side.as_ref().map(|s| s.text.clone());
+        match (row.kind, row.suggestion.as_deref()) {
+            (RowKind::Added, Some("theirs"))
+                if body(&row.mine).is_some_and(|t| theirs_away.contains(&t)) =>
+            {
+                flag(row)
+            }
+            (RowKind::Removed, Some("mine"))
+                if body(&row.theirs).is_some_and(|t| mine_away_by_modified.contains(&t)) =>
+            {
+                flag(row)
+            }
+            _ => {}
+        }
+    });
 }
 
 /// Classify each aligned row against the base. `rows` and `nodes` have the same

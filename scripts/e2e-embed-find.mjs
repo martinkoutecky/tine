@@ -1,5 +1,5 @@
 // GH #694/#695: durable host fold and selection-seeded Find through native UI.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -8,6 +8,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const OUT = path.resolve("artifacts/embed-find-694-695");
 fs.mkdirSync(OUT, { recursive: true });
 const RUN = fs.mkdtempSync(path.join(OUT, "native-")), GRAPH = path.join(RUN, "graph");
@@ -35,10 +36,10 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30000, capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
   await ensureMainWindow(browser);
   await browser.$(".app-container").waitForExist({ timeout: 30000 });
-  stage = "nested occurrence keyboard fold preserves source";
+  stage = "nested keyboard fold saves its source host";
   await openPageByName(browser, "NestedHost");
   await browser.$(".embed-page .embed-page .block-content").waitForExist({ timeout: 15000 });
-  // Editing an embedded source row must use its occurrence's disclosure owner.
+  // Inner page-embed folds save the source host, as block embeds do (GH #868).
   await browser.execute(() => {
     const row = document.querySelector(".main-content .embed-page .ls-block");
     row.querySelector(".block-content").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
@@ -51,7 +52,8 @@ try {
     const embed = document.querySelector(".main-content .embed-page .embed-page");
     return embed?.textContent.includes("Source") && !embed.textContent.includes("source body");
   }), { timeout: 10000 });
-  assert.equal(fs.readFileSync(nestedSourcePath, "utf8"), nestedSource);
+  await browser.waitUntil(() => fs.readFileSync(nestedSourcePath, "utf8").includes(org ? ":collapsed: true" : "collapsed:: true"), { timeout: 15000 });
+  assert.equal(fs.readFileSync(sourcePath, "utf8"), source);
   await browser.execute(() => {
     const row = document.querySelector(".main-content .embed-page .ls-block");
     row.querySelector(".block-content").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
@@ -62,7 +64,8 @@ try {
   await browser.keys(["Escape"]);
   await browser.$(".embed-page .embed-page .block-content").waitForExist();
   await browser.saveScreenshot(path.join(RUN, "nested-fold.png"));
-  assert.equal(fs.readFileSync(nestedSourcePath, "utf8"), nestedSource);
+  await browser.waitUntil(() => fs.readFileSync(nestedSourcePath, "utf8").includes(org ? ":collapsed: false" : "collapsed:: false"), { timeout: 15000 });
+  const nestedAfterUnfold = fs.readFileSync(nestedSourcePath, "utf8");
   assert.equal(fs.readFileSync(sourcePath, "utf8"), source);
   await openPageByName(browser, "Host");
   stage = "page embed fold";
@@ -110,13 +113,13 @@ try {
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".inpage-find-input")?.value === "source" && document.querySelector(".inpage-find-count")?.textContent.startsWith("1 /")), { timeout: 10000 });
   await browser.saveScreenshot(path.join(RUN, "find.png"));
   assert.equal(fs.readFileSync(sourcePath, "utf8"), source);
-  assert.equal(fs.readFileSync(nestedSourcePath, "utf8"), nestedSource);
-  fs.writeFileSync(path.join(RUN, "receipt.json"), JSON.stringify({ tested: "6ca84ddde + fix round 3 diff", app: APP, format: ext, outcome: "PASS" }, null, 2));
+  assert.equal(fs.readFileSync(nestedSourcePath, "utf8"), nestedAfterUnfold);
+  fs.writeFileSync(path.join(RUN, "receipt.json"), JSON.stringify({ tested: testedCommit, app: APP, format: ext, outcome: "PASS" }, null, 2));
   console.log(`PASS: native page-embed fold and selected-text Find (${RUN})`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(RUN, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(RUN, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: 6ca84ddde + fix round 3 diff\nJourney: ${stage}\nExpected: occurrence-only fold, unchanged embedded sources, host-only saved fold and selected text in Find with first match active.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
+  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit}\nJourney: ${stage}\nExpected: outer fold saves only the host, inner fold saves its source host, deeper source stays unchanged, and selected text seeds Find with first match active.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

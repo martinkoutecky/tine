@@ -3,7 +3,8 @@ import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { facetsFromDto } from "../render/facets";
 import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { BLOCK_SCOPED_PROPERTY_KEYS, BUILTIN_HIDE, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { commentEditorHide } from "../editor/commentProperties";
 import { blockRegions } from "../render/parse";
 import { utf8ByteLength } from "../render/spans";
 import { journalTitle, appNow } from "../journal";
@@ -143,7 +144,8 @@ function flatten(
   parent: string | null,
   pageName: string,
   byId: Record<string, Node>,
-  format: Format
+  format: Format,
+  retain = false
 ): string[] {
   return dtos.map((d) => {
     // Seed the header-facet cache from the backend (one Rust lsdoc parse, shipped) so
@@ -160,8 +162,17 @@ function flatten(
     // they would all collapse into one node.
     const existing = d.id ? byId[d.id] : undefined;
     const key = !d.id ? freshId() : existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
+    const childIds = flatten(d.children, key, pageName, byId, format, retain);
+    // Same structural key, same loaded block: leave its live object alone.
+    // Changed blocks still get a new object, retiring deferred editor actions.
+    if (retain && existing && existing.page === pageName && existing.raw === d.raw
+      && existing.collapsed === d.collapsed && existing.parent === parent
+      && !existing.originatedFromPageHeader) {
+      if (existing.loadedRaw !== d.raw) existing.loadedRaw = d.raw;
+      if (!sameKeys(existing.children, childIds)) existing.children = childIds;
+      return key;
+    }
     acquireSeededFacets(d.raw, format, facetsFromDto(d), () => doc.byId[key]);
-    const childIds = flatten(d.children, key, pageName, byId, format);
     byId[key] = {
       id: key,
       raw: d.raw,
@@ -175,8 +186,10 @@ function flatten(
   });
 }
 
-export function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, Node>): FeedPage {
-  const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md");
+const sameKeys = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((id, i) => id === b[i]);
+
+export function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, Node>, retain = false): FeedPage {
+  const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md", retain);
   return {
     name: dto.name,
     kind: dto.kind,
@@ -188,6 +201,23 @@ export function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, 
     guide: dto.guide ?? false,
     id: dto.id,
   };
+}
+
+/** Reload the same physical page without replacing its mounted outline owner.
+ * Only changed nodes are replaced; vanished keys are removed after the new tree
+ * exists. Runtime keys remain the backend's current structural identities.
+ * O(old + new page blocks), no I/O and no changes to save/conflict admission. */
+export function reconcileLoadedPage(dto: PageDto & { id?: string }, state: DocState): void {
+  const page = state.pages.find(p => p.name === dto.name)!;
+  const old = new Set<string>();
+  const collect = (id: string) => { old.add(id); state.byId[id]?.children.forEach(collect); };
+  page.roots.forEach(collect);
+  const next = toFeedPage(dto, state.byId, page.format === (dto.format ?? "md"));
+  const keep = (id: string) => { old.delete(id); state.byId[id].children.forEach(keep); };
+  next.roots.forEach(keep);
+  for (const id of old) delete state.byId[id];
+  if (sameKeys(page.roots, next.roots)) next.roots = page.roots;
+  Object.assign(page, next);
 }
 
 function removeNodeSubtree(s: DocState, id: string) {
@@ -222,7 +252,8 @@ function toDto(id: string): BlockDto {
     const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
     const own = blockRegions(n.raw, format).properties.filter((p) => p.primary);
     const properties = own.map((p): [string, string] => [p.key, p.value]);
-    if (own.some((p) => p.line[1] === end && hides(BUILTIN_HIDE, p.key, properties))) raw = n.raw;
+    const hide = commentEditorHide(n, properties, format, (parent) => doc.byId[parent]);
+    if (own.some((p) => p.line[1] === end && hides(hide, p.key, properties))) raw = n.raw;
   }
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }

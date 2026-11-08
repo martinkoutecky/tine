@@ -50,7 +50,11 @@ pub fn apply_with_policy(
             referenced,
         } => merge_many::merge_many(&mut cx, survivor, absorbed, referenced)?,
         Verb::Indent { keys } => indent(&mut cx, keys)?,
-        Verb::Outdent { keys, logical } => outdent(&mut cx, keys, *logical)?,
+        Verb::Outdent {
+            keys,
+            logical,
+            retain,
+        } => outdent::outdent(&mut cx, keys, *logical, retain)?,
         Verb::Delete { keys } => delete(&mut cx, keys)?,
         Verb::MoveTo {
             keys,

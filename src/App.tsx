@@ -1,4 +1,5 @@
 import { Rich } from "./i18n/Rich";
+import type { ShortcutBinding } from "./shortcutBindings";
 import { installTineLinks } from "./deepLinkNavigation";
 import { installShareIngest } from "./shareIngest";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
@@ -1028,7 +1029,7 @@ export function App(): JSX.Element {
   // mirror the merged map to the quick-capture window so a remapped
   // editor/quick-capture-file (or any editor shortcut) is honored there too — it
   // can't read this window's localStorage overrides on its own.
-  let latestShortcuts: Record<string, string> = {};
+  let latestShortcuts: Record<string, ShortcutBinding> = {};
   const captureBroadcastScope = {};
   const broadcastShortcuts = () => {
     if (!isTauri()) return;

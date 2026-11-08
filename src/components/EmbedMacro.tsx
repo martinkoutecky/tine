@@ -184,10 +184,10 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
           </Show>
           <Show when={!insidePeek} fallback={
             <LinkDepthContext.Provider value={linkDepth + 1}>
-              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} readOnly />
+              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} readOnly pageBody localFolds />
             </LinkDepthContext.Provider>
           }>
-            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
+            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} wholePage={!!pageTarget()} hostBlockId={props.blockId} surface="embed" />
           </Show>
         </Show>
       </Show>

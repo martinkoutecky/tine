@@ -13,7 +13,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { isConflicted } from "../document";
+import { isConflicted, pageInstanceGeneration } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { isGuidePageName } from "../guide";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -36,7 +36,7 @@ import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGr
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
 import { cellBlockId, cellForBlockId, cellOwner, cellSel, focusCell, setCellSel } from "../sheet/selection";
 import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
-import { startEditing } from "../editorController";
+import { endEdit, startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import { cutBlocks } from "../cut";
@@ -804,6 +804,7 @@ function PageMenu(props: {
 }): JSX.Element {
   // A name-only caller still pins the loaded file when the menu opens.
   const openedPage = pageByName(props.name);
+  const openedInstance = pageInstanceGeneration(props.name);
   const path = props.path ?? openedPage?.id;
   const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(path ? { path } : {}) });
   const fav = () => isFavorite(props.name, props.pageKind);
@@ -867,7 +868,7 @@ function PageMenu(props: {
     // prompt says the unsaved changes go too.
     const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" }), { okLabel: t("confirm-delete"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
-    if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
+    if (!captured.path && (pageByName(name) !== openedPage || pageInstanceGeneration(name) !== openedInstance || pageByName(name)?.id !== path)) {
       pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
       return;
     }
@@ -993,7 +994,8 @@ export function pageMenuAvailability(pageKind: PageKind): { rename: boolean; del
 
 function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => void }): JSX.Element {
   const subject = pageByName(props.name);
-  const owner = graphOwner(() => !!subject && pageByName(props.name) === subject);
+  const instance = pageInstanceGeneration(props.name);
+  const owner = graphOwner(() => !!subject && pageByName(props.name) === subject && pageInstanceGeneration(props.name) === instance);
   const [editing, setEditing] = createSignal(false);
   const [value, setValue] = createSignal(readPageIconProperty(props.name));
   let input: HTMLInputElement | undefined;
@@ -1188,6 +1190,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
+    ...(!multi && blockProperty(id, "tine.author") !== null ? [{ label: msg("comment-remove-author"), run: () => { endEdit("select-block"); setBlockProperty(id, "tine.author", null); } }] : []),
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).

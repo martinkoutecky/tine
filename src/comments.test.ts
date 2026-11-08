@@ -10,11 +10,68 @@ const sliceOf = (raw: string, anchor: ReturnType<typeof anchorQuote>) =>
   anchor.kind === "range" ? raw.slice(anchor.start, anchor.end) : anchor.kind;
 
 describe("margin comment anchor (vision §3.7)", () => {
-  it("anchors a unique quote and needs no context", () => {
+  it("anchors the final laborum with an explicit end boundary (GH #891)", () => {
+    const part = "Duis aute irure dolor in reprehenderit in voluptate laborum.";
+    const parent = part + " " + part;
+    const at = parent.lastIndexOf("laborum.");
+    const selector = quoteSelectorFor(parent, at, parent.length, parent);
+    expect(selector.suffix).toBe("");
+    expect(anchorQuote(parent, selector)).toEqual({ kind: "range", start: at, end: parent.length });
+  });
+
+  it("grows context past 32 characters until an interior occurrence is unique", () => {
+    const common = " many identical words before the selected word ";
+    const tail = " after the target with many identical trailing words ";
+    const parent = "alpha" + common + "target" + tail + "beta" + common + "target" + tail + "omega";
+    const at = parent.lastIndexOf("target" + tail);
+    const selector = quoteSelectorFor(parent, at, at + 6, parent);
+    expect(Math.max(selector.prefix!.length, selector.suffix!.length)).toBeGreaterThan(32);
+    expect(anchorQuote(parent, selector)).toEqual({ kind: "range", start: at, end: at + 6 });
+  });
+
+  it.each(["md", "org"] as const)("treats the prose end before %s metadata as a boundary", (format) => {
+    const prose = "Same words before laborum. Same words before laborum.";
+    const parent = prose + (format === "md" ? "\nid:: 89100000-0000-4000-8000-000000000001\ntine.author:: Ada" : "\n:PROPERTIES:\n:id: 89100000-0000-4000-8000-000000000001\n:tine.author: Ada\n:END:");
+    const at = prose.lastIndexOf("laborum.");
+    const selector = quoteSelectorFor(prose, at, prose.length, parent, format);
+    expect(selector.suffix).toBe("");
+    expect(anchorQuote(parent, { quote: "laborum.", prefix: "Same words before", suffix: "" }, format))
+      .toEqual({ kind: "range", start: at, end: prose.length });
+    expect(anchorQuote(parent, selector, format)).toEqual({ kind: "range", start: at, end: prose.length });
+  });
+
+  it("mirrors the boundary rule at the start and does not reinterpret missing legacy context", () => {
+    const parent = "word repeated word";
+    expect(anchorQuote(parent, { quote: "word", prefix: "", suffix: null }))
+      .toEqual({ kind: "range", start: 0, end: 4 });
+    expect(anchorQuote(parent, { quote: "word", prefix: null, suffix: "" }))
+      .toEqual({ kind: "range", start: 14, end: 18 });
+    expect(anchorQuote(parent, { quote: "word", prefix: null, suffix: null })).toEqual({ kind: "ambiguous" });
+    // A boundary hint cannot outweigh better surviving text context after an edit.
+    expect(anchorQuote("word different. nearby word", { quote: "word", prefix: "nearby", suffix: "" }))
+      .toEqual({ kind: "range", start: 23, end: 27 });
+  });
+
+  it.each(["md", "org"] as const)("round-trips empty boundary context distinctly from absent legacy context in %s", (format) => {
+    const selector = { quote: "word", prefix: "", suffix: "" };
+    expect(quoteSelectorOf(facetsOf(commentRaw(selector, format), format).properties)).toEqual(selector);
+    expect(quoteSelectorOf(facetsOf(commentRaw({ quote: "word", prefix: null, suffix: null }, format), format).properties))
+      .toEqual({ quote: "word", prefix: null, suffix: null });
+  });
+
+  it("keeps legacy textual winners, while identical nonempty context remains ambiguous", () => {
+    const parent = "same word tail. same word tail.";
+    expect(anchorQuote(parent, { quote: "word", prefix: "same", suffix: "tail." })).toEqual({ kind: "ambiguous" });
+    const edited = "clue word tail. different word tail.";
+    expect(anchorQuote(edited, { quote: "word", prefix: "different", suffix: null }))
+      .toEqual({ kind: "range", start: edited.lastIndexOf("word"), end: edited.lastIndexOf("word") + 4 });
+  });
+
+  it("anchors a unique quote and always keeps context", () => {
     const parent = "Agent's paragraph text that has a phrase worth disputing.\ntine.author:: claude";
     const at = parent.indexOf("a phrase");
     const selector = quoteSelectorFor(parent, at, at + "a phrase worth disputing".length, parent);
-    expect(selector).toEqual({ quote: "a phrase worth disputing", prefix: "Agent's paragraph text that has", suffix: ". tine.author:: claude" });
+    expect(selector).toEqual({ quote: "a phrase worth disputing", prefix: "Agent's paragraph text that has", suffix: "." });
     expect(sliceOf(parent, anchorQuote(parent, selector))).toBe("a phrase worth disputing");
   });
 
@@ -56,7 +113,7 @@ describe("margin comment anchor (vision §3.7)", () => {
     expect(anchorQuote(edited, selector)).toEqual({ kind: "range", start: second + 7, end: second + 14 });
   });
 
-  it("caps context at 32 characters on whole code points", () => {
+  it("keeps the initial 32-character context on whole code points when sufficient", () => {
     const filler = "🎉".repeat(40);
     const parent = `${filler} one x ${filler} two x ${filler}`;
     const second = parent.lastIndexOf(" x ") + 1;

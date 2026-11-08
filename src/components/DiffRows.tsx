@@ -63,16 +63,18 @@ export function seedSuggestedOrNoLoss(
   return out;
 }
 
-/** The "Apply all suggested" sweep: like [seedSuggestedOrNoLoss], except a row
- *  whose suggestion is a merge TOOL's own text keeps its current decision. The
- *  batch button vouches only for what Tine computed itself. */
+/** The "Apply all suggested" sweep: every row Tine suggests a choice for gets
+ *  it, except a row whose suggestion is a merge TOOL's own text. A row with no
+ *  suggestion keeps the choice the user made (GH #901: resetting those undid a
+ *  whole-side choice and duplicated sections). The batch button vouches only
+ *  for what Tine computed itself. */
 export function seedSuggestedExceptArtifact(
   rows: DiffRow[],
   out: Record<string, MergeDecision>
 ): Record<string, MergeDecision> {
   eachRow(rows, (r) => {
     const artifactMerge = r.suggestion === "merged" && r.merged?.source === "artifact";
-    if (r.kind !== "unchanged" && !artifactMerge) out[r.id] = r.suggestion ?? noLossDecision(r.kind);
+    if (r.kind !== "unchanged" && !artifactMerge && r.suggestion) out[r.id] = r.suggestion;
   });
   return out;
 }

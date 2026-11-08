@@ -34,6 +34,7 @@ blockProperty
 blockRef
 blockSubtreeMarkdown
 blockWritable
+bodyNeighbor  # why: GH #891: editors and embed exits share navigation that omits whole comment threads; batch-fix-beta-mc-structure
 buildClipboardPayload
 canIndentBlock  # why: the swipe indent cue asks the kernel indent verb instead of restating its depth rule (outline kernel twin 14); batch-outline-kernel
 captureEmptyPage  # why: the tine://capture route admits today's journal exactly as the capture append does (ADR 0073); batchNativeIntegrations
@@ -43,7 +44,7 @@ carryTodayPage
 carryUnfinished
 childIds
 clearSelection
-collapseEpochOf  # why: embed occurrence folds compare the source collapse write epoch (GH #360); batch21c
+collapseEpochOf  # why: query bulk-fold requests reject stale source collapse generations (GH #792); batch21c
 collapsibleDescendantIds
 commentsFirst  # why: a block's comments show and navigate right under it, before its other children, when drawn inline (GH #110); batch-fix-margin-comments
 conflictReason  # why: conflict bar reason text; batch03
@@ -95,6 +96,7 @@ installPageIdentityNavigation  # why: route/tab rekey must precede exact-path wo
 installRenameRefreshHandler
 isBlockMoving
 isBlockRefUuid  # why: an unresolved ((id)) that is not a UUID is shown, never looked up (GH #589); batch20b
+isCommentId  # why: GH #891: one parsed comment discriminator for document structure and all editor surfaces; batch-fix-beta-mc-structure
 isConflicted
 isDirty
 isLoaded
@@ -176,7 +178,7 @@ selectionMarkdown
 selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty
 setCollapsed
-setCollapsedBlocks  # why: D-20261030-EMB block embed folds below the root save the source in one undo step; batch-fix-embed-look-08
+setCollapsedBlocks  # why: D-20261030-EMB inner block/page embed folds save the source in one undo step (GH #868); batch-fix-embed-look-08
 setCollapsedDeep
 setCollapsedDescendants
 setCollapsedTrees  # why: GH #785 batches page and selected subtree folding into one save notification per page; batch-sweep-nav
@@ -193,6 +195,7 @@ stopOwnNumberedListOnEmptyEnter
 storedFold  # why: the bullet's fold including a query's authored default, read by Block and the query arrow; batch-og-query-fold-arrow
 subscribeOwnerFlush  # why: the window answers its graph owner's flush before a CLI write (CLI slice 2); batch-cli-slice2
 switcherPage
+threadRootOf  # why: GH #891: one thread-membership predicate for body editing, drag, paste and navigation; batch-fix-beta-mc-structure
 toLoadablePage
 toggleBlockProperty
 toggleCollapse

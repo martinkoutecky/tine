@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "solid-js";
 
 const platform = vi.hoisted(() => ({ mobile: true }));
+const geometry = vi.hoisted(() => ({ row: null as { top: number; bottom: number } | null }));
+vi.mock("../editor/caretRows", () => ({ textareaCaretRow: () => geometry.row }));
 vi.mock("../inputCapability", () => ({
   touchPrimary: () => platform.mobile,
 }));
@@ -40,6 +42,7 @@ function pointer(type: string, init: { pointerId?: number; isPrimary?: boolean }
 
 describe("MobileKeyboardToolbar", () => {
   beforeEach(() => {
+    geometry.row = null;
     document.body.innerHTML = "";
     mockVisualViewport();
   });
@@ -116,9 +119,11 @@ describe("MobileKeyboardToolbar", () => {
   });
 
   it.each(["main-content", "right-sidebar", "left-sidebar-scroll"])("reveals the focused editor in its own %s scroller (GH #384, GH #751)", async (surface) => {
+    geometry.row = { top: 0, bottom: 20 };
     const { revealFocusedEditorAboveToolbar } = await import("./MobileKeyboardToolbar");
     const scroller = document.createElement("main");
     scroller.className = surface;
+    Object.defineProperty(scroller, "clientHeight", { value: 600 });
     const editor = document.createElement("textarea");
     editor.className = "block-editor";
     scroller.appendChild(editor);
@@ -130,20 +135,22 @@ describe("MobileKeyboardToolbar", () => {
       toJSON() { return {}; },
     });
     expect(revealFocusedEditorAboveToolbar(520)).toBe(true);
-    expect(scroller.scrollTop).toBe(28); // 20px overlap + 8px breathing room
+    expect(scroller.scrollTop).toBe(30); // caret bottom 490 -> 520 - three 20px body lines
 
     editor.getBoundingClientRect = () => ({
       top: 420, bottom: 500, left: 0, right: 300, width: 300, height: 80, x: 0, y: 420,
       toJSON() { return {}; },
     });
     expect(revealFocusedEditorAboveToolbar(520)).toBe(false);
-    expect(scroller.scrollTop).toBe(28);
+    expect(scroller.scrollTop).toBe(30);
   });
 
   it("reveals the editor above its docked formatting row, not only above the dock (GH #375)", async () => {
+    geometry.row = { top: 0, bottom: 20 };
     const { revealFocusedEditorAboveToolbar } = await import("./MobileKeyboardToolbar");
     const scroller = document.createElement("main");
     scroller.className = "main-content";
+    Object.defineProperty(scroller, "clientHeight", { value: 600 });
     const editor = document.createElement("textarea");
     editor.className = "block-editor";
     scroller.appendChild(editor);
@@ -162,7 +169,7 @@ describe("MobileKeyboardToolbar", () => {
       toJSON() { return {}; },
     });
     expect(revealFocusedEditorAboveToolbar(520)).toBe(true);
-    expect(scroller.scrollTop).toBe(28); // 500 + 8 - 480
+    expect(scroller.scrollTop).toBe(70); // caret bottom 490 -> formatting row 480 - three body lines
     formatting.remove();
     scroller.remove();
   });

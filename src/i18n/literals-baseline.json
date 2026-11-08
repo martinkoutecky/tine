@@ -26,7 +26,6 @@
 "src/components/HelpShortcuts.tsx\tjsx-text\tresult\tStrike",
 "src/components/HelpShortcuts.tsx\tjsx-text\tresult\tcode",
 "src/components/HelpShortcuts.tsx\tjsx-text\tresult\timage",
-{"site":"src/components/HelpShortcuts.tsx\tui-flow\trows\tmod+k","reason":"Keybinding chord, never translated (DESIGN D11)."},
 "src/components/JournalFilenamePanel.tsx\ttoast\tapply\t{skippedMessage}",
 "src/components/Namespace.tsx\tjsx-text\tNamespaceMacro\t{{namespace {}}}",
 "src/components/Page.tsx\ttoast\tcommitRename\t{message}",

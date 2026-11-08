@@ -22,6 +22,56 @@ command names, closed-vocabulary tokens, booleans, counts and durations. It
 never accepts note content, paths, page titles, queries, URLs, credentials,
 error text or the opt-in `TINE_DEBUG` log.
 
+**Workspace-window stages (GH #809).** `workspace.open` carries a process-local
+`sequence` (the numeric popup counter, never its label), a fixed `stage`, and
+`openElapsedMs`. The usual `elapsedMs` is still time since recorder startup.
+Native open time starts at prepare entry; frontend open time starts at launch
+and includes its prepare IPC round trip. Compare durations within a side;
+async delivery can interleave the two sides' events.
+
+- Frontend: `frontend.prepare-done`, `frontend.open-called`,
+  `frontend.open-returned`, `frontend.document-ready`,
+  `frontend.bootstrap-done`, `frontend.focus-called`, `frontend.focus-done`,
+  `frontend.failed`. Focus events occur only for an activated window. Dispatch
+  before open/focus does not await diagnostic IPC; it cannot guarantee delivery
+  if the renderer itself stops before dispatch reaches native code.
+- Native: `native.prepare-received`, `native.prepared`,
+  `native.request-received`, `native.builder-entry`, `native.build-returned`,
+  `native.build-failed`, `native.created-geometry`, `native.response-create`,
+  `native.page-load-started`, `native.page-load-finished`. Page-load events are
+  engine notifications; an engine may not notify an initial `about:blank` load.
+  Wry's Windows `SetNewWindow` and deferral completion occur after Tine returns
+  `Create` and are **not observable here**. `response-create` only describes
+  Tine's handoff, not their completion. No URL or title is recorded.
+- `native.prepared` adds rounded `logicalWidth`/`logicalHeight` (1–16384),
+  `monitorCount` (0–64) and `targetScaleMilli` (100–16000). The target scale
+  before creation is null when OS placement chooses the monitor, or no monitor
+  contains the requested top-left corner. `native.created-geometry` adds the
+  actual window scale and `physicalWidth`/`physicalHeight` (1–262144).
+  Unknown or out-of-range facts are null. No screen position or monitor name
+  enters the report. This adds events only; popup creation policy is unchanged.
+
+**Native main-loop liveness.** On Linux, Windows and macOS one sleeping worker
+posts an acknowledgement every 5 s, with at most one outstanding callback.
+That callback only sends an `Instant` through a one-slot channel and never
+touches the flight recorder. The worker records `runtime.main_thread_stall`
+with `thresholdMs` (2000, 10000 or 30000), measured `delayMs`, and `recovered`.
+Each threshold is recorded once while waiting; after 30 s it sleeps until the
+reply, with no repeated events. A late reply records recovery. Idle probes
+produce no recorder events, no dirty flag, no disk writes: one thread, one
+channel/queued callback per 5 s, no polling loop. Android and iOS explicitly
+compile out the worker because OS suspension is expected; a guard test pins
+all five target names. A native stall does not establish a root cause, and
+missing frontend progress with a quiet native watchdog suggests a renderer
+stall only if the worker had time to probe.
+
+For a freeze, wait **60 seconds** before force-closing, relaunch once and send
+the diagnostics report: `sessions.previous` retains flushed stages and native
+stalls, and `previousExitUnclean` distinguishes the forced end. Persistence
+continues on its existing background worker even when the native loop hangs.
+The Linux kill/relaunch journey uses a `cfg(test)` hook at popup builder entry;
+shipped binaries contain no blocking hook or environment switch for it.
+
 **Persisted format** (`src-tauri/src/flight_store.rs`). One directory,
 `<app data>/diagnostics/`, never inside a graph:
 
