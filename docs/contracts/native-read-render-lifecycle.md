@@ -14,6 +14,26 @@ the warm-cache probe) or page-inventory reads there. Page/tag completion uses
 the dedicated bounded capture query. `capture.graphReaders.test.tsx` exercises
 the capture entry point with native-equivalent refusals for general reads.
 
+Page/tag completion retains every match of its previous query, including
+matches outside the displayed limit. Extending both the search-folded query
+and any Mandarin expansion query re-ranks that set with the existing page
+comparator; shortening, replacement or a non-prefix Unicode fold rebuilds it.
+The pool is in memory only. A block editor builds its session on the first
+nonblank query and releases it on popup close. Calls without an editor lease,
+including Capture's dedicated query, use a bounded anonymous slot retained
+until replacement, invalidation or snapshot disposal. Each snapshot keeps at
+most eight recent pools in total.
+Physical entries share the existing materialized page list. Closing a session
+also frees its pools in held older snapshots, through a graph-owned weak registry.
+Publications carry a pool only when the changed pages leave its physical
+names, aliases, namespace seeds and baseline-adjusted reference names unchanged;
+create/delete/rename and changed name inputs invalidate it. Body autosaves
+that leave those inputs unchanged retain the pool without enumerating names.
+Property-value reads share one pending request per key; its arrival refreshes
+the latest owned query without another keystroke, in both block editors.
+`query_plan/completion_tests.rs` differentially checks the previous evaluator,
+including Unicode fold rewrites, aliases, namespaces and expansion matching.
+
 User macro substitution is charged before constructing the substituted string.
 The DOM renderer and Copy/Export rendered-text walker use the same expansion
 budget owner: depth 12, 1000 expansions and 256 KiB of expanded string units

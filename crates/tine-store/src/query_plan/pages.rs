@@ -2,21 +2,21 @@
 use super::*;
 
 #[derive(Debug)]
-enum PageCandidate {
+pub(super) enum PageCandidate {
     File(usize),
     Referenced(PageEntry),
 }
 
 #[derive(Debug)]
-struct ScoredPage {
-    from_content: bool,
-    score: i32,
-    match_class: ObjectiveMatchClass,
-    matched_text: String,
-    matched_alias: Option<String>,
-    tie_key: String,
-    candidate: PageCandidate,
-    content_text: Option<String>,
+pub(super) struct ScoredPage {
+    pub(super) from_content: bool,
+    pub(super) score: i32,
+    pub(super) match_class: ObjectiveMatchClass,
+    pub(super) matched_text: String,
+    pub(super) matched_alias: Option<String>,
+    pub(super) tie_key: String,
+    pub(super) candidate: PageCandidate,
+    pub(super) content_text: Option<String>,
 }
 
 impl ScoredPage {
@@ -55,7 +55,7 @@ impl Ord for ScoredPage {
     }
 }
 
-fn push_page(heap: &mut BinaryHeap<ScoredPage>, limit: usize, candidate: ScoredPage) {
+pub(super) fn push_page(heap: &mut BinaryHeap<ScoredPage>, limit: usize, candidate: ScoredPage) {
     if heap.len() < limit {
         heap.push(candidate);
     } else if heap
@@ -183,6 +183,8 @@ pub(super) fn best_page_match(
     page_name: &str,
     aliases: &[String],
 ) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
+    #[cfg(test)]
+    COMPLETION_SCORES.with(|count| count.set(count.get() + 1));
     let page_match = page_base_score(plan, expr, page_name, &plan.fold(page_name));
     let mut best = page_match.map(|(score, class)| (score, class, page_name.to_string(), None));
     for alias in aliases {

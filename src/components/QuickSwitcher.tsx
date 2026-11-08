@@ -551,7 +551,7 @@ export function QuickSwitcher(): JSX.Element {
 
   return (
     <Show when={switcherOpen()}>
-      <div class="switcher-overlay" onClick={cancelSwitcher}>
+      <div class="switcher-overlay" data-pane-focus-neutral onClick={cancelSwitcher}>
         <div class="switcher" onClick={(e) => e.stopPropagation()}>
           <input
             ref={inputRef}

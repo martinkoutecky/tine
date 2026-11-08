@@ -2,6 +2,40 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-external-pdf.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
+        {"class":"exact-safety-interoperability","userOutcome":"Every file and directory in the scratch graph is identical before and after opening and reading outside PDFs; no import, sidecar, highlight page or capture image is created.","blocking":false,"authority":"GH #732 read-only decision"}
+      ],
+      "acceptableVariations": ["Pane geometry, toolbar wrapping, selection appearance and reader timing can vary while the tools and preserved file outcomes hold."],
+      "nonRequirements": ["No annotation identity design, relative file: or parent-relative link behavior, Windows/macOS/mobile device certification, or manager release burn-in."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-math-print.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Grouped inline and display equations retain all atoms on A5 paper, with no interactive scrollport clipping.","blocking":false,"authority":"GH #915 sibling investigation; UI-GH915-MATH-NARROW-PAPER"}],
+      "acceptableVariations": ["Pagination, typography and fitting strategy may vary; all equation content must survive."],
+      "nonRequirements": ["No native print-dialog certification or new paper-fitting policy in the screen-math lane."],
+      "stability":"quarantined",
+      "quarantineReason":"A5 loses two oxygen atoms with the original unconstrained math CSS as well as the candidate. Screen-only containment prevents additional scrollport clipping, but fitting grouped math to small physical paper needs a product decision. The assertion remains intact."
+    },
+    "scripts/e2e-math-overflow.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Inline and display equations have reachable starts and ends within narrow routed main, split, sidebar, embed, query, hover preview and phone-width panes; ordinary KaTeX breaks and short inline baselines survive. With Android gestures enabled, ancestors permit native horizontal panning of overflowing formulas.","blocking":false,"authority":"GH #915; UI-GH915-MATH-REACHABLE"}],
+      "acceptableVariations": ["Formula-local scrolling or line breaks, scrollbar appearance, fonts and pane geometry may vary."],
+      "nonRequirements": ["No TeX rewriting, exact pixels, print pagination, Windows/macOS/iOS/Android device certification or release acceptance. Formula-local scrolling deliberately goes beyond OG's unconstrained KaTeX."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-query-breadcrumbs.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Advanced query lists hide ancestor trails with :breadcrumb-show? false in routed main pages, right sidebar and block embeds; grouped page headings remain, explicit ungrouped lists omit headings, defaults show trails and tables are unaffected. Reading preserves authored bytes.","blocking":false,"authority":"GH #881; OG 6e7afa8eb query.cljs/custom-query-inner, block.cljs/->hiccup"}],
+      "acceptableVariations": ["Markup, spacing and row allocation may vary while context visibility and results remain correct."],
+      "nonRequirements": ["Simple-query View switch and tine.breadcrumbs persistence await Martin.", "Windows, macOS, iOS and Android certification."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-completion-perf.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL"}],
+      "acceptableVariations": ["Paint times vary with host load; timings are observations, not a flaky threshold oracle."],
+      "nonRequirements": ["Release burn-in and Windows/macOS/mobile runtime certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-table-wrap.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Reading a routed Markdown page, journal, embed and sidebar in either editor keeps wide prose, many columns and URLs inside the pane with wrapping; unbreakable content scrolls inside its table and reading preserves file bytes.","blocking":false,"authority":"GH #802; D-20261107-R11"}],
       "acceptableVariations": ["Column allocation, wrapping positions, table markup and spacing may vary while readable content fits the pane."],
@@ -31,7 +65,7 @@
         { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },
         { "class": "exact-safety-interoperability", "userOutcome": "Editing and clipboard transfers reach the exact expected Markdown file bytes, preserve the copied source and nested children, remove only the cut subtrees, and keep the reference target unchanged.", "blocking": false, "authority": "CM6 rollout acceptance D-20261025-CS / ET2 (#767), existing guarded save and outline clipboard semantics" },
         { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": false },
-        { "class": "core-operation", "userOutcome": "Typed and clipboard-pasted Markdown property lines, and typing inside an existing value, offer their key's known values without choosing a property name; accepting a value updates the correct span and saves it on a routed page in either editor.", "blocking": false, "authority": "D-20261102-PERF follow-up 3; UI-PROPERTY-VALUES-TYPED" }
+        { "class": "core-operation", "userOutcome": "Typed and clipboard-pasted Markdown property lines, and typing inside an existing value, offer their key's known values without choosing a property name; a pending values reply refreshes the latest typed query without another keystroke; accepting a value updates the correct span and saves it on a routed page in either editor.", "blocking": false, "authority": "D-20261102-PERF follow-up 3; UI-PROPERTY-VALUES-TYPED" }
       ],
       "acceptableVariations": ["Native clipboard plumbing, editor DOM, selection painting, completion layout and save latency may vary while the semantic outcomes and persisted bytes hold."],
       "nonRequirements": ["A real OS IME candidate window, candidate selection/cancellation, dead keys, platform IME reconversion or mobile keyboards: these require human/device checks.", "macOS native UI certification: the repository currently has no macOS WebDriver app runner.", "Exact pixels, selection color, caret blink, timing or editor DOM structure."],
@@ -390,6 +424,12 @@
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"
     },
+    "scripts/e2e-palette-pointer.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Clicking a command, page, block or create-page row acts once in the focused split pane, closes the palette and keeps the main pane's page; Enter still runs the highlighted command.", "blocking": true }],
+      "acceptableVariations": ["Row ranking, geometry, focus decoration and save latency may vary."],
+      "nonRequirements": ["Exact event sequences or DOM nesting; touch and pen hardware; certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-journal-template-cold.mjs": {
       "contracts": [
         {"class":"exact-safety-interoperability","userOutcome":"On a cold launch of the realistic 10k graph with a configured daily template and no file for today, the template's rows fill today exactly once with its variables resolved, and today's file is written once through the guarded save; a launch with a launch checkpoint does the same.","blocking":true,"authority":"BqbeQ"},
@@ -594,9 +634,9 @@
       "stability":"burn-in"
     },
     "scripts/e2e-journal-sections.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Customize seeds and opens an ordinary sections page from config queries and agenda, preserves an existing default-name page, reflects an edited query under today's journal without reload, and restores config sections on deletion in Markdown and Org graphs. Journals settings identifies and opens the active page without resetting the dialog.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Customize seeds and opens an ordinary sections page from config queries and agenda, preserves an existing default-name page, reflects an edited query under today's journal without reload, and restores config sections on deletion in Markdown and Org graphs. Journals settings identifies and opens the active page without resetting the dialog. The sections page, routed journal, Journals feed and sidebar source page show the configured query table, selected columns, sorted rows and aggregate. Editing a journal result saves the live task without changing the section block. Cancel keeps the sections page; accepting Delete removes it and restores config sections (GH #914).","blocking":true}],
       "acceptableVariations":["Query layout, page filename casing, focus, and save or watcher latency may vary while answer membership and persisted content remain correct."],
-      "nonRequirements":["Exact pixels, identical EDN whitespace, native platform certification outside Linux WebKitGTK, or synchronizing the page back into config.edn."],
+      "nonRequirements":["Exact pixels, identical EDN whitespace, native platform certification outside Linux WebKitGTK, synchronizing the page back into config.edn, or editing a section's View from the journal feed."],
       "stability":"burn-in"
     },
     "scripts/e2e-share-dialog.mjs": {

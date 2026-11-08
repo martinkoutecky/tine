@@ -296,9 +296,9 @@ describe("today's sections (GH #605)", () => {
     dispose();
   });
 
-  it("GH #855: each query section gets its block's text, so its View properties (sort, group) apply on the feed", async () => {
+  it("GH #855 / #914: each query section carries its whole host block, including every View property", async () => {
     h.marked = ["My sections"];
-    const viewed = "{{tine-query task = 'TODO'}}\ntine.group-field:: tags\ntine.sort:: priority asc";
+    const viewed = "{{tine-query task = 'TODO'}}\ntine.view:: table\ntine.columns:: points\ntine.group-field:: tags\ntine.sort:: priority asc\ntine.col-aggregates:: points=sum";
     h.pages.set("My sections", { name: "My sections", kind: "page", title: "My sections", pre_block: "tine.journal-sections:: true", format: "md",
       blocks: [block(viewed), block("{{query (task LATER)}}")] });
     const { div, dispose } = await mount();

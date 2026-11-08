@@ -56,8 +56,10 @@ async function openTine(bottom: boolean) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const dispose = render(() => <App />, host);
+  await vi.dynamicImportSettled();
   // After mount: App's startup preference load would overwrite an earlier seed.
-  await vi.waitFor(() => expect(host.querySelector(".journal-title")).not.toBeNull());
+  // Async startup readiness, with the same budget as block readiness below.
+  await vi.waitFor(() => expect(host.querySelector(".journal-title")).not.toBeNull(), { timeout: 5000 });
   resetMobileNavigationAtBottomForTests(bottom);
   mainPaneRouter.openPage("Tine", "page");
   await vi.waitFor(() => expect(route()).toMatchObject({ kind: "page", name: "Tine" }));

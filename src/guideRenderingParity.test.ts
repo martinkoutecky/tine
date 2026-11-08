@@ -1,8 +1,16 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches advanced query breadcrumb options (GH #881)", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  for (const outcome of [":breadcrumb-show? false", "keep their source page headings", ":group-by-page? false", "right sidebar and embeds", ":table-view? false"]) expect(guide).toContain(outcome);
+});
 it("the Guide explains compact embed icons and visible touch labels (GH #847)", () => {
   const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["chain icon for **Edit link**", "box-with-arrow icon for **Open source**", "**Remove** keeps its text beside a trash icon", "touch screen, all three keep their text labels"]) expect(guide).toContain(outcome);
+});
+it("the onboarding Guide explains the shared journal-section View and its editing home (GH #914)", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  for (const outcome of ["table or board, columns, sort and aggregates", "Change the View on the sections page", "result blocks can be edited directly in the journal"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches calendar sidebar gestures and retained tagged-page folds", () => {
   const journals = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");

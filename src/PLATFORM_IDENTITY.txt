@@ -61,7 +61,7 @@ src/keybindings.ts navigator.platform x1  # why: os-convention; mod key is Cmd o
 src/plugins/manager.ts platformKind x1  # why: native-api; plugin manifests declare the platforms they support (ADR 0052)
 src/plugins/startup.ts platform-literal x1  # why: native-api; plugin host initialisation differs on iOS (ADR 0052)
 src/plugins/startup.ts platformKind x1  # why: native-api; plugin host initialisation differs on iOS (ADR 0052)
-src/render/inline.tsx isMobilePlatform x1  # why: native-api; external media editor launches a desktop program
+src/render/inline.tsx isMobilePlatform x2  # why: native-api; external media editor launches a desktop program; outside PDF filesystem access is desktop-only (GH #732)
 src/router.ts isMobilePlatform x1  # why: host-event; Android Back and iOS swipe-back drive the history API
 src/shareIngest.ts platform-literal x1  # why: host-event; share source (Android intent vs iOS extension) is a host event
 src/shareShape.ts platform-literal x1  # why: host-event; share source (Android intent vs iOS extension) is a host event

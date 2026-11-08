@@ -61,8 +61,8 @@ impl WholeGraph {
 
     /// `[[` completion over pages, journals, aliases and referenced names.
     /// A first call can traverse all page blocks and reference text to build
-    /// indexes; later calls scan page, alias, and referenced-name candidates
-    /// and rank or sort matches, returning at most `limit` entries. Once an
+    /// indexes. Query extensions rank only the previous query's full matching
+    /// set (not its top `limit`); replacements rebuild the candidate set. Once an
     /// index has been built, a later publication carries it forward by updating
     /// changed pages; the first completion after every save does not rescan B.
     /// An inline editor can supply its (page, block, pre-completion text) to
@@ -86,6 +86,10 @@ impl WholeGraph {
                 .unwrap_or_else(|| format!("{page}\0{block}\0{original}"))
         });
         if limit == 0 {
+            self.graph.completion_rank.release(
+                &editor.map(|(p, b, r)| (p.to_owned(), b.to_owned(), r.to_owned())),
+                session,
+            );
             if let Some(identity) = identity {
                 self.graph
                     .completion_name_keys
@@ -152,24 +156,12 @@ impl WholeGraph {
                 plan.name_keys = Some(Arc::new(keys));
             }
         }
-        plan.execute(&self.graph, || false)
-            .hits
-            .into_iter()
-            .filter_map(|hit| match hit {
-                tine_core::query_plan::QueryHit::Page {
-                    mut page,
-                    matched_alias,
-                    match_class,
-                    ..
-                } => {
-                    if let Some(alias) = matched_alias {
-                        page.name = alias;
-                    }
-                    Some((page, match_class))
-                }
-                _ => None,
-            })
-            .collect()
+        if transliteration && plan.name_keys.is_none() {
+            plan.name_keys = Some(Arc::clone(&self.graph.transliteration_names));
+        }
+        self.graph
+            .completion_rank
+            .execute(&plan, &self.graph, session)
     }
 }
 

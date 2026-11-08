@@ -11,7 +11,8 @@ import { invalidateBinding } from "./binding";
 import type { PageEntry, QueryExecution } from "./types";
 
 // Work/wait budgets, not host wall time. This provider represents the complete
-// 10k name pool; each invocation counts one native rank of that pool. The real
+// 10k name pool; each positive-limit call counts one native rank of that pool.
+// Zero-limit calls release an editor lease without ranking. The real
 // release-app journey measures ranking and paint on the default realistic graph.
 const names: PageEntry[] = Array.from({ length: 10_000 }, (_, i) => ({
   name: `Topic ${i}`, kind: "page", path: `pages/Topic ${i}.md`, date_key: null,
@@ -82,16 +83,23 @@ describe("GH #899: completion responds during typing on the 10k name pool", () =
 
   it.each(["close", "dispose", "graph", "composition"])("retires queued work on %s", async transition => {
     let reply!: (rows: PageEntry[]) => void;
-    const read = vi.spyOn(backend(), "quickSwitch").mockImplementationOnce(() => new Promise(resolve => { reply = resolve; }));
+    const read = vi.spyOn(backend(), "quickSwitch").mockImplementationOnce(() => new Promise(resolve => { reply = resolve; }))
+      .mockResolvedValue([]);
     const mounted = editor(); mounted.input("[[t"); await flush();
     expect(read).toHaveBeenCalledOnce();
+    const first = read.mock.calls[0];
     mounted.input("[[to");
     if (transition === "close") mounted.core.closeAc();
     else if (transition === "composition") mounted.core.pause();
     else if (transition === "dispose") { mounted.retire(); disposals.pop()!(); }
     else invalidateBinding();
     reply([{ name: "stale", kind: "page", path: "", date_key: null }]); await flush();
-    expect(read).toHaveBeenCalledOnce();
+    expect(read.mock.calls.filter(([, limit]) => limit > 0)).toEqual([first]);
+    const releases = read.mock.calls.filter(([, limit]) => limit === 0);
+    if (transition === "close" || transition === "dispose") {
+      expect(releases.length).toBeGreaterThan(0);
+      for (const call of releases) expect(call).toEqual(["", 0, first[2], false]);
+    } else expect(releases).toEqual([]);
     expect(mounted.core.acItems().some(item => item.label === "stale")).toBe(false);
   });
 

@@ -348,6 +348,9 @@ impl Graph {
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
             completion_name_keys: Arc::clone(&self.completion_name_keys),
+            completion_rank: crate::query_plan::completion::CompletionCache::new(
+                &self.completion_name_keys,
+            ),
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]

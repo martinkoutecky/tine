@@ -4,9 +4,10 @@ import type { Block as AstBlock, Format } from "../render/ast";
 import { parseBody } from "../render/facets";
 import { query_edn_json } from "../render/wasm/lsdoc_wasm.js";
 import { QueryMacro } from "./Macro";
+import { queryListOptions, type QueryListOptions } from "../editor/queryListOptions";
 
 export type BeginQueryMatch =
-  | { kind: "supported"; query: string; title?: string; keeps_block_children?: boolean }
+  | { kind: "supported"; query: string; title?: string; keeps_block_children?: boolean; listOptions?: QueryListOptions }
   | { kind: "unsupported"; reason: string };
 
 // Mirrored by `whole_begin_query_payload` (tine-graph-features render.rs); both read
@@ -40,14 +41,22 @@ export function inspectBeginQuery(
   if (body.length !== 1 || body[0].kind !== "custom" || body[0].name.toLowerCase() !== "query") {
     return { kind: "unsupported", reason: "container was not recognized as a query" };
   }
-  return JSON.parse(query_edn_json(container[1], "begin_query", "")) as BeginQueryMatch;
+  const match = JSON.parse(query_edn_json(container[1], "begin_query", "")) as BeginQueryMatch;
+  const options = queryListOptions(container[1]);
+  return match.kind === "supported" && Object.keys(options).length ? { ...match, listOptions: options } : match;
 }
 
-/** The options map the BEGIN_QUERY macro text ends with: OG's table view, and the map's
- *  `:remove-block-children? false` (GH #651), which the engine reads from this trailing
- *  map for the simple DSL as well as a datalog vector. */
-function beginQueryOptions(match: { keeps_block_children?: boolean }): string {
-  return match.keeps_block_children ? "{:table-view? true :remove-block-children? false}" : "{:table-view? true}";
+/** Forward authored presentation alongside the engine's child-row option.
+ * Tine intentionally retains its existing table default; explicit false allows
+ * OG's list options to apply (GH #881; query.cljs/custom-query-inner). */
+function beginQueryOptions(match: { keeps_block_children?: boolean; listOptions?: QueryListOptions }): string {
+  const options = match.listOptions;
+  return `{${[
+    `:table-view? ${options?.table !== false}`,
+    ...(match.keeps_block_children ? [":remove-block-children? false"] : []),
+    ...(options?.breadcrumb !== undefined ? [`:breadcrumb-show? ${options.breadcrumb}`] : []),
+    ...(options?.groupByPage !== undefined ? [`:group-by-page? ${options.groupByPage}`] : []),
+  ].join(" ")}}`;
 }
 
 /** Read-only BEGIN_QUERY presentation. OG presents the authored title and query
