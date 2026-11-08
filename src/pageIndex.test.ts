@@ -312,11 +312,13 @@ describe("page index: name-only inventory deltas", () => {
     const links: string[] = [];
     const routes: string[] = [];
     const namespaces: string[] = [];
+    const navigationNames: string[] = [];
     let unrelated = 0;
     const dispose = createRoot(dispose => {
       createComputed(() => links.push(index.linkTarget("2026-10-23").name));
       createComputed(() => routes.push(index.navigationTarget("2026-10-23").name));
       createComputed(() => namespaces.push(index.namespaceTarget("2026-10-23")!.name));
+      createComputed(() => navigationNames.push(index.navigationName("2026-10-23")));
       createComputed(() => { index.linkTarget("Unrelated"); unrelated++; });
       return dispose;
     });
@@ -326,6 +328,7 @@ describe("page index: name-only inventory deltas", () => {
     expect(links).toEqual(["Alpha", "Beta"]);
     expect(routes).toEqual(["Alpha", "Beta"]);
     expect(namespaces).toEqual(["Oct 23rd, 2026", "Oct 23rd, 2026"]);
+    expect(navigationNames).toEqual(["Alpha", "Beta"]);
     index.patchPageIndex(3n, { keys: ["oct 23rd, 2026"], entries: [] });
     expect(links.at(-1)).toBe("2026-10-23");
     index.patchPageIndex(4n, { keys: ["oct 23rd, 2026"], entries: [day("Alpha")] });

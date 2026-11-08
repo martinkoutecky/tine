@@ -440,7 +440,7 @@ export function navigationName(name: string): string {
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
   const entry = answer?.pages.get(key) ?? (!isPublishedExport() ? answer?.journals.get(key) : undefined);
-  if (!entry && !isPublishedExport()) return linkTargetIn(answer, name, true).name;
+  if (!entry && !isPublishedExport()) return linkTargetIn(answer, name, true, nameAnswer).name;
   const target = entry?.target;
   if (!target || target.kind === "absent") return name;
   if (target.kind === "alias" && entry?.link) return entry.link.name;
