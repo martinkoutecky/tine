@@ -197,7 +197,7 @@ fn guide_explains_margin_comments() {
     assert!(tips.markdown.contains("## Comment on a passage — Ctrl+R"));
     for workflow in [
         "selection toolbar's **Comment** button",
-        "quote context and author metadata stay hidden",
+        "Comment and reply editors hide every `tine.*` property",
         "speech bubble at the right edge",
         "click its **Reply…** box at the bottom",
         "**Shift+Enter** adds a line",
@@ -229,30 +229,32 @@ fn guide_explains_margin_comments() {
         .contains("struck through with **quoted text changed**"));
     assert!(tips
         .markdown
-        .contains("A bullet with an `tine.author::` property"));
+        .contains("A bullet with a `tine.author::` property"));
     // Comment identity (D-20261017-LD1): the "Your name" setting.
     assert!(tips.markdown.contains("**Settings > Editor > Your name**"));
     assert!(tips
         .markdown
         .contains("saved with `tine.author:: <your name>`"));
     // tine#841: the one-time question in a git graph, and what Skip does.
-    assert!(tips.markdown.contains("In a graph that is under git, the first comment or reply you write without a name asks for one once"));
+    assert!(tips.markdown.contains("In a graph that is under git, the first comment or reply you write without a name asks **How should your comments be signed?** once"));
     assert!(tips
         .markdown
         .contains("**Skip** writes the comment without it and Tine does not ask again"));
-    // Slice 2b: comments draw no bullets; the author chip is their handle.
-    assert!(tips.markdown.contains("draw no bullet of their own"));
-    assert!(tips.markdown.contains("the name chip is the handle"));
+    // GH #891: comments are annotations; the name chip opens the block menu.
+    assert!(tips.markdown.contains("Comments cannot be dragged"));
+    assert!(tips
+        .markdown
+        .contains("Right-click the name chip (long-press on a phone) for the block menu"));
     // Slice 2: the margin column on wide windows, and where it does not apply.
     assert!(tips
         .markdown
-        .contains("shows the comments in a column on the right"));
+        .contains("shows threads in a column on the right"));
     assert!(tips
         .markdown
-        .contains("**Enter** in a comment's text adds a reply under it"));
+        .contains("**Enter** in a comment's text adds a reply under the thread root"));
     assert!(tips
         .markdown
-        .contains("in a split pane or in the sidebar, comments stay in the outline"));
+        .contains("in the sidebar or in an embed, comments stay in the outline"));
 }
 
 #[test]

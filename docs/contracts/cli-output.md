@@ -513,7 +513,7 @@ One block per line, indented two spaces per level:
 ```
 # a
 id pages/a.md rev d24f22bfce0d5568
-1~xy4j47 [tine.author:: claude] one
+1~diekug [tine.author:: claude] one
          id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
   1.1~3as2k7 under one
 2~hl6h22 TODO two

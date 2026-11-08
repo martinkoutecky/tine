@@ -47,7 +47,7 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "blocks": [
-        "proof/1~qabwn5"
+        "proof/1~uia6yw"
       ],
       "kind": "written",
       "more": 0,
@@ -63,7 +63,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev 9ff53a1e36372041\nproof/1~qabwn5\n"
+    "text": "written proof rev 9ff53a1e36372041\nproof/1~uia6yw\n"
   },
   {
     "after": "- ONE\n  status:: doing\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  tine.author:: claude\n\t- child\n",
@@ -80,7 +80,7 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "blocks": [
-        "proof/1~hzu4mh"
+        "proof/1~nqlhzc"
       ],
       "kind": "written",
       "more": 0,
@@ -96,7 +96,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev d2df4dda01c7a304\nproof/1~hzu4mh\n"
+    "text": "written proof rev d2df4dda01c7a304\nproof/1~nqlhzc\n"
   },
   {
     "after": "- ONE\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: codex\n\t- child\n",
@@ -115,7 +115,7 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
     "json": {
       "blocks": [
-        "proof/1~tzt47m"
+        "proof/1~uia6yw"
       ],
       "kind": "written",
       "more": 0,
@@ -132,7 +132,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev 9eb4d8d7a77b9cd2\nproof/1~tzt47m\n"
+    "text": "written proof rev 9eb4d8d7a77b9cd2\nproof/1~uia6yw\n"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: done\n  tine.author:: claude\n\t- child\n",
@@ -363,8 +363,8 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
     "json": {
       "blocks": [
-        "proof/5~uul3jr",
-        "proof/5.1~vxlt64"
+        "proof/5~ee4nkg",
+        "proof/5.1~57c7bc"
       ],
       "kind": "written",
       "more": 0,
@@ -381,7 +381,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev b56c2caa0ab73a38\nproof/5~uul3jr\nproof/5.1~vxlt64\n"
+    "text": "written proof rev b56c2caa0ab73a38\nproof/5~ee4nkg\nproof/5.1~57c7bc\n"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
@@ -759,7 +759,7 @@
     "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
     "json": {
       "blocks": [
-        "proof/1.2~uul3jr"
+        "proof/1.2~ee4nkg"
       ],
       "kind": "written",
       "more": 0,
@@ -776,7 +776,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev dafcabc6cfb501db\nproof/1.2~uul3jr\n"
+    "text": "written proof rev dafcabc6cfb501db\nproof/1.2~ee4nkg\n"
   },
   {
     "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
@@ -1139,7 +1139,7 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "blocks": [
-        "proof/1~cek3t2"
+        "proof/1~msqxih"
       ],
       "kind": "written",
       "more": 0,
@@ -1155,7 +1155,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev a1240e96cb96c134\nproof/1~cek3t2\n"
+    "text": "written proof rev a1240e96cb96c134\nproof/1~msqxih\n"
   },
   {
     "after": "* ONE\n:PROPERTIES:\n:status: doing\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:tine.author: claude\n:END:\n** child\n",
@@ -1172,7 +1172,7 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "blocks": [
-        "proof/1~nihbsq"
+        "proof/1~7qjkxd"
       ],
       "kind": "written",
       "more": 0,
@@ -1188,7 +1188,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev d8901db1afec8a0d\nproof/1~nihbsq\n"
+    "text": "written proof rev d8901db1afec8a0d\nproof/1~7qjkxd\n"
   },
   {
     "after": "* ONE\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: codex\n:END:\n** child\n",
@@ -1207,7 +1207,7 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
     "json": {
       "blocks": [
-        "proof/1~gnu65i"
+        "proof/1~msqxih"
       ],
       "kind": "written",
       "more": 0,
@@ -1224,7 +1224,7 @@
       },
       "verb": "block.edit"
     },
-    "text": "written proof rev add40fc9a2bd513b\nproof/1~gnu65i\n"
+    "text": "written proof rev add40fc9a2bd513b\nproof/1~msqxih\n"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: done\n:tine.author: claude\n:END:\n** child\n",
@@ -1455,8 +1455,8 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
     "json": {
       "blocks": [
-        "proof/5~miekes",
-        "proof/5.1~hifi2e"
+        "proof/5~ee4nkg",
+        "proof/5.1~57c7bc"
       ],
       "kind": "written",
       "more": 0,
@@ -1473,7 +1473,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev fd8901b68fe59378\nproof/5~miekes\nproof/5.1~hifi2e\n"
+    "text": "written proof rev fd8901b68fe59378\nproof/5~ee4nkg\nproof/5.1~57c7bc\n"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
@@ -1851,7 +1851,7 @@
     "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
     "json": {
       "blocks": [
-        "proof/1.2~miekes"
+        "proof/1.2~ee4nkg"
       ],
       "kind": "written",
       "more": 0,
@@ -1868,7 +1868,7 @@
       },
       "verb": "block.add"
     },
-    "text": "written proof rev e8cfdcb95a5e4e7a\nproof/1.2~miekes\n"
+    "text": "written proof rev e8cfdcb95a5e4e7a\nproof/1.2~ee4nkg\n"
   },
   {
     "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
