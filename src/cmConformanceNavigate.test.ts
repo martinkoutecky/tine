@@ -66,14 +66,16 @@ function sorted(v: unknown): unknown {
 }
 
 async function runCase(c: Case): Promise<string[]> {
-  vi.resetModules();
   backendMock.pageInventory.mockReset().mockResolvedValue({ rev: "1", entries: c.inventory });
   await (await import("./render/parse")).initParser();
   const journal = await import("./journal");
   // graph.ts: setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format).
   journal.setJournalFormats(c.journalTitleFormat, c.journalFileFormat);
   const index = await import("./pageIndex");
+  // Each graph gets fresh inventory state without reinitializing the module tree.
+  index.resetPageIndex();
   index.installPageIndex();
+  await index.refreshPageIndex();
   await vi.waitFor(() => expect(index.allPages()).toBeDefined());
   const diffs: string[] = [];
   const conflicts = new Set(c.conflicts);
@@ -141,6 +143,7 @@ async function runCase(c: Case): Promise<string[]> {
 }
 
 beforeEach(() => {
+  vi.resetModules();
   backendMock.graphBindingGeneration.mockReset().mockReturnValue(1);
 });
 

@@ -7,11 +7,12 @@ import { beforeEach, expect, it, vi } from "vitest";
 const bus = vi.hoisted(() => ({
   listeners: new Set<(event: { payload: { origin: string } }) => void>(),
   stored: false,
+  broadcasts: 0,
   heldTrue: null as null | { fail: (error: Error) => void; reply: () => void },
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (_name, cb) => { bus.listeners.add(cb); return () => bus.listeners.delete(cb); }),
-  emit: vi.fn(async (_name, payload) => { for (const cb of bus.listeners) cb({ payload }); }),
+  emit: vi.fn(async (_name, payload) => { for (const cb of bus.listeners) cb({ payload }); bus.broadcasts++; }),
 }));
 vi.mock("./backend", () => ({ backend: () => ({
   getAppString: async () => "en",
@@ -27,11 +28,9 @@ vi.mock("./backend", () => ({ backend: () => ({
   },
 }) }));
 
-const settle = () => new Promise(resolve => setTimeout(resolve, 30));
-
 async function twoWindows() {
   vi.resetModules();
-  bus.listeners.clear(); bus.stored = false; bus.heldTrue = null;
+  bus.listeners.clear(); bus.stored = false; bus.heldTrue = null; bus.broadcasts = 0;
   const main = await import("./launcherRanking");
   await main.initPinyinMatchingSetting();
   vi.resetModules();
@@ -47,9 +46,10 @@ it("a failed local write overlapped by another window's broadcast ends on the st
   main.setPinyinMatchingEnabled(true);
   await vi.waitFor(() => expect(bus.heldTrue).not.toBeNull());
   other.setPinyinMatchingEnabled(false);
-  await settle();
+  await vi.waitFor(() => expect(bus.broadcasts).toBe(1));
+  expect(main.pinyinMatchingEnabled()).toBe(true);
   bus.heldTrue!.fail(new Error("disk full"));
-  await settle();
+  await vi.waitFor(() => expect(main.pinyinMatchingEnabled()).toBe(false));
   expect(bus.stored).toBe(false);
   expect(other.pinyinMatchingEnabled()).toBe(false);
   expect(main.pinyinMatchingEnabled()).toBe(false);
@@ -61,10 +61,12 @@ it("a local write whose reply lands after another window's newer write ends on t
   await vi.waitFor(() => expect(bus.heldTrue).not.toBeNull());
   // main's write reached the file first, but its reply is still in flight when
   // the other window writes false (the later write on disk) and broadcasts.
+  bus.stored = true;
   other.setPinyinMatchingEnabled(false);
-  await settle();
+  await vi.waitFor(() => expect(bus.broadcasts).toBe(1));
+  expect(main.pinyinMatchingEnabled()).toBe(true);
   bus.heldTrue!.reply();
-  await settle();
+  await vi.waitFor(() => expect(main.pinyinMatchingEnabled()).toBe(false));
   expect(bus.stored).toBe(false);
   expect(other.pinyinMatchingEnabled()).toBe(false);
   expect(main.pinyinMatchingEnabled()).toBe(false);
