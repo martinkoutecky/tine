@@ -122,6 +122,37 @@ fn cli_reads_ignore_logseq_backups_cold_and_from_checkpoint() {
 }
 
 #[test]
+fn journal_reads_the_active_cross_kind_opening_file() {
+    let graph = Graph::new();
+    graph.store.stop_watcher_for_tests();
+    std::fs::create_dir_all(graph.root.join("journals")).unwrap();
+    let ordinary = "title:: Nov 6th, 2026\n- ordinary opening file\n";
+    let journal = "- HIDDEN_JOURNAL_SENTINEL\n";
+    seed(
+        &graph,
+        &[
+            ("pages/A.md", ordinary),
+            ("journals/2026_11_06.md", journal),
+        ],
+    );
+    let slot = graph.slot();
+    for (text, expected) in [
+        (ordinary, ordinary),
+        ("title:: Elsewhere\n- ordinary opening file\n", journal),
+        (ordinary, ordinary),
+    ] {
+        std::fs::write(graph.root.join("pages/A.md"), text).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let read = verb(&slot, "journal", json!({"date":"2026-11-06"})).unwrap();
+        assert_eq!(read["text"], expected);
+    }
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("journals/2026_11_06.md")).unwrap(),
+        journal
+    );
+}
+
+#[test]
 fn page_show_uses_the_indexed_name_during_a_title_change() {
     for org in [false, true] {
         let graph = Graph::new();

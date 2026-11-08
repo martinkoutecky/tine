@@ -12,7 +12,8 @@
 // (pinned in cm_conformance_published.rs), so it answers as the app. The only
 // differences left, in `tests/fixtures/published-answers/conformance-differences.json`
 // (reasons in the design note), are spellings no exported page writes: d1's
-// typed `25-10-2026` and o1's probe `getPage journal "2026-10-26"`. A site
+// typed `25-10-2026` and d6's `23.10.2026`. OWN2 closes the former twin-day
+// getPage difference because the shared opening path now agrees. A site
 // visitor reaches them only by typing the address. `CM_REFRESH=1` rewrites it.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";

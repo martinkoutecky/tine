@@ -119,7 +119,7 @@ fn cost_fixture() -> (tempfile::TempDir, Store, Subscription) {
 
 fn assert_no_page_reparse(store: &Store, label: &str, config_reads: u64) {
     let view = store.whole_graph().unwrap();
-    assert_eq!(view.corpus(None).pages.len(), 12);
+    assert_eq!(view.corpus(None, false).pages.len(), 12);
     let counts = tine_store::cost_counters::snapshot();
     // read_config uses the same full-read counter as pages. Own reloads
     // read that one file here; watcher-thread reads are counted separately.
@@ -189,7 +189,10 @@ fn outside_settings_keep_parsed_pages_but_build_config_reparses() {
         "logseq/config.edn",
         Duration::from_secs(10)
     ));
-    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 11);
+    assert_eq!(
+        store.whole_graph().unwrap().corpus(None, false).pages.len(),
+        11
+    );
     let counts = tine_store::cost_counters::snapshot();
     eprintln!(
         "external hidden: page reads={}, parses={}",
@@ -205,7 +208,10 @@ fn own_build_config_change_still_reparses_pages() {
     let (_dir, store, _subscription) = cost_fixture();
     tine_store::cost_counters::reset();
     tine_graph_features::config::set_journal_page_title_format(&store, "yyyy-MM-dd").unwrap();
-    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 12);
+    assert_eq!(
+        store.whole_graph().unwrap().corpus(None, false).pages.len(),
+        12
+    );
     let counts = tine_store::cost_counters::snapshot();
     eprintln!(
         "own journal format: page reads={}, parses={}",

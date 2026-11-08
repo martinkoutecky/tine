@@ -23,7 +23,7 @@ fn export_targets_use_real_ids_in_markdown_and_org() {
     )
     .unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
-    let corpus = store.whole_graph().unwrap().corpus(None);
+    let corpus = store.whole_graph().unwrap().corpus(None, false);
     for (name, expected) in [("Markdown", md_id), ("Org", org_id)] {
         let page = corpus.pages.iter().find(|page| page.name == name).unwrap();
         assert_eq!(

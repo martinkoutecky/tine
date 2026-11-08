@@ -137,7 +137,7 @@ fn main() {
     }
     let ready_ms = ms(began);
     let view = store.whole_graph().expect("ready");
-    let pages = view.corpus(None).pages.len();
+    let pages = view.corpus(None, false).pages.len();
     let t = Instant::now();
     store.page(&largest).expect("largest");
     let page_largest_ms = ms(t);

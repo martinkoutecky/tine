@@ -26,6 +26,11 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
     let mut out = Vec::new();
     bad.journal_days.clear();
     for day in crate::journals::journal_conflicts(store)? {
+        // An ordinary claimant can own this literal name. Its complete
+        // cross-kind bucket is listed below as a name conflict instead.
+        if !day.files.iter().any(|file| file.canonical) {
+            continue;
+        }
         for file in &day.files {
             if let Some(reason) = &file.preview_error {
                 bad.journal_days.insert(file.path.clone(), reason.clone());
@@ -41,6 +46,7 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
             role,
             label: file.name.clone(),
             path: Some(file.path.clone()),
+            kind: None,
         };
         // A day whose pair cannot be diffed stays queued without row choices
         // (as a cross-format pair does), and the unreadable file is reported.
@@ -151,6 +157,7 @@ fn copy_object(store: &Store, copy: &SyncConflict) -> io::Result<Option<Conflict
                 role: SideRole::Mine,
                 label: "This device".to_string(),
                 path: Some(winner),
+                kind: None,
             },
             ConflictSide {
                 role: SideRole::Theirs,
@@ -160,6 +167,7 @@ fn copy_object(store: &Store, copy: &SyncConflict) -> io::Result<Option<Conflict
                     copy.tag.clone()
                 },
                 path: Some(copy.path.clone()),
+                kind: None,
             },
         ],
         block_conflicts: diff.as_ref().map(|d| decidable_row_count(&d.rows)),
@@ -183,11 +191,13 @@ fn marker_object(store: &Store, marked: &VcsMarkerConflict) -> io::Result<Confli
             role: SideRole::Mine,
             label: label(|p| p.mine_label.as_str(), "Local side"),
             path: None,
+            kind: None,
         },
         ConflictSide {
             role: SideRole::Theirs,
             label: label(|p| p.theirs_label.as_str(), "Merged-in side"),
             path: None,
+            kind: None,
         },
     ];
     if parsed.as_ref().is_some_and(|p| p.diff.three_way) {
@@ -195,6 +205,7 @@ fn marker_object(store: &Store, marked: &VcsMarkerConflict) -> io::Result<Confli
             role: SideRole::Base,
             label: "Common ancestor".to_string(),
             path: None,
+            kind: None,
         });
     }
     Ok(ConflictObject {
@@ -214,6 +225,64 @@ const CONFIG: &str = "logseq/config.edn";
 
 fn sort_queue(queue: &mut [ConflictObject]) {
     queue.sort_by(|a, b| a.page_name.cmp(&b.page_name).then_with(|| a.id.cmp(&b.id)));
+}
+
+/// Ordinary and cross-kind twins use the same physical claimant answer as
+/// navigation. Journal-only buckets retain their existing resolution journey.
+fn name_objects(store: &Store, names: Option<&[String]>) -> io::Result<Vec<ConflictObject>> {
+    let view = store
+        .whole_graph()
+        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    let inventory = view.inventory(tine_store::InventoryScope::ConflictingFiles(names));
+    let mut buckets = std::collections::BTreeMap::<String, Vec<_>>::new();
+    for entry in &inventory.0 {
+        buckets
+            .entry(tine_core::refs::page_key(&entry.name))
+            .or_default()
+            .push(entry);
+    }
+    Ok(buckets
+        .into_values()
+        .into_iter()
+        .filter(|claims| !claims[0].is_journal)
+        .map(|claims| {
+            let winner = &claims[0];
+            let file = |entry: &tine_store::InventoryEntry| match &entry.target {
+                tine_store::Resolved::Existing { id, .. } => id.as_str().to_owned(),
+                _ => unreachable!("physical conflict inventory contains file targets"),
+            };
+            let kind = |entry: &tine_store::InventoryEntry| {
+                if entry.is_journal {
+                    PageKind::Journal
+                } else {
+                    PageKind::Page
+                }
+            };
+            ConflictObject {
+                id: format!("name:{}", tine_core::refs::page_key(&winner.name)),
+                source: ConflictSource::DuplicateName,
+                page_name: winner.name.clone(),
+                page_path: file(winner),
+                kind: kind(winner),
+                sides: claims
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| ConflictSide {
+                        role: if i == 0 {
+                            SideRole::Mine
+                        } else {
+                            SideRole::Theirs
+                        },
+                        label: file(entry),
+                        path: Some(file(entry)),
+                        kind: Some(kind(entry)),
+                    })
+                    .collect(),
+                block_conflicts: None,
+                markers: Vec::new(),
+            }
+        })
+        .collect())
 }
 
 /// The Concord conflict queue: ONE derived inventory of everything on disk
@@ -249,6 +318,7 @@ fn derive(store: &Store) -> io::Result<Derived> {
     let sync_conflicts = sync_copies(store, &mut bad)?;
     let vcs_markers = list_vcs_marker_pages(store, &mut bad)?;
     let mut queue = journal_objects(store, &mut bad)?;
+    queue.extend(name_objects(store, None)?);
     for copy in &sync_conflicts {
         queue.extend(bad.file(&copy.path, copy_object(store, copy))?.flatten());
     }
@@ -350,15 +420,19 @@ impl ConflictQueue {
                     })
                     || path == CONFIG
                     || inventory.queue.iter().any(|o| {
-                        o.source == ConflictSource::DuplicateJournal
-                            && o.sides.iter().any(|s| s.path.as_deref() == Some(path))
+                        matches!(
+                            o.source,
+                            ConflictSource::DuplicateJournal | ConflictSource::DuplicateName
+                        ) && o.sides.iter().any(|s| s.path.as_deref() == Some(path))
                     })
             };
             change
                 .files
                 .iter()
                 .filter(|(file, _, _)| {
-                    change.origin == tine_store::Origin::External || named(file.as_str())
+                    change.origin == tine_store::Origin::External
+                        || change.inventory_delta().0
+                        || named(file.as_str())
                 })
                 .map(|(file, _, _)| file.clone())
                 .collect()
@@ -442,6 +516,64 @@ impl ConflictQueue {
             }
             inventory.vcs_markers.sort_by(|a, b| a.path.cmp(&b.path));
             sort_copies(&mut inventory.sync_conflicts);
+            // Old keys come from affected conflict sides (a removed/retitled
+            // file may no longer have its old name); new keys come from exact
+            // physical inventory lookups. No whole-graph pass per edit.
+            let mut names: Vec<String> = inventory
+                .queue
+                .iter()
+                .filter(|o| {
+                    o.source == ConflictSource::DuplicateName
+                        && o.sides
+                            .iter()
+                            .any(|s| files.iter().any(|f| s.path.as_deref() == Some(f.as_str())))
+                })
+                .map(|o| o.page_name.clone())
+                .collect();
+            let view = store
+                .whole_graph()
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            for file in files {
+                names.extend(
+                    view.inventory(tine_store::InventoryScope::File(&tine_store::PageId::from(
+                        file.as_str(),
+                    )))
+                    .0
+                    .iter()
+                    .map(|e| e.name.clone()),
+                );
+            }
+            let config_changed = files.iter().any(|f| f.as_str() == CONFIG);
+            let fresh_names = name_objects(store, (!config_changed).then_some(names.as_slice()))?;
+            // An ordinary-only event can mask or restore a duplicated day.
+            // Stable ordinary ownership does not rewalk journal files.
+            journals |= inventory.queue.iter().any(|old| {
+                let affected = names
+                    .iter()
+                    .any(|name| tine_core::refs::same_page(name, &old.page_name));
+                let ordinary_owned = fresh_names
+                    .iter()
+                    .any(|new| tine_core::refs::same_page(&new.page_name, &old.page_name));
+                affected
+                    && match old.source {
+                        ConflictSource::DuplicateJournal => ordinary_owned,
+                        ConflictSource::DuplicateName => {
+                            !ordinary_owned
+                                && old
+                                    .sides
+                                    .iter()
+                                    .any(|side| side.kind == Some(PageKind::Journal))
+                        }
+                        _ => false,
+                    }
+            });
+            inventory.queue.retain(|o| {
+                o.source != ConflictSource::DuplicateName
+                    || (!config_changed
+                        && !names
+                            .iter()
+                            .any(|name| tine_core::refs::same_page(name, &o.page_name)))
+            });
             let touched = |object: &ConflictObject| match object.source {
                 ConflictSource::DuplicateJournal => journals,
                 ConflictSource::SyncCopy => object
@@ -451,6 +583,7 @@ impl ConflictQueue {
                 _ => files.iter().any(|f| f.as_str() == object.page_path),
             };
             inventory.queue.retain(|object| !touched(object));
+            inventory.queue.extend(fresh_names);
             for copy in inventory
                 .sync_conflicts
                 .iter()

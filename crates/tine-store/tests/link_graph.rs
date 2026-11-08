@@ -326,7 +326,7 @@ fn links_near_seeds_survive_a_rename_inside_a_definition() {
 /// claims — the pages without a file.
 fn parity(root: &Path) -> (usize, usize) {
     let (_store, graph) = open(root);
-    let corpus = graph.corpus(None);
+    let corpus = graph.corpus(None, false);
     let mut physical: BTreeSet<String> = BTreeSet::new();
     let mut fileless: BTreeSet<String> = BTreeSet::new();
     let format = tine_core::date::JournalFormat::new(None, None);
@@ -451,7 +451,7 @@ fn links_near_k2_on_the_realistic_graph() {
     let root = std::env::var("TINE_LINKS_BENCH_GRAPH").expect("TINE_LINKS_BENCH_GRAPH");
     let (_store, graph) = open(Path::new(&root));
     let names: Vec<String> = graph
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .filter(|page| page.kind == tine_core::model::PageKind::Page)
@@ -506,13 +506,13 @@ fn links_near_k2_on_the_realistic_graph() {
     // The table build alone, on a fresh view of an unchanged graph... the view
     // shares the snapshot, so time a rebuild through a new store instead.
     let (_store2, graph2) = open(Path::new(&root));
-    let _ = graph2.corpus(None);
+    let _ = graph2.corpus(None, false);
     let started = std::time::Instant::now();
     let _ = graph2.link_table_stats();
     eprintln!("link table build alone: {:?}", started.elapsed());
     eprintln!(
         "{} pages, VmHWM {} KiB",
-        graph.corpus(None).pages.len(),
+        graph.corpus(None, false).pages.len(),
         rss_kib("VmHWM:")
     );
 }
@@ -574,7 +574,7 @@ fn alias_fanout_build_peak(owners: usize, repeats: usize) -> (i64, (usize, usize
         &format!("- {}\n", "[[shared]] ".repeat(repeats)),
     );
     let (_store, graph) = open(dir.path());
-    let _ = graph.corpus(None);
+    let _ = graph.corpus(None, false);
     let (stats, peak) = crate::query_unit_cost::peak_heap_of(|| graph.link_table_stats());
     (peak, stats)
 }

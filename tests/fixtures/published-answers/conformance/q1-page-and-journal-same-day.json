@@ -7,10 +7,6 @@
         "day": null,
         "is_journal": false,
         "key": "2026-10-26",
-        "link": {
-          "kind": "journal",
-          "name": "Oct 26th, 2026"
-        },
         "name": "2026-10-26",
         "target": {
           "id": "pages/2026-10-26.md",
@@ -53,7 +49,7 @@
         "kind": "journal",
         "name": "2026-10-26",
         "target": {
-          "id": "journals/2026_10_26.md",
+          "id": "pages/2026-10-26.md",
           "kind": "existing",
           "others": []
         }

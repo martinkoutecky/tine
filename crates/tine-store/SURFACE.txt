@@ -97,11 +97,11 @@ field store::Change.origin
 enum store::LoadError
 fn store::Store::refresh
 fn store::Store::subscribe
-fn store::Change::page
+fn store::Change::pages
 # Cost-model audit 2026-11-02 row 1: a link edit's inventory signal carries the
 # entries that moved, so the window patches its names instead of rereading the
 # whole inventory per autosave. No existing Change item answers names
-# (`Change::page` is one page's parsed form), and `WholeGraph::inventory` cannot
+# (`Change::pages` lists affected active pages), and `WholeGraph::inventory` cannot
 # take a parameter for it: a later view answers a later revision, not this
 # publication's. The answer reuses `Inventory`; no type is added.
 fn store::Change::inventory_delta
@@ -400,7 +400,9 @@ fn store::WholeGraph::complete_page_names
 # `InventoryScope` instead of a sibling method (rule 3).
 fn store::WholeGraph::inventory
 # Cost-model audit 2026-11-02 row 5: print asks for the pages of one name
-# through `corpus(Some(name))` (a parameter, rule 3), not a sibling method.
+# through `corpus(Some(name), active_only)` (parameters, rule 3), not a sibling method.
+# R13 B1 keeps the same question for active semantics and physical mutation
+# inputs; inventory's ConflictingFiles scope supplies physical conflict rows.
 fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::resolve

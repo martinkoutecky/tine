@@ -82,10 +82,10 @@ pub(crate) fn content_free(doc: &tine_core::doc::Document) -> bool {
 /// content: it opens itself, as before EMPTY-ALIAS.
 fn file_content_free(graph: &ReadSnapshot, id: &str) -> bool {
     graph
-        .pages
+        .physical_pages
         .positions
         .get(id)
-        .and_then(|&slot| graph.pages.get(slot))
+        .and_then(|&slot| graph.physical_pages.get(slot))
         .is_some_and(|(_, doc)| content_free(doc))
 }
 
@@ -94,6 +94,11 @@ fn file_content_free(graph: &ReadSnapshot, id: &str) -> bool {
 fn claim_content_free<'a>(graph: &ReadSnapshot, mut ids: impl Iterator<Item = &'a str>) -> bool {
     let mut any = false;
     let all = ids.all(|id| {
+        if graph.physical_pages.positions.contains_key(id)
+            && !graph.pages.positions.contains_key(id)
+        {
+            return true;
+        }
         any = true;
         file_content_free(graph, id)
     });
@@ -169,9 +174,24 @@ pub(crate) fn link_target_in(
         })
     };
     let fallback = crate::model::fileless_names::FilelessName::new(format, name);
+    let owners = graph.real_page_owners();
+    if let Some(entry) = owners.opening_entry(&key) {
+        let all: Vec<_> = [false, true]
+            .into_iter()
+            .flat_map(|kind| claimed(kind, key.clone()).into_iter().flatten().cloned())
+            .collect();
+        return yielded(&all).unwrap_or_else(|| LinkTarget {
+            name: entry.name.clone(),
+            is_journal: entry.kind == PageKind::Journal,
+        });
+    }
     if fallback.day.is_some() {
         if let Some(journals) = claimed(true, tine_core::refs::page_key(&fallback.name)) {
-            return opens(journals, true);
+            if let Some(entry) = owners.opening_entry(&tine_core::refs::page_key(&fallback.name)) {
+                if entry.kind == PageKind::Journal {
+                    return opens(journals, true);
+                }
+            }
         }
         if let Some(pages) = claimed(false, key.clone()) {
             return opens(pages, false);
@@ -266,6 +286,10 @@ pub enum InventoryScope<'a> {
     File(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
+    /// Physical files in conflicting claim buckets, opening file first in
+    /// each bucket. Each row targets its own file; `None` lists every bucket,
+    /// and named refreshes visit only those keys. No document or disk reads.
+    ConflictingFiles(Option<&'a [String]>),
     /// Frozen published `answers` v1 lookup rows for referenced spelling keys
     /// absent from this `All` inventory. These retain the old ordinary-row
     /// shape; their `link` uses the shared link answer. Not a live entity list.
@@ -285,6 +309,29 @@ pub enum InventoryScope<'a> {
 }
 
 impl WholeGraph {
+    /// Physical conflict buckets, ordered with the opening claimant first.
+    /// `names` limits refreshes to affected keys (O(claimants log P)); `None`
+    /// enumerates all keys once for the initial conflict view. No file reads.
+    fn claim_conflicts(&self, names: Option<&[String]>) -> Vec<Vec<PageEntry>> {
+        let keys: std::collections::BTreeSet<_> = match names {
+            Some(names) => names
+                .iter()
+                .map(|name| tine_core::refs::page_key(name))
+                .collect(),
+            None => self
+                .claimants
+                .iter()
+                .map(|((_, key), _)| key.clone())
+                .collect(),
+        };
+        keys.into_iter()
+            .filter_map(|key| {
+                let claims = self.all_name_claimants(&key);
+                (claims.len() > 1).then_some(claims)
+            })
+            .collect()
+    }
+
     /// Direct declaring owners when EMPTY-ALIAS makes this a redirecting name.
     /// Rename uses the same content-free answer as navigation, but requires a
     /// unique declarer before offering a merge. Indexed lookups, no file I/O.
@@ -321,12 +368,10 @@ impl WholeGraph {
     /// Names and file claimants in this view. Physical twins with the same
     /// decoded spelling produce one name entry whose target contains the
     /// canonical id and the other claimants; `scan_area` lists physical files.
-    /// Ordinary page twins can both contribute parsed search and backlink
-    /// content; duplicate-day journal strays are absent from view queries but
-    /// can be read directly by file id. Such a read does not add them to this
-    /// view or publish a change; they do not contribute references or backlinks.
-    /// They still appear as `others` of the day's `Resolved::Existing` target.
-    // The parsed whole-graph cache omits duplicate-day journal strays.
+    /// Only the opening claimant contributes parsed search and backlink
+    /// content. Every physical row remains available by file id; reading a
+    /// losing file does not activate it or publish a change. Losing claimants
+    /// appear as `others` of the name's `Resolved::Existing` target.
     /// A first call can traverse all
     /// page blocks and reference text to build indexes; later calls cost
     /// O(P + B + aliases + R + N log N) on the first call, where R is
@@ -373,10 +418,10 @@ impl WholeGraph {
         match scope {
             InventoryScope::File(id) => Arc::new(Inventory(
                 self.graph
-                    .pages
+                    .physical_pages
                     .positions
                     .get(id.as_str())
-                    .and_then(|&slot| self.graph.pages.get(slot))
+                    .and_then(|&slot| self.graph.physical_pages.get(slot))
                     .map(|(entry, _)| InventoryEntry {
                         name: entry.name.clone(),
                         target: self.resolve(&entry.name, entry.kind == PageKind::Journal),
@@ -390,6 +435,26 @@ impl WholeGraph {
                     .collect(),
             )),
             InventoryScope::All => self.full_inventory(),
+            InventoryScope::ConflictingFiles(names) => Arc::new(Inventory(
+                self.claim_conflicts(names)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| {
+                        Some(InventoryEntry {
+                            name: entry.name,
+                            target: Resolved::Existing {
+                                id: entry.rel_path?,
+                                others: Vec::new(),
+                            },
+                            is_journal: entry.kind == PageKind::Journal,
+                            day: entry.date_key.map(Day),
+                            link: None,
+                            namespace_parent: false,
+                            empty_alias: false,
+                        })
+                    })
+                    .collect(),
+            )),
             InventoryScope::PublishedV1Spellings(inventory) => {
                 let listed: HashSet<_> = inventory
                     .0
@@ -493,7 +558,7 @@ impl WholeGraph {
         let mut claimed = Vec::new();
         for page in self.list.iter() {
             let key = tine_core::refs::page_key(&page.name);
-            if !visited.insert((page.kind == PageKind::Journal, key.clone())) {
+            if !visited.insert(key.clone()) {
                 continue;
             }
             for entry in self.claimed_entries(page, key) {
@@ -570,7 +635,7 @@ impl WholeGraph {
             if (page_key != key
                 && !(page_key.starts_with(&prefix)
                     && tine_core::refs::is_namespace_name(&page.name)))
-                || !visited.insert((page.kind == PageKind::Journal, page_key.clone()))
+                || !visited.insert(page_key.clone())
             {
                 continue;
             }
@@ -608,12 +673,14 @@ impl WholeGraph {
     /// One entry per spelling of `page`'s claimant bucket (`key` is its page
     /// key), each with the target `resolve` gives: the bucket's first
     /// claimant, then every other claimant.
-    fn claimed_entries(&self, page: &PageEntry, key: String) -> Vec<InventoryEntry> {
-        let is_journal = page.kind == PageKind::Journal;
+    fn claimed_entries(&self, page: &PageEntry, _key: String) -> Vec<InventoryEntry> {
+        let claimants = self.all_name_claimants(&page.name);
+        let winner = claimants.first().unwrap_or(page);
+        let is_journal = winner.kind == PageKind::Journal;
         let mut names: Vec<String> = Vec::new();
         let mut ids: Vec<PageId> = Vec::new();
-        if let Some(claimants) = self.claimants.get(&(is_journal, key)) {
-            for claimant in claimants {
+        {
+            for claimant in &claimants {
                 if let Some(id) = &claimant.rel_path {
                     if !names.contains(&claimant.name) {
                         names.push(claimant.name.clone());
@@ -631,7 +698,7 @@ impl WholeGraph {
                     others: ids[1..].to_vec(),
                 },
                 is_journal,
-                day: page.date_key.map(Day),
+                day: winner.date_key.map(Day),
                 link: None,
                 namespace_parent: false,
                 empty_alias: false,

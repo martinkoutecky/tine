@@ -112,7 +112,7 @@ fn open_and_retained_snapshot_save_cost() {
                 }
             }
             assert_eq!(
-                held.corpus(None).pages.len(),
+                held.corpus(None, false).pages.len(),
                 pages + 2,
                 "a retained view remains usable after edits"
             );

@@ -261,7 +261,7 @@ export function editorCompletions(props: CompletionAdapter) {
     }
     completionOriginalRaw ??= node(props.id).raw;
     const editor = { pageName: node(props.id).page, blockId: props.id, originalRaw: completionOriginalRaw };
-    if (!props.quickSwitch && pinyinMatchingEnabled() && !completionLease) {
+    if (!props.quickSwitch && !completionLease) {
       completionLease = { ...editor, session: crypto.randomUUID() };
     }
     const lease = completionLease;

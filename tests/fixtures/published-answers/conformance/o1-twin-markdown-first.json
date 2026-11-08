@@ -9,24 +9,9 @@
         "key": "foo",
         "name": "Foo",
         "target": {
-          "id": "pages/foo.md",
+          "id": "pages/Foo.markdown",
           "kind": "existing",
-          "others": [
-            "pages/Foo.markdown"
-          ]
-        }
-      },
-      {
-        "day": null,
-        "is_journal": false,
-        "key": "foo",
-        "name": "foo",
-        "target": {
-          "id": "pages/foo.md",
-          "kind": "existing",
-          "others": [
-            "pages/Foo.markdown"
-          ]
+          "others": []
         }
       },
       {
@@ -63,12 +48,6 @@
       "kind": "page",
       "name": "Notes",
       "path": "pages/Notes.md"
-    },
-    {
-      "date_key": null,
-      "kind": "page",
-      "name": "foo",
-      "path": "pages/foo.md"
     }
   ],
   "exported_at": "",
@@ -95,16 +74,6 @@
       "pre_block": null,
       "read_only": true,
       "title": "Notes"
-    },
-    {
-      "blocks": [],
-      "format": "md",
-      "kind": "page",
-      "name": "foo",
-      "path": "pages/foo.md",
-      "pre_block": null,
-      "read_only": true,
-      "title": "foo"
     }
   ],
   "queries": [],

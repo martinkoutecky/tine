@@ -107,12 +107,12 @@ impl ReadSnapshot {
     pub(crate) fn asset_refs(&self) -> &AssetRefIndex {
         let index = self
             .asset_refs
-            .get_or_init(|| AssetRefIndex::build(&self.pages));
+            .get_or_init(|| AssetRefIndex::build(&self.physical_pages));
         #[cfg(test)]
         {
             // Oracle: the carried index answers what a full scan does.
             let mut scanned = HashSet::new();
-            for (_, doc) in self.pages.iter() {
+            for (_, doc) in self.physical_pages.iter() {
                 tine_core::asset_refs::collect_document_asset_refs(doc, &mut scanned);
             }
             let indexed: HashSet<String> = index.names().cloned().collect();
@@ -126,15 +126,21 @@ impl ReadSnapshot {
 }
 
 impl ReadSnapshot {
-    /// Whether this generation holds a parsed page for the file `path`
-    /// (graph-relative `rel`). Cost O(log P).
-    pub(crate) fn holds_page_at(&self, rel: &str, path: &Path) -> bool {
-        snapshot_page_by_rel(&self.pages, None, rel).is_some_and(|(entry, _)| entry.path == path)
+    /// Whether cached asset facts cover this file without a fresh stray read.
+    /// Dated journal losers keep their old fresh-disk guard; ordinary physical
+    /// twins keep the existing cached index, avoiding new per-trash I/O.
+    pub(crate) fn asset_cache_covers(&self, rel: &str, path: &Path) -> bool {
+        snapshot_page_by_rel(&self.physical_pages, None, rel).is_some_and(|(entry, _)| {
+            entry.path == path
+                && (entry.kind != PageKind::Journal
+                    || entry.date_key.is_none()
+                    || self.pages.positions.contains_key(rel))
+        })
     }
 
     /// Whether `other` shares this generation's page table.
     pub(crate) fn same_pages(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.pages, &other.pages)
+        Arc::ptr_eq(&self.physical_pages, &other.physical_pages)
     }
 }
 
@@ -142,14 +148,14 @@ impl ReadSnapshot {
     /// The parsed page at graph-relative `rel` with its slot (page order).
     /// Cost O(log P).
     pub(crate) fn parsed_page(&self, rel: &str) -> Option<(usize, &(PageEntry, Arc<Document>))> {
-        let slot = *self.pages.positions.get(rel)?;
-        let page = self.pages.get(slot)?;
+        let slot = *self.physical_pages.positions.get(rel)?;
+        let page = self.physical_pages.get(slot)?;
         (page.0.rel_path_str() == rel).then_some((slot, page))
     }
 
     /// Every parsed page in page order (test oracles only).
     #[cfg(test)]
     pub(crate) fn pages_in_order(&self) -> impl Iterator<Item = &(PageEntry, Arc<Document>)> {
-        self.pages.iter()
+        self.physical_pages.iter()
     }
 }

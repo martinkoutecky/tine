@@ -14,6 +14,10 @@ conflict-overview-sync-conflict-copies = Sync conflict copies
 conflict-overview-version-control-merge-markers = Version-control merge markers
 
 conflict-overview-duplicate-journal-days = Duplicate journal days
+conflict-overview-duplicate-names = Page name conflicts
+conflicts-prose-name-files = { NUMBER($count, useGrouping: 0) } files claim this name
+conflict-overview-opening-file = Opens for this name
+conflict-overview-name-order = Ordinary pages come before journals; within each kind, the first path by UTF-8 byte order opens. Only that file supplies aliases and references. Every file is kept and can be opened below.
 
 conflict-overview-conflicts = Conflicts
 

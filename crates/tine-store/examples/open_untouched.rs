@@ -12,7 +12,7 @@ fn main() {
     let (store, _, _) = Store::open(Path::new(&root), OpenOptions::default()).expect("open graph");
     let graph = store.whole_graph().expect("initial load");
     let ids: Vec<_> = graph
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .into_iter()
         .map(|page| page.id)

@@ -431,6 +431,7 @@ fn lazy_marks_cover_every_lazy_slot_the_checkpoint_writes() {
     // Built with the generation at publication, never by a read.
     let eager: BTreeSet<String> = [
         "pages",
+        "physical_pages",
         "cache_generation",
         "observed_mtimes",
         "list",

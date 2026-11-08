@@ -3,8 +3,10 @@
 //! runtime UUIDs are deterministic structural locators; persisted `id::`
 //! values remain separate external reference identities.
 
+mod active_pages;
 mod checkpoint_state;
 mod collapse_only;
+mod completion_rank;
 pub(crate) mod derived;
 pub(crate) mod entry_identity;
 pub(crate) mod held_index;
@@ -547,28 +549,28 @@ pub(crate) struct Graph {
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
     page_locks:
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
-    /// Open editor completions' supplemental name keys, by session. The one
-    /// owner across every published view (incremental, config, Rescan,
-    /// checkpoint install), so a close releases the session everywhere.
+    /// Graph-owned completion sessions; close releases keys and ranks in every view.
     pub(crate) completion_name_keys: CompletionSessions,
 }
 
-pub(crate) type CompletionSessions = Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>;
+pub(crate) type CompletionSessions = Arc<completion_rank::Sessions>;
 
 /// The immutable page and index input for one published generation. Evaluators
 /// borrow this value; write helpers and filesystem capabilities are absent.
 pub(crate) struct ReadSnapshot {
+    /// Every parsed physical file, including inactive twins. Mutation and
+    /// orphan-asset safety must inspect this view, never the semantic mask.
+    pub(crate) physical_pages: Arc<Pages>,
     pub(crate) pages: Arc<Pages>,
+    pub(crate) semantic_changed_paths: Vec<String>,
     config: Config,
     list: Arc<EntryList>,
+    active_list: std::sync::OnceLock<Arc<Vec<PageEntry>>>,
     observed_mtimes: Arc<SharedMap<String, std::time::SystemTime>>,
     explicit_index: SnapshotExplicitIndex,
     reference_candidate_index: RwLock<SnapshotReferenceCandidateIndex>,
     cache_generation: u64,
-    // Built on first use, as before snapshots. Racing readers of one
-    // generation share one build; generations published after it inherit it
-    // by per-file deltas. A view published before the first build and read
-    // later builds its own copy (an old-view edge, not the save path).
+    // Lazy indexes carry per-file deltas; old views build their own copy.
     block_index: std::sync::OnceLock<SnapshotBlockIndex>,
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
@@ -586,9 +588,7 @@ pub(crate) struct ReadSnapshot {
     /// inherits it and patches only the pages a save changed, also when an
     /// alias or a page name moved (D-20261018-M2c, I-25).
     alias_relation: std::sync::OnceLock<Arc<crate::query::AliasRelation>>,
-    /// TQL's link table (`links`, `linked_by`, `near`), built on the first
-    /// query that reads it; in memory only, never carried across a generation
-    /// (an edit anywhere can move any link).
+    /// TQL's lazy link table; any edit invalidates it. Never persisted.
     link_graph: std::sync::OnceLock<Arc<crate::query::link_graph::LinkGraph>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
@@ -598,9 +598,9 @@ pub(crate) struct ReadSnapshot {
     query_index: crate::query::index::QueryIndexSlot,
     pub(crate) transliteration_names: Arc<NameKeyMap>,
     pub(crate) transliteration_owners: SharedMap<String, usize>,
-    // Only open editor completions own supplemental keys: the graph's one
-    // registry, released explicitly on close (including stale IPC replies).
+    // The graph owns supplemental keys; completion close releases them.
     pub(crate) completion_name_keys: CompletionSessions,
+    pub(crate) completion_rank: crate::query_plan::completion::CompletionCache,
     #[cfg(test)]
     pub(crate) name_cache_work: usize,
     #[cfg(test)]
@@ -796,11 +796,22 @@ impl ReadSnapshot {
     ) -> Self {
         #[cfg(feature = "test-faults")]
         let capture_started = std::time::Instant::now();
+        let physical_pages = pages;
+        let real_page_names = Arc::new(crate::query::RealPageNames::capture(
+            old.map(|old| (old.real_page_names.as_ref(), old.physical_pages.as_ref())),
+            &physical_pages,
+            changed_paths,
+        ));
+        let physical_changed_paths = changed_paths;
+        let (pages, semantic_paths) =
+            active_pages::capture(&physical_pages, &real_page_names, old, changed_paths);
+        let changed_paths = semantic_paths.as_slice();
         // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
             // First, on the page-parse workers: it builds every block
             // projection the other indexes read (GJ5 S1).
-            let explicit = SnapshotExplicitIndex::capture(None, &pages, &[], None, &config);
+            let explicit =
+                SnapshotExplicitIndex::capture(None, &physical_pages, &[], None, &config);
             std::thread::scope(|scope| {
                 let signatures = scope.spawn(|| {
                     SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
@@ -824,7 +835,7 @@ impl ReadSnapshot {
                         None,
                     )
                 });
-                let blocks = scope.spawn(|| SnapshotBlockIndex::build(&pages));
+                let blocks = scope.spawn(|| SnapshotBlockIndex::build(&physical_pages));
                 (
                     explicit,
                     signatures.join().expect("signature index worker"),
@@ -862,20 +873,23 @@ impl ReadSnapshot {
                         && old.config.ignored_page_references_keywords
                             == config.ignored_page_references_keywords
                 })
-                .map(|old| (&old.explicit_index, &old.pages)),
-                &pages,
-                changed_paths,
-                position_pair,
+                .map(|old| (&old.explicit_index, &old.physical_pages)),
+                &physical_pages,
+                physical_changed_paths,
+                None,
                 &config,
             )
         };
         let block_index = std::sync::OnceLock::new();
-        let previous_block =
-            old.and_then(|old| old.block_index.get().map(|index| (index, &old.pages)));
+        let previous_block = old.and_then(|old| {
+            old.block_index
+                .get()
+                .map(|index| (index, &old.physical_pages))
+        });
         let _ = block_index.set(if let Some((_, _, _, _, index)) = &initial {
             index.clone()
         } else {
-            SnapshotBlockIndex::capture(previous_block, &pages, changed_paths)
+            SnapshotBlockIndex::capture(previous_block, &physical_pages, physical_changed_paths)
         });
         let carry_projection =
             |previous: Option<(&SnapshotPageDerivedIndex, &Arc<Pages>)>,
@@ -921,10 +935,10 @@ impl ReadSnapshot {
         if let Some(carried) = old.and_then(|old| {
             asset_ref_index::AssetRefIndex::carry(
                 old.asset_refs.get()?,
-                &old.pages,
-                &pages,
-                changed_paths,
-                position_pair,
+                &old.physical_pages,
+                &physical_pages,
+                physical_changed_paths,
+                None,
             )
         }) {
             let _ = asset_refs.set(carried);
@@ -970,11 +984,6 @@ impl ReadSnapshot {
                 }
             }
         }
-        let real_page_names = Arc::new(crate::query::RealPageNames::capture(
-            old.map(|old| (old.real_page_names.as_ref(), old.pages.as_ref())),
-            &pages,
-            changed_paths,
-        ));
         let query_index = crate::query::index::QueryIndexSlot::succeeding(
             old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
             changed_paths,
@@ -984,10 +993,28 @@ impl ReadSnapshot {
             usize::from(previous_block.is_none_or(|(_, before)| {
                 changed_paths.is_empty() && !Arc::ptr_eq(before, &pages)
             }));
+        let active_list = std::sync::OnceLock::new();
+        if let Some(old) = old.filter(|old| {
+            // The physical metadata root is shared for body-only edits. Check
+            // only affected paths for active membership changes; an unchanged
+            // sibling can have promoted or demoted without changing its bytes.
+            Arc::ptr_eq(&old.list, &list)
+                && changed_paths.iter().all(|path| {
+                    old.pages.positions.contains_key(path.as_str())
+                        == pages.positions.contains_key(path.as_str())
+                })
+        }) {
+            if let Some(materialized) = old.active_list.get() {
+                let _ = active_list.set(Arc::clone(materialized));
+            }
+        }
         let mut snapshot = Self {
+            physical_pages,
             pages,
+            semantic_changed_paths: semantic_paths.clone(),
             config,
             list,
+            active_list,
             observed_mtimes,
             explicit_index,
             reference_candidate_index: RwLock::new(reference_candidate_index),
@@ -1009,6 +1036,9 @@ impl ReadSnapshot {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
+            completion_rank: crate::query_plan::completion::CompletionCache::new(
+                &completion_name_keys,
+            ),
             completion_name_keys,
             #[cfg(test)]
             name_cache_work: 0,
@@ -1017,6 +1047,9 @@ impl ReadSnapshot {
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        if let Some(old) = old {
+            snapshot.carry_completion_rank(old, changed_paths);
+        }
         if let Some(support) =
             old.and_then(|old| fileless_names::DaySupport::carry(old, &snapshot, changed_paths))
         {
@@ -1427,11 +1460,7 @@ impl ReadSnapshot {
     }
     /// The real-name table ranked by the claimant order (OW-1).
     pub(crate) fn real_page_owners(&self) -> crate::query::RealPageOwners {
-        crate::query::RealPageOwners::new(
-            Arc::clone(&self.real_page_names),
-            Arc::clone(&self.list),
-            &self.config,
-        )
+        crate::query::RealPageOwners::new(Arc::clone(&self.real_page_names))
     }
     /// Journal entries are named by the configured date title (page_identity's
     /// listed_entry). Probe only claimants of that name, not every journal.
@@ -1440,10 +1469,9 @@ impl ReadSnapshot {
         day: tine_core::date::JournalDate,
     ) -> Option<String> {
         let title = self.config.journal_format().title(day);
-        self.real_page_names
-            .paths(&tine_core::refs::page_key(&title))
-            .filter_map(|path| self.list.get_path(path))
-            .find(|entry| {
+        self.real_page_owners()
+            .opening_entry(&tine_core::refs::page_key(&title))
+            .filter(|entry| {
                 entry.kind == PageKind::Journal && entry.date_key == Some(day.ordinal_key())
             })
             .map(|entry| entry.name.clone())
@@ -1597,7 +1625,7 @@ impl ReadSnapshot {
             .expect("published generations hold the exact block index")
             .owners_ignoring_case(uuid)
             .into_iter()
-            .filter_map(|slot| self.pages.get(slot))
+            .filter_map(|slot| self.physical_pages.get(slot))
             .collect()
     }
 
@@ -1610,13 +1638,24 @@ impl ReadSnapshot {
     pub(crate) fn block_owner_page(
         &self,
         uuid: &str,
+        active_only: bool,
     ) -> Option<(usize, &(PageEntry, Arc<Document>))> {
+        let pages = if active_only {
+            &self.pages
+        } else {
+            &self.physical_pages
+        };
         let owner = self
             .block_index
             .get()
             .expect("published generations hold the exact block index")
-            .first_owner(uuid)
-            .and_then(|slot| self.pages.get(slot).map(|page| (slot, page)));
+            .owners(uuid)
+            .and_then(|owners| {
+                owners
+                    .slots()
+                    .iter()
+                    .find_map(|&slot| pages.get(slot).map(|page| (slot, page)))
+            });
         // Also compiled in the app's debug tests, where tine-store is a dependency.
         // A missed owner walk is as suspect as an absent row. Never recover by
         // scanning in production: the check diagnoses the invariant in tests.
@@ -1629,7 +1668,7 @@ impl ReadSnapshot {
             };
             if !owner.is_some_and(|(_, (_, doc))| holds(doc)) {
                 assert!(
-                    !self.pages.iter().any(|(_, doc)| holds(doc)),
+                    !pages.iter().any(|(_, doc)| holds(doc)),
                     "block index missed held id {uuid:?}"
                 );
             }
@@ -1650,7 +1689,7 @@ impl ReadSnapshot {
                     .slots()
                     .iter()
                     .map(|&slot| {
-                        self.pages.get(slot).map_or_else(
+                        self.physical_pages.get(slot).map_or_else(
                             || format!("<missing slot {slot}>"),
                             |(entry, _)| entry.rel_path_str().to_owned(),
                         )
@@ -1667,7 +1706,7 @@ impl ReadSnapshot {
     /// Every slot the block index lists for `uuid`, ascending (index oracle).
     #[cfg(test)]
     pub(crate) fn block_owner_slots(&self, uuid: &str) -> Vec<usize> {
-        self.block_owner_page(uuid);
+        self.block_owner_page(uuid, true);
         self.block_index
             .get()
             .and_then(|index| index.owners(uuid))
@@ -1682,7 +1721,21 @@ impl ReadSnapshot {
     pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
         #[cfg(test)]
         PAGE_LIST_READS.with(|count| count.set(count.get() + 1));
-        self.list.materialize()
+        Arc::clone(self.active_list.get_or_init(|| {
+            #[cfg(test)]
+            ACTIVE_LIST_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
+            Arc::new(self.pages.iter().map(|(entry, _)| entry.clone()).collect())
+        }))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn physical_page_list_arc(&self) -> Arc<Vec<PageEntry>> {
+        Arc::new(
+            self.physical_pages
+                .iter()
+                .map(|(entry, _)| entry.clone())
+                .collect(),
+        )
     }
     pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
@@ -1692,7 +1745,18 @@ impl ReadSnapshot {
         self.explicit_index
             .shards
             .iter()
-            .flat_map(|shard| shard.iter().map(|(name, _)| name.as_str()))
+            .flat_map(|shard| shard.iter())
+            .filter(|(_, paths)| paths.iter().any(|(path, _)| self.is_active_path(path)))
+            .map(|(name, _)| name.as_str())
+    }
+
+    pub(crate) fn physical_explicit_referrers(&self, names: &[String]) -> Vec<crate::PageId> {
+        let paths = self.explicit_index.candidates(names);
+        self.physical_pages
+            .iter()
+            .filter(|(entry, _)| paths.contains(&entry.path))
+            .filter_map(|(entry, _)| entry.rel_path.clone())
+            .collect()
     }
 
     fn referenced_name_index(&self) -> &SnapshotPageDerivedIndex {
@@ -2016,6 +2080,7 @@ impl BlockOwners {
 #[cfg(test)]
 thread_local! {
     static PAGE_LIST_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ACTIVE_LIST_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whole page-list reads (`page_list_arc`) on this thread (cost audit row 8).
@@ -2258,7 +2323,7 @@ impl SnapshotBlockIndex {
         }
     }
 
-    /// The first page, in page order, holding `id`.
+    #[cfg(test)]
     fn first_owner(&self, id: &str) -> Option<usize> {
         self.owners(id).map(|owners| owners.slots()[0])
     }
@@ -2683,6 +2748,7 @@ fn build_page_cache_index(pages: &Pages) -> PageCacheIndex {
     index
 }
 
+#[cfg(test)]
 fn is_date_stem_entry(entry: &PageEntry, fmt: &JournalFormat) -> bool {
     entry
         .path
@@ -2695,35 +2761,7 @@ fn is_date_stem_entry(entry: &PageEntry, fmt: &JournalFormat) -> bool {
         })
 }
 
-/// One ordering for every name/day claimant in the legacy cache and store view.
-pub(crate) fn compare_page_claimants(
-    a: &PageEntry,
-    b: &PageEntry,
-    fmt: &JournalFormat,
-    name_fmt: FileNameFormat,
-) -> std::cmp::Ordering {
-    let date_rank =
-        |entry: &PageEntry| entry.kind == PageKind::Journal && is_date_stem_entry(entry, fmt);
-    let filename_rank = |entry: &PageEntry| {
-        entry.kind == PageKind::Page
-            && entry
-                .path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| {
-                    tine_core::refs::same_page(&decode_page_name(stem, name_fmt), &entry.name)
-                })
-    };
-    date_rank(b)
-        .cmp(&date_rank(a))
-        .then_with(|| filename_rank(b).cmp(&filename_rank(a)))
-        .then_with(|| {
-            let md = |entry: &PageEntry| entry.path.extension().is_some_and(|ext| ext == "md");
-            md(b).cmp(&md(a))
-        })
-        .then_with(|| a.path.file_name().cmp(&b.path.file_name()))
-        .then_with(|| a.path.cmp(&b.path))
-}
+pub(crate) use tine_core::model::compare_page_claimants;
 
 /// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
 /// tag no longer matches — so every entry is always consistent with the current
@@ -3242,27 +3280,6 @@ impl Graph {
         graph_text_eligible(&self.root, &abs, &self.current_config()).then_some(abs)
     }
 
-    /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
-    /// title-named `Friday, 26-06-2026.org`) that coexists with a canonical
-    /// date-stem file (`2026_06_26.{md,org}`) for the SAME day. The `(kind,name)`
-    /// cache slot belongs to the canonical file, so a shadow must never be folded
-    /// into it (that would make name-resolution serve the shadow's content). A
-    /// shadow is loaded fresh by path on demand instead (#21). Twins (two date-stem
-    /// files of the same day in different extensions) are deliberately NOT shadows —
-    /// that case keeps its existing `has_twin`/dedup handling.
-    /// A configured-format file (`24-06-2026.md` under `dd-MM-yyyy`) is canonical,
-    /// never its own shadow (else no reconcile, stale reload, clobbering save; C3 L05).
-    fn is_shadow_journal(&self, path: &Path, date: tine_core::date::JournalDate) -> bool {
-        let format = self.current_journal_format();
-        let stem = path.file_stem().and_then(|s| s.to_str());
-        if stem.is_none_or(|s| format.is_canonical_stem(s)) {
-            return false;
-        }
-        let canon = format.file_stem(date);
-        let dir = self.journals_path();
-        dir.join(format!("{canon}.md")).is_file() || dir.join(format!("{canon}.org")).is_file()
-    }
-
     /// The format (`Md`/`Org`) new pages and journals are created in, from
     /// `config.edn`'s `:preferred-format`. Existing files keep their own format.
     #[cfg(test)]
@@ -3304,11 +3321,7 @@ impl Graph {
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
         // via tine_graph_features::journals::journal_conflicts for reconciliation.
-        let mut js = dedup_journal_days(
-            raw,
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        );
+        let mut js = dedup_journal_days(raw);
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -3599,7 +3612,8 @@ impl Graph {
     fn load_all_pages(&self) -> PageCacheBuild {
         // A held page's row is its owner's (`install_built`): never read.
         let mut memo = entry_identity::Memo::default();
-        let entries: Vec<PageEntry> = (self.list_pages_shared().iter())
+        let physical = self.physical_page_entries();
+        let entries: Vec<PageEntry> = (physical.iter())
             .filter(|entry| self.disk_sourced_in(&mut memo, &entry.path))
             .cloned()
             .collect();
@@ -3705,11 +3719,8 @@ impl Graph {
         // (`LaunchObservations`) instead of a second hash pass.
         let (listed, tracked_only, walk_errors, listing_stamps) =
             page_identity::launch_listing_walk(self);
-        let journal_format = self.current_journal_format();
-        let name_format = self.current_config().file_name_format;
-        // Journal identity is the filename date, so the duplicate-day collapse
-        // needs no content; non-journal entries pass through it unchanged.
-        let entries = dedup_journal_days(listed.clone(), &journal_format, name_format);
+        // Retain every physical file; snapshot publication masks inactive twins.
+        let entries = listed.clone();
         // A held page's row is its owner's ((G), `install_built`): the build
         // never reads it, and the watcher rereads its file.
         let withheld = self.withheld(&listed);
@@ -3992,7 +4003,7 @@ impl SnapshotMemos {
         } else {
             (
                 Arc::new(crate::query::AliasEdges::default()),
-                crate::query::RealPageOwners::empty(graph.config()),
+                crate::query::RealPageOwners::empty(),
             )
         };
         let journal = graph.config().journal_format();
@@ -4592,6 +4603,7 @@ impl Graph {
         if self
             .fail_sync_parse_once
             .swap(false, std::sync::atomic::Ordering::AcqRel)
+            || content.contains(TEST_EXTERNAL_SYNC_PARSE_PANIC_SENTINEL)
         {
             panic!("injected external sync parser panic");
         }
@@ -5006,6 +5018,11 @@ fn page_cache_worker_count() -> usize {
 
 #[cfg(test)]
 pub(crate) const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
+/// Persistent read failure for a claimant retried through cold and sync paths.
+/// Separate from the cold-only marker used to test successful host release.
+#[cfg(test)]
+pub(crate) const TEST_EXTERNAL_SYNC_PARSE_PANIC_SENTINEL: &str =
+    "__TINE_TEST_EXTERNAL_SYNC_PARSE_PANIC__";
 /// Test-only: a page holding this text panics the rename path's own-title
 /// read (`transaction::validation::rewrite_move`), the lsdoc outline parse a
 /// page move runs under the writer lock (og-gh644 F3).
@@ -5026,18 +5043,14 @@ pub(crate) const TEST_INDEX_PANIC_SENTINEL: &str = "__TINE_TEST_INDEX_PANIC__";
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
 /// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
 /// the input order are preserved.
-fn dedup_journal_days(
-    entries: Vec<PageEntry>,
-    fmt: &JournalFormat,
-    name_fmt: FileNameFormat,
-) -> Vec<PageEntry> {
+fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
     let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<PageEntry> = Vec::new();
     for e in entries {
         match e.date_key {
             Some(k) if e.kind == PageKind::Journal => {
                 if let Some(&i) = idx_of.get(&k) {
-                    if compare_page_claimants(&e, &out[i], fmt, name_fmt).is_lt() {
+                    if compare_page_claimants(&e, &out[i]).is_lt() {
                         out[i] = e;
                     }
                 } else {
@@ -7242,7 +7255,7 @@ mod tests {
                 scope.spawn(move || {
                     assert_eq!(
                         snapshot
-                            .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001")
+                            .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001", true)
                             .map(|(_, (entry, _))| entry.name.as_str()),
                         Some("Target")
                     );
@@ -7278,7 +7291,7 @@ mod tests {
         assert!(after.referenced_name_index.get().is_some());
         assert_eq!(
             after
-                .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001")
+                .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001", true)
                 .map(|(_, (entry, _))| entry.name.as_str()),
             Some("Target")
         );
@@ -9280,7 +9293,7 @@ mod tests {
                     store
                         .whole_graph()
                         .unwrap()
-                        .blocks(&["11111111-1111-4111-8111-111111111111".into()])
+                        .blocks(&["11111111-1111-4111-8111-111111111111".into()], true)
                         .unwrap()[0]
                         .is_some(),
                     "ID-bearing root lost addressability"
@@ -11132,7 +11145,7 @@ mod tests {
 
             guide: false,
         };
-        let id = store.journal_id(tine_store::Day(20260710));
+        let id = store.journal_id(tine_store::Day(20260710), false);
         assert!(matches!(
             host_writer.save(
                 tine_store::EditKind::ReplacePage,
@@ -11506,12 +11519,13 @@ mod tests {
             ),
             ("nested saved sentinel", non_winner_entry.rel_path_str()),
         ] {
-            assert!(
+            assert_eq!(
                 g.run_graph_search(needle, 0, 8, false).hits.iter().any(|hit| matches!(
                     hit,
                     tine_core::query_plan::QueryHit::Block { path: hit_path, .. } if hit_path == path
                 )),
-                "search hit for {needle:?} must retain its physical owner {path:?}"
+                path == logical_winner.rel_path_str(),
+                "search includes only the active claimant; physical reads still retain {path:?}"
             );
         }
 

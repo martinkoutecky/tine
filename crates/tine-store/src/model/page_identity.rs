@@ -64,26 +64,6 @@ impl Graph {
             Err(_) => true,
         }
     }
-
-    /// [`Self::find_entry`] that answers a name some file is named for from
-    /// that file (GH #623 BR3). While the claimant index cannot answer, an
-    /// ordinary page tries [`filename_claimants`] (a listing of file names
-    /// plus the matching files) before the O(P) preamble walk, which a
-    /// title-only or absent name still needs. Same answer either way.
-    pub(crate) fn find_entry_named_file_first(
-        &self,
-        name: &str,
-        kind: PageKind,
-    ) -> Option<PageEntry> {
-        let key = (kind, tine_core::refs::page_key(name));
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        if kind == PageKind::Page && self.cached_claimants(&key, gen).is_none() {
-            if let Some(winner) = filename_claimants(self, name).into_iter().next() {
-                return Some(winner);
-            }
-        }
-        self.find_entry(name, kind)
-    }
 }
 
 /// Which name claims answer a lookup of `name`: a journal is claimed by its
@@ -122,7 +102,7 @@ pub(crate) fn claim_lookup<'a>(
 }
 
 /// The same claimant ordering for cold direct reads, journal open and snapshots.
-pub(super) fn page_claimants(graph: &Graph, entries: &[PageEntry]) -> ClaimantMap {
+pub(super) fn page_claimants(entries: &[PageEntry]) -> ClaimantMap {
     let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
     for entry in entries {
         claimants
@@ -130,10 +110,8 @@ pub(super) fn page_claimants(graph: &Graph, entries: &[PageEntry]) -> ClaimantMa
             .or_default()
             .push(entry.clone());
     }
-    let format = graph.current_journal_format();
-    let name_format = graph.current_config().file_name_format;
     for entries in claimants.values_mut() {
-        entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
+        entries.sort_by(|a, b| compare_page_claimants(a, b));
     }
     (claimants.into_iter())
         .map(|(key, entries)| (claimant_key(&key), entries))
@@ -209,9 +187,7 @@ mod cold_index_tests {
         .unwrap();
         // Before Ready: the file-name listing and the live preamble index.
         let graph = Graph::open(dir.path());
-        assert!(graph
-            .find_entry_named_file_first("Links", PageKind::Page)
-            .is_some());
+        assert!(graph.find_entry("Links", PageKind::Page).is_some());
         assert!(graph.find_entry("Links", PageKind::Page).is_some());
         // The store's load, inventory and page-by-name door.
         let store = crate::Store::open(dir.path(), Default::default())
@@ -282,14 +258,17 @@ mod cold_index_tests {
         GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
         let (store, _, _) = crate::Store::open(&dir, Default::default()).unwrap();
         let open_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.replace(0));
-        let journal = store.journal_id(crate::Day(
-            tine_core::date::JournalDate {
-                year: 2026,
-                month: 9,
-                day: 29,
-            }
-            .ordinal_key(),
-        ));
+        let journal = store.journal_id(
+            crate::Day(
+                tine_core::date::JournalDate {
+                    year: 2026,
+                    month: 9,
+                    day: 29,
+                }
+                .ordinal_key(),
+            ),
+            false,
+        );
         assert_eq!(store.page(&journal).unwrap().doc.blocks[0].raw, "journal");
         let feed_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.get());
         fs::remove_file(dir.join(".tine-test-pause-load")).unwrap();
@@ -298,7 +277,7 @@ mod cold_index_tests {
             panic!("late title claimant missing")
         };
         assert_eq!(others.len(), 1);
-        assert_eq!(id.as_str(), "pages/Other.md");
+        assert_eq!(id.as_str(), "pages/Org.org");
         assert_eq!(store.page(&id).unwrap().doc.name, "Claimed");
         assert!(
             matches!(graph.resolve("Elsewhere", false), crate::Resolved::Existing { id, .. } if id.as_str() == "pages/Claimed.md")
@@ -747,27 +726,6 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     list_pages(graph, kind, None)
-}
-
-/// The ordinary pages whose file stem decodes to `name`, each named by its
-/// preamble like any listing, ranked by the one claimant order; only those
-/// still named `name` are kept (GH #623 BR3). They are exactly the
-/// filename-rank claimants of `name`, which outrank every claimant that
-/// takes the name by `title::` alone (`compare_page_claimants`), so a
-/// nonempty answer starts with the claimant a full listing would rank first.
-/// Lists file names only and opens just the matching files, instead of the
-/// O(P) preamble reads of a full listing. Records no discovery errors: only
-/// a full listing knows the whole set.
-pub(crate) fn filename_claimants(graph: &Graph, name: &str) -> Vec<PageEntry> {
-    let key = tine_core::refs::page_key(name);
-    let mut entries: Vec<_> = list_pages(graph, Some(PageKind::Page), Some(&key))
-        .into_iter()
-        .filter(|entry| tine_core::refs::page_key(&entry.name) == key)
-        .collect();
-    let format = graph.current_journal_format();
-    let name_format = graph.current_config().file_name_format;
-    entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
-    entries
 }
 
 /// `stem_key`: list only ordinary pages whose decoded stem has this

@@ -41,6 +41,7 @@ for (const [name, text] of Object.entries({
   "Native property pasted": "- Pasted property\n",
   "Native property existing": "- Existing property\n  alpha:: o\n",
   "Native property values": "- Values\n  alpha:: one\n- More values\n  alpha:: two\n",
+  "Native property pending": "- Pending property\n",
 })) fs.writeFileSync(file(name), text);
 const app = process.env.TINE_APP || path.join(root, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
 const fixture = accountHomeFixture(out, out, { ...process.env,
@@ -325,6 +326,39 @@ try {
     await exit();
     await saved(page, `- ${title}\n  alpha:: one\n`);
   }
+  stage = "Pending property values refresh the latest typed query";
+  await edit("Native property pending", "Pending property");
+  await keys("Control", "End"); await keys("Shift", "Enter");
+  // Hold only the native value reply at the read-only fetch boundary. The
+  // backend query, editor events, filtering, rendering and save remain real.
+  await browser.execute(() => {
+    const fetch = window.fetch;
+    const pending = window.__pendingProperty = { started: false, release: null };
+    window.fetch = function(url, options, ...rest) {
+      if (!String(url).endsWith("/query_facets") || JSON.parse(options.body).scope?.key !== "alpha")
+        return fetch.call(this, url, options, ...rest);
+      pending.started = true;
+      return fetch.call(this, url, options, ...rest).then(response => new Promise(resolve => {
+        pending.release = () => resolve(response);
+      }));
+    };
+    pending.restore = () => { window.fetch = fetch; };
+  });
+  await type("alpha:: ");
+  await browser.waitUntil(() => browser.execute(() => typeof window.__pendingProperty.release === "function"), { timeout: 10000 });
+  await type("tw");
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")]
+    .some(row => row.textContent?.trim() === 'Create "tw"')), { timeout: 10000 });
+  await browser.execute(() => { window.__pendingProperty.restore(); window.__pendingProperty.release(); });
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")]
+    .some(row => row.textContent?.trim() === "two") && ![...document.querySelectorAll(".autocomplete .ac-label")]
+    .some(row => row.textContent?.trim() === "one")), { timeout: 10000, timeoutMsg: "Pending reply did not refresh the latest query without a keystroke" });
+  await screenshot("pending-values.png");
+  await browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-item")]
+    .find(row => row.querySelector(".ac-label")?.textContent?.trim() === "two")
+    .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+  await exit();
+  await saved("Native property pending", "- Pending property\n  alpha:: two\n");
   fixture.verify();
   stage = "Capture native evidence";
   await screenshot("complete.png");

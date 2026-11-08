@@ -418,7 +418,7 @@ mod inventory_adapter_tests {
 
     /// Delta bytes the window receives instead of a refetch (`None`: refetch).
     fn probe_inventory_delta(change: &tine_store::Change) -> Option<usize> {
-        change.inventory_delta().map(|delta| {
+        change.inventory_delta().1.map(|delta| {
             serde_json::to_vec(&inventory_delta_wire(delta))
                 .unwrap()
                 .len()

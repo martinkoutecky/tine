@@ -140,7 +140,7 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
         None
     );
     assert_eq!(
-        store.journal_id(Day(20260618)).as_str(),
+        store.journal_id(Day(20260618), false).as_str(),
         "journals/2026_06_18.md"
     );
 
@@ -153,7 +153,7 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
     put(&root, "journals/Jun 19th, 2026.md", b"- title\n");
     let custom = Store::open(&root, Default::default()).unwrap().0;
     assert_eq!(
-        custom.journal_id(Day(20260619)).as_str(),
+        custom.journal_id(Day(20260619), false).as_str(),
         "journals/2026-06-19.org"
     );
 }
@@ -168,13 +168,13 @@ fn journal_equal_rank_uses_extension_then_byte_order() {
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
     assert_eq!(
-        store.journal_id(Day(20260618)).as_str(),
+        store.journal_id(Day(20260618), false).as_str(),
         "journals/2026-06-18.md"
     );
     fs::remove_file(root.join("journals/2026-06-18.md")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     assert_eq!(
-        store.journal_id(Day(20260618)).as_str(),
+        store.journal_id(Day(20260618), false).as_str(),
         "journals/Jun 18th, 2026.md"
     );
 }

@@ -64,9 +64,9 @@ fn retained_views_bound_content_and_structural_publication_work() {
             "I-25: bounded tree paths, not graph copies: {cost:?}"
         );
         assert_eq!(cost.snapshot_rebuilds, 0, "I-25: structural publication patches affected paths, never rebuilds signatures; exemplar model/persistent.rs: {cost:?}");
-        assert_eq!(held.corpus(None).pages.len(), pages);
+        assert_eq!(held.corpus(None, false).pages.len(), pages);
         assert_eq!(
-            store.whole_graph().unwrap().corpus(None).pages.len(),
+            store.whole_graph().unwrap().corpus(None, false).pages.len(),
             pages + 1
         );
         store.close();

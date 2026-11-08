@@ -125,10 +125,8 @@ impl WatchHandle {
             *self.core.load.status.lock().unwrap(),
             LoadStatus::Failed(_)
         ) {
-            *self.core.journal_ids.lock().unwrap() = journal_ids_from_entries(
-                &self.core.graph,
-                self.core.graph.list_pages_shared().as_ref(),
-            );
+            *self.core.journal_ids.lock().unwrap() =
+                journal_ids_from_entries(self.core.graph.list_pages_shared().as_ref());
             self.core.changes.rev()
         } else {
             self.core

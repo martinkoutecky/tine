@@ -11,9 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
+- When two files claim one page name, Tine opens the ordinary page before a journal, then the file whose graph-relative path sorts first by UTF-8 bytes. Only that file supplies aliases, references and query results; the Journals feed hides a journal masked by an ordinary page. Both files are kept (REG-CM-ACTIVE-TWINS).
+- Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
 
+- Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Advanced query lists honor `:breadcrumb-show? false`, hiding ancestor trails while retaining grouped page headings, including in the sidebar and embeds (GH #881).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).

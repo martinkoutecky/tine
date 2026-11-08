@@ -95,13 +95,13 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
     } finally { setPinyinMatchingEnabled(false); dispose(); }
   });
 
-  it("releases baseline keys again when an obsolete native request replies after completion closes", async () => {
+  it.each([false, true])("releases baseline keys again when an obsolete native request replies after completion closes (Pinyin=%s)", async enabled => {
     let finish: ((pages: PageEntry[]) => void) | undefined;
     const lookup = vi.spyOn(backend(), "quickSwitch").mockImplementation(async (_query, limit) => {
       if (limit === 0) return [];
       return new Promise<PageEntry[]>(resolve => { finish = resolve; });
     });
-    setPinyinMatchingEnabled(true);
+    setPinyinMatchingEnabled(enabled);
     loadSingle(page(""));
     startEditing("reference-authoring", 0);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{id => <Block id={id} />}</For>);
@@ -133,7 +133,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
       inputAt(textarea, kind === "page" ? "[[Fz]]" : "#Fz", kind === "page" ? 4 : 3);
       const expected = kind === "page" ? 'Create "Fz"' : "Create #Fz";
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(expected));
-      expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "" }, false);
+      expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "", session: expect.any(String) }, false);
       accept(textarea);
       expect(textarea.value().trim()).toBe(kind === "page" ? "[[Fz]]" : "#Fz");
     } finally { dispose(); }
@@ -244,7 +244,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
       const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target"));
-      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]" }, false);
+      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]", session: expect.any(String) }, false);
 
       // Type the rest and accept immediately, before the 90 ms backend debounce.
       // The visible row is still legitimate, but replacement must use the live

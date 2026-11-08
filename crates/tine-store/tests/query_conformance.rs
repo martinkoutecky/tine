@@ -962,12 +962,10 @@ fn property_atoms_compare_by_their_keys_effective_type() {
     );
 }
 
-/// Master's journal-first tie: two groups of the same name order journal
-/// first. og classifies a page by its directory (v0.6.5), so unlike master's
-/// Direct Files the pair IS reachable from disk and the rule is exercised
-/// end to end.
+/// R13 OWN2/G1: the ordinary opening claimant alone supplies query blocks
+/// when a journal and an ordinary file carry the same literal name.
 #[test]
-fn two_groups_of_the_same_name_are_ordered_journal_first() {
+fn a_cross_kind_name_has_only_its_active_ordinary_query_group() {
     let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("journals/2026_07_29.md", "- TODO from the journal\n"),
@@ -985,10 +983,7 @@ fn two_groups_of_the_same_name_are_ordered_journal_first() {
             .iter()
             .map(|group| (group.page.as_str(), group.kind))
             .collect::<Vec<_>>(),
-        vec![
-            ("Jul 29th, 2026", PageKind::Journal),
-            ("Jul 29th, 2026", PageKind::Page),
-        ]
+        vec![("Jul 29th, 2026", PageKind::Page)]
     );
 }
 
