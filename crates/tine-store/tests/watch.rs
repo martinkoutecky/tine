@@ -396,7 +396,7 @@ fn own_config_commit_reloads_format_and_sets_config_changed() {
     assert_eq!(graph.store.config().preferred_format.ext(), "org");
     assert!(graph
         .store
-        .journal_id(crate::Day(20260925))
+        .journal_id(crate::Day(20260925), false)
         .as_str()
         .ends_with(".org"));
 }
@@ -531,7 +531,7 @@ fn scan_refresh_keeps_journal_day_index_current() {
     graph.write("journals/2026_09_25.org", "* day\n");
     graph.changes();
     assert_eq!(
-        graph.store.journal_id(crate::Day(20260925)).as_str(),
+        graph.store.journal_id(crate::Day(20260925), false).as_str(),
         "journals/2026_09_25.org"
     );
     let view = graph.store.whole_graph().unwrap();
@@ -596,7 +596,7 @@ fn notify_with_one_missing_directory_falls_back_to_polling() {
         "missing notify directory must be recovered by polling"
     );
     assert_eq!(
-        store.journal_id(crate::Day(20260925)).as_str(),
+        store.journal_id(crate::Day(20260925), false).as_str(),
         "journals/2026_09_25.org"
     );
     store.close();

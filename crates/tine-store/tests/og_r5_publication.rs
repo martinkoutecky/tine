@@ -35,7 +35,13 @@ fn a_saved_shadow_journal_does_not_replace_the_canonical_published_day() {
             &page,
         )
         .unwrap();
-    let corpus = store.whole_graph().unwrap().corpus(None);
+    let view = store.whole_graph().unwrap();
+    assert_eq!(
+        view.corpus(None, false).pages.len(),
+        2,
+        "both physical files remain"
+    );
+    let corpus = view.corpus(None, true);
     assert_eq!(corpus.pages.len(), 1);
     assert_eq!(corpus.pages[0].id.as_str(), "journals/2026_06_26.md");
     assert_eq!(corpus.pages[0].document.roots[0].raw(), "canonical");
@@ -71,7 +77,7 @@ fn published_tree_matches_written_bytes_when_the_dto_does_not_round_trip() {
         .unwrap();
     let bytes = fs::read_to_string(dir.path().join(id.as_str())).unwrap();
     let parsed = tine_core::doc::parse(&bytes);
-    let view = store.whole_graph().unwrap().corpus(None);
+    let view = store.whole_graph().unwrap().corpus(None, false);
     assert_eq!(*view.pages[0].document, parsed);
     assert_eq!(view.pages[0].document.roots[0].uuid, live_id);
     store.close();

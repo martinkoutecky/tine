@@ -234,10 +234,7 @@ fn compare_owner_answers(
     use crate::{InventoryScope, Resolved};
     let mut diffs = Vec::new();
     let snapshot = view.test_read_snapshot();
-    let config = snapshot.config();
-    let fmt = config.journal_format();
-    let name_fmt = config.file_name_format;
-    let entries = snapshot.page_list_arc();
+    let entries = snapshot.physical_page_list_arc();
     let physical: Vec<&PageEntry> = entries.iter().filter(|e| e.rel_path.is_some()).collect();
     let rel_of: BTreeMap<&Path, &str> = physical
         .iter()
@@ -250,7 +247,7 @@ fn compare_owner_answers(
     let least = |group: &[&PageEntry]| -> Option<String> {
         group
             .iter()
-            .min_by(|a, b| compare_page_claimants(a, b, &fmt, name_fmt))
+            .min_by(|a, b| compare_page_claimants(a, b))
             .map(|e| e.rel_path_str().to_owned())
     };
     let kind_name = |k: PageKind| {

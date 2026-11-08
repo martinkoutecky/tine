@@ -2301,12 +2301,13 @@ pub(crate) fn quick_switch_for_editor(
 /// `Some(..)`/`None`).
 #[cfg(test)]
 pub(crate) fn resolve_blocks(graph: &ReadSnapshot, uuids: &[String]) -> Vec<Option<RefGroup>> {
-    resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
+    resolve_blocks_bounded(graph, uuids, true, usize::MAX, usize::MAX).0
 }
 
 pub(crate) fn resolve_blocks_bounded(
     graph: &ReadSnapshot,
     uuids: &[String],
+    active_only: bool,
     max_rows: usize,
     max_bytes: usize,
 ) -> (Vec<Option<RefGroup>>, bool, usize) {
@@ -2314,7 +2315,7 @@ pub(crate) fn resolve_blocks_bounded(
     type Want<'a> = (&'a (PageEntry, std::sync::Arc<Document>), HashSet<&'a str>);
     let mut by_page: BTreeMap<usize, Want<'_>> = BTreeMap::new();
     for id in uuids {
-        if let Some((slot, page)) = graph.block_owner_page(id) {
+        if let Some((slot, page)) = graph.block_owner_page(id, active_only) {
             by_page
                 .entry(slot)
                 .or_insert_with(|| (page, HashSet::new()))
@@ -2600,7 +2601,7 @@ pub(crate) fn preview_block_with_budget(
     let max_nodes = max_nodes.max(1);
     let max_bytes = max_bytes.max(1);
     // The exact block index names the answering page (see `resolve_blocks`).
-    let (_, (entry, doc)) = graph.block_owner_page(uuid)?;
+    let (_, (entry, doc)) = graph.block_owner_page(uuid, true)?;
     touch_page();
     let mut found: Option<&DocBlock> = None;
     walk(&doc.roots, &mut |block| {
@@ -4994,7 +4995,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_source_page_names_merge_into_one_reference_group() {
+    fn duplicate_source_page_names_only_include_the_active_file() {
         use std::fs;
         let dir = std::env::temp_dir().join(format!("tine-ref-groups-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -5006,8 +5007,9 @@ mod tests {
         let groups = backlinks(&graph, "Target");
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].page, "Note");
-        assert_eq!(groups[0].blocks.len(), 2);
-        assert_eq!(groups[0].evidence.len(), 2);
+        assert_eq!(groups[0].blocks.len(), 1);
+        assert_eq!(groups[0].evidence.len(), 1);
+        assert_eq!(groups[0].blocks[0].raw, "first [[Target]]");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -5089,12 +5091,7 @@ mod tests {
             "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
-            equivalent_page_names(
-                &RealPageOwners::empty(&Default::default()),
-                &AliasEdges::new(&aliases),
-                "Z"
-            )
-            .0,
+            equivalent_page_names(&RealPageOwners::empty(), &AliasEdges::new(&aliases), "Z").0,
             "A"
         );
     }

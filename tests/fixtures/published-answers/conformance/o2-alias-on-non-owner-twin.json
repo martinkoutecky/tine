@@ -1,27 +1,7 @@
 {
-  "aliases": [
-    [
-      "zed",
-      "a"
-    ]
-  ],
+  "aliases": [],
   "answers": {
-    "alias_groups": [
-      {
-        "aliases": [
-          "zed"
-        ],
-        "name": "a",
-        "pages": []
-      },
-      {
-        "aliases": [
-          "zed"
-        ],
-        "name": "a",
-        "pages": []
-      }
-    ],
+    "alias_groups": [],
     "inventory": [
       {
         "day": null,
@@ -31,9 +11,7 @@
         "target": {
           "id": "pages/a.md",
           "kind": "existing",
-          "others": [
-            "pages/b.md"
-          ]
+          "others": []
         }
       },
       {
@@ -51,16 +29,10 @@
         "day": null,
         "is_journal": false,
         "key": "zed",
-        "link": {
-          "kind": "page",
-          "name": "a"
-        },
         "name": "zed",
         "target": {
-          "kind": "alias",
-          "owners": [
-            "pages/b.md"
-          ]
+          "id": "pages/zed.md",
+          "kind": "absent"
         }
       }
     ],
@@ -86,12 +58,6 @@
       "kind": "page",
       "name": "a",
       "path": "pages/a.md"
-    },
-    {
-      "date_key": null,
-      "kind": "page",
-      "name": "a",
-      "path": "pages/b.md"
     }
   ],
   "exported_at": "",
@@ -115,16 +81,6 @@
       "kind": "page",
       "name": "a",
       "path": "pages/a.md",
-      "pre_block": null,
-      "read_only": true,
-      "title": "a"
-    },
-    {
-      "blocks": [],
-      "format": "md",
-      "kind": "page",
-      "name": "a",
-      "path": "pages/b.md",
       "pre_block": null,
       "read_only": true,
       "title": "a"

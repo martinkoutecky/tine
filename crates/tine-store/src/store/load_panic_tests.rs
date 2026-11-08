@@ -568,7 +568,7 @@ fn recovered_good(root: &Path, store: &Store, no_row: NoRowExplains) -> String {
     drop(no_row);
     store.refresh(Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
-    let corpus = view.corpus(None);
+    let corpus = view.corpus(None, false);
     let good = corpus.pages.iter().find(|page| page.name == "Good");
     good.unwrap().document.roots[0].raw().to_owned()
 }

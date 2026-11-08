@@ -52,7 +52,8 @@ fn gf4_ready_feed_matches_legacy_days_bodies_and_cursors() {
             .collect();
         let mut days: BTreeMap<_, _> = entries.into_iter().collect();
         for day in referenced.iter().filter(|d| d.0 <= as_of_day) {
-            days.entry(*day).or_insert_with(|| store.journal_id(*day));
+            days.entry(*day)
+                .or_insert_with(|| store.journal_id(*day, false));
         }
         let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
         let mut page = collect_feed_page(
@@ -287,7 +288,7 @@ fn realistic_graph_scroll_steps() {
     let graph = store.whole_graph().unwrap();
     let t = std::time::Instant::now();
     for _ in &cursors {
-        std::hint::black_box(indexed_days_through(&store, &graph, Day(as_of_day)));
+        std::hint::black_box(indexed_days_through(&graph, Day(as_of_day)));
     }
     let new_days = t.elapsed() / cursors.len() as u32;
     drop(graph);

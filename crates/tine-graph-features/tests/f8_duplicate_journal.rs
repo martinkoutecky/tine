@@ -17,6 +17,231 @@ use tine_store::{FileId, Store};
 const KEEPER: &str = "journals/2026_06_26.md";
 const STRAY: &str = "journals/Friday, 26-06-2026.md";
 
+#[test]
+fn f8_cross_kind_feed_masks_inactive_journal() {
+    let _guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["pages", "journals"] {
+        fs::create_dir(dir.path().join(folder)).unwrap();
+    }
+    let ordinary = "title:: Nov 6th, 2026\n- ordinary opening file\n";
+    let journal = "- HIDDEN_JOURNAL_SENTINEL\n";
+    fs::write(dir.path().join("pages/A.md"), ordinary).unwrap();
+    fs::write(dir.path().join("journals/2026_11_06.md"), journal).unwrap();
+    // This also exercises referenced-day insertion when the physical journal
+    // is masked, rather than only file-backed feed membership.
+    fs::write(dir.path().join("pages/Refs.md"), "- [[Nov 6th, 2026]]\n").unwrap();
+    let options = || tine_store::OpenOptions {
+        watch: tine_store::WatchMode::Poll,
+        ..Default::default()
+    };
+    let store = Store::open(dir.path(), options()).unwrap().0;
+    store.whole_graph().unwrap();
+    let check = |store: &Store, visible: bool| {
+        let view = store.whole_graph().unwrap();
+        assert_eq!(view.corpus(None, false).pages.len(), 3);
+        assert_eq!(
+            view.corpus(None, true).pages.len(),
+            if visible { 3 } else { 2 }
+        );
+        let mut answers = Vec::new();
+        for include_references in [false, true] {
+            for before in [None, Some(20261107)] {
+                let feed = tine_graph_features::journals::feed_page_through(
+                    store,
+                    10,
+                    before,
+                    None,
+                    include_references,
+                )
+                .unwrap();
+                let bodies: Vec<_> = feed.pages.iter().map(|page| &page.doc.blocks).collect();
+                let has_journal = format!("{bodies:?}").contains("HIDDEN_JOURNAL_SENTINEL");
+                assert_eq!(
+                    has_journal, visible,
+                    "references={include_references}, before={before:?}"
+                );
+                assert!(feed
+                    .pages
+                    .iter()
+                    .all(|page| page.doc.kind == PageKind::Journal));
+                if !visible {
+                    assert!(
+                        feed.pages.is_empty(),
+                        "an ordinary owner is not a virtual journal"
+                    );
+                }
+                answers.push(
+                    serde_json::to_value(
+                        feed.pages
+                            .into_iter()
+                            .map(|page| page.doc)
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+        let physical = store
+            .page(&tine_store::PageId::from(
+                "journals/2026_11_06.md".to_owned(),
+            ))
+            .unwrap();
+        assert_eq!(physical.doc.blocks[0].raw, "HIDDEN_JOURNAL_SENTINEL");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("journals/2026_11_06.md")).unwrap(),
+            journal
+        );
+        answers
+    };
+    check(&store, false);
+    let conflicts = ConflictQueue::default().inventory(&store).unwrap();
+    assert!(conflicts.queue.iter().any(|object| {
+        object.source == ConflictSource::DuplicateName
+            && object
+                .sides
+                .iter()
+                .any(|side| side.kind == Some(PageKind::Journal))
+    }));
+    for (text, visible) in [
+        ("title:: Elsewhere\n- ordinary opening file\n", true),
+        (ordinary, false),
+    ] {
+        fs::write(dir.path().join("pages/A.md"), text).unwrap();
+        store.refresh(tine_store::Depth::Bytes).unwrap();
+        let incremental = check(&store, visible);
+        let fresh = Store::open(dir.path(), options()).unwrap().0;
+        fresh.whole_graph().unwrap();
+        assert_eq!(incremental, check(&fresh, visible));
+        fresh.close();
+    }
+    store.close();
+}
+
+#[test]
+fn f8_cross_kind_loading_feed_masks_inactive_journal() {
+    let _guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["pages", "journals"] {
+        fs::create_dir(dir.path().join(folder)).unwrap();
+    }
+    fs::write(
+        dir.path().join("pages/A.md"),
+        "title:: Nov 6th, 2026\n- ordinary\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("journals/2026_11_06.md"),
+        "- HIDDEN_JOURNAL_SENTINEL\n",
+    )
+    .unwrap();
+    let pause = dir.path().join(".tine-test-pause-load");
+    fs::write(&pause, "").unwrap();
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let (send, receive) = std::sync::mpsc::channel();
+    let reader = std::sync::Arc::clone(&store);
+    let thread = std::thread::spawn(move || {
+        send.send(tine_graph_features::journals::feed_page_through(
+            &reader, 10, None, None, false,
+        ))
+        .unwrap();
+    });
+    let early = receive.recv_timeout(std::time::Duration::from_secs(5));
+    let loading = !store.is_graph_ready().unwrap();
+    fs::remove_file(pause).unwrap();
+    thread.join().unwrap();
+    assert!(loading);
+    let feed = early
+        .expect("file-only feed must not wait for Ready")
+        .unwrap();
+    assert!(feed.references_pending);
+    assert!(
+        feed.pages.is_empty(),
+        "the title-only ordinary owner masks the journal before Ready"
+    );
+    store.close();
+}
+
+#[test]
+fn name_conflicts_list_ordinary_and_cross_kind_files_without_writing() {
+    let _guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["pages", "journals"] {
+        fs::create_dir(dir.path().join(folder)).unwrap();
+    }
+    let first = "#+title: Nov 6th, 2026\n* first\n";
+    let second = "title:: Nov 6th, 2026\n- second\n";
+    let journal = "- journal\n";
+    for (path, text) in [
+        ("pages/A.org", first),
+        ("pages/Z.md", second),
+        ("journals/2026_11_06.md", journal),
+        ("journals/2026-11-06.md", "- another journal\n"),
+    ] {
+        fs::write(dir.path().join(path), text).unwrap();
+    }
+    let store = Store::open(
+        dir.path(),
+        tine_store::OpenOptions {
+            watch: tine_store::WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
+    let queue = ConflictQueue::default();
+    let check = |count| {
+        let inventory = queue.inventory(&store).unwrap();
+        assert_eq!(inventory.queue.len(), 1);
+        let object = inventory
+            .queue
+            .iter()
+            .find(|o| o.source == ConflictSource::DuplicateName)
+            .unwrap();
+        assert_eq!(object.sides.len(), count);
+        assert_eq!(object.page_path, "pages/A.org");
+        assert_eq!(object.sides[0].kind, Some(PageKind::Page));
+        assert!(object
+            .sides
+            .iter()
+            .any(|side| side.kind == Some(PageKind::Journal)));
+    };
+    check(4);
+    let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert!(days[0].files.iter().all(|file| !file.canonical));
+    fs::remove_file(dir.path().join("pages/Z.md")).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    queue
+        .refresh_files(&store, &[FileId::from("pages/Z.md".to_owned())])
+        .unwrap();
+    check(3);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/A.org")).unwrap(),
+        first
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("journals/2026_11_06.md")).unwrap(),
+        journal
+    );
+    // Ordinary-only events can restore or mask the journal conflict too.
+    fs::remove_file(dir.path().join("pages/A.org")).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    queue
+        .refresh_files(&store, &[FileId::from("pages/A.org".to_owned())])
+        .unwrap();
+    let promoted = queue.inventory(&store).unwrap();
+    assert_eq!(promoted.queue.len(), 1);
+    assert_eq!(promoted.queue[0].source, ConflictSource::DuplicateJournal);
+    assert_eq!(promoted.queue[0].page_path, "journals/2026-11-06.md");
+    fs::write(dir.path().join("pages/A.org"), first).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    queue
+        .refresh_files(&store, &[FileId::from("pages/A.org".to_owned())])
+        .unwrap();
+    check(3);
+    store.close();
+}
+
 fn graph(label: &str) -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
@@ -468,8 +693,8 @@ fn the_duplicate_day_keeper_is_the_file_the_day_opens() {
     for dir in ["pages", "journals", "assets"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    let opened_file = "journals/2026_10_26.md";
-    let iso_file = "journals/2026-10-26.md";
+    let opened_file = "journals/2026-10-26.md";
+    let iso_file = "journals/2026_10_26.md";
     fs::write(
         root.join(opened_file),
         "- shared line\n- only in underscore\n",

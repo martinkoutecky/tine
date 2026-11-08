@@ -343,7 +343,7 @@ pub(crate) fn reindex(app: &tauri::AppHandle, label: &str, slot: &Arc<crate::sta
     index(app).reindex(&binding_of(slot), move || {
         match source.store.whole_graph() {
             Ok(view) => Some(
-                view.corpus(None)
+                view.corpus(None, true)
                     .pages
                     .iter()
                     .map(|page| entry(&page.name, &page.document))

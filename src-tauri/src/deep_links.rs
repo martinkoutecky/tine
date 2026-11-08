@@ -200,7 +200,7 @@ fn target_in_view(
     };
     let (name, kind, block) = if let Some(id) = &request.block {
         let Some(group) = view
-            .blocks(&[id.clone()])
+            .blocks(&[id.clone()], false)
             .map_err(|e| format!("{e:?}"))?
             .into_iter()
             .next()
@@ -229,7 +229,7 @@ fn target_in_view(
     let Resolved::Existing { id, others } = view.resolve(&name, kind == PageKind::Journal) else {
         return Ok(None);
     };
-    // `view.blocks` names only the logical page. Same-name pages (and duplicate
+    // The physical block index names only the logical page. Same-name pages (and duplicate
     // journal days) are separate physical files, and the block belongs to ONE of
     // them: keep that file, not whichever the page resolver prefers.
     let page = match &block {
@@ -948,6 +948,9 @@ mod tests {
         )
         .unwrap();
         let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
+        let view = store.whole_graph().unwrap();
+        assert!(view.blocks(&[id.into()], true).unwrap()[0].is_none());
+        assert!(view.blocks(&[id.into()], false).unwrap()[0].is_some());
         let request = LinkRequest {
             graph: None,
             page: None,
@@ -968,6 +971,42 @@ mod tests {
         assert!(target_in_store(&store, "fixture", &upper)
             .unwrap()
             .is_none());
+        // Incremental edits update physical navigation; promotion admits
+        // the same block to graph meaning without moving its link target.
+        let replacement = "bbbbbbbb-1111-4111-8111-111111111111";
+        let source = format!("- changed losing block\n  id:: {replacement}\n");
+        std::fs::write(temp.path().join("pages/foo.md"), &source).unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        assert!(target_in_store(&store, "fixture", &request)
+            .unwrap()
+            .is_none());
+        let replacement_request = LinkRequest {
+            block: Some(replacement.into()),
+            ..request
+        };
+        for promoted in [false, true] {
+            if promoted {
+                std::fs::remove_file(temp.path().join("pages/Foo.md")).unwrap();
+                store.refresh(tine_store::Depth::Stamps).unwrap();
+            }
+            let target = target_in_store(&store, "fixture", &replacement_request)
+                .unwrap()
+                .unwrap();
+            assert_eq!(target.path.as_deref(), Some("pages/foo.md"));
+            assert_eq!(
+                store
+                    .whole_graph()
+                    .unwrap()
+                    .blocks(&[replacement.into()], true)
+                    .unwrap()[0]
+                    .is_some(),
+                promoted
+            );
+            assert_eq!(
+                std::fs::read_to_string(temp.path().join("pages/foo.md")).unwrap(),
+                source
+            );
+        }
     }
 
     #[test]
