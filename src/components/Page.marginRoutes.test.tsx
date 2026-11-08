@@ -26,12 +26,12 @@ function page(date: Date, id: string): PageRead {
     ] }] };
 }
 
-it.each(["journals", "page", "split-main", "split-secondary"] as const)("the %s surface gives each journal day its own margin at wide widths and inline threads at narrow widths", async kind => {
+it.each(["journals", "page", "zoom", "split-main", "split-secondary"] as const)("the %s surface uses the same margin, popover and sheet tiers", async kind => {
   const today = new Date(); const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
   const pages = [page(today, "today"), page(yesterday, "yesterday")];
   vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages, done: true, next_before_day: null, as_of_day: localDayKey(today) });
   vi.spyOn(backend(), "getPage").mockResolvedValue(pages[0]);
-  const route = { kind: "page", name: pages[0].name, pageKind: "journal" } as const;
+  const route = { kind: "page", name: pages[0].name, pageKind: "journal", ...(kind === "zoom" ? { block: "today" } : {}) } as const;
   if (kind !== "journals") mainPaneRouter.replaceActiveRoute(route);
   const paneId = kind === "split-secondary" ? "pane-2" : "main";
   if (kind.startsWith("split")) restorePaneLayout(
@@ -58,6 +58,14 @@ it.each(["journals", "page", "split-main", "split-secondary"] as const)("the %s 
     width = 800;
     for (const cb of [...resize]) cb([], {} as ResizeObserver);
     await vi.waitFor(() => expect(pane.querySelector(".margin-column")).toBeNull());
-    expect(pane.querySelectorAll(".page-blocks .comment-card")).toHaveLength(count);
+    expect(pane.querySelectorAll(".page-blocks .comment-card")).toHaveLength(0);
+    expect(pane.querySelectorAll(".page-blocks .margin-marker")).toHaveLength(count);
+    pane.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+    expect(document.querySelector(".comment-thread-popup .comment-card")).not.toBeNull();
+    document.querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+    width = 390;
+    for (const cb of [...resize]) cb([], {} as ResizeObserver);
+    pane.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+    expect(document.querySelector(".comment-bottom-sheet .comment-card")).not.toBeNull();
   } finally { vi.unstubAllGlobals(); }
 });

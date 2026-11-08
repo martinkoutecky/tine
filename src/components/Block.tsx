@@ -127,7 +127,7 @@ import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection
 import { isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor } from "./blockParts";
 import { commentFromEditor } from "../commentActions";
 import { commentKey } from "../editor/commentKeys";
-import { CommentGroup, quoteInGroup } from "./CommentGroup";
+import { quoteInGroup } from "./CommentGroup";
 import { CommentBelowChip } from "./CommentBelowChip";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -237,7 +237,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     return n ? propertySession.facets(n.raw, fmt()) : EMPTY_FACETS;
   });
-  const { outlineChildren, marginComments, inlineGroup } = marginOutline(node, surfaceKey, fmt);
+  const { outlineChildren, marginComments } = marginOutline(node, surfaceKey, fmt);
   const groupedQuote = quoteInGroup(props.id);
   const hasChildren = () => outlineChildren().length > 0;
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
@@ -461,7 +461,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="block-children-container">
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
               <div class="block-children">
-                <For {...blockListProps(outlineChildren, (id, neighbours) => inlineGroup(id) ? <CommentGroup ids={inlineGroup(id)!} /> : <Block id={id} authorNeighbors={neighbours} />)} />
+                <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />)} />
               </div>
             </div>
           </Match>

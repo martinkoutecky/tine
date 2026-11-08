@@ -36,7 +36,7 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
-function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
+function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
   loadSingle({ name: PAGE, kind: "page", title: PAGE, format: "md", pre_block: null, blocks });
   setGraphMeta({ root: "/fixture" } as any);
   const root = document.createElement("div");
@@ -48,7 +48,8 @@ function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
       {extra?.()}
     </>
   ), root);
-  return root;
+  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return document.body;
 }
 
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"].comment-name-prompt');

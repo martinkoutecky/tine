@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
+it("the Guide explains width-only live popovers and phone sheets", () => {
+  const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  for (const fact of ["slim passage rail", "live popover", "bottom sheet", "swipe between passages", "own open threads", "even when the block is collapsed", "no count badge"]) expect(tips).toContain(fact);
+  expect(tips).not.toContain("comments stay in the outline as cards");
+});
+
 it("the Guide explains unique context, ambiguous quotes, flat replies, thread counts and touch read-mode Comment (GH #891, #110)", () => {
   const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
   expect(tips).toContain("with `tine.quote-prefix::` and `tine.quote-suffix::`, a few words on either side");

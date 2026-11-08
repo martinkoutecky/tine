@@ -29,7 +29,7 @@ export async function saveJourneyScreenshot(browser, file) {
 }
 
 export async function checkCommentStructure(browser, pageFile, artifacts) {
-  await browser.setWindowSize(1000, 1000); // inline annotations expose the drag bug
+  await browser.setWindowSize(1600, 1000); // visible margin cards expose thread drag/drop guards
   await openPageByName(browser, STRUCTURE_PAGE);
   const clearPaneMode = async () => {
     if (await browser.$(".pane-select-hint").isExisting()) await browser.keys(["Escape"]);

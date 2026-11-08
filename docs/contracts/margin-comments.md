@@ -1,7 +1,30 @@
 # Margin comment interaction
 
-Authority: D-20261107-MC3, design §§5 and 7; internal IDs UI-MC010-KEYBOARD,
-UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY.
+Authority: D-20261107-MC3, design §§5–7; internal IDs UI-MC010-KEYBOARD,
+UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-MEDIUM,
+UI-MC010-PHONE.
+
+- Layout uses the containing pane's CSS width, including interface zoom. At
+  960 px the existing margin fits; below that threads never fall back to inline
+  cards. Medium panes retain highlights and a slim per-thread passage rail.
+  Markers, highlights and the block's own-thread chip open the live thread in
+  `PeekPopup`, sharing preview placement and outside-press, Escape, scroll and
+  resize dismissal. Editing holds the popup under the preview's existing rules.
+  Cards, replies and document mutations are the same components and door as
+  in the wide margin. Expanded wide blocks have no count badge.
+- At 480 px or less, highlight/chip entry opens a bottom sheet capped at 55% of
+  the viewport height, leaving source text above. Swipe horizontally or use the
+  previous/next controls to move between passages; same-passage threads stay
+  grouped. The block's composers retain drafts across navigation. The chip
+  counts own open thread roots, never replies, and remains reachable when the
+  block is folded. Show/Hide comments removes these entry points and surfaces.
+  Page routes, journal days, zoomed blocks, splits, sidebar blocks, references
+  and embeds follow the same width rule. Crossing the medium/phone boundary
+  while editing changes placement without replacing the editor. A held sheet
+  fits the visual viewport when a soft keyboard shrinks it; opening above an
+  existing keyboard reveals the source in the visible text strip. Removing its source
+  closes the compact surface; deleting its selected thread leaves any remaining
+  thread visible and replyable.
 
 - In either block editor, Enter and Shift+Enter insert a line break in a comment
   or any reply. Ctrl/Cmd+Enter and Escape finish editing. These keys never split
@@ -15,12 +38,13 @@ UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY.
   with `tine.resolved:: true` is excluded from this count. The chip expands the
   existing surface fold. No resolve/reopen action or new property is introduced.
 - Threads resolving to the same source range (or the whole block) share a card
-  and passage header in the margin and existing inline surfaces. File order
+  and passage header in the margin, popover and sheet. File order
   breaks ties. Stale and ambiguous selectors remain separate cards. Each root
   retains its messages, actions and reply composer; disk structure is unchanged.
   A composer remounted during regrouping or width changes retains its unsent
-  draft for that thread and surface. The transfer lasts only through the current
-  render; leaving the surface releases the state, and graph switches clear it.
+  draft for that thread and surface. Compact entry keeps drafts while its source
+  row remains mounted, including closing and reopening the thread view; leaving
+  the surface releases the state, and graph switches clear it.
 - Commenting again on a resolved passage focuses its last thread's reply box.
   It does not write. The group's explicit New thread action appends a distinct
   root on the same resolved passage, through the existing guarded save path.
@@ -34,4 +58,4 @@ UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY.
   existing refusal and remain available to send or discard.
 
 There is no format, storage mode, transport, or write-path change. Resolve/date
-semantics, author gutter runs and medium/phone layout tiers are separate work.
+semantics and author gutter runs are separate work.

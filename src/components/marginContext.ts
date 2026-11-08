@@ -21,6 +21,8 @@ export interface MarginApi {
 export interface MarginPlacement {
   api: MarginApi;
   thread: { root: string; parent: string } | null;
+  /** A locally owned reference/embed surface, rather than an inherited margin. */
+  surface?: string;
 }
 
 export const MarginContext = createContext<MarginPlacement | null>(null);

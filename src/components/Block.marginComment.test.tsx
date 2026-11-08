@@ -34,7 +34,7 @@ function page(blocks: BlockDto[]): PageDto {
   return { name: PAGE, kind: "page", title: PAGE, pre_block: null, blocks };
 }
 
-function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): { root: HTMLDivElement; dispose: () => void } {
+function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): { root: HTMLElement; dispose: () => void } {
   loadSingle({ ...page(blocks), format });
   if (edit) startEditing(edit, 0);
   const root = document.createElement("div");
@@ -42,7 +42,9 @@ function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): 
   const dispose = render((): JSX.Element => (
     <For each={pageByName(PAGE)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  return { root, dispose };
+  // Existing card assertions now exercise the live popover reached by its chip.
+  if (!edit) root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return { root: document.body, dispose };
 }
 
 function ctrlR(ta: EditorDriver | HTMLTextAreaElement): KeyboardEvent {
@@ -113,7 +115,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
         return element!;
       });
       expect(root.querySelector(".margin-column")).toBeNull();
-      const card = zoom.querySelector('[data-block-id="c"]')!;
+      zoom.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      const card = document.querySelector('[data-block-id="c"]')!;
       expect(card.textContent).toContain("My view");
       expect(card.textContent).toContain("Earlier reply");
       const draft = card.querySelector<HTMLTextAreaElement>(".comment-composer textarea")!;
@@ -124,7 +127,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       const reply = docNode(docNode("c")!.children.at(-1)!)!;
       expect(reply.parent).toBe("c");
       expect(reply.raw).toContain("Reply from zoom");
-      expect(zoom.textContent).toContain("Reply from zoom");
+      expect(document.body.textContent).toContain("Reply from zoom");
     } finally { dispose(); }
   });
 
@@ -183,7 +186,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode(id)!.raw).toContain("tine.quote:: these words");
       expect(editingId()).toBe(id);
       expect(docNode("p")!.children).toEqual(["existing", id]); // ADR 0075 file order
-      expect([...root.querySelectorAll('[data-block-id="p"] .ls-block')].map(el => el.getAttribute("data-block-id"))).toEqual([id, "existing"]);
+      expect([...root.querySelectorAll('[data-block-id="p"] .ls-block')].map(el => el.getAttribute("data-block-id"))).toEqual(["existing"]);
+      expect(root.querySelector(`.comment-thread-popup [data-block-id="${id}"]`)).not.toBeNull();
     } finally { dispose(); }
   });
 

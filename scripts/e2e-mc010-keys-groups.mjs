@@ -129,7 +129,7 @@ try {
   await browser.$('input[aria-label="Your name"]').setValue("Ada Test"); await keys("Enter"); await keys("Escape");
   for (const mode of modes) {
     if (mode === "cm6") ids = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, id.replace("01000000", "02000000")]));
-    editorSelector = mode === "cm6" ? '.main-content [data-block-editor="cm6"] .cm-content' : ".main-content textarea.block-editor";
+    editorSelector = mode === "cm6" ? '[data-block-editor="cm6"] .cm-content' : "textarea.block-editor";
     const file = path.join(graph, `pages/Comments ${mode}.md`);
     await browser.setWindowSize(1700, 1000);
     stage = `${mode}: choose editor`;
@@ -222,10 +222,10 @@ try {
       await keys("Escape");
       await browser.waitUntil(() => browser.execute(() => !document.querySelector("[data-mobile-drawer-scrim]")));
     }
-    await browser.$(".page-blocks .comment-group").waitForExist();
+    await browser.$(".page-blocks .margin-marker").waitForExist();
     await menuToggle("Hide comments", true);
     assert.equal(await browser.execute(() => document.querySelectorAll(".comment-group,.comment-quote-anchor,.comment-below-chip,.margin-marker").length), 0);
-    await menuToggle("Show comments", true); await browser.$(".page-blocks .comment-group").waitForExist();
+    await menuToggle("Show comments", true); await browser.$(".page-blocks .margin-marker").waitForExist();
     await shot(`${mode}-04-narrow-comments`);
     await keys("Control", "0");
     await browser.waitUntil(() => browser.execute(() => innerWidth > 420));

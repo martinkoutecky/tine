@@ -16,6 +16,12 @@ export { isCommentId, threadRootOf } from "./document";
  * main column keeps at least ~550 px beside a 280 px column, a 32 px gap and the
  * pane's 48 px side padding. Mirrored by `--margin-column-*` in comments.css. */
 export const MARGIN_MIN_PANE_WIDTH = 960;
+/** Below this pane width there is no useful side rail: use a bottom sheet.
+ * Measured in the same CSS pixels as margin fit, including interface zoom. */
+export const COMMENT_PHONE_MAX_WIDTH = 480;
+export function commentTier(width: number): "wide" | "medium" | "phone" {
+  return width >= MARGIN_MIN_PANE_WIDTH ? "wide" : width <= COMMENT_PHONE_MAX_WIDTH ? "phone" : "medium";
+}
 /** The comment column's width bounds, px (`--margin-column-width` in comments.css
  * is the narrow end). */
 export const MARGIN_COLUMN_MIN = 280;

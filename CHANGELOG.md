@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Narrow panes open live comment threads from passage markers, highlights and thread-count chips; phones use a bottom sheet with swipe navigation. The tiers follow pane width on pages, journals, splits, sidebars and embeds, and visible wide-margin threads no longer duplicate a count badge (GH #891; UI-MC010-MEDIUM; UI-MC010-PHONE).
 - Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
 - Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
 - The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).

@@ -23,7 +23,7 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
-function mount(blocks: BlockDto[]): { root: HTMLDivElement; dispose: () => void } {
+function mount(blocks: BlockDto[]): { root: HTMLElement; dispose: () => void } {
   const page: PageDto = { name: PAGE, kind: "page", title: PAGE, pre_block: null, blocks };
   loadSingle(page);
   const root = document.createElement("div");
@@ -31,7 +31,8 @@ function mount(blocks: BlockDto[]): { root: HTMLDivElement; dispose: () => void 
   const dispose = render((): JSX.Element => (
     <For each={pageByName(PAGE)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  return { root, dispose };
+  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return { root: document.body, dispose };
 }
 
 const fixture = () => mount([

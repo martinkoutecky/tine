@@ -2,7 +2,7 @@
 // routed named page, select words in a block, click Comment, type a reply, and
 // the page file on disk holds a child bullet with the reply and `tine.quote::`. The
 // app must not reload on Ctrl+R (the webview's default for that chord). The
-// window is narrow, so the comment renders inline (the margin column is
+// window is narrow, so the comment opens in a popover (the margin column is
 // scripts/e2e-margin-column.mjs). The graph is under git and no name is set, so
 // the first comment asks for "Your name" once (tine#841); the name given there
 // is a device setting, shown in Settings, and the comment and the reply written
@@ -103,7 +103,7 @@ try {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
   await assertAppLease(account);
   console.log("app bundle:", await browser.execute(() => document.querySelector('link[rel="modulepreload"][href*="app-"]')?.getAttribute("href")));
-  // A window too narrow for the margin column (slice 2): comments stay inline.
+  // A window too narrow for the margin column: comments open in a live popover.
   await browser.setWindowSize(1000, 820);
   await openPageByName(browser, PAGE_NAME);
 
@@ -199,7 +199,7 @@ try {
 
   // The caret moves into the new comment's empty body line.
   await browser.waitUntil(() => browser.execute(() => {
-    const ta = document.querySelector(".page-blocks textarea.block-editor");
+    const ta = document.querySelector(".comment-thread-popup textarea.block-editor");
     return !!ta && ta.closest(".comment-in-thread") && ta.value === "" && ta.selectionStart === 0 && document.activeElement === ta;
   }), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open an empty body editor on the new comment" });
   if ((await browser.execute(() => window.__marginE2E)) !== "alive") throw new Error("Ctrl+R reloaded the webview");
@@ -238,17 +238,17 @@ try {
 
   // Rendered: a comment card with the quote, and the phrase marked in the parent.
   await browser.waitUntil(() => browser.execute((phrase) =>
-    document.querySelector(".page-blocks .ls-block.comment-card .comment-quote-text")?.textContent === phrase
+    document.querySelector(".comment-thread-popup .ls-block.comment-card .comment-quote-text")?.textContent === phrase
       && document.querySelector(".page-blocks .comment-quote-anchor")?.textContent === phrase, PHRASE), {
     timeout: 5_000, timeoutMsg: "the comment did not render as a card with its quote and a marked passage",
   });
   // Your own name renders as "you", not as an agent.
-  const chips = await browser.execute(() => [...document.querySelectorAll(".page-blocks .ls-block.comment-in-thread .author-chip")]
+  const chips = await browser.execute(() => [...document.querySelectorAll(".comment-thread-popup .ls-block.comment-in-thread .author-chip")]
     .map((el) => ({ text: el.textContent, agent: el.classList.contains("agent") })));
   if (!chips.length || chips.some((chip) => chip.text !== "you" || chip.agent)) throw new Error(`own comments are not shown as you: ${JSON.stringify(chips)}`);
   const beforeDraft = fs.statSync(PAGE_FILE).mtimeMs;
   await browser.execute(() => document.querySelector(".comment-card").dispatchEvent(new MouseEvent("mouseenter")));
-  // Focus via the native pointer after hovering the inline thread.
+  // Focus via the native pointer after hovering the live thread.
   await browser.$(".comment-card").moveTo();
   const draft = await browser.$(".comment-card > .comment-composer textarea");
   await draft.click();
