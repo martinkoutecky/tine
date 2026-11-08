@@ -62,7 +62,42 @@ it("GH453: Guide explains the command and shortcut assignment", () => {
   const guide = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
   expect(guide).toContain("Toggle code block wrap");
   expect(guide).toContain("keeps your reading position");
+  expect(guide).toContain("Code cards above the visible reading row can grow or shrink without moving that row");
+  expect(guide).toContain("Code cards above the visible reading row can grow or shrink without moving that row");
   expect(guide).toContain("Keyboard shortcuts");
+});
+
+it.each([true, false])("GH453: toggling wrap to %s keeps the visible row after a clipped code card in every pane", async wrapped => {
+  vi.spyOn(backend(), "setAppString").mockResolvedValue();
+  changeCodeWrapping(!wrapped);
+  loadSingle({ name: "Code", title: "Code", kind: "page", pre_block: null, blocks: [
+    { id: "parent", raw: "Long parent", collapsed: false, children: [
+      { id: "above", raw: "```js\n" + "long ".repeat(80) + "\n```", collapsed: false, children: [] },
+      { id: "anchor", raw: "Reading here", collapsed: false, children: [] },
+    ] },
+  ] });
+  const disposers: (() => void)[] = [];
+  const scrollers = ["main-content", "main-content", "right-sidebar"].map(className => {
+    const scroller = document.createElement("div"); scroller.className = className; document.body.append(scroller);
+    disposers.push(render(() => <Block id="parent" />, scroller));
+    scroller.scrollTop = 200 + (codeWrapping() ? 160 : 0);
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 500 } as DOMRect);
+    const rect = (top: number, bottom: number) => ({ top: top - scroller.scrollTop, bottom: bottom - scroller.scrollTop } as DOMRect);
+    vi.spyOn(scroller.querySelector('[data-block-id="parent"]')!, "getBoundingClientRect").mockImplementation(() => rect(0, codeWrapping() ? 2000 : 1000));
+    // Native layout: the previous code row's trailing space intersects the
+    // viewport, while the next row starts in view. Its top does not move when
+    // its own code wraps, so anchoring it lets the reading row jump away.
+    vi.spyOn(scroller.querySelector('[data-block-id="above"]')!, "getBoundingClientRect").mockImplementation(() => rect(74, 204 + (codeWrapping() ? 160 : 0)));
+    vi.spyOn(scroller.querySelector('[data-block-id="anchor"]')!, "getBoundingClientRect").mockImplementation(() => rect(204 + (codeWrapping() ? 160 : 0), 268 + (codeWrapping() ? 160 : 0)));
+    return scroller;
+  });
+  try {
+    runGlobalCommand("ui/toggle-code-block-wrap"); await tick();
+    expect(codeWrapping()).toBe(wrapped);
+    for (const scroller of scrollers) {
+      expect.soft(scroller.querySelector('[data-block-id="anchor"]')!.getBoundingClientRect().top).toBe(4);
+    }
+  } finally { disposers.forEach(dispose => dispose()); }
 });
 
 it("Settings globally wraps reading and editing, and remembers the device preference", async () => {

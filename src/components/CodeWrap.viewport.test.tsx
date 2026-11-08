@@ -57,6 +57,25 @@ it("wrap retains a visible descendant within a long outline parent", () => {
   expect(marker.getBoundingClientRect().top).toBe(before);
 });
 
+it("keeps the intersecting descendant when a tall card fills the viewport", () => {
+  const scroller = document.createElement("div"); scroller.className = "main-content";
+  const parent = document.createElement("div"); parent.dataset.blockId = "parent";
+  const code = document.createElement("div"); code.dataset.blockId = "tall-card";
+  const below = document.createElement("div"); below.dataset.blockId = "below-viewport";
+  parent.append(code, below); scroller.append(parent); document.body.append(scroller);
+  scroller.scrollTop = 200;
+  let growth = 0;
+  const rect = (top: number, bottom: number) => ({ top: top - scroller.scrollTop, bottom: bottom - scroller.scrollTop } as DOMRect);
+  vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 500 } as DOMRect);
+  vi.spyOn(parent, "getBoundingClientRect").mockImplementation(() => rect(0, 2000 + growth));
+  vi.spyOn(code, "getBoundingClientRect").mockImplementation(() => rect(100 + growth, 1500 + growth));
+  vi.spyOn(below, "getBoundingClientRect").mockImplementation(() => rect(1500 + 2 * growth, 1600 + 2 * growth));
+  const anchor = captureReadingViewport(scroller)!;
+  growth = 160; anchor.restore();
+  expect(code.getBoundingClientRect().top).toBe(-100);
+  anchor.release();
+});
+
 it.each(["ongoing scrollbar drag", "wheel", "touchstart", "pointerdown", "keydown"])("a %s during late shrink must retain user ownership", gesture => {
   let resize!: ResizeObserverCallback;
   vi.stubGlobal("ResizeObserver", class {
