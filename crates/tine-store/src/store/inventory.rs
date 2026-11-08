@@ -7,7 +7,8 @@ use super::*;
 /// the graph's page identity key. A physical page has one entry per decoded
 /// spelling, and each entry's target is exactly what [`WholeGraph::resolve`]
 /// returns for that name: the canonical claimant, then every other file
-/// claiming the same normalized name.
+/// claiming the same normalized name. `ActiveFilesUnder` and `ConflictingFiles`
+/// instead target the listed physical file directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InventoryEntry {
     /// Decoded file name, alias, or referenced name.
@@ -282,6 +283,9 @@ pub(crate) struct InventoryDelta {
 /// Which names a [`WholeGraph::inventory`] lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InventoryScope<'a> {
+    /// Active parsed file owners whose identity starts with this prefix.
+    /// One row per identity, targeting the active file; no alias resolution.
+    ActiveFilesUnder(&'a str),
     /// The file-claimed name of this page in this view, if present.
     File(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
@@ -379,6 +383,14 @@ impl WholeGraph {
     /// indexed once per snapshot instead of rescanned for every name.
     /// The result is stable in this view.
     ///
+    /// [`InventoryScope::ActiveFilesUnder`] normalizes a literal name prefix,
+    /// retaining a terminal slash as the descendant boundary,
+    /// and ranges the existing real-name tree. It returns the semantic owner's
+    /// stored spelling and file target, once per identity, in identity order.
+    /// It includes journals and excludes alias-only and reference-only names.
+    /// Cost O(log P + C) for C matching stored claimants (including twins),
+    /// with no document traversal, filesystem access or new index.
+    ///
     /// [`InventoryScope::FilesAtOrUnder`] returns only the file-claimed
     /// entries (pages and journals, `is_journal` telling them apart) whose
     /// page key is the given key or lies under `key/` with a namespace name
@@ -416,6 +428,32 @@ impl WholeGraph {
     /// with no document traversal or file reads. An absent page returns empty.
     pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
         match scope {
+            InventoryScope::ActiveFilesUnder(prefix) => {
+                let prefix = prefix.strip_suffix('/').map_or_else(
+                    || tine_core::refs::page_key(prefix),
+                    |parent| format!("{}/", tine_core::refs::page_key(parent)),
+                );
+                let owners = self.graph.real_page_owners();
+                Arc::new(Inventory(
+                    owners
+                        .under(&prefix)
+                        .filter_map(|entry| {
+                            Some(InventoryEntry {
+                                name: entry.name.clone(),
+                                target: Resolved::Existing {
+                                    id: entry.rel_path.clone()?,
+                                    others: Vec::new(),
+                                },
+                                is_journal: entry.kind == PageKind::Journal,
+                                day: entry.date_key.map(Day),
+                                link: None,
+                                namespace_parent: false,
+                                empty_alias: false,
+                            })
+                        })
+                        .collect(),
+                ))
+            }
             InventoryScope::File(id) => Arc::new(Inventory(
                 self.graph
                     .physical_pages

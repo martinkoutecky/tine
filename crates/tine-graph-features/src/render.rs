@@ -1443,9 +1443,7 @@ fn youtube_id(url: &str) -> Option<String> {
 /// List every page under a `{{namespace X}}` prefix (`X/…`, any depth) as links.
 fn render_namespace(graph: &RenderGraph<'_>, ns: &str, ctx: &Ctx) -> String {
     let prefix = format!("{}/", ns.trim());
-    let mut children = graph
-        .lookups
-        .names_under(graph.corpus, graph.whole, &prefix);
+    let mut children = graph.lookups.names_under(graph.whole, &prefix);
     children.retain(|name| publish_page_allowed(ctx, name));
     if children.is_empty() {
         return format!(
