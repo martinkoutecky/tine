@@ -42,13 +42,8 @@
       },
       {
         "day": null,
-        "empty_alias": true,
         "is_journal": false,
         "key": "ml",
-        "link": {
-          "kind": "page",
-          "name": "Machine Learning"
-        },
         "name": "ML",
         "target": {
           "id": "pages/ML.md",

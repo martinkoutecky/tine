@@ -1,7 +1,7 @@
 {
   "aliases": [
     [
-      "24-10-2026",
+      "Oct 24th, 2026",
       "Plan"
     ]
   ],
@@ -9,7 +9,7 @@
     "alias_groups": [
       {
         "aliases": [
-          "24-10-2026"
+          "Oct 24th, 2026"
         ],
         "name": "Plan",
         "pages": []
@@ -109,6 +109,22 @@
       {
         "day": null,
         "is_journal": false,
+        "key": "oct 24th, 2026",
+        "link": {
+          "kind": "page",
+          "name": "Plan"
+        },
+        "name": "Oct 24th, 2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Plan.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
         "key": "plan",
         "name": "Plan",
         "target": {
@@ -142,6 +158,26 @@
           "id": "journals/22-10-2026.md",
           "kind": "existing",
           "others": []
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "24-10-2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Plan.md"
+          ]
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "Oct 24th, 2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Plan.md"
+          ]
         }
       }
     ],

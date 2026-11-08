@@ -1,11 +1,11 @@
 {
   "aliases": [
     [
-      "2026-10-26",
+      "ML",
       "owner"
     ],
     [
-      "ML",
+      "Oct 26th, 2026",
       "owner"
     ]
   ],
@@ -13,8 +13,8 @@
     "alias_groups": [
       {
         "aliases": [
-          "2026-10-26",
-          "ML"
+          "ML",
+          "Oct 26th, 2026"
         ],
         "name": "owner",
         "pages": []
@@ -67,6 +67,22 @@
       {
         "day": null,
         "is_journal": false,
+        "key": "oct 26th, 2026",
+        "link": {
+          "kind": "page",
+          "name": "owner"
+        },
+        "name": "Oct 26th, 2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
         "key": "owner",
         "name": "owner",
         "target": {
@@ -81,7 +97,28 @@
       "file_name_format": "yyyy_MM_dd",
       "title_format": "MMM do, yyyy"
     },
-    "resolve": [],
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026-10-26",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/owner.md"
+          ]
+        }
+      }
+    ],
     "v": 1
   },
   "backlinks": {},

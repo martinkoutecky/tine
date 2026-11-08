@@ -145,6 +145,9 @@ impl DaySupport {
 #[derive(Clone, Debug)]
 pub(crate) struct FilelessName {
     pub(crate) name: String,
+    /// An unclaimed spelling of the day when its display title is claimed
+    /// by an ordinary file. Opening that literal title would open that file.
+    pub(crate) opening_name: Option<String>,
     pub(crate) day: Option<JournalDate>,
     pub(crate) namespace_parent: bool,
 }
@@ -160,6 +163,7 @@ impl FilelessName {
             .flatten();
         Self {
             name: day.map_or_else(|| name.to_owned(), |day| format.title(day)),
+            opening_name: None,
             day,
             namespace_parent: false,
         }
@@ -182,22 +186,31 @@ impl FilelessName {
 
 impl ReadSnapshot {
     /// No real-file reclassification: raw claims win first (CM-DATEPAGE).
-    /// A date fallback is then suppressed when its canonical day is claimed
-    /// or declared, so another spelling never invents a second page entity.
+    /// A date fallback is suppressed by an active journal or day alias.
+    /// A canonical ordinary file claims only its own spelling (KD), so an
+    /// alternate spelling can still support a distinct virtual journal.
     pub(crate) fn fileless_name(&self, format: &JournalFormat, name: &str) -> Option<FilelessName> {
+        let mut answer = FilelessName::new(format, name);
         let unclaimed = |key: &str| {
             self.real_page_names.owners(key).next().is_none()
                 && self
-                    .alias_owner_paths(key)
+                    .alias_owner_paths(key, answer.day)
                     .is_none_or(|owners| owners.is_empty())
         };
         let key = refs::page_key(name);
         if !unclaimed(&key) {
             return None;
         }
-        let answer = FilelessName::new(format, name);
-        if answer.day.is_some() && !unclaimed(&refs::page_key(&answer.name)) {
-            return None;
+        if answer.day.is_some() {
+            if let Some(entry) = self
+                .real_page_owners()
+                .opening_entry(&refs::page_key(&answer.name))
+            {
+                if entry.kind == PageKind::Journal {
+                    return None;
+                }
+                answer.opening_name = Some(name.to_owned());
+            }
         }
         Some(answer)
     }

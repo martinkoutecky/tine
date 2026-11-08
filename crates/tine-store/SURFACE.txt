@@ -377,24 +377,16 @@ field store::InventoryEntry.link
 # is a flag on the same entry (sent only when true), not a sibling method or
 # scope: every entry carries it and the namespace views nest by it. 22 -> 23.
 field store::InventoryEntry.namespace_parent
-# CM step 2 EMPTY-ALIAS (S14, D-20261103-CMA): a name whose files are all
-# content-free yields to its alias owner; that this is why `link` differs is a
-# flag on the same entry (sent only when true), not a sibling method or scope:
-# `link` alone cannot say it (a date-shaped name's link also moves), and named
-# routes follow `link` only for alias entries and these. 23 -> 24.
+field store::InventoryEntry.parent
+# Retired EMPTY-ALIAS compatibility field: live entries always set false
+# under R13-C4. Frozen published v1 readers retain their stored answer.
 field store::InventoryEntry.empty_alias
 struct store::LinkTarget
 field store::LinkTarget.name
 field store::LinkTarget.is_journal
 # test-oracle: the conformance harnesses (tine-store, and tine-graph-features sharing them) ask the link answer for names the inventory does not list; production reads InventoryEntry.link.
 fn store::WholeGraph::link_target
-# CM step 2 batch 16 (CM-R9-EMPTYDIALOG, D-20261105-CM11): the rename planner
-# needs the declaring owner FILES of a name that EMPTY-ALIAS redirects, to offer
-# the M-Q5 dialog. `inventory` answers names, not declaring files (a File-scope
-# round trip through `resolve` picks the canonical spelling twin, not the
-# declarer), and `resolve` keeps the empty file as an empty-alias name's target
-# because navigation and the empty file's own page depend on it. 24 -> 25.
-fn store::WholeGraph::redirecting_alias_owners
+# R13-C4 retires content-dependent owner routing in navigation and rename.
 fn store::WholeGraph::complete_page_names
 # GH #623: the rename planner asks for the page files under one key through
 # `InventoryScope` instead of a sibling method (rule 3).

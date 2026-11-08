@@ -21,6 +21,8 @@ pub struct InventoryEntry {
     /// What a `[[name]]` link opens ([`WholeGraph::link_target`]), only when
     /// that differs from this entry's own (name, kind): an alias (its owner),
     /// a date spelling (its day's journal), an alias spelled as a date.
+    /// A virtual journal whose display title has an ordinary literal claimant
+    /// carries an unclaimed spelling here to preserve its typed opening.
     pub link: Option<LinkTarget>,
     /// Listed only because a listed name lies under it: `n` for a page file
     /// or a reference named `n/y` (model rule 1, SPEC §3.2; OG creates these
@@ -28,18 +30,18 @@ pub struct InventoryEntry {
     /// its target is the absent page its name would create. Views that show
     /// a namespace tree read it instead of re-deriving prefixes.
     pub namespace_parent: bool,
-    /// EMPTY-ALIAS (D-20261103-CMA): a file claims this name, but every
-    /// claimant has no real content ([`content_free`]) and some page declares
-    /// the name as an alias, so `link` is that alias owner. A named route
-    /// opens the owner too, as an alias-only name does; only a route to the
-    /// exact file (its path) opens the empty page itself.
+    /// Canonical typed immediate namespace prefix. It is an entity target,
+    /// never an alias opening destination; consumers attach only listed pages.
+    pub parent: Option<LinkTarget>,
+    /// Retired live answer, always false (R13-C4). Frozen published v1 rows
+    /// can still carry their historical answer.
     pub empty_alias: bool,
 }
 
 /// The page a link opens: its name and kind, as the router takes them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkTarget {
-    /// The name to open (a claimant's own name, or the journal title).
+    /// The name to open (a claimant's name, journal title or unclaimed day spelling).
     pub name: String,
     /// A journal (else an ordinary page).
     pub is_journal: bool,
@@ -54,64 +56,34 @@ fn fileless_entry(
         target,
         is_journal: answer.day.is_some(),
         day: answer.day.map(|day| Day(day.ordinal_key())),
-        link: None,
+        link: answer.opening_name.map(|name| LinkTarget {
+            name,
+            is_journal: true,
+        }),
         namespace_parent: answer.namespace_parent,
+        parent: None,
         empty_alias: false,
     }
-}
-
-/// Whether a parsed page file has no real content: the one test for
-/// EMPTY-ALIAS (D-20261103-CMA), OG's `page-empty-or-dummy?`
-/// (`src/main/frontend/db/model.cljs`, `page-empty?` or exactly one block
-/// whose `:block/content` is `""`; model round 9 `Model.contentFree`). No
-/// text before the first bullet (page properties, a title or free text are
-/// content, as OG's pre-block is), and no block or exactly one childless
-/// block whose text is empty (`- `). Whitespace is content; two blank blocks
-/// are content. Reads the parsed document only: O(1), no parse.
-pub(crate) fn content_free(doc: &tine_core::doc::Document) -> bool {
-    doc.pre_block.as_deref().is_none_or(str::is_empty)
-        && match doc.roots.as_slice() {
-            [] => true,
-            [only] => only.children.is_empty() && only.raw().is_empty(),
-            _ => false,
-        }
-}
-
-/// Whether the file `id` is parsed in this generation and [`content_free`].
-/// A file without a parsed document (unreadable, not yet read) counts as
-/// content: it opens itself, as before EMPTY-ALIAS.
-fn file_content_free(graph: &ReadSnapshot, id: &str) -> bool {
-    graph
-        .physical_pages
-        .positions
-        .get(id)
-        .and_then(|&slot| graph.physical_pages.get(slot))
-        .is_some_and(|(_, doc)| content_free(doc))
-}
-
-/// Whether every file claiming a name is [`content_free`] (model `solid`
-/// negated: one claimant with content keeps the name). `false` for none.
-fn claim_content_free<'a>(graph: &ReadSnapshot, mut ids: impl Iterator<Item = &'a str>) -> bool {
-    let mut any = false;
-    let all = ids.all(|id| {
-        if graph.physical_pages.positions.contains_key(id)
-            && !graph.pages.positions.contains_key(id)
-        {
-            return true;
-        }
-        any = true;
-        file_content_free(graph, id)
-    });
-    any && all
 }
 
 /// The page the alias `key` opens, if any page declares it: the alias owner
 /// rule's one answer (AL2/CI4), of the owner's own kind. A declarer is a
 /// parsed page of this generation, so its path is always placed.
-fn alias_owner_link(graph: &ReadSnapshot, key: &str) -> Option<LinkTarget> {
-    let relation = graph.alias_relation();
-    let path = relation.owner_path(key)?;
-    let slot = *graph.pages.positions.get(path.as_str())?;
+fn alias_owner_link(
+    graph: &ReadSnapshot,
+    key: &str,
+    day: Option<JournalDate>,
+) -> Option<LinkTarget> {
+    let path = if day.is_some() {
+        graph.alias_owner_paths(key, day)?.into_iter().next()?
+    } else {
+        graph.alias_owner_path(key)?
+    };
+    owner_link(graph, &path)
+}
+
+fn owner_link(graph: &ReadSnapshot, path: &str) -> Option<LinkTarget> {
+    let slot = *graph.pages.positions.get(path)?;
     let (entry, _) = graph.pages.get(slot)?;
     Some(LinkTarget {
         name: entry.name.clone(),
@@ -129,10 +101,7 @@ fn alias_owner_link(graph: &ReadSnapshot, key: &str) -> Option<LinkTarget> {
 /// - Any other name: the ordinary page claiming it, else the first alias
 ///   owner in path order, of the owner's own kind (a journal's alias opens
 ///   the journal), else an absent ordinary page.
-/// - EMPTY-ALIAS (D-20261103-CMA): a claimed file (journal or page) whose
-///   claimants are all [`content_free`] yields to the alias owner of the
-///   name when some page declares it (whatever the declarer's kind); with no
-///   declarer the empty file opens itself.
+/// - R13-C4: a real file always opens itself, regardless of content.
 /// O(1) claimant lookups plus O(owners). `declared` is whether some page
 /// declares the name as an alias, when the caller already knows (the full
 /// inventory does); `None` reads the alias relation.
@@ -141,7 +110,7 @@ pub(crate) fn link_target_in(
     graph: &ReadSnapshot,
     format: &JournalFormat,
     name: &str,
-    declared: Option<bool>,
+    _declared: Option<bool>,
 ) -> LinkTarget {
     let key = tine_core::refs::page_key(name);
     let claimed = |journal: bool, key: String| {
@@ -149,41 +118,18 @@ pub(crate) fn link_target_in(
             .get(&(journal, key))
             .filter(|claimants| !claimants.is_empty())
     };
-    let owner = || alias_owner_link(graph, &key);
-    // EMPTY-ALIAS: the claimants of (kind, spelling) are all content-free
-    // and the typed name has a declarer: the declarer opens. The declarer
-    // is looked up first (most claimed names have none), then the claimants'
-    // documents.
-    let yielded = |claimants: &[PageEntry]| {
-        if declared == Some(false) {
-            return None;
-        }
-        let owner = owner()?;
-        claim_content_free(
-            graph,
-            claimants
-                .iter()
-                .filter_map(|claimant| claimant.rel_path.as_ref().map(PageId::as_str)),
-        )
-        .then_some(owner)
-    };
-    let opens = |claimants: &[PageEntry], is_journal: bool| {
-        yielded(claimants).unwrap_or_else(|| LinkTarget {
-            name: claimants[0].name.clone(),
-            is_journal,
-        })
-    };
     let fallback = crate::model::fileless_names::FilelessName::new(format, name);
+    let owner = || alias_owner_link(graph, &key, fallback.day);
+    let opens = |claimants: &[PageEntry], is_journal: bool| LinkTarget {
+        name: claimants[0].name.clone(),
+        is_journal,
+    };
     let owners = graph.real_page_owners();
     if let Some(entry) = owners.opening_entry(&key) {
-        let all: Vec<_> = [false, true]
-            .into_iter()
-            .flat_map(|kind| claimed(kind, key.clone()).into_iter().flatten().cloned())
-            .collect();
-        return yielded(&all).unwrap_or_else(|| LinkTarget {
+        return LinkTarget {
             name: entry.name.clone(),
             is_journal: entry.kind == PageKind::Journal,
-        });
+        };
     }
     if fallback.day.is_some() {
         if let Some(journals) = claimed(true, tine_core::refs::page_key(&fallback.name)) {
@@ -200,7 +146,14 @@ pub(crate) fn link_target_in(
             return owner;
         }
         return LinkTarget {
-            name: fallback.name,
+            name: if owners
+                .opening_entry(&tine_core::refs::page_key(&fallback.name))
+                .is_some()
+            {
+                name.to_owned()
+            } else {
+                fallback.name
+            },
             is_journal: true,
         };
     }
@@ -214,11 +167,7 @@ pub(crate) fn link_target_in(
 }
 
 /// `entry` with its `link` set when the link opens something other than the
-/// entry itself, and `empty_alias` when that is because the claimed file is
-/// content-free. A file-claimed name without a digit is never a date, so its
-/// link is itself unless some page declares it as an alias and its files are
-/// content-free: one alias-relation lookup (none when `declared` is given),
-/// then O(1) document checks.
+/// entry itself. Real files have no content-dependent redirect.
 fn with_link(
     claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
     graph: &ReadSnapshot,
@@ -226,33 +175,40 @@ fn with_link(
     mut entry: InventoryEntry,
     declared: Option<bool>,
 ) -> InventoryEntry {
-    // EMPTY-ALIAS needs a declarer of the name (checked first: most claimed
-    // names have none; `declared` when the caller already knows) and every
-    // claimant content-free.
-    let empty = match &entry.target {
-        Resolved::Existing { id, others } => {
-            declared.unwrap_or_else(|| {
-                graph
-                    .alias_relation()
-                    .owner_path(&tine_core::refs::page_key(&entry.name))
-                    .is_some()
-            }) && claim_content_free(graph, std::iter::once(id).chain(others).map(PageId::as_str))
-        }
-        _ => false,
-    };
+    if let Some((prefix, key)) =
+        crate::model::namespace_parents::parent_prefixes(&entry.name).last()
+    {
+        let owners = graph.real_page_owners();
+        let target = owners
+            .opening_entry(&key)
+            .map(|parent| LinkTarget {
+                name: parent.name.clone(),
+                is_journal: parent.kind == PageKind::Journal,
+            })
+            .unwrap_or_else(|| {
+                let fallback = crate::model::fileless_names::FilelessName::new(format, prefix);
+                LinkTarget {
+                    name: fallback.name,
+                    is_journal: fallback.day.is_some(),
+                }
+            });
+        entry.parent = (target.is_journal || target.name != prefix).then_some(target);
+    }
     if matches!(entry.target, Resolved::Existing { .. })
-        && !empty
         && !entry.name.bytes().any(|byte| byte.is_ascii_digit())
     {
         return entry;
     }
-    let link = link_target_in(claimants, graph, format, &entry.name, declared);
+    let alias = match &entry.target {
+        Resolved::Alias { owners } => owners.first().and_then(|id| owner_link(graph, id.as_str())),
+        _ => None,
+    };
+    let link = entry
+        .link
+        .take()
+        .or(alias)
+        .unwrap_or_else(|| link_target_in(claimants, graph, format, &entry.name, declared));
     if link.is_journal != entry.is_journal || link.name != entry.name {
-        // A content-free file whose link is its alias owner yielded to it;
-        // a link that moved to the day's journal moved for the date instead.
-        entry.empty_alias = empty
-            && alias_owner_link(graph, &tine_core::refs::page_key(&entry.name)).as_ref()
-                == Some(&link);
         entry.link = Some(link);
     }
     entry
@@ -266,8 +222,7 @@ pub struct Inventory(pub Vec<InventoryEntry>);
 /// claim changed: the alias and reference-only entries of some page keys
 /// (cost-model audit 2026-11-02 row 1). A file-claimed entry never travels
 /// here: claims change only with a page created, removed or renamed, which
-/// refetches, and so does an EMPTY-ALIAS flip (a declared claimant turning
-/// content-free or back, an alias edit naming a content-free claimant).
+/// refetches. Content-only changes never redirect an existing file.
 /// Applying it to the previous inventory (drop every alias and reference-only
 /// entry whose key is listed, add `entries`) gives the new inventory exactly. Size O(changed keys).
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -330,39 +285,6 @@ impl WholeGraph {
                 (claims.len() > 1).then_some(claims)
             })
             .collect()
-    }
-
-    /// Direct declaring owners when EMPTY-ALIAS makes this a redirecting name.
-    /// Rename uses the same content-free answer as navigation, but requires a
-    /// unique declarer before offering a merge. Indexed lookups, no file I/O.
-    pub fn redirecting_alias_owners(&self, name: &str) -> Option<Vec<PageId>> {
-        let key = tine_core::refs::page_key(name);
-        let owners = self.graph.alias_owner_paths(&key)?;
-        if owners.is_empty() {
-            return None;
-        }
-        let solid = |journal: bool, key: String| {
-            self.claimants.get(&(journal, key)).is_some_and(|claims| {
-                claims.iter().any(|claim| {
-                    claim
-                        .rel_path
-                        .as_ref()
-                        .is_none_or(|id| !file_content_free(&self.graph, id.as_str()))
-                })
-            })
-        };
-        if solid(false, key.clone())
-            || solid(true, key)
-            || self.journal_format.parse(name).is_some_and(|day| {
-                solid(
-                    true,
-                    tine_core::refs::page_key(&self.journal_format.title(day)),
-                )
-            })
-        {
-            return None;
-        }
-        Some(owners.iter().cloned().map(PageId::from).collect())
     }
 
     /// Names and file claimants in this view. Physical twins with the same
@@ -429,6 +351,7 @@ impl WholeGraph {
                         day: entry.date_key.map(Day),
                         link: None,
                         namespace_parent: false,
+                        parent: None,
                         empty_alias: false,
                     })
                     .into_iter()
@@ -450,6 +373,7 @@ impl WholeGraph {
                             day: entry.date_key.map(Day),
                             link: None,
                             namespace_parent: false,
+                            parent: None,
                             empty_alias: false,
                         })
                     })
@@ -479,6 +403,7 @@ impl WholeGraph {
                                     day: None,
                                     link: None,
                                     namespace_parent: false,
+                                    parent: None,
                                     empty_alias: false,
                                 },
                                 None,
@@ -500,6 +425,7 @@ impl WholeGraph {
                             day: Some(day),
                             link: None,
                             namespace_parent: false,
+                            parent: None,
                             empty_alias: false,
                         }
                     })
@@ -552,8 +478,7 @@ impl WholeGraph {
             .into_iter()
             .map(|(alias, _, owner)| (tine_core::refs::page_key(&alias), alias, owner))
             .collect();
-        // Declared alias keys, so a claimed entry's EMPTY-ALIAS check needs
-        // no per-entry alias-relation lookup.
+        // Declared alias keys supplied to the shared link answerer.
         let declared: HashSet<&str> = aliases.iter().map(|(key, _, _)| key.as_str()).collect();
         let mut claimed = Vec::new();
         for page in self.list.iter() {
@@ -575,10 +500,38 @@ impl WholeGraph {
             if page_claimed_names.contains(&key) {
                 continue;
             }
+            let mut answer =
+                crate::model::fileless_names::FilelessName::new(&self.journal_format, &alias);
+            if let Some(day) = self
+                .graph
+                .alias_edges()
+                .date(&key)
+                .map(JournalDate::from_ordinal)
+            {
+                answer.name = self.journal_format.title(day);
+                answer.day = Some(day);
+            }
+            let key = tine_core::refs::page_key(&answer.name);
+            if answer.day.is_some()
+                && self
+                    .graph
+                    .real_page_owners()
+                    .opening_entry(&key)
+                    .is_some_and(|entry| entry.kind == PageKind::Journal)
+            {
+                continue;
+            }
             let spelling = references
                 .get(&key)
-                .map_or(alias.as_str(), |referrers| referrers.spelling.as_str())
+                .map_or(answer.name.as_str(), |referrers| {
+                    referrers.spelling.as_str()
+                })
                 .to_owned();
+            let spelling = if answer.day.is_some() {
+                answer.name
+            } else {
+                spelling
+            };
             let slot = alias_owners
                 .entry(key)
                 .or_insert_with(|| (spelling, Vec::new()));
@@ -589,18 +542,24 @@ impl WholeGraph {
         }
         for (_, (name, mut owners)) in alias_owners {
             owners.sort();
+            let answer =
+                crate::model::fileless_names::FilelessName::new(&self.journal_format, &name);
             entries.push(InventoryEntry {
                 name,
                 target: Resolved::Alias { owners },
-                is_journal: false,
-                day: None,
+                is_journal: answer.day.is_some(),
+                day: answer.day.map(|day| Day(day.ordinal_key())),
                 link: None,
                 namespace_parent: false,
+                parent: None,
                 empty_alias: false,
             });
         }
         entries.extend(self.graph.reference_only_pages().into_iter().map(|answer| {
-            let target = self.resolve(&answer.name, answer.day.is_some());
+            let target = self.resolve(
+                answer.opening_name.as_deref().unwrap_or(&answer.name),
+                answer.day.is_some(),
+            );
             fileless_entry(answer, target)
         }));
         let mut entries: Vec<_> = claimed
@@ -655,15 +614,16 @@ impl WholeGraph {
             });
             match claimant {
                 Some(page) => entries.extend(self.claimed_entries(&page, key)),
-                None => entries.push(InventoryEntry {
-                    target: self.resolve(&spelling, false),
-                    name: spelling,
-                    is_journal: false,
-                    day: None,
-                    link: None,
-                    namespace_parent: false,
-                    empty_alias: false,
-                }),
+                None => {
+                    let answer = crate::model::fileless_names::FilelessName::new(
+                        &self.journal_format,
+                        &spelling,
+                    );
+                    entries.push(fileless_entry(
+                        answer.clone(),
+                        self.resolve(&answer.name, answer.day.is_some()),
+                    ));
+                }
             }
         }
         sort_inventory(&mut entries);
@@ -701,6 +661,7 @@ impl WholeGraph {
                 day: winner.date_key.map(Day),
                 link: None,
                 namespace_parent: false,
+                parent: None,
                 empty_alias: false,
             })
             .collect()
@@ -727,29 +688,48 @@ impl Snapshot {
                 .get(&(journal, key.to_owned()))
                 .is_some_and(|claimants| claimants.iter().any(|c| c.rel_path.is_some()))
         };
-        if claimed(false) {
+        let active_journal = self
+            .graph
+            .real_page_owners()
+            .opening_entry(key)
+            .is_some_and(|entry| entry.kind == PageKind::Journal);
+        if day.is_none() && (claimed(false) || claimed(true)) || day.is_some() && active_journal {
             return None;
         }
         let spelling = table.get(key).map(|referrers| referrers.spelling.as_str());
         if let Some(owners) = self
             .graph
-            .alias_owner_paths(key)
+            .alias_owner_paths(key, day)
             .filter(|owners| !owners.is_empty())
         {
+            let mut answer = crate::model::fileless_names::FilelessName::new(
+                &self.journal_format,
+                spelling.unwrap_or(key),
+            );
+            if let Some(day) = day.or_else(|| {
+                self.graph
+                    .alias_edges()
+                    .date(key)
+                    .map(JournalDate::from_ordinal)
+            }) {
+                answer.name = self.journal_format.title(day);
+                answer.day = Some(day);
+            }
+            if answer.day.is_some() && tine_core::refs::page_key(&answer.name) != key {
+                return None;
+            }
             return Some(self.linked(InventoryEntry {
-                name: spelling.unwrap_or(key).to_owned(),
+                name: answer.name,
                 target: Resolved::Alias {
                     owners: owners.into_iter().map(PageId::from).collect(),
                 },
-                is_journal: false,
-                day: None,
+                is_journal: answer.day.is_some(),
+                day: answer.day.map(|day| Day(day.ordinal_key())),
                 link: None,
                 namespace_parent: false,
+                parent: None,
                 empty_alias: false,
             }));
-        }
-        if claimed(true) {
-            return None;
         }
         let fallback = crate::model::fileless_names::FilelessName::new(
             &self.journal_format,
@@ -788,17 +768,6 @@ impl Snapshot {
             id: proposed_page_id(&self.config.config, &answer.name),
         };
         Some(self.linked(fileless_entry(answer, target)))
-    }
-
-    /// Whether these claimants of one name are all content-free files
-    /// ([`content_free`], EMPTY-ALIAS).
-    pub(super) fn claim_content_free(&self, claimants: &[PageEntry]) -> bool {
-        claim_content_free(
-            &self.graph,
-            claimants
-                .iter()
-                .filter_map(|claimant| claimant.rel_path.as_ref().map(PageId::as_str)),
-        )
     }
 
     fn linked(&self, entry: InventoryEntry) -> InventoryEntry {

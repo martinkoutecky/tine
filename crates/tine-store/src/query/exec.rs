@@ -401,7 +401,10 @@ impl Plan {
             if cancelled() {
                 return None;
             }
-            let Some(node) = table.node(&refs::normalize(&entry.name)) else {
+            let Some(node) = table.node(
+                &refs::normalize(&entry.name),
+                entry.kind == PageKind::Journal,
+            ) else {
                 continue;
             };
             if set[node as usize] {

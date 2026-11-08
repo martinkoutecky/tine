@@ -434,6 +434,7 @@ pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
 /// alias-connected component, and the real page to exclude as self. The
 /// normalized component is shared by backlinks, unlinked references, and their
 /// scoped-invalidation predicates so those paths cannot drift.
+#[cfg(test)]
 fn equivalent_page_names(
     real_pages: &RealPageOwners,
     edges: &AliasEdges,
@@ -511,7 +512,7 @@ fn graph_equivalent_page_names(
         },
         |day| {
             if explicit {
-                referenced_day_keys(graph.explicit_reference_names(), &format, day)
+                referenced_day_keys(explicit_reference_spellings(graph), &format, day)
             } else {
                 Vec::new()
             }
@@ -562,7 +563,7 @@ pub(crate) fn reference_class(
             |day| graph.reference_journal_name(day),
             |day| {
                 if spelled {
-                    referenced_day_keys(graph.explicit_reference_names(), &format, day)
+                    referenced_day_keys(explicit_reference_spellings(graph), &format, day)
                 } else {
                     days.borrow_mut().push(day.ordinal_key());
                     Vec::new()
@@ -571,16 +572,7 @@ pub(crate) fn reference_class(
         )
         .1
     };
-    let mut keys = class_of(target);
-    if let Some(journal) = format
-        .parse(target)
-        .and_then(|day| graph.reference_journal_name(day))
-        .filter(|journal| refs::page_key(journal) != refs::page_key(target))
-    {
-        keys.extend(class_of(&journal));
-        keys.sort();
-        keys.dedup();
-    }
+    let keys = class_of(target);
     let mut days = days.into_inner();
     days.sort_unstable();
     days.dedup();
@@ -602,8 +594,22 @@ pub(crate) fn referenced_day_keys<'a>(
         .filter(|name| {
             may_spell(name) && eval::reference_day(name, format) == Some(day.ordinal_key())
         })
-        .map(str::to_owned)
+        .map(refs::page_key)
         .collect()
+}
+
+/// Parse configured literals from authored names, then return their keys.
+/// Reuse the existing persistent name table; edits already carry it by delta.
+fn explicit_reference_spellings(graph: &ReadSnapshot) -> impl Iterator<Item = &str> {
+    graph.explicit_reference_names().map(move |key| {
+        if !key.bytes().any(|byte| byte.is_ascii_digit()) {
+            return key;
+        }
+        graph
+            .referenced_name_table()
+            .get(key)
+            .map_or(key, |name| name.spelling.as_str())
+    })
 }
 
 /// The panel's resolver for many targets of one snapshot: the reads
@@ -652,12 +658,12 @@ impl PanelResolver {
         // once: what `referenced_day_keys` finds per target.
         let mut referenced_by_day: std::collections::HashMap<i64, Vec<String>> =
             std::collections::HashMap::new();
-        for name in graph.explicit_reference_names() {
+        for name in explicit_reference_spellings(graph) {
             if let Some(day) = eval::reference_day(name, &format) {
                 referenced_by_day
                     .entry(day)
                     .or_default()
-                    .push(name.to_owned());
+                    .push(refs::page_key(name));
             }
         }
         PanelResolver {
@@ -712,60 +718,52 @@ pub(crate) fn graph_equivalent_page_names_with(
     journal_for_day: impl Fn(JournalDate) -> Option<String>,
     referenced_for_day: impl Fn(JournalDate) -> Vec<String>,
 ) -> (String, Vec<String>, String) {
-    let mut resolved = equivalent_page_names(real_pages, edges, target);
-    let target_day = format.parse(target);
-    // Journals of the alias group other than the target's own day.
-    let members: Vec<(JournalDate, String)> = resolved
-        .1
-        .iter()
-        .filter_map(|key| {
-            let day = format.parse(key)?;
-            if Some(day) == target_day {
-                return None;
-            }
-            let journal = journal_for_day(day)?;
-            (refs::page_key(&journal) == *key).then_some((day, journal))
+    let target_key = refs::page_key(target);
+    let ordinary = |key: &str| {
+        real_pages
+            .opening_entry(key)
+            .is_some_and(|entry| entry.kind == PageKind::Page)
+    };
+    let target_day = (!ordinary(&target_key))
+        .then(|| {
+            format
+                .parse(target)
+                .or_else(|| edges.date(&target_key).map(JournalDate::from_ordinal))
         })
-        .collect();
-    for (day, journal) in members {
-        resolved
-            .1
-            .extend(journal_spelling_keys(format, day, &journal));
-        resolved.1.extend(referenced_for_day(day));
-    }
-    let Some(target_day) = target_day else {
-        resolved.1.sort();
-        resolved.1.dedup();
-        return resolved;
-    };
-    let Some(journal_name) = journal_for_day(target_day) else {
-        // A date with no real page is an editable virtual journal. Keep real
-        // ordinary pages and aliases intact; only fileless dates share spellings.
-        if real_pages.get(&refs::page_key(&resolved.0)).is_none() {
-            let title = format.title(target_day);
-            let spellings = journal_spelling_keys(format, target_day, &title);
-            if spellings.iter().any(|name| real_pages.get(name).is_some()) {
-                resolved.1.sort();
-                resolved.1.dedup();
-                return resolved;
-            }
-            resolved.1.extend(spellings);
-            resolved.1.extend(referenced_for_day(target_day));
-            resolved.0 = title.clone();
-            resolved.2 = title;
+        .flatten();
+    let visited_days = std::cell::RefCell::new(std::collections::BTreeSet::new());
+    let mut resolved = equivalent_page_names_with(real_pages, edges, target, |key| {
+        if ordinary(key) {
+            return Vec::new();
         }
-        resolved.1.sort();
-        resolved.1.dedup();
-        return resolved;
-    };
-    resolved
-        .1
-        .extend(journal_spelling_keys(format, target_day, &journal_name));
-    resolved.1.extend(referenced_for_day(target_day));
-    resolved.1.sort();
-    resolved.1.dedup();
-    resolved.0 = journal_name.clone();
-    resolved.2 = journal_name;
+        let day = if key == target_key {
+            target_day
+        } else {
+            edges
+                .date(key)
+                .map(JournalDate::from_ordinal)
+                .or_else(|| format.parse(key))
+        };
+        let Some(day) = day else { return Vec::new() };
+        if !visited_days.borrow_mut().insert(day) {
+            return Vec::new();
+        }
+        journal_spelling_keys(format, day, &format.title(day))
+            .into_iter()
+            .chain(edges.date_names(day).cloned())
+            .chain(referenced_for_day(day))
+            .filter(|name| !ordinary(name))
+            .collect()
+    });
+    if let Some(day) = target_day {
+        if let Some(journal) = journal_for_day(day) {
+            resolved.0 = journal.clone();
+            resolved.2 = journal;
+        } else if !resolved.1.iter().any(|key| real_pages.get(key).is_some()) {
+            resolved.0 = format.title(day);
+            resolved.2.clear(); // A virtual day has no physical self to exclude.
+        }
+    }
     resolved
 }
 
@@ -786,45 +784,27 @@ pub(crate) fn journal_spelling_keys(
         .collect()
 }
 
-/// Scoped invalidation cannot see which journal pages exist, so a date-shaped
-/// target is widened by every accepted spelling of its day whether or not that
-/// journal exists: it may evict an unaffected entry but never keep a stale one.
-fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, target: &str) {
-    if let Some(day) = format.parse(target) {
-        names_norm.extend(journal_spelling_keys(format, day, target));
-        names_norm.sort();
-        names_norm.dedup();
-    }
-}
-
 fn invalidation_page_names(
     real_pages: &RealPageOwners,
     aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
 ) -> (String, Vec<String>) {
-    let (canonical, mut names, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names, journal, target);
+    let (canonical, names, _) = graph_equivalent_page_names_with(
+        real_pages,
+        aliases,
+        journal,
+        target,
+        |_| None,
+        |_| Vec::new(),
+    );
     (canonical, names)
 }
 
 /// The same conservative closure as scoped backlink/unlinked invalidation.
 /// Unlike query-time canonical journal selection, this never scans journals.
 pub(crate) fn reference_invalidation_names(graph: &ReadSnapshot, target: &str) -> Vec<String> {
-    let journal = graph.config().journal_format();
-    // Include aliases of day spellings, and day spellings reached via aliases.
-    // This uses the same component traversal, visiting each key once.
-    equivalent_page_names_with(
-        &real_page_names(graph),
-        &graph.alias_edges(),
-        target,
-        |name| {
-            let mut names = Vec::new();
-            widen_for_journal_day(&mut names, &journal, name);
-            names
-        },
-    )
-    .1
+    graph_equivalent_page_names(graph, target, false).1
 }
 
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
@@ -917,7 +897,7 @@ pub(crate) fn document_explicit_reference_names(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> Vec<String> {
-    explicit_reference_names_where(entry, doc, config, &|_| true, true)
+    explicit_reference_names_where(entry, doc, config, &|_| true, true, true)
 }
 
 /// Publication uses the same parser/policy projection, selecting changed
@@ -935,6 +915,7 @@ pub(crate) fn changed_explicit_reference_names(
         config,
         &|block| changed.contains(&block.uuid),
         header_changed,
+        false,
     )
 }
 
@@ -944,8 +925,14 @@ fn explicit_reference_names_where(
     config: &tine_core::config::Config,
     accept: &dyn Fn(&DocBlock) -> bool,
     include_header: bool,
+    normalized: bool,
 ) -> Vec<String> {
-    fn collect(blocks: &[DocBlock], names: &mut Vec<String>, accept: &dyn Fn(&DocBlock) -> bool) {
+    fn collect(
+        blocks: &[DocBlock],
+        names: &mut Vec<String>,
+        accept: &dyn Fn(&DocBlock) -> bool,
+        normalized: bool,
+    ) {
         for block in blocks {
             if accept(block) {
                 names.extend(
@@ -955,10 +942,16 @@ fn explicit_reference_names_where(
                         .explicit
                         .iter()
                         .flat_map(|reference| refs::namespace_refs(&reference.name))
-                        .map(refs::page_key),
+                        .map(|name| {
+                            if normalized {
+                                refs::page_key(name)
+                            } else {
+                                name.to_owned()
+                            }
+                        }),
                 );
             }
-            collect(&block.children, names, accept);
+            collect(&block.children, names, accept, normalized);
         }
     }
 
@@ -983,10 +976,16 @@ fn explicit_reference_names_where(
                 .explicit
                 .iter()
                 .flat_map(|reference| refs::namespace_refs(&reference.name))
-                .map(refs::page_key),
+                .map(|name| {
+                    if normalized {
+                        refs::page_key(name)
+                    } else {
+                        name.to_owned()
+                    }
+                }),
         );
     }
-    collect(&doc.roots, &mut names, accept);
+    collect(&doc.roots, &mut names, accept, normalized);
     names.sort_unstable();
     names.dedup();
     names
@@ -1254,14 +1253,30 @@ pub(crate) fn tagged_pages_query(
 /// P), with the generation's real-name table.
 pub(crate) fn alias_group_members(graph: &ReadSnapshot, target: &str) -> Vec<(String, String)> {
     let real = real_page_names(graph);
-    let edges = graph.alias_edges();
-    let (_, component, _) = equivalent_page_names(&real, &edges, target);
+    let (_, component, _) = graph_equivalent_page_names(graph, target, false);
     let own = refs::page_key(target);
-    component
-        .into_iter()
-        .filter(|key| *key != own)
-        .map(|key| (key.clone(), graph.alias_spelling(&key).unwrap_or(key)))
-        .collect()
+    let format = graph.config().journal_format();
+    let own_day = real
+        .get(&own)
+        .is_none()
+        .then(|| format.parse(target))
+        .flatten();
+    let mut members = std::collections::BTreeMap::new();
+    for key in component {
+        if key == own {
+            continue;
+        }
+        if real.get(&key).is_some() {
+            members.insert(key.clone(), key);
+        } else if let Some(spelling) = graph.alias_spelling(&key) {
+            let answer = crate::model::fileless_names::FilelessName::new(&format, &spelling);
+            if own_day.is_some() && answer.day == own_day {
+                continue;
+            }
+            members.insert(refs::page_key(&answer.name), answer.name);
+        }
+    }
+    members.into_iter().collect()
 }
 
 const BACKLINK_FILTER_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -1611,11 +1626,12 @@ pub(crate) fn page_affects_backlinks(
         .collect();
     if !days.is_empty() {
         names_norm.extend(
-            document_explicit_reference_names(entry, doc, config)
+            explicit_reference_names_where(entry, doc, config, &|_| true, true, false)
                 .into_iter()
                 .filter(|name| {
                     eval::reference_day(name, journal).is_some_and(|d| days.contains(&d))
-                }),
+                })
+                .map(|name| refs::page_key(&name)),
         );
         names_norm.sort();
         names_norm.dedup();

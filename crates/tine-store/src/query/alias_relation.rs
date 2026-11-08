@@ -24,6 +24,73 @@ use std::sync::Arc;
 
 type Multiset = Map<String, u32>;
 
+impl crate::model::ReadSnapshot {
+    /// Direct alias owners through the configured date interpretation. Raw
+    /// rows stay literal; the reader checks active ordinary claims (KD).
+    /// O(owners of the reached day), never a pass over every alias.
+    pub(crate) fn alias_owner_paths(
+        &self,
+        key: &str,
+        day: Option<JournalDate>,
+    ) -> Option<Vec<String>> {
+        let relation = self.alias_relation();
+        if !key.bytes().any(|byte| byte.is_ascii_digit()) {
+            return relation.owner_paths(key);
+        }
+        let real = self.real_page_owners();
+        let format = self.config().journal_format();
+        let ordinary = |name: &str| {
+            real.opening_entry(name)
+                .is_some_and(|entry| entry.kind == PageKind::Page)
+        };
+        if day.is_none() && ordinary(key) {
+            return relation.owner_paths(key);
+        }
+        let edges = relation.edges();
+        let day = day.or_else(|| {
+            edges
+                .date(key)
+                .map(JournalDate::from_ordinal)
+                .or_else(|| format.parse(key))
+        });
+        let Some(day) = day else {
+            return relation.owner_paths(key);
+        };
+        let mut owners: Vec<_> = edges
+            .date_names(day)
+            .filter(|name| !ordinary(name))
+            .flat_map(|name| relation.owner_paths(name).unwrap_or_default())
+            .collect();
+        owners.sort();
+        owners.dedup();
+        (!owners.is_empty()).then_some(owners)
+    }
+
+    /// The relative path of the page alias-only `key` opens (AL2/CI4).
+    pub(crate) fn alias_owner_path(&self, key: &str) -> Option<String> {
+        if !key.bytes().any(|byte| byte.is_ascii_digit()) {
+            return self.alias_relation().owner_path(key).cloned();
+        }
+        self.alias_owner_paths(key, None)?.into_iter().next()
+    }
+}
+
+fn date_keys(spellings: &[String], format: &JournalFormat) -> Vec<(String, i64)> {
+    let mut dates: Vec<_> = spellings
+        .iter()
+        .filter_map(|name| {
+            let day = format.parse(name)?;
+            Some([
+                (refs::page_key(name), day.ordinal_key()),
+                (refs::page_key(&format.title(day)), day.ordinal_key()),
+            ])
+        })
+        .flatten()
+        .collect();
+    dates.sort();
+    dates
+}
+
 #[derive(Clone, Copy)]
 enum Table {
     Neighbors,
@@ -68,6 +135,10 @@ fn adjust(sets: &mut Map<String, Multiset>, key: &str, member: &str, add: bool) 
 pub(crate) struct AliasEdges {
     neighbors: Map<String, Multiset>,
     originals: Map<String, Multiset>,
+    /// Configured dates of authored alias endpoints. Literal claims are
+    /// checked by the reader before joining these spellings (KD).
+    dates: Map<String, (i64, u32)>,
+    by_day: Map<String, Multiset>,
 }
 
 impl AliasEdges {
@@ -90,6 +161,31 @@ impl AliasEdges {
             };
             adjust(sets, &key, &member, add);
         }
+    }
+
+    fn apply_dates(&mut self, dates: &[(String, i64)], add: bool) {
+        for (key, day) in dates {
+            adjust(&mut self.by_day, &day.to_string(), key, add);
+            let count = self.dates.get(key).map_or(0, |(_, count)| *count);
+            if add {
+                self.dates.insert(key.clone(), (*day, count + 1));
+            } else if count > 1 {
+                self.dates.insert(key.clone(), (*day, count - 1));
+            } else {
+                self.dates.remove(key);
+            }
+        }
+    }
+
+    pub(crate) fn date(&self, key: &str) -> Option<i64> {
+        self.dates.get(key).map(|(day, _)| *day)
+    }
+
+    pub(crate) fn date_names(&self, day: JournalDate) -> impl Iterator<Item = &String> {
+        self.by_day
+            .get(&day.ordinal_key().to_string())
+            .into_iter()
+            .flat_map(|set| set.iter().map(|(key, _)| key))
     }
 
     /// The names written next to `name` by an alias declaration.
@@ -116,11 +212,21 @@ pub(crate) struct AliasRow {
     name: String,
     rel: String,
     keys: Vec<String>,
+    dates: Vec<(String, i64)>,
 }
 
 impl AliasRow {
     /// The row of `entry` declaring `spellings`; `None` when it declares none.
+    #[cfg(test)]
     pub(crate) fn of(entry: &PageEntry, spellings: &[String]) -> Option<Self> {
+        Self::with_format(entry, spellings, &JournalFormat::new(None, None))
+    }
+
+    pub(crate) fn with_format(
+        entry: &PageEntry,
+        spellings: &[String],
+        format: &JournalFormat,
+    ) -> Option<Self> {
         if spellings.is_empty() {
             return None;
         }
@@ -130,6 +236,7 @@ impl AliasRow {
             name: entry.name.clone(),
             rel: entry.rel_path_str().to_owned(),
             keys: sorted.into_iter().map(|s| refs::page_key(s)).collect(),
+            dates: date_keys(spellings, format),
         })
     }
 }
@@ -177,12 +284,17 @@ impl AliasRelation {
                 .map(|(k, members)| (k, members.into_iter().collect()))
                 .collect()
         };
+        let mut edges = AliasEdges {
+            neighbors: sets(neighbors),
+            originals: sets(originals),
+            ..Default::default()
+        };
+        for (_, row) in &page_rows {
+            edges.apply_dates(&row.dates, true);
+        }
         Self {
             rows: page_rows.into_iter().collect(),
-            edges: Arc::new(AliasEdges {
-                neighbors: sets(neighbors),
-                originals: sets(originals),
-            }),
+            edges: Arc::new(edges),
             owners: owners
                 .into_iter()
                 .map(|(k, by_path)| (k, by_path.into_iter().collect()))
@@ -195,7 +307,8 @@ impl AliasRelation {
     /// (the relation is then rebuilt on first use, never guessed).
     pub(crate) fn from_list(
         list: &[(String, String, String)],
-        path_of: impl Fn(&str) -> Option<PathBuf>,
+        path_of: impl Fn(&str) -> Option<(PathBuf, Vec<String>)>,
+        format: &JournalFormat,
     ) -> Option<Self> {
         let mut rows: Vec<(PathBuf, AliasRow)> = Vec::new();
         let mut at: std::collections::HashMap<&str, usize> = Default::default();
@@ -203,12 +316,14 @@ impl AliasRelation {
             let slot = match at.get(rel.as_str()) {
                 Some(slot) => *slot,
                 None => {
+                    let (path, spellings) = path_of(rel)?;
                     rows.push((
-                        path_of(rel)?,
+                        path,
                         AliasRow {
                             name: name.clone(),
                             rel: rel.clone(),
                             keys: Vec::new(),
+                            dates: date_keys(&spellings, format),
                         },
                     ));
                     at.insert(rel, rows.len() - 1);
@@ -242,6 +357,7 @@ impl AliasRelation {
     }
 
     fn contribute(&mut self, path: &Path, row: &AliasRow, add: bool) {
+        Arc::make_mut(&mut self.edges).apply_dates(&row.dates, add);
         for key in &row.keys {
             Arc::make_mut(&mut self.edges).apply(key, &row.name, add);
             let alias_norm = refs::page_key(key);
@@ -511,12 +627,19 @@ mod tests {
             (b.path.clone(), AliasRow::of(&b, &["Ax".into()]).unwrap()),
         ];
         let relation = AliasRelation::build(rows);
-        let back = AliasRelation::from_list(&relation.list(), |rel| {
-            Some(PathBuf::from(format!("/g/{rel}")))
-        })
+        let back = AliasRelation::from_list(
+            &relation.list(),
+            |rel| Some((PathBuf::from(format!("/g/{rel}")), Vec::new())),
+            &JournalFormat::new(None, None),
+        )
         .unwrap();
         assert_eq!(relation.image(), back.image());
-        assert!(AliasRelation::from_list(&relation.list(), |_| None).is_none());
+        assert!(AliasRelation::from_list(
+            &relation.list(),
+            |_| None,
+            &JournalFormat::new(None, None)
+        )
+        .is_none());
         let owners: HashMap<_, _> = back.owner_rows().into_iter().collect();
         assert_eq!(owners["ax"], ["pages/A.md", "pages/B.md"]);
     }

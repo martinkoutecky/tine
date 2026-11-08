@@ -349,11 +349,9 @@ fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
         .0
         .iter()
         .any(|entry| entry.name == "Ordinary" && !entry.is_journal));
-    assert!(rows
-        .0
-        .iter()
-        .any(|entry| entry.name == "25.10.2026"
-            && matches!(entry.target, crate::Resolved::Alias { .. })));
+    assert!(rows.0.iter().any(|entry| entry.name == "X 2026_25_10"
+        && entry.is_journal
+        && matches!(entry.target, crate::Resolved::Alias { .. })));
     drop(view);
     assert_patch(&store, "pages/Notes.md", "[[2026-10-22]] [[Ordinary]]");
     check(&store, "X 2026_22_10", false);
@@ -415,6 +413,150 @@ fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
     );
     apply_plan(&store, tx);
     check(&store, "X 2026_22_10", false);
+    store.close();
+}
+
+#[test]
+fn a_canonical_ordinary_date_file_does_not_capture_the_typed_day_or_its_alias_delta() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
+        ),
+        (
+            "pages/2026_10_23.md",
+            "- literal ordinary page [[2026-10-23]]\n",
+        ),
+        ("pages/Owner.md", "- owner\n"),
+        ("pages/Notes.md", "- [[2026-10-23]]\n"),
+        ("pages/2026-10-23%2Fchild.md", "- child\n"),
+    ]);
+    let check =
+        |aliased: bool| {
+            let view = store.whole_graph().unwrap();
+            let all = view.inventory(InventoryScope::All);
+            let rows: Vec<_> = all
+                .0
+                .iter()
+                .filter(|entry| entry.name == "2026_10_23")
+                .collect();
+            assert_eq!(rows.len(), 2, "ordinary literal and typed journal: {all:?}");
+            assert!(rows.iter().any(|entry| !entry.is_journal
+                && matches!(entry.target, crate::Resolved::Existing { .. })));
+            let day = rows.iter().find(|entry| entry.is_journal).unwrap();
+            assert_eq!(matches!(day.target, crate::Resolved::Alias { .. }), aliased);
+            assert!(matches!(
+                view.resolve("2026_10_23", false),
+                crate::Resolved::Existing { .. }
+            ));
+            assert_eq!(
+                view.link_target("2026-10-23").name,
+                if aliased { "Owner" } else { "2026-10-23" }
+            );
+            assert_eq!(
+                view.backlinks("2026-10-23")
+                    .unwrap()
+                    .iter()
+                    .map(|group| group.blocks.len())
+                    .sum::<usize>(),
+                2
+            );
+            let crate::QueryResult::Simple(groups) = view
+                .query("[[2026-10-23]]", crate::QueryDialect::Simple)
+                .unwrap()
+            else {
+                panic!("block query")
+            };
+            for source in ["Notes", "2026_10_23"] {
+                assert_eq!(
+                    groups
+                        .iter()
+                        .find(|group| group.page == source)
+                        .unwrap()
+                        .blocks
+                        .len(),
+                    1,
+                    "date reference in {source}"
+                );
+            }
+            let crate::QueryResult::Simple(literal) = view
+                .query("[[2026_10_23]]", crate::QueryDialect::Simple)
+                .unwrap()
+            else {
+                panic!("literal reference query")
+            };
+            assert!(
+                literal
+                    .iter()
+                    .all(|group| group.page != "Notes" && group.page != "Owner"),
+                "the ordinary literal does not acquire the alternate date spelling"
+            );
+            let (files, references) = view.page_backlink_counts();
+            assert_eq!(
+                files
+                    .iter()
+                    .find(|(path, _)| path == "pages/2026_10_23.md")
+                    .unwrap()
+                    .1,
+                0
+            );
+            if !aliased {
+                assert_eq!(
+                    references
+                        .iter()
+                        .find(|(name, _)| name == "2026_10_23")
+                        .unwrap()
+                        .1,
+                    2
+                );
+                assert!(matches!(day.target, crate::Resolved::Absent { .. }));
+                assert_eq!(day.link.as_ref().unwrap().name, "2026-10-23");
+            }
+        };
+    check(false);
+    let mut held = inventory(&store);
+    let (changed, deltas) = save(&store, "pages/Owner.md", |doc| {
+        doc.pre_block = Some("alias:: 2026-10-23".into())
+    });
+    assert!(changed);
+    for delta in deltas.expect("bounded alias delta") {
+        apply(&mut held, &delta);
+    }
+    assert_eq!(held, inventory(&store));
+    check(true);
+    store.close();
+}
+
+#[test]
+fn a_masked_journal_cannot_extend_an_ordinary_files_literal_date_claim() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
+        ),
+        ("pages/2026_10_23.md", "- ordinary\n"),
+        ("journals/2026_10_23.md", "- masked journal\n"),
+        ("pages/Notes.md", "- [[2026-10-23]]\n"),
+    ]);
+    assert!(store
+        .page_named("2026-10-23", tine_core::model::PageKind::Journal)
+        .unwrap()
+        .is_none());
+    let view = store.whole_graph().unwrap();
+    assert!(matches!(
+        view.resolve("2026-10-23", true),
+        crate::Resolved::Absent { .. }
+    ));
+    assert!(
+        matches!(view.resolve("2026_10_23", true), crate::Resolved::Existing { ref id, .. } if id.as_str() == "pages/2026_10_23.md")
+    );
+    let all = view.inventory(InventoryScope::All);
+    assert!(all.0.iter().any(|entry| entry.name == "2026_10_23"
+        && entry.is_journal
+        && matches!(entry.target, crate::Resolved::Absent { .. })));
+    assert_eq!(view.link_target("2026-10-23").name, "2026-10-23");
     store.close();
 }
 
@@ -1101,36 +1243,32 @@ fn window_link(store: &Store, name: &str) -> (String, bool, bool) {
     (link.name, link.is_journal, entry.empty_alias)
 }
 
-/// EMPTY-ALIAS (D-20261103-CMA, OG `page-empty-or-dummy?`): with `Machine
-/// Learning` declaring `alias:: ML`, `[[ML]]` opens Machine Learning while
-/// `pages/ML.md` has no real content, and `ML.md` once it has any. The empty
-/// page stays a real, listed page (its entry is `Existing`).
+/// R13-C4: Machine Learning's `alias:: ML` never redirects the real ML file,
+/// across empty/blank/property-only/populated content shapes.
 #[test]
-fn empty_alias_page_yields_its_name_to_the_alias_owner() {
+fn real_file_opens_itself_even_when_empty_and_aliased() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let owner = ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n");
     let notes = ("pages/Notes.md", "- [[ML]]\n");
-    // (ML.md text, does `[[ML]]` open Machine Learning?)
-    let cases: [(&str, &str, bool); 8] = [
-        ("no blocks", "", true),
-        ("a blank line", "\n", true),
-        ("one empty block", "- \n", true),
-        ("one block with a space", "-  \n", false),
-        ("two empty blocks", "- \n- \n", false),
-        ("page properties only", "tags:: x\n", false),
-        ("a title only", "title:: ML\n", false),
-        ("content", "- my own ML notes\n", false),
+    let cases = [
+        ("no blocks", ""),
+        ("a blank line", "\n"),
+        ("one empty block", "- \n"),
+        ("one block with a space", "-  \n"),
+        ("two empty blocks", "- \n- \n"),
+        ("page properties only", "tags:: x\n"),
+        ("a title only", "title:: ML\n"),
+        ("content", "- my own ML notes\n"),
     ];
-    for (what, text, yields) in cases {
+    for (what, text) in cases {
         let (_dir, store) = fixture(&[owner, notes, ("pages/ML.md", text)]);
         let (name, journal, empty_alias) = window_link(&store, "ML");
-        let want = if yields { "Machine Learning" } else { "ML" };
         assert_eq!(
             (name.as_str(), journal),
-            (want, false),
+            ("ML", false),
             "{what}: [[ML]] opens"
         );
-        assert_eq!(empty_alias, yields, "{what}: empty_alias");
+        assert!(!empty_alias, "{what}: retired empty_alias flag");
         // Still a real page: listed with its own file.
         let view = store.whole_graph().unwrap();
         assert!(
@@ -1143,26 +1281,19 @@ fn empty_alias_page_yields_its_name_to_the_alias_owner() {
     let (_dir, store) = fixture(&[notes, ("pages/ML.md", "")]);
     assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
     store.close();
-    // The declarer's kind does not matter: a journal declaring `alias:: n/y`
-    // wins over an empty `n/y` page (model C-g).
+    // A journal declarer cannot displace an empty ordinary file either.
     let (_dir, store) = fixture(&[
         ("journals/2026_10_27.md", "alias:: n/y\n\n- see [[A]]\n"),
         ("pages/N%2Fy.md", ""),
     ]);
-    assert_eq!(
-        window_link(&store, "N/y"),
-        ("Oct 27th, 2026".into(), true, true)
-    );
+    assert_eq!(window_link(&store, "N/y"), ("N/y".into(), false, false));
     store.close();
 }
 
-/// EMPTY-ALIAS follows live edits without a restart: typing the first
-/// character into the empty `ML.md` makes `[[ML]]` open it, clearing it again
-/// makes `[[ML]]` open Machine Learning, and dropping or adding the alias
-/// moves it too. The window's held inventory (patched by deltas, or refetched
-/// when a publication carries none) always equals a fresh read.
+/// Typing, clearing, adding or dropping the colliding alias changes no live
+/// opening and signals no inventory refresh. The held inventory equals a fresh read.
 #[test]
-fn empty_alias_follows_live_edits() {
+fn real_file_opening_is_independent_of_content_and_alias_edits() {
     let _integration_guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture(&[
         ("pages/Machine Learning.md", "alias:: ML\n\n- ml\n"),
@@ -1180,7 +1311,7 @@ fn empty_alias_follows_live_edits() {
         assert_eq!(held, fresh, "the window's inventory after saving {id}");
         changed
     };
-    assert_eq!(window_link(&store, "ML").0, "Machine Learning");
+    assert_eq!(window_link(&store, "ML").0, "ML");
     let typed = |text: &'static str| {
         move |doc: &mut tine_core::model::PageDto| {
             doc.blocks = vec![tine_core::model::BlockDto {
@@ -1190,29 +1321,26 @@ fn empty_alias_follows_live_edits() {
         }
     };
     assert!(
-        step(&store, "pages/ML.md", &typed("m")),
-        "first character signals"
+        !step(&store, "pages/ML.md", &typed("m")),
+        "first character does not change the inventory"
     );
     assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
-    assert!(step(&store, "pages/ML.md", &typed("")), "clearing signals");
-    assert_eq!(
-        window_link(&store, "ML"),
-        ("Machine Learning".into(), false, true)
+    assert!(
+        !step(&store, "pages/ML.md", &typed("")),
+        "clearing does not change the inventory"
     );
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
     let pre = |text: Option<&'static str>| {
         move |doc: &mut tine_core::model::PageDto| doc.pre_block = text.map(str::to_owned)
     };
-    assert!(step(&store, "pages/Machine Learning.md", &pre(None)));
+    assert!(!step(&store, "pages/Machine Learning.md", &pre(None)));
     assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
-    assert!(step(
+    assert!(!step(
         &store,
         "pages/Machine Learning.md",
         &pre(Some("alias:: ML"))
     ));
-    assert_eq!(
-        window_link(&store, "ML"),
-        ("Machine Learning".into(), false, true)
-    );
+    assert_eq!(window_link(&store, "ML"), ("ML".into(), false, false));
     store.close();
 }
 

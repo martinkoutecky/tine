@@ -842,12 +842,9 @@ ordinary date-named file retains its own spelling (D-20261107-KD); another
 accepted spelling can still name the day's journal. Without a literal file,
 the graph's journal answerer (`JournalFormat::parse`: configured formats and
 fixed fallbacks, D-20261102-JDL) tries that day's active journal, then the
-alias owner. An active claimant with no real content (`inventory.rs::content_free` over its parsed
-document: no pre-block text, and no blocks or one block with empty raw text)
-yields the name to the alias owner when some page declares it (D-20261103-CMA,
-OG `page-empty-or-dummy?`); such entries carry `empty_alias: true` and named
-routes (`navigationTarget`) follow their `link`, while exact-path opens (All
-pages, search hits, the alias group's Related pages row) still open the file. An
+alias owner. An active claimant always opens itself, including an empty or
+blank file (D-20261106-R13-C4). Live entries never set the retired `empty_alias`
+flag. Named routes, links and exact-path opens all retain that file. An
 alias owned by a journal opens the journal. A name nothing claims or aliases is
 a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
 exported to the frontend through wasm so the unknown-name fallback runs the same
@@ -856,15 +853,37 @@ code). `page_inventory` entries carry the answer as an optional
 entries carry nothing). The field is in-memory and derived per read: nothing is
 persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
 delta's `rev` (a link depends on the key's alias owners, which travel in the
-delta, and on file claims, whose change refetches; a claimant flipping between
-content-free and content while its name is declared, or an alias edit naming a
-content-free claimant, also refetches). The published snapshot
-(quick share generation 1, `docs/contracts/quick-share.md`) does not carry it:
-its document is frozen, so adding the answer there is a format decision still
-open (CM step 2 receipt). Proof: `crates/tine-store/tests/inventory_delta.rs`
+delta, and on file claims, whose change refetches). Content changes alone do
+not change name routing. Published `answers` v1 stores the lookup answers at
+publication time (`docs/contracts/quick-share.md`). Existing snapshots retain
+their stored redirects, including the former empty-alias answer; new snapshots
+record real-file-first opening. The frozen reader never reclassifies old rows.
+Proof: `crates/tine-store/tests/inventory_delta.rs`
 `a_delta_keeps_the_link_answer_fresh`,
-`empty_alias_page_yields_its_name_to_the_alias_owner`,
-`empty_alias_follows_live_edits`, `src/cmConformanceNavigate.test.ts`.
+`real_file_opens_itself_even_when_empty_and_aliased`,
+`real_file_opening_is_independent_of_content_and_alias_edits`, `src/cmConformanceNavigate.test.ts`.
+
+Date-shaped alias endpoints use the configured journal interpretation even
+without a real journal. The existing alias relation maintains only its
+authored date endpoints by day alongside its raw rows. Component walks join
+accepted spellings and those endpoints, excluding every literal ordinary
+claim unless an explicit alias edge joins it (D-20261107-KD). Opening uses
+the same date-endpoint buckets for direct declarers. Literal name/page query
+leaves use the literal real claim first; reference leaves use the component.
+FORMAT 28 invalidates retained reference/query answers once; the body schema
+and graph files are unchanged. Live namespace rows optionally carry
+`parent: {name, kind}` when the immediate prefix has a canonical spelling or
+journal kind. Tree, macro and hierarchy attach only a listed typed parent;
+alias-only names remain excluded, without jumping to an ancestor. Frozen
+published v1 rows omit this new field and retain their previous readers.
+
+An ordinary file claiming the configured canonical day title remains distinct
+from the virtual journal named by another accepted spelling (SPEC §2.3).
+Both typed inventory rows can have that displayed title. The virtual journal
+retains an unclaimed opening spelling in its existing `link` field; entity
+gestures preserve it while a literal link using the ordinary filename still
+opens that file. Count panels distinguish `(kind,key)` in the same count walk.
+A virtual journal has no physical self page to exclude from references or links.
 
 Which references name a journal day (Linked References, `[[day]]` backlink
 counts' needles) is every spelling the journal answerer accepts for that day:
@@ -1777,11 +1796,11 @@ C12). The global tree omits isolated pages. Both live namespace flags are
 omitted from the frozen published `answers` v1 rows. No checkpoint field or
 FORMAT changes.
 
-The rename offer applies the same EMPTY-ALIAS content-free predicate as
-navigation. A redirecting alias target, even with an empty file, asks to merge
-into its unique declaring owner or make the typed name its own page. The
-first answer retains the empty target file; the second fills it using the
-existing guarded merge path. Both retain the declaring alias, map children
+The rename offer selects a real target file independently of content
+(R13-C4). An empty real target is filled through the existing guarded merge
+path; it never routes source content to another alias declarer. A fileless
+alias target retains the existing owner-choice flow pending the later r13
+candidate-planning batch. Both retain the declaring alias, map children
 and links to the typed name, and map stored queries to the chosen survivor's
 name. Rust's `RenameOffer::AliasOf` carries separate `merge` and `ownPage`
 permissions. A reference-only source has no OwnPage permission and its API

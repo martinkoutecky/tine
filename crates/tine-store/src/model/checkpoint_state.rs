@@ -300,10 +300,19 @@ impl Graph {
         let alias_relation = derived
             .aliases
             .and_then(|state| match state {
-                AliasListState::In(list) => crate::query::AliasRelation::from_list(&list, |rel| {
-                    let slot = *pages.positions.get(rel)?;
-                    pages.get(slot).map(|(entry, _)| entry.path.clone())
-                }),
+                AliasListState::In(list) => crate::query::AliasRelation::from_list(
+                    &list,
+                    |rel| {
+                        let slot = *pages.positions.get(rel)?;
+                        pages.get(slot).map(|(entry, doc)| {
+                            (
+                                entry.path.clone(),
+                                crate::query::document_alias_spellings(doc),
+                            )
+                        })
+                    },
+                    &config.journal_format(),
+                ),
                 AliasListState::Out(_) => None,
             })
             .map(Arc::new);

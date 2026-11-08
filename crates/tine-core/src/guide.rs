@@ -738,8 +738,7 @@ mod parity_guide_tests {
             "Their blocks are never merged into one view",
             "opens the page whose file path comes first in plain character order",
             "A name with its own page file opens that file",
-            // EMPTY-ALIAS (D-20261103-CMA): an empty page yields to the alias.
-            "A page file with no real content (no text and no properties, at most one empty bullet) gives its name to the alias",
+            "even when the file is empty",
         ] {
             assert!(guide.contains(phrase), "Guide missing {phrase}");
         }

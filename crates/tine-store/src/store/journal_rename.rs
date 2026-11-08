@@ -111,7 +111,7 @@ impl WholeGraph {
                 dated.push(k.as_str());
                 continue;
             }
-            for path in self.graph.alias_owner_paths(k).into_iter().flatten() {
+            for path in self.graph.alias_owner_paths(k, None).into_iter().flatten() {
                 let declarer = self
                     .graph
                     .pages

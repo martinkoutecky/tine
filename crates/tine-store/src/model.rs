@@ -726,18 +726,6 @@ impl ReadSnapshot {
         }
         keys
     }
-    /// Owner paths of the aliases whose page key is `key`, in
-    /// `page_aliases_with_owners` order. Read from the alias relation, so a
-    /// resolve costs O(owners of the key), not a pass over every alias.
-    pub(crate) fn alias_owner_paths(&self, key: &str) -> Option<Vec<String>> {
-        self.alias_relation().owner_paths(key)
-    }
-
-    /// The relative path of the page alias-only `key` opens (AL2/CI4).
-    pub(crate) fn alias_owner_path(&self, key: &str) -> Option<String> {
-        self.alias_relation().owner_path(key).cloned()
-    }
-
     /// The least spelling a page declared alias `key` with (the relation keeps
     /// only keys), or `None` when no page declares it. O(owners of the key x
     /// their aliases) through the per-page spelling index.
@@ -1149,6 +1137,7 @@ impl ReadSnapshot {
         }
         let mut next = (**relation).clone();
         let mut moved = false;
+        let format = self.config().journal_format();
         for rel in changed_paths {
             let before = snapshot_page_by_rel(&old.pages, None, rel);
             let after = snapshot_page_by_rel(&self.pages, None, rel);
@@ -1159,7 +1148,10 @@ impl ReadSnapshot {
             }
             if let Some((entry, doc)) = after {
                 let spellings = crate::query::document_alias_spellings(doc);
-                moved |= next.replace(&entry.path, crate::query::AliasRow::of(entry, &spellings));
+                moved |= next.replace(
+                    &entry.path,
+                    crate::query::AliasRow::with_format(entry, &spellings, &format),
+                );
             }
         }
         Some(if moved {
@@ -1545,11 +1537,16 @@ impl ReadSnapshot {
     pub(crate) fn alias_relation(&self) -> &Arc<crate::query::AliasRelation> {
         self.alias_relation.get_or_init(|| {
             let index = self.alias_spelling_index();
+            let format = self.config().journal_format();
             Arc::new(crate::query::AliasRelation::build(
                 self.pages.iter().filter_map(|(entry, _)| {
                     #[cfg(feature = "test-faults")]
                     crate::cost_counters::alias_page_probe();
-                    let row = crate::query::AliasRow::of(entry, index.get(&entry.path)?)?;
+                    let row = crate::query::AliasRow::with_format(
+                        entry,
+                        index.get(&entry.path)?,
+                        &format,
+                    )?;
                     Some((entry.path.clone(), row))
                 }),
             ))

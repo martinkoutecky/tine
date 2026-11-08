@@ -2894,6 +2894,17 @@ impl WholeGraph {
         if !entries.is_empty() {
             entries = self.all_name_claimants(claim_name);
         }
+        // A normalized journal fallback cannot inherit a masked journal's
+        // ordinary opening claimant: that file claims only its literal key.
+        if is_journal
+            && literal.is_none()
+            && tine_core::refs::page_key(name) != tine_core::refs::page_key(claim_name)
+            && entries
+                .first()
+                .is_some_and(|entry| entry.kind == PageKind::Page)
+        {
+            entries.clear();
+        }
         if !entries.is_empty() {
             let mut ids = entries
                 .iter()
@@ -2903,10 +2914,13 @@ impl WholeGraph {
                 others: ids.collect(),
             };
         }
-        if !is_journal {
+        if !is_journal || self.journal_format.parse(name).is_some() {
             let owners: Vec<_> = self
                 .graph
-                .alias_owner_paths(&tine_core::refs::page_key(name))
+                .alias_owner_paths(
+                    &tine_core::refs::page_key(name),
+                    self.journal_format.parse(name),
+                )
                 .map(|paths| paths.iter().cloned().map(PageId::from).collect())
                 .unwrap_or_default();
             if !owners.is_empty() {
