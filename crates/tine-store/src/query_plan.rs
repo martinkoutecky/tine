@@ -18,6 +18,14 @@ use tine_core::query_plan::{
 use tine_core::refs;
 use tine_core::refs::page_key;
 use tine_core::search_query::{canonical_fold, literal_fold, Matcher, Term};
+pub(crate) mod completion;
+
+#[cfg(test)]
+thread_local! { pub(crate) static COMPLETION_SCORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+#[cfg(test)]
+mod completion_bench_tests;
+#[cfg(test)]
+mod completion_tests;
 
 const MAX_EVIDENCE_SPANS: usize = 32;
 

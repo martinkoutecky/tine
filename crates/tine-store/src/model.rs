@@ -5,6 +5,7 @@
 
 mod checkpoint_state;
 mod collapse_only;
+mod completion_rank;
 pub(crate) mod derived;
 pub(crate) mod entry_identity;
 pub(crate) mod held_index;
@@ -547,13 +548,11 @@ pub(crate) struct Graph {
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
     page_locks:
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
-    /// Open editor completions' supplemental name keys, by session. The one
-    /// owner across every published view (incremental, config, Rescan,
-    /// checkpoint install), so a close releases the session everywhere.
+    /// Graph-owned completion sessions; close releases keys and ranks in every view.
     pub(crate) completion_name_keys: CompletionSessions,
 }
 
-pub(crate) type CompletionSessions = Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>;
+pub(crate) type CompletionSessions = Arc<completion_rank::Sessions>;
 
 /// The immutable page and index input for one published generation. Evaluators
 /// borrow this value; write helpers and filesystem capabilities are absent.
@@ -565,10 +564,7 @@ pub(crate) struct ReadSnapshot {
     explicit_index: SnapshotExplicitIndex,
     reference_candidate_index: RwLock<SnapshotReferenceCandidateIndex>,
     cache_generation: u64,
-    // Built on first use, as before snapshots. Racing readers of one
-    // generation share one build; generations published after it inherit it
-    // by per-file deltas. A view published before the first build and read
-    // later builds its own copy (an old-view edge, not the save path).
+    // Lazy indexes carry per-file deltas; old views build their own copy.
     block_index: std::sync::OnceLock<SnapshotBlockIndex>,
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
@@ -586,9 +582,7 @@ pub(crate) struct ReadSnapshot {
     /// inherits it and patches only the pages a save changed, also when an
     /// alias or a page name moved (D-20261018-M2c, I-25).
     alias_relation: std::sync::OnceLock<Arc<crate::query::AliasRelation>>,
-    /// TQL's link table (`links`, `linked_by`, `near`), built on the first
-    /// query that reads it; in memory only, never carried across a generation
-    /// (an edit anywhere can move any link).
+    /// TQL's lazy link table; any edit invalidates it. Never persisted.
     link_graph: std::sync::OnceLock<Arc<crate::query::link_graph::LinkGraph>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
@@ -598,9 +592,9 @@ pub(crate) struct ReadSnapshot {
     query_index: crate::query::index::QueryIndexSlot,
     pub(crate) transliteration_names: Arc<NameKeyMap>,
     pub(crate) transliteration_owners: SharedMap<String, usize>,
-    // Only open editor completions own supplemental keys: the graph's one
-    // registry, released explicitly on close (including stale IPC replies).
+    // The graph owns supplemental keys; completion close releases them.
     pub(crate) completion_name_keys: CompletionSessions,
+    pub(crate) completion_rank: crate::query_plan::completion::CompletionCache,
     #[cfg(test)]
     pub(crate) name_cache_work: usize,
     #[cfg(test)]
@@ -1009,6 +1003,9 @@ impl ReadSnapshot {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
+            completion_rank: crate::query_plan::completion::CompletionCache::new(
+                &completion_name_keys,
+            ),
             completion_name_keys,
             #[cfg(test)]
             name_cache_work: 0,
@@ -1017,6 +1014,9 @@ impl ReadSnapshot {
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        if let Some(old) = old {
+            snapshot.carry_completion_rank(old, changed_paths);
+        }
         if let Some(support) =
             old.and_then(|old| fileless_names::DaySupport::carry(old, &snapshot, changed_paths))
         {

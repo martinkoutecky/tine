@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
 - Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).
