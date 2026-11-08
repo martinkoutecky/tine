@@ -2,6 +2,7 @@ import { render } from "solid-js/web";
 import { Block } from "../../src/components/Block";
 import { loadSingle } from "../../src/document/workingSet";
 import { initParser } from "../../src/render/parse";
+import { renderedBlocks } from "../../src/lazyObserve";
 import { clearSeededFacets } from "../../src/render/facets";
 import "../../src/styles/theme.css";
 import "../../src/styles/inter.css";
@@ -11,13 +12,15 @@ import { QueryResultsRegion } from "../../src/components/QueryResultParts";
 import { SheetContainer } from "../../src/components/SheetContainer";
 import { SheetTable } from "../../src/components/SheetTable";
 
-export async function mount(raw: string, depth: number, paneWidth: number, format: "md" | "org" = "md", surface = "markdown", cell = "a".repeat(65)) {
+export async function mount(raw: string, depth: number, paneWidth: number, format: "md" | "org" = "md", surface = "markdown", cell = "a".repeat(65), eager = false) {
   await initParser();
   let block = { id: "table", raw, collapsed: false, children: [] as any[] };
   for (let i = 0; i < depth; i++) block = { id: `parent-${i}`, raw: `Parent ${i + 1}`, collapsed: false, children: [block] };
   if (surface === "sheet") block = { id: "table", raw: "Sheet\ntine.fields:: first=text;second=text\ntine.table-widths:: prop:first=450;prop:second=450", collapsed: false, children: [{ id: "row", raw: "Row\nfirst:: editable\nsecond:: stable", collapsed: false, children: [] }] };
   loadSingle({ name: "Table bleed", title: "Table bleed", kind: "page", format, pre_block: null, blocks: [block] });
   clearSeededFacets();
+  // Model a source already rendered elsewhere, as in a Linked References copy.
+  if (eager) renderedBlocks.add("table");
   document.body.innerHTML = '<div id="fixture"></div>';
   return render(() => <div class="pane-leaf" style={{ width: `${paneWidth}px`, height: "650px", flex: "none", margin: "0 auto" }}>
     <div class="main-content"><div class="main-content-inner" style={{ "max-width": "720px", width: "100%" }}><h1>Table bleed</h1>{surface.startsWith("query") ? <div class="query-block"><QueryResultsRegion><QueryLegacyTable cols={["block", "page"]} rows={[{ text: cell, page: cell.replace(/a/g, "b"), kind: "page", props: {}, byKey: {} }]} sortBy={() => {}} arrow={() => ""} /></QueryResultsRegion></div>

@@ -57,6 +57,11 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-07, GH #805 (0.10 lane brief, Martin's 10/30 AA and TRIAGE-1031 placement):
+  `commands.registry` 148→149 for the explicitly requested remappable **Quit Tine**
+  command (`app/quit`, Ctrl+Q on Linux/Windows). It reaches the existing safe Quit
+  path. The command is native-only, so the browser-mock palette count stays at 90;
+  no new Settings control or topbar button.
 - 2026-11-06, GH #860 / roadmap AG (Martin's 2026-11-03 placement, SWEEP-1103):
   `commands.registry` 147→148 and `commands.palette` 89→90 for **Toggle embed breadcrumbs**,
   explicitly requested as a palette command, rebindable with no default key like Toggle custom CSS.

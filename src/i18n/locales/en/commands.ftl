@@ -1,6 +1,8 @@
 ## Commands: the command table (keybindings.ts). A command's message id is
 ## `command-` + its id with `/` replaced by `-` (D4).
 command-go-search = Search / quick switch
+command-app-quit = Quit Tine
+commands-couldn-t-request-quit = Couldn't request quit. Try closing the window.
 navigation-sidebar-title = Toggle sidebar (t l)
 navigation-search-title = Search (Ctrl+K)
 navigation-search = Search

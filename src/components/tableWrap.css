@@ -1,18 +1,36 @@
 /* Table viewports (TableWrap.tsx owns the geometry; app.css owns the base look).
    F1/F1b/F2 (GH #749 follow-up, D-20261028-UILP). */
 
-/* A Markdown/Org cell with long text wraps at a sensible width; short cells and
-   numbers stay on one line (an unbroken token never breaks: no overflow-wrap).
-   TableWrap marks them (`md-cell-long`, LONG_CELL_CHARS). */
-.md-table th.md-cell-long,
-.md-table td.md-cell-long {
+/* GH #802, D-20261107-R11: automatic columns grow into free pane space first,
+   then wrap at spaces. OG 6e7afa8eb components/table.css + block.cljs:3075 use
+   an automatic table inside an overflow container. Intentional difference:
+   Tine expands beyond its text column before wrapping, rather than always
+   filling the column. Unbreakable tokens/images keep the local scroll fallback.
+   No character-count widths: several short prose cells must also fit together. */
+.md-table-wrap > table.md-table {
+  max-width: 100%;
+}
+.md-table-wrap .md-table th,
+.md-table-wrap .md-table td {
   white-space: normal;
   overflow-wrap: normal;
   word-break: normal;
-  min-width: 18ch;
-  max-width: 40ch;
-  width: 34ch;
-  vertical-align: top;
+}
+.md-table-wrap .md-table .md-cell-long { vertical-align: top; }
+/* Words stay whole while the table fits: break-word does not lower a column's
+   minimum width, so a short column is never squeezed below its longest word to
+   widen a long one. Only when the table cannot fit its viewport with whole
+   words (many prose columns in a narrow pane, a long URL) does TableWrap mark it
+   tight; then, like OG's inherited word breaking, prose and link labels may split
+   anywhere as a last resort. Unbroken numeric/plain-text cells keep their
+   whole-token minimum and scroll locally instead. */
+.md-table-wrap .md-table .md-cell-prose,
+.md-table-wrap .md-table a {
+  overflow-wrap: break-word;
+}
+.md-table-wrap.md-table-tight .md-table .md-cell-prose,
+.md-table-wrap.md-table-tight .md-table a {
+  overflow-wrap: anywhere;
 }
 
 /* A table in a query box (or a right-sidebar item) never leaves the box: the box

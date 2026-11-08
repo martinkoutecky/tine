@@ -173,6 +173,19 @@ pub(crate) fn read_prefs(app: &tauri::AppHandle) -> Prefs {
     }
 }
 
+/// GH #805: keyboard Quit uses exactly the tray/menu path, including surfacing
+/// windows whose guarded save refuses to close. No process exit lives here.
+/// Synchronous UI dispatch is deliberate: it only requests window closes and
+/// starts the existing prompt-surfacing timer; it performs no disk reads or flush.
+#[tauri::command]
+pub(crate) fn request_app_quit(app: tauri::AppHandle) {
+    // Desktop: Linux, Windows, macOS. Mobile: Android, iOS.
+    #[cfg(desktop)]
+    quit(&app);
+    #[cfg(mobile)]
+    let _ = app;
+}
+
 /// Create/remove the tray icon to match the stored preferences and report the
 /// outcome. Mobile has no tray.
 #[tauri::command]
