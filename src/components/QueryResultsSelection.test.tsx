@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createStore, produce } from "solid-js/store";
 import { backend } from "../backend";
 import { closeExportModal, exportModal } from "../ui";
 import { QueryResultsSelection } from "./QueryResultsSelection";
@@ -26,7 +26,7 @@ it("GH #907: a frozen selection keeps its old positional source when retained di
   try {
     root.querySelector<HTMLButtonElement>("button")!.click();
     const finish = beginResultsChange();
-    setHits(0, "block", "id", "position-2");
+    setHits(produce(list => { const hit = list[0]; if (hit.entity === "block") hit.block.id = "position-2"; }));
     finish();
     adoptResults(hits, captureResultsTicket());
     [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Copy results")!.click();
