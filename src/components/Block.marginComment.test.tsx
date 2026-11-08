@@ -120,7 +120,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(draft).not.toBeNull();
       draft.value = "Reply from zoom";
       draft.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
       const reply = docNode(docNode("c")!.children.at(-1)!)!;
       expect(reply.parent).toBe("c");
       expect(reply.raw).toContain("Reply from zoom");
@@ -213,7 +213,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode("c")!.children).toEqual(["r"]);
       draft!.value = "A considered reply";
       draft!.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      draft!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      draft!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
       const id = docNode("c")!.children.at(-1)!;
       expect(docNode(id)!.raw).toContain("A considered reply");
       expect(docNode(id)!.parent).toBe("c");

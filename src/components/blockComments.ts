@@ -1,19 +1,20 @@
 // What a Block needs from the margin dialogue (vision §3.7), kept out of
 // Block.tsx so the component only wires it (the size ratchet, PARITY-CAMPAIGN §3).
 
-import { useContext } from "solid-js";
+import { createMemo, useContext } from "solid-js";
 import type { OutlineScope } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
 import { AUTHOR_TINTS, authorTint, isOwnAuthor } from "../commentIdentity";
-import { isCommentId, marginNext, marginPrev } from "../margin";
+import { isCommentId, marginNext, marginPrev, threadRootOf } from "../margin";
 import { commentsFirst, nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
 import { facetsOf } from "../render/facets";
+import { commentGroups } from "../commentGroups";
 export { commentEditorHide } from "../editor/commentProperties";
 
-interface CommentNode { raw: string; parent: string | null; children: readonly string[] }
+interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];
 
 /** Plain functions over the block's facets: an ordinary block pays two property
@@ -56,16 +57,22 @@ const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || s
 export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: () => "md" | "org") {
   const place = useContext(MarginContext);
   const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
+  const groups = createMemo(() => {
+    if (main() || commentMarginHidden() || threadRootOf(node().id, fmt()) !== null) return null;
+    const all = commentGroups(node().id, fmt());
+    return all.length ? { first: new Map(all.map(ids => [ids[0], ids])), hidden: new Set(all.flatMap(ids => ids.slice(1))) } : null;
+  });
   // GH #845: with the margin hidden no surface draws a thread (not even inline).
   const outlineChildren = () => {
     const n = node();
     if (main() || commentMarginHidden()) return n.children.filter(id => !isCommentId(id, fmt()));
     // Replies retain file pre-order, even when a hand-nested reply has a quote.
     if (inCommentThread(n.parent, fmt()) || (n.parent !== null && quoteSelectorOf(facetsOf(n.raw, fmt()).properties) !== null)) return n.children;
-    return commentsFirst(n.children);
+    return commentsFirst(n.children).filter(id => !groups()?.hidden.has(id));
   };
   const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt())) : []);
-  return { outlineChildren, marginComments };
+  const inlineGroup = (id: string) => groups()?.first.get(id);
+  return { outlineChildren, marginComments, inlineGroup };
 }
 
 /** Body navigation skips annotations through the shared tree API. A margin

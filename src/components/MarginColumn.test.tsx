@@ -144,7 +144,8 @@ describe("the margin column on a wide main pane", () => {
     ])]);
     try {
       expect([...column(pane)!.querySelectorAll<HTMLElement>(".margin-thread")].map(el => el.dataset.threadId))
-        .toEqual(["early", "tie", "late"]);
+        .toEqual(["early", "late"]);
+      expect([...thread(pane, "early")!.querySelectorAll<HTMLElement>(".comment-card")].map(el => el.dataset.blockId)).toEqual(["early", "tie"]);
       expect(pane.querySelector(".margin-marker")!.textContent).toBe("3");
       expect(pane.querySelectorAll(".margin-marker")).toHaveLength(1);
     } finally { dispose(); }
@@ -386,7 +387,7 @@ describe("editing in the margin", () => {
     }
   });
 
-  it("Enter in a comment's text adds a reply inside its thread and keeps the quote on the comment", async () => {
+  it("Enter in a comment's text inserts a line without a reply and keeps the quote", async () => {
     const { pane, dispose } = mount(commented());
     try {
       startEditing("c2", "Which step size?".length);
@@ -395,13 +396,12 @@ describe("editing in the margin", () => {
       expect(ta.value().startsWith("Which step size?")).toBe(true);
       ta.select("Which step size?".length, "Which step size?".length);
       key(ta, "Enter");
-      const reply = docNode("c2")!.children[0];
-      expect(reply).toBeDefined();
-      expect(docNode(reply)!.raw).toBe("");
-      expect(docNode("c2")!.raw).toBe("Which step size?\ntine.quote:: the step size");
-      expect(editingId()).toBe(reply);
-      await Promise.resolve();
-      expect(editor(thread(pane, "c2")!)!.element.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(reply);
+      expect(docNode("c2")!.children).toEqual([]);
+      expect(ta.value()).toBe("Which step size?\n");
+      expect(editingId()).toBe("c2");
+      ta.keydown({ key: "Enter", ctrlKey: true });
+      expect(docNode("c2")!.raw).toContain("tine.quote:: the step size");
+      expect(editingId()).toBeNull();
     } finally {
       dispose();
     }

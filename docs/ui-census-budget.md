@@ -47,6 +47,15 @@ The alternatives to growing a surface are palette-only, config-only or cut.
 Run `UI_CENSUS_PRINT=1 npx vitest run --config vitest.render.config.ts src/uiCensus.budget.test.tsx`
 to print every count with the labels of the controls counted.
 
+- 2026-11-08, D-20261107-MC3 §7 (UI-MC010-VISIBILITY, GH #891): ordinary page
+  and journal header menus gain one Show comments/Hide comments row: desktop
+  16→17, mobile 15→16. The approved design requires a visible mobile control
+  and delegates page menu versus keyboard toolbar placement to this lane.
+  The page header menu keeps this reading action available without occupying
+  the editing toolbar; the same action is available on desktop. Link/sidebar
+  context menus gain no row. Review rationale is also in the lane receipt;
+  this implementation lane is explicitly instructed not to commit.
+
 ## Known gap
 
 jsdom has no layout. Controls that CSS hides at rest (hover reveal, container-query

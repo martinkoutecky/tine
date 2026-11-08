@@ -8,7 +8,7 @@ import { Block } from "./components/Block";
 import { CommentNameSetting } from "./components/CommentNameSetting";
 import { backend } from "./backend";
 import { commentRaw, replyRaw } from "./comments";
-import { createComment, replyOnEnter } from "./commentActions";
+import { createComment, submitReply } from "./commentActions";
 import { AUTHOR_TINTS, authorTint, commentAuthorName, isOwnAuthor, normalizeAuthorName, resetCommentAuthorNameForTests, initCommentIdentity } from "./commentIdentity";
 import { blockRegions, initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
@@ -91,9 +91,8 @@ describe("what is written", () => {
     resetCommentAuthorNameForTests("Ada");
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
     expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.\ntine.author:: Ada");
-    expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
-    const reply = doc.byId[comment].children[0];
-    expect(doc.byId[reply].raw).toBe("\ntine.author:: Ada");
+    const reply = submitReply(comment, "Response")!;
+    expect(doc.byId[reply].raw).toBe("Response\ntine.author:: Ada");
     undo();
     expect(doc.byId[comment].children).toHaveLength(0);
     undo();
@@ -104,8 +103,8 @@ describe("what is written", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
     expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
-    expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
-    expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("");
+    const reply = submitReply(comment, "Response")!;
+    expect(doc.byId[reply].raw).toBe("Response");
   });
 });
 

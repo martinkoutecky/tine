@@ -21,3 +21,9 @@ it("the Guide explains that body structure skips whole annotation threads (GH #8
   ]) expect(tips).toContain(fact);
   expect(tips).not.toContain("Drag it to move the comment");
 });
+
+it("the Guide explains multiline comments, grouped passages, subtree counts and the touch visibility control", () => {
+  const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  for (const fact of ["**Enter** and **Shift+Enter** insert a line break", "**Ctrl/Cmd+Enter**", "**Send**", "**N below**", "**New thread**", "page actions menu", "share one card and one quote"]) expect(tips).toContain(fact);
+  expect(tips).not.toContain("**Enter** in a comment's text adds a reply");
+});

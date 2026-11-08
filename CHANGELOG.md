@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
+- Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
+- The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
 
 ### Fixed

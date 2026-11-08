@@ -292,9 +292,12 @@ export interface MessageArgs {
   "commands-select-text-in-a-block-then-use": {};
   "commands-undo-redo-mode": { "mode": string | number };
   "comment-author-you": {};
+  "comment-below": { "count": string | number };
+  "comment-below-expand": { "count": string | number };
   "comment-block-cannot-take": {};
   "comment-block-changed": {};
   "comment-delete": {};
+  "comment-hide": {};
   "comment-margin-count": { "count": number };
   "comment-margin-draft-pending": {};
   "comment-margin-label": {};
@@ -307,6 +310,7 @@ export interface MessageArgs {
   "comment-name-prompt-save": {};
   "comment-name-prompt-scope": {};
   "comment-name-prompt-title": {};
+  "comment-new-thread": {};
   "comment-on-whole-block": {};
   "comment-quote-ambiguous": {};
   "comment-quote-changed": {};
@@ -314,6 +318,8 @@ export interface MessageArgs {
   "comment-reply": {};
   "comment-reply-placeholder": {};
   "comment-select-first": {};
+  "comment-send": {};
+  "comment-show": {};
   "comment-stale-write-what": {};
   "comment-toolbar": {};
   "comment-toolbar-shortcut": {};

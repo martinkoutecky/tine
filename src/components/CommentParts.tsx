@@ -4,7 +4,7 @@
 // All of it is derived at render time from ordinary block properties. Slice 2
 // adds the main column's marker for comments drawn in the margin.
 
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
+import { createEffect, createMemo, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
 import { MarginContext } from "./marginContext";
 import { DialogActions } from "./DialogActions";
 import { t } from "../i18n";
@@ -21,6 +21,8 @@ import { commentMarginHidden } from "../commentMarginPref";
 import { openContextMenu } from "../ui";
 import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
+import { consumeReplyFocus, replyFocusRequest } from "../commentReplyFocus";
+import { commentDraftState } from "../commentDraftState";
 
 /** Whether the block under `parentId` belongs to a comment's thread: some
  * ancestor (from `parentId` up) is a comment. O(depth) facet lookups. */
@@ -127,18 +129,28 @@ export function CommentActions(props: { id: string }): JSX.Element {
 /** No document node exists while composing: abandoning an empty draft costs
  * zero writes. Once submitted it is an ordinary editable child block. */
 export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
-  const [draft, setDraft] = createSignal("");
+  const { draft, setDraft, expanded, setExpanded } = commentDraftState(props.id, props.surface);
   // Hiding the margin would unmount this textarea and its unsent text.
-  onCleanup(registerReplyDraft(draft));
-  const [expanded, setExpanded] = createSignal(false);
+  onCleanup(registerReplyDraft(() => draft()));
   let input!: HTMLTextAreaElement;
+  onMount(() => createEffect(() => {
+    const held = replyFocusRequest();
+    if (!held || held.id !== props.id || held.surface !== null && held.surface !== props.surface) return;
+    setExpanded(true);
+    // Let the expanded class render and the old editor finish unmounting.
+    queueMicrotask(() => {
+      if (replyFocusRequest() !== held || !input.isConnected) return;
+      input.focus();
+      consumeReplyFocus();
+    });
+  }));
   const cancel = () => { setDraft(""); setExpanded(false); input.blur(); };
   // The first reply of a person with no name asks for one first (tine#841); the
   // draft stays in the composer while the dialog is open.
   const submit = () => { if (draft().trim()) runWithCommentName(() => { if (submitReply(props.id, draft())) cancel(); }); };
   return <Show when={blockWritable(props.id)}>
     <div class="comment-composer" classList={{ expanded: expanded() }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      <textarea ref={input} class="comment-reply-draft" rows={expanded() ? 3 : 1}
+      <textarea ref={input} class="comment-reply-draft" data-reply-root={props.id} rows={expanded() ? 3 : 1}
         placeholder={t("comment-reply-placeholder")} aria-label={t("comment-reply-placeholder")}
         value={draft()} onInput={e => setDraft(e.currentTarget.value)}
         onFocus={() => setExpanded(true)}
@@ -151,11 +163,11 @@ export function CommentComposer(props: { id: string; surface: string }): JSX.Ele
             if (draft().trim()) runWithCommentName(() => { if (commentFromReplyDraft(props.id, draft(), selectionStart, selectionEnd, props.surface)) cancel(); });
           }
           else if (e.key === "Escape") { e.preventDefault(); cancel(); }
-          else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+          else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submit(); }
         }} />
       <Show when={expanded()}><DialogActions class="comment-composer-footer"
         cancel={<button type="button" onClick={cancel}>{t("confirm-cancel")}</button>}
-        primary={<button type="button" class="comment-reply" disabled={!draft().trim()} onClick={submit}>{t("comment-reply")}</button>}
+        primary={<button type="button" class="comment-reply" disabled={!draft().trim()} onClick={submit}>{t("comment-send")}</button>}
       /></Show>
     </div>
   </Show>;

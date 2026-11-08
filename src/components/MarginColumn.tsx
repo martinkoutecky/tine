@@ -17,10 +17,12 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, 
 import { Block } from "./Block";
 import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
-import { countMarginMeasurePass, orderedCommentIds, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
+import { countMarginMeasurePass, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
 import { type FeedPage } from "../document";
 import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
+import { commentGroups } from "../commentGroups";
+import { CommentGroup } from "./CommentGroup";
 
 export interface MarginSurface {
   /** Comments are drawn in the margin (the outline carries `margin-active`). */
@@ -205,7 +207,7 @@ export function createMarginSurface(opts: {
     });
   });
 
-  function ThreadView(props: { id: string; parentId: string; row: HTMLElement }): JSX.Element {
+  function ThreadView(props: { id: string; ids: readonly string[]; parentId: string; row: HTMLElement }): JSX.Element {
     let el!: HTMLDivElement;
     onMount(() => {
       threads.set(props.id, { el, parentId: props.parentId, row: props.row });
@@ -223,7 +225,7 @@ export function createMarginSurface(opts: {
     return (
       <div
         class="margin-thread"
-        classList={{ active: activeComment() === props.id }}
+        classList={{ active: props.ids.includes(activeComment() ?? "") }}
         data-thread-id={props.id}
         ref={el}
         onMouseEnter={() => setActiveComment(props.id)}
@@ -231,9 +233,7 @@ export function createMarginSurface(opts: {
         onFocusIn={() => { setActiveComment(props.id); setFocusedComment(props.id); }}
         onFocusOut={(e) => { if (!el.contains(e.relatedTarget as Node | null)) { setActiveComment(null); setFocusedComment(null); } }}
       >
-        <MarginContext.Provider value={{ api, thread: { root: props.id, parent: props.parentId } }}>
-          <Block id={props.id} />
-        </MarginContext.Provider>
+        <CommentGroup ids={props.ids} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId } }}><Block id={id} /></MarginContext.Provider>} />
       </div>
     );
   }
@@ -269,18 +269,14 @@ export function createMarginSurface(opts: {
       rows();
       api.schedule();
     });
-    const commentsOf = (parentId: string) => {
-      const format = opts.page()?.format ?? "md";
-      return orderedCommentIds(parentId, format);
-    };
+    function RowGroups(props: { parentId: string; row: HTMLElement }): JSX.Element {
+      const groups = createMemo(() => new Map(commentGroups(props.parentId, opts.page()?.format ?? "md").map(ids => [ids[0], ids])));
+      return <For each={[...groups().keys()]}>{id => <ThreadView id={id} ids={groups().get(id)!} parentId={props.parentId} row={props.row} />}</For>;
+    }
     return (
       <aside class="margin-column" aria-label={t("comment-margin-label")} ref={el}>
         <For each={rows()}>
-          {(entry) => (
-            <For each={commentsOf(entry.parentId)}>
-              {(id) => <ThreadView id={id} parentId={entry.parentId} row={entry.row} />}
-            </For>
-          )}
+          {(entry) => <RowGroups parentId={entry.parentId} row={entry.row} />}
         </For>
       </aside>
     );
