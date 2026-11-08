@@ -1632,7 +1632,7 @@
       "r13-query-output: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
       "r13-same-key-nested-org: Alpha -> ALPHA: offers/automatic": [],
       "r13-same-key-nested-org: Alpha -> ALPHA: {\"destination\":\"ALPHA\",\"survivor\":null}": [
-        "G6/B3: physical output paths: model [\"pages/nested/physical.org\"], Tine [\"pages/ALPHA.org\"]"
+        "G6/B3: physical output paths: model [\"pages/nested/physical.org\"], Tine [\"pages/nested/ALPHA.org\"]"
       ],
       "r13-singleton-merge: A -> B: offers/automatic": [
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"

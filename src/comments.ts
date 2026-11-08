@@ -10,16 +10,17 @@
 // Authoring keys live here; the kernel owns the comment discriminator used by
 // both quoteSelectorOf and the editor's hidden-property projection.
 
-import { editBlock } from "./render/parse";
+import { editBlock, editorText, parserReady, rawByteOfEditor } from "./render/parse";
 import { propertyKeyNorm } from "./propertyKey";
 import type { Format } from "./render/ast";
 import { comment_quote } from "./render/wasm/lsdoc_wasm.js";
+import { utf8ToUtf16Cursor } from "./render/utf16Cursor";
 
 export const COMMENT_QUOTE_KEY = "tine.quote";
 export const COMMENT_QUOTE_PREFIX_KEY = "tine.quote-prefix";
 export const COMMENT_QUOTE_SUFFIX_KEY = "tine.quote-suffix";
 export const AUTHOR_KEY = "tine.author";
-/** W3C TextQuoteSelector context length (Hypothes.is uses 32 as well). */
+/** Initial context budget; repeated passages can require more (GH #891). */
 export const QUOTE_CONTEXT_MAX = 32;
 
 /** What a comment quotes. `quote === ""` means the whole parent block. */
@@ -33,7 +34,8 @@ export interface QuoteSelector {
 export type QuoteAnchor =
   | { kind: "whole" }
   | { kind: "range"; start: number; end: number }
-  | { kind: "stale" };
+  | { kind: "stale" }
+  | { kind: "ambiguous" };
 
 // --- whitespace normalisation ----------------------------------------------
 // A property value holds one line, so a quote collapses every whitespace run to
@@ -84,6 +86,21 @@ export function normalizeQuoteText(text: string): string {
   return normalizeWithMap(text).text;
 }
 
+/** Prose boundaries come from the kernel's property projection, so hidden
+ * identity/author rows and Org drawer delimiters cannot move a boundary.
+ * This never changes the source used to score old textual context. */
+function contentBounds(raw: string, format: Format): { start: number; end: number } {
+  if (!parserReady()) return { start: 0, end: raw.length };
+  const policy = '{"kind":"all"}';
+  const body = normalizeWithMap(editorText(raw, format, policy).visible);
+  if (!body.text) return { start: 0, end: raw.length };
+  const cursor = utf8ToUtf16Cursor(raw);
+  return {
+    start: cursor(rawByteOfEditor(raw, format, policy, body.starts[0])),
+    end: cursor(rawByteOfEditor(raw, format, policy, body.ends[body.text.length - 1])),
+  };
+}
+
 /** Drop a surrogate half left at either edge by a fixed-length cut. */
 function wholeCodePoints(text: string): string {
   let start = 0;
@@ -102,12 +119,14 @@ export function occurrences(haystack: string, needle: string): number[] {
 
 /** The selector for a text selection [start, end) of `editorText`, the editor's
  * view of the parent whose current raw text is `parentRaw`. The quote is the
- * normalised selection. Prefix and suffix (≤32 chars, normalised, trimmed at a
- * word boundary) are always written when the quote occurs in the parent, so a
+ * normalised selection. Context starts at 32 chars, trimmed at word boundaries,
+ * and grows until the occurrence is unique. Empty context marks a boundary;
+ * null means unknown (including legacy comments with omitted context). Both
+ * sides are always written when the quote occurs in the parent, so a
  * later second occurrence of the quoted words cannot re-anchor the comment
  * (ADR 0075, D-20261018-MC2). An empty selection quotes the whole block (`quote === ""`).
- * Cost O(parent length × occurrences). */
-export function quoteSelectorFor(editorText: string, start: number, end: number, parentRaw: string): QuoteSelector {
+ * Cost O(parent length × occurrences × log(parent length)) in the repeated case. */
+export function quoteSelectorFor(editorText: string, start: number, end: number, parentRaw: string, format: Format = "md"): QuoteSelector {
   const lo = Math.max(0, Math.min(start, end, editorText.length));
   const hi = Math.min(editorText.length, Math.max(start, end));
   const quote = normalizeQuoteText(editorText.slice(lo, hi));
@@ -121,12 +140,23 @@ export function quoteSelectorFor(editorText: string, start: number, end: number,
   const found = occurrences(parent.text, quote);
   if (found.length === 0) return { quote, prefix: null, suffix: null };
   const at = found[Math.min(ordinal, found.length - 1)];
-  const from = Math.max(0, at - QUOTE_CONTEXT_MAX);
-  const prefix = wordBoundaryStart(parent.text, from, wholeCodePoints(parent.text.slice(from, at))).trim();
   const after = at + quote.length;
-  const to = Math.min(parent.text.length, after + QUOTE_CONTEXT_MAX);
-  const suffix = wordBoundaryEnd(parent.text, to, wholeCodePoints(parent.text.slice(after, to))).trim();
-  return { quote, prefix: prefix || null, suffix: suffix || null };
+  const bounds = contentBounds(parentRaw, format);
+  const bodyStart = Math.max(0, parent.starts.findIndex(raw => raw >= bounds.start));
+  const beyondBody = parent.ends.findIndex(raw => raw > bounds.end);
+  const bodyEnd = beyondBody === -1 ? parent.text.length : beyondBody;
+  // If properties themselves were selected, retain their ordinary raw context.
+  const first = at >= bodyStart && after <= bodyEnd ? bodyStart : 0;
+  const last = at >= bodyStart && after <= bodyEnd ? bodyEnd : parent.text.length;
+  for (let size = QUOTE_CONTEXT_MAX; ; size *= 2) {
+    const from = Math.max(first, at - size);
+    const to = Math.min(last, after + size);
+    const prefix = wordBoundaryStart(parent.text, from, wholeCodePoints(parent.text.slice(from, at))).trim();
+    const suffix = wordBoundaryEnd(parent.text, to, wholeCodePoints(parent.text.slice(after, to))).trim();
+    const selector = { quote, prefix, suffix };
+    const anchor = anchorQuote(parentRaw, selector, format);
+    if ((anchor.kind === "range" && anchor.start === parent.starts[at]) || (from === first && to === last)) return selector;
+  }
 }
 
 /** `cut` starts at `from` in `text`; drop a word the cut split, unless that word is all of it. */
@@ -158,30 +188,39 @@ function commonPrefixLength(a: string, b: string): number {
 }
 
 /** Re-anchor a selector in the parent's raw text: the occurrence whose
- * surroundings agree best with the stored prefix and suffix (the earliest on a
- * tie), `whole` for an empty quote, `stale` when the quote no longer occurs.
+ * surroundings agree best with the stored prefix and suffix. Explicit empty
+ * properties break textual ties at the corresponding block boundary; old
+ * writers omitted empty context, so absence never implies a boundary. A tie
+ * is ambiguous, an empty quote whole, a missing quote stale.
  * Never persisted. Cost O(parent length × occurrences). */
-export function anchorQuote(parentRaw: string, selector: QuoteSelector): QuoteAnchor {
+export function anchorQuote(parentRaw: string, selector: QuoteSelector, format: Format = "md"): QuoteAnchor {
   const quote = normalizeQuoteText(selector.quote);
   if (!quote) return { kind: "whole" };
   const parent = normalizeWithMap(parentRaw);
   const found = occurrences(parent.text, quote);
   if (found.length === 0) return { kind: "stale" };
   let best = found[0];
+  let tied = false;
   if (found.length > 1) {
     const prefix = normalizeQuoteText(selector.prefix ?? "");
     const suffix = normalizeQuoteText(selector.suffix ?? "");
+    const bounds = selector.prefix === "" || selector.suffix === "" ? contentBounds(parentRaw, format) : null;
     let bestScore = -1;
     for (const at of found) {
-      const score = commonSuffixLength(parent.text.slice(Math.max(0, at - prefix.length - 1), at).trimEnd(), prefix)
+      const textScore = commonSuffixLength(parent.text.slice(Math.max(0, at - prefix.length - 1), at).trimEnd(), prefix)
         + commonPrefixLength(parent.text.slice(at + quote.length, at + quote.length + suffix.length + 1).trimStart(), suffix);
+      const boundaryScore = Number(selector.prefix === "" && parent.starts[at] === bounds?.start)
+        + Number(selector.suffix === "" && parent.ends[at + quote.length - 1] === bounds?.end);
+      // Surviving text is stronger evidence than a boundary after later edits.
+      const score = textScore * 3 + boundaryScore;
       if (score > bestScore) {
         bestScore = score;
         best = at;
-      }
+        tied = false;
+      } else if (score === bestScore) tied = true;
     }
   }
-  return { kind: "range", start: parent.starts[best], end: parent.ends[best + quote.length - 1] };
+  return tied ? { kind: "ambiguous" } : { kind: "range", start: parent.starts[best], end: parent.ends[best + quote.length - 1] };
 }
 
 // --- reading the format -----------------------------------------------------
@@ -197,8 +236,8 @@ export function quoteSelectorOf(properties: readonly (readonly [string, string])
   if (quote == null) return null;
   return {
     quote: quote.trim(),
-    prefix: propertyValue(properties, COMMENT_QUOTE_PREFIX_KEY) || null,
-    suffix: propertyValue(properties, COMMENT_QUOTE_SUFFIX_KEY) || null,
+    prefix: propertyValue(properties, COMMENT_QUOTE_PREFIX_KEY),
+    suffix: propertyValue(properties, COMMENT_QUOTE_SUFFIX_KEY),
   };
 }
 
@@ -225,8 +264,8 @@ export function isCommentPresentationKey(key: string, comment: boolean): boolean
  * writer for either format. */
 export function commentRaw(selector: QuoteSelector, format: Format, author: string = ""): string {
   let raw = editBlock("\n", format, { kind: "property", key: COMMENT_QUOTE_KEY, value: selector.quote });
-  if (selector.prefix) raw = editBlock(raw, format, { kind: "property", key: COMMENT_QUOTE_PREFIX_KEY, value: selector.prefix });
-  if (selector.suffix) raw = editBlock(raw, format, { kind: "property", key: COMMENT_QUOTE_SUFFIX_KEY, value: selector.suffix });
+  if (selector.prefix !== null) raw = editBlock(raw, format, { kind: "property", key: COMMENT_QUOTE_PREFIX_KEY, value: selector.prefix });
+  if (selector.suffix !== null) raw = editBlock(raw, format, { kind: "property", key: COMMENT_QUOTE_SUFFIX_KEY, value: selector.suffix });
   if (author) raw = editBlock(raw, format, { kind: "property", key: AUTHOR_KEY, value: author });
   return raw;
 }

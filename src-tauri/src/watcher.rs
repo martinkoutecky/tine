@@ -483,8 +483,21 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
     let (events, copies_changed) = window_events(&change);
     crate::spotlight::observe(app, label, slot, spotlight_events(&change));
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
+    if conflicts_dirty {
+        // Synchronous on this subscription bridge thread (I-21: no new worker).
+        crate::concord::trash_identical_copies(app, label, slot);
+    }
     let pages = events.len();
-    for (name, payload) in publication_event_payloads(events, binding_generation, &change) {
+    let payloads = publication_event_payloads(events, binding_generation, &change);
+    if let Some(link) = slot.window.get() {
+        if let Some(answers) = payloads
+            .first()
+            .and_then(|(_, payload)| payload.get("answers"))
+        {
+            link.published(change.graph_rev, answers.clone());
+        }
+    }
+    for (name, payload) in payloads {
         let _ = app.emit_to(label, name, payload);
     }
     if let Some(payload) = asset_event_payload(&change, binding_generation) {

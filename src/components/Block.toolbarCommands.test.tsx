@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { For } from "solid-js";
+import { EditorView } from "@codemirror/view";
 import { Block } from "./Block";
 import { MobileKeyboardToolbar, NATIVE_IME_EVENT, revealFocusedEditorAboveToolbar } from "./MobileKeyboardToolbar";
 import { DatePicker } from "./DatePicker";
@@ -14,6 +15,7 @@ import { installKeybindings } from "../keybindings";
 import { editorIn } from "../tests/editorDriver";
 import { closeDatePicker, datePicker, setWorkflow } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
+import * as caretRows from "../editor/caretRows";
 
 vi.mock("../inputCapability", async original => ({
   ...await original<typeof import("../inputCapability")>(), touchPrimary: () => true,
@@ -123,13 +125,26 @@ it("applies the dock planning picker to its mounted editor and restores focus", 
   expect(document.activeElement).toBe(editorIn().element);
 });
 
-it("reveals either focused editor above the docked selection row", async () => {
+it("leaves three body lines below either editor's caret above the docked selection row", async () => {
   const root = mount(); await Promise.resolve();
   const editor = editorIn(); editor.selectByUser(0, 8);
-  vi.spyOn(editor.element, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 470, 300, 30));
+  // jsdom has no layout. Supply each engine's caret measurement while retaining
+  // the mounted editor's real toolbar/selection and registered CM6 source.
+  root.scrollTop = 0;
+  Object.defineProperty(root, "clientHeight", { value: 600 });
+  vi.spyOn(root, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 300, 600));
+  vi.spyOn(editor.element, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, 470 - root.scrollTop, 300, 30));
+  editor.element.style.setProperty("--ls-block-line-height", "26px");
+  if (editor.kind === "cm6") {
+    const view = EditorView.findFromDOM(editor.element)!;
+    vi.spyOn(view, "coordsAtPos").mockImplementation(() => ({ left: 0, right: 1, top: 470 - root.scrollTop, bottom: 490 - root.scrollTop }));
+  } else {
+    vi.spyOn(caretRows, "textareaCaretRow").mockReturnValue({ top: 0, bottom: 20 });
+  }
   vi.spyOn(root.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")!, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 480, 300, 32));
   expect(revealFocusedEditorAboveToolbar(520)).toBe(true);
-  expect(root.scrollTop).toBe(28);
+  expect(editor.element.getBoundingClientRect().top + 20).toBe(480 - 3 * 26);
+  expect(revealFocusedEditorAboveToolbar(520)).toBe(false); // typing keeps the same selection-row clearance
 });
 
 it("refuses dock text commands after read-only replacement", async () => {

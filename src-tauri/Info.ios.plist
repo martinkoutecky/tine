@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>TineOutline</string>
+	<string>Tine Beta</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSUbiquitousContainers</key>
 	<dict>
-		<key>iCloud.page.tine.Tine</key>
+		<key>iCloud.page.tine.TineBeta</key>
 		<dict>
 			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
 			<true/>
 			<key>NSUbiquitousContainerName</key>
-			<string>TineOutline</string>
+			<string>Tine Beta</string>
 			<key>NSUbiquitousContainerSupportedFolderLevels</key>
 			<string>Any</string>
 		</dict>
@@ -26,7 +26,7 @@
 	<array>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>
-			<string>page.tine.Tine.today</string>
+			<string>page.tine.TineBeta.today</string>
 			<key>UIApplicationShortcutItemTitle</key>
 			<string>Today's journal</string>
 			<key>UIApplicationShortcutItemIconType</key>
@@ -39,7 +39,7 @@
 		</dict>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>
-			<string>page.tine.Tine.capture</string>
+			<string>page.tine.TineBeta.capture</string>
 			<key>UIApplicationShortcutItemTitle</key>
 			<string>Quick capture</string>
 			<key>UIApplicationShortcutItemIconType</key>
@@ -52,7 +52,7 @@
 		</dict>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>
-			<string>page.tine.Tine.search</string>
+			<string>page.tine.TineBeta.search</string>
 			<key>UIApplicationShortcutItemTitle</key>
 			<string>Search</string>
 			<key>UIApplicationShortcutItemIconType</key>

@@ -746,6 +746,7 @@ fn load_graph_with_relocation(
         app.clone(),
         window_label.to_string(),
         slot.binding_generation,
+        Arc::downgrade(&slot.store),
     ));
     crate::owner_protection::start_retry(app, &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);

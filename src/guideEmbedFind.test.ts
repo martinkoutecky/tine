@@ -13,4 +13,8 @@ it("the Guide teaches selection-seeded Find and the page-embed host fold", () =>
   expect(embed).toContain("saved on the host block, never the embedded page");
   expect(embed).toContain("the same fold hides those too");
   expect(embed).toContain("main pane and right sidebar");
+  expect(embed).toContain("Folds inside a page or block embed belong to the source block");
+  expect(embed).toContain("indent guide's **Collapse/Expand all children** save `collapsed::` on the source");
+  expect(embed).toContain("Enter after a folded branch creates a visible sibling");
+  expect(embed).toContain("If the source is read-only, its folds stay local to the session");
 });

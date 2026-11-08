@@ -36,6 +36,7 @@ import {
   collectRows,
   countSuggestions,
   humanizeSideLabel,
+  noLossDecision,
   seedSuggestedExceptArtifact,
   seedSuggestedOrNoLoss,
   visibleDiffRows,
@@ -249,7 +250,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const setDecision = (id: string, d: MergeDecision) => setDecisions((m) => ({ ...m, [id]: d }));
   const setAll = (d: MergeDecision) => {
     const next: Record<string, MergeDecision> = {};
-    for (const { id } of pending()) next[id] = d;
+    // GH #901: a one-sided row has no "both" button; keeping both there means
+    // keeping the block, so the active choice stays visible.
+    for (const { id, kind } of pending()) next[id] = d === "both" ? noLossDecision(kind) : d;
     setDecisions(next);
     setPreChoice(d === "mine" || d === "theirs" ? d : "union");
   };
@@ -268,6 +271,35 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     el?.scrollIntoView({ block: "center" });
     el?.classList.add("page-conflict-row-focus");
     window.setTimeout(() => el?.classList.remove("page-conflict-row-focus"), 900);
+  };
+
+  // GH #875: an identical copy holds nothing to decide; the native side trashes
+  // byte-identical ones itself, and this discards one that differs only where
+  // the comparison cannot see (recoverable trash, like the overview's Discard).
+  const discardIdenticalCopy = async () => {
+    const c = conflict();
+    const copy = c.source === "sync-copy" ? c.sides.find((s) => s.role === "theirs")?.path ?? null : null;
+    if (!copy || busy()) return;
+    const { id } = c;
+    const owner = bindingOwner(() => mounted);
+    const name = copy.split("/").pop() ?? copy;
+    setBusy(true);
+    try {
+      const result = await writeOwned(owner, backend().trashSyncConflict(copy, "delete-page"));
+      if (result.kind === "stale" || !owner()) return;
+      settleArtifactConflict(id);
+      pushToast(msg("conflict-overview-discarded", { name }), "success");
+      void refreshSyncConflicts();
+    } catch (e) {
+      if (!owner()) return;
+      if (errorFamily(e) === "conflict-copy-gone") {
+        settleArtifactConflict(id);
+        pushToast(msg("conflict-resolution-copy-gone"), "info");
+        void refreshSyncConflicts();
+      } else pushToast(msg("conflict-overview-couldn-t-discard-it", { error: String(errorDetail(e)) }), "error");
+    } finally {
+      if (owner()) setBusy(false);
+    }
   };
 
   const apply = async () => {
@@ -469,7 +501,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           <Show
             when={!d().blocks_identical || d().pre_differs}
             fallback={
-              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-is-safe-to-discard-from-the")}</Show>
+              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-holds-nothing-the-page-lacks")}{" "}
+                  <button class="settings-btn page-conflict-discard-copy" disabled={busy()} onClick={() => void discardIdenticalCopy()}>{t("confirm-discard-copy")}</button>
+                </Show>
                 <Show when={conflict().source === "duplicate-journal"}>{t("conflict-resolution-the-other-file-is-safe-to-trash-above")}</Show>
                 <Show when={conflict().source === "live-save"}>
                   {t("conflict-resolution-use-disk-version-above-loses-nothing")}
@@ -480,7 +514,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
             <div class="sync-merge-toolbar">
               <span class="settings-hint">
                 <Show
-                  when={suggestedCount()}
+                  when={suggestedCount() || diffValue()?.three_way}
                   fallback={<>{t("conflict-resolution-nothing-was-pre-selected-no-common-version-is")}</>}
                 >
                   {t("conflict-resolution-suggested-summary", { suggested: String(suggestedCount()), total: String(pending().length) })}</Show>

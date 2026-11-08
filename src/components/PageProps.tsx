@@ -2,7 +2,7 @@ import { msg, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps, type PropsPanelScope } from "../ui";
 import {
-  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName,
+  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageInstanceGeneration,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
 import { PAGE_PROP_SPECS, isEditablePropertyKey, FORM_MANAGED, hides, type PagePropSpec } from "../editor/properties";
@@ -47,9 +47,8 @@ function existingProperties(scope: PropsPanelScope): [string, string][] {
 const readOne = (scope: PropsPanelScope, key: string) =>
   scope.kind === "page" ? readPageProperty(scope.name, key) : blockProperty(scope.id, key);
 
-// The loaded page/block object the panel opened on. A genuine reload (external
-// change, delete + recreate, graph reset) replaces it — even under the same page
-// name or block id — so comparing it binds every write to what the user saw.
+// DOM owners survive a reload. Deferred writes additionally own the loaded-page
+// generation, which retires even when their unchanged live objects survive.
 const subjectOf = (scope: PropsPanelScope): object | undefined =>
   scope.kind === "page" ? pageByName(scope.name) : node(scope.id);
 
@@ -57,8 +56,9 @@ const subjectOf = (scope: PropsPanelScope): object | undefined =>
  *  (`binding`) AND the subject instance captured at open are both current;
  *  otherwise it is refused visibly and the panel closes, so a typed edit is
  *  never dropped silently and never overwrites an intervening change. */
-function writeOne(scope: PropsPanelScope, binding: Binding, subject: object | undefined, key: string, value: string | null): boolean {
-  const stale = !bindingCurrent(binding) ? "graph" : !subject || subjectOf(scope) !== subject
+function writeOne(scope: PropsPanelScope, binding: Binding, subject: object | undefined, instance: number | null, key: string, value: string | null): boolean {
+  const name = scope.kind === "page" ? scope.name : node(scope.id)?.page;
+  const stale = !bindingCurrent(binding) ? "graph" : !subject || subjectOf(scope) !== subject || !name || pageInstanceGeneration(name) !== instance
     ? scope.kind : null;
   if (stale) {
     pushToast(msg("page-props-stale-panel", { stale, key }), "error");
@@ -120,7 +120,9 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
   const rows = createMemo(() => rowsFor(props.scope), undefined, { equals: sameKeys });
   const writable = createMemo(() => scopeWritable(props.scope));
   const subject = untrack(() => subjectOf(props.scope));
-  const write = (key: string, value: string | null) => writeOne(props.scope, props.binding, subject, key, value);
+  const name = props.scope.kind === "page" ? props.scope.name : node(props.scope.id)?.page;
+  const instance = untrack(() => name ? pageInstanceGeneration(name) : null);
+  const write = (key: string, value: string | null) => writeOne(props.scope, props.binding, subject, instance, key, value);
   const heading = createMemo(() => scopeLabel(props.scope));
   return (
     <div

@@ -39,6 +39,7 @@ import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
 import { msg, t, type Msg } from "./i18n";
 import { chooseAliasRename } from "./renameAliasChoice";
+import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 import { primeQuickShareGate } from "./quickShareGate";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
@@ -216,7 +217,7 @@ export async function loadGraphPath(
     if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
     if (prepared.status !== "ready") {
       pushToast(
-        msg("graph-tineoutline-can-only-open-folders-inside-on"),
+        msg("graph-tineoutline-can-only-open-folders-inside-on", { app: APP_IOS_DISPLAY_NAME }),
         "error",
         { sticky: true }
       );
@@ -731,7 +732,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     }
     if (platform === "ios" && result.status === "refused") {
       pushToast(
-        msg("graph-choose-a-folder-inside-on-my-iphone"),
+        msg("graph-choose-a-folder-inside-on-my-iphone", { app: APP_IOS_DISPLAY_NAME }),
         "info"
       );
     }
@@ -771,7 +772,7 @@ export async function chooseNewGraphParent(forClone = false): Promise<{ kind: "c
     if (picked.kind === "stale") return { kind: "aborted" };
     if (picked.value.status === "refused") {
       pushToast(
-        msg("graph-choose-a-folder-inside-on-my-iphone"),
+        msg("graph-choose-a-folder-inside-on-my-iphone", { app: APP_IOS_DISPLAY_NAME }),
         "info"
       );
       return { kind: "aborted" };
@@ -805,7 +806,7 @@ export async function chooseNewGraphParent(forClone = false): Promise<{ kind: "c
     }
     if (prepared.status !== "ready") {
       pushToast(
-        msg("graph-tineoutline-can-only-create-graphs-inside-on"),
+        msg("graph-tineoutline-can-only-create-graphs-inside-on", { app: APP_IOS_DISPLAY_NAME }),
         "error",
         { sticky: true }
       );

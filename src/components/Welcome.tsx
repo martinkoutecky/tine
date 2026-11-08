@@ -13,6 +13,7 @@ import { queryAllWindows } from "../windowRealm";
 import { platformKind } from "../platform";
 import { readOr } from "../resourceRead";
 import { CloneGraphDialog } from "./CloneGraphDialog";
+import { APP_IOS_DISPLAY_NAME } from "../appIdentity";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
@@ -97,7 +98,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
         <div class="welcome-actions">
           <button class="welcome-choice" disabled={!!busy()} onClick={() => setCloning(true)}>{t("git-clone-label")}</button>
           <Show when={ios()}>
-            <p class="welcome-busy">{t("welcome-on-iphone-and-ipad-graphs-can-live")}</p>
+            <p class="welcome-busy">{t("welcome-on-iphone-and-ipad-graphs-can-live", { app: APP_IOS_DISPLAY_NAME })}</p>
           </Show>
           <button
             class="welcome-choice"

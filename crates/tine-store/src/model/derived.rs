@@ -601,6 +601,14 @@ impl Graph {
     pub(crate) fn named_entry(&self, path: &Path) -> Named {
         match self.authority(path) {
             Authority::Disk => match self.entry_for_path(path) {
+                // A late/retired path is not proof of a physical file. Name
+                // discovery falls back to its filename on read errors, which
+                // is useful for proposed paths but must not create a claimant
+                // after an external move (GH #905). Check after discovery so
+                // a disappearance during its preamble read is absent too.
+                Some(_) if matches!(fs::symlink_metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound) => {
+                    Named::Absent
+                }
                 Some(entry) => Named::Entry(entry),
                 None => Named::NotAPage,
             },

@@ -46,6 +46,9 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
       // account for the new width, not just negate the leftward shift.
       const inlineShift = parentStyle.direction === "rtl" ? width - normalWidth - shift : shift;
       el.style.setProperty("--table-bleed-shift", `${inlineShift}px`);
+      // GH #909: a table wider than its column covers the ancestors' outline
+      // guides it overlaps, on either side.
+      el.toggleAttribute("data-bleed", width > normalWidth + 0.5);
     };
     const schedule = () => { if (!frame) frame = requestFrame(el, () => { frame = undefined; measure(); }); };
     const observer = newResizeObserver(el, schedule);

@@ -10,8 +10,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
+- Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).
+- Conflict review no longer suggests removing a block that both versions still contain when one device moved it and the other edited a neighbour; applying the suggestions, or choosing either whole version of its parent, lost that block (GH #901).
+- **Apply all suggested** no longer resets your choices on rows Tine has no suggestion for; **Keep both everywhere** shows the active choice on blocks only one side has; a review that knows the common version no longer says none is known (GH #901).
+- Journal days and split panes use the same width rule for margin comments as single pages; comment and reply editors hide every `tine.*` property on all platforms while preserving its bytes on save (GH #891).
+- Editing an authored block keeps its author mark visible while hiding and preserving `tine.author::`; the chip menu offers Remove author. Author metadata no longer appears inside blockquotes (GH #894, GH #895).
+- Margin comments anchor repeated passages using enough context to identify the selected occurrence, including the last word of a block. Tied matches are shown as ambiguous; missing quotes remain visible. Wide margin cards follow passage order and keep the focused thread beside its passage (GH #891).
+- On touch screens, Comment is available when selecting rendered text, before entering edit mode (GH #891).
+- Body editing skips whole margin-comment threads: Backspace, Delete, Enter, arrows, indentation, drag and paste preserve comments and their replies (GH #891, GH #110).
+- iOS Betas install as the separate amber Tine Beta app, with their own settings, graph folders and share inbox, alongside the App Store app (GH #890).
+- A sync copy identical to its page no longer sticks as a conflict that says there is nothing to decide: identical copies go to Tine's trash on their own, including the second of two identical copies after the first is resolved, and a copy that only looks identical offers Discard copy (GH #875).
+- Renaming a page keeps its file in its current subfolder, including Org files and namespace children (GH #904).
+- An externally moved page no longer stays hidden behind a stale path: late page-index updates drop absent files, and an incomplete launch checkpoint rebuilds from disk (GH #905).
+- Page embeds keep the source outline's order after structural edits, and preserve folded branches while the source page is loading (GH #868).
+- On Android, opening the keyboard leaves about three body lines below the caret so children of short blocks stay visible, while keeping the edited line below pinned parents (GH #783).
+- Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).
+- Search tabs keep their result rows and scroll position usable while the graph is being written through the CLI; unrelated edits skip the search refresh and matching edits update without replacing unchanged rows (GH #907).
 - Known property values appear after typing or pasting a Markdown property key and when editing an existing value in either editor; pending suggestions appear when they finish loading (UI-PROPERTY-VALUES-TYPED).
 - A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).
+- `tine` commands run from the folder that contains a graph (for example your home folder, with the graph in `~/logseq`) no longer treat that folder as the graph, which listed Logseq backup copies as pages and journals as plain pages; they now look for the graph's `logseq/config.edn` (GH #908).
+- A wide table in a nested block no longer has the outline guide lines of its parent blocks drawn through its header and rows on narrow windows, split panes and the sidebar (GH #909).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Code blocks keep their Copy code control available while editing: hover the corner on desktop, or keep the caret in the code on touch screens, in both editors (GH #879).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
@@ -68,6 +87,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged.
+- Comment threads read at one level in file order, including hand-nested replies; new replies attach directly to the thread root. Existing nesting stays unchanged on disk. Comment badges count threads, and the visibility command and setting are named Show/Hide comments (GH #110, GH #891).
 - Settings > Appearance shows the first few theme packages with **Show all**, so the settings below the list are no longer far down (#882).
 - Grids edit like an outline: click or arrow into a cell, keep editing across cells, and use Enter and Tab to build its child outline; Esc keeps your text and selects the cell (GH #874).
 - Block and page embed toolbars use compact icons for **Edit link** and **Open source**, with translated tooltips and accessible names. **Remove** keeps its text beside an icon, and touch screens keep all labels (#847).
