@@ -31,6 +31,7 @@ import { journalTitle } from "./journal";
 import { exitPaneSelect, rememberBlockSelectionForPaneReturn } from "./paneSelect";
 import { pdfNavigationIntent, resetPdfNavigationForTest } from "./pdfNavigation";
 import { invalidateBinding } from "./binding";
+import { takeExternalPdfSource } from "./externalPdfSource";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
@@ -48,6 +49,21 @@ beforeEach(() => {
   exitPaneSelect();
   resetPaneLayoutToSingle(journalsSnapshot());
   paneRouter("main").setScrollerElement(null);
+});
+
+it("an explicit outside link reauthorizes a restored reader in its existing tab", () => {
+  const filename = "file:///tmp/outside.pdf";
+  const first = openPdf(filename, "Outside")!;
+  const reader = layoutPaneIds().find(id => paneRouter(id).route().kind === "pdf")!;
+  paneRouter(reader).updateActivePdfViewState({ page: 2, scale: 1.75 });
+  const before = paneRouter(reader).tabs().length;
+  const read = async () => new Uint8Array([1]);
+  const reopened = openPdf(filename, "Outside", undefined, undefined, { externalRead: read })!;
+  expect(reopened.viewId).not.toBe(first.viewId);
+  expect(reopened).toMatchObject({ filename, page: 2, scale: 1.75 });
+  expect(paneRouter(reader).tabs()).toHaveLength(before);
+  expect(takeExternalPdfSource(reopened.viewId, filename)).toBeTypeOf("function");
+  expect(takeExternalPdfSource(reopened.viewId, filename)).toBeUndefined();
 });
 
 it("GH #499 splitting C right preserves the A/B row above it", () => {
