@@ -397,7 +397,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-code-wrap-toggle.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "The palette and bound code wrap command preserve the reading position in every mounted main, split and sidebar scroller in both directions without changing note source.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Palette, bound shortcut and Settings code wrapping preserve unobscured reading text in mounted main, split and sidebar scrollers in both directions with the classic and CodeMirror editor preferences, without changing note source.", "blocking": true }],
       "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"

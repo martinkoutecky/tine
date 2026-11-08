@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).
 - CodeMirror page and tag completion uses one search per typed query, showing choices on the first reply without a duplicate read or empty intermediate list (GH #767; internal: UI-CM6-COMPLETION-SINGLE-INPUT).
 - Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Advanced query lists honor `:breadcrumb-show? false`, hiding ancestor trails while retaining grouped page headings, including in the sidebar and embeds (GH #881).
