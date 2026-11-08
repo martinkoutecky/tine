@@ -2,6 +2,15 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-external-pdf.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
+        {"class":"exact-safety-interoperability","userOutcome":"Every file and directory in the scratch graph is identical before and after opening and reading outside PDFs; no import, sidecar, highlight page or capture image is created.","blocking":false,"authority":"GH #732 read-only decision"}
+      ],
+      "acceptableVariations": ["Pane geometry, toolbar wrapping, selection appearance and reader timing can vary while the tools and preserved file outcomes hold."],
+      "nonRequirements": ["No annotation identity design, relative file: or parent-relative link behavior, Windows/macOS/mobile device certification, or manager release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-math-print.mjs": {
       "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Grouped inline and display equations retain all atoms on A5 paper, with no interactive scrollport clipping.","blocking":false,"authority":"GH #915 sibling investigation; UI-GH915-MATH-NARROW-PAPER"}],
       "acceptableVariations": ["Pagination, typography and fitting strategy may vary; all equation content must survive."],
