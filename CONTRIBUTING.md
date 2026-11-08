@@ -14,6 +14,30 @@ opening a pull request.
    problem, a `TINE_DEBUG=1` log (see the README) is usually enough to diagnose it.
 2. **Feature requests and design proposals.** See below — for Tine, a well-described
    proposal *is* the contribution.
+3. **Sponsoring other people's feature requests.** See
+   [How feature requests get accepted](#how-feature-requests-get-accepted).
+
+## How feature requests get accepted
+
+A new feature request starts with the label `needs-sponsor`. Anyone can sponsor one
+by commenting that:
+
+- you'd like the same problem solved, and/or
+- you agree with a particular way of solving it: the one in the original post, or one
+  suggested in the comments. The same problem can often be solved in several ways, so
+  saying which one you back helps.
+
+A 👍 on the post helps too. Disagreement is just as useful: if you think a request,
+or a proposed way of doing it, is a bad idea, say so and why.
+
+Once a request has enough support it gets `issue-accepted`, which means it will be
+built (without a promised date). Requests to match Logseq usually go straight in; just
+say how Logseq does it. A request can also be accepted directly when it plainly makes
+sense.
+
+**The easiest way to help:** look through the
+[open `needs-sponsor` issues](https://github.com/martinkoutecky/tine/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-sponsor)
+and say what you think. That is what moves them.
 
 ## How code changes work here: propose, don't patch
 
