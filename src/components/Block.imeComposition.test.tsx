@@ -217,7 +217,7 @@ describe("IME composition", () => {
       expect(setRawSpy).toHaveBeenCalledTimes(1);
       if (textarea.kind === "textarea") expect(autosize).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(100);
-      expect(quickSwitch).toHaveBeenLastCalledWith("Pa", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "" }, false);
+      expect(quickSwitch).toHaveBeenLastCalledWith("Pa", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "", session: expect.any(String) }, false);
 
       input(textarea, "[[Pa");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
@@ -230,7 +230,7 @@ describe("IME composition", () => {
       expect(setRawSpy).toHaveBeenCalledTimes(2);
       if (textarea.kind === "textarea") expect(autosize).toHaveBeenCalledTimes(2);
       await vi.advanceTimersByTimeAsync(100);
-      expect(quickSwitch).toHaveBeenLastCalledWith("Par", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "" }, false);
+      expect(quickSwitch).toHaveBeenLastCalledWith("Par", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "", session: expect.any(String) }, false);
     } finally {
       dispose();
     }

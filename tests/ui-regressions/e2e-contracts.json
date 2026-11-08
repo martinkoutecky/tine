@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-query-breadcrumbs.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Advanced query lists hide ancestor trails with :breadcrumb-show? false in routed main pages, right sidebar and block embeds; grouped page headings remain, explicit ungrouped lists omit headings, defaults show trails and tables are unaffected. Reading preserves authored bytes.","blocking":false,"authority":"GH #881; OG 6e7afa8eb query.cljs/custom-query-inner, block.cljs/->hiccup"}],
+      "acceptableVariations": ["Markup, spacing and row allocation may vary while context visibility and results remain correct."],
+      "nonRequirements": ["Simple-query View switch and tine.breadcrumbs persistence await Martin.", "Windows, macOS, iOS and Android certification."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-completion-perf.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL"}],
+      "acceptableVariations": ["Paint times vary with host load; timings are observations, not a flaky threshold oracle."],
+      "nonRequirements": ["Release burn-in and Windows/macOS/mobile runtime certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-table-wrap.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Reading a routed Markdown page, journal, embed and sidebar in either editor keeps wide prose, many columns and URLs inside the pane with wrapping; unbreakable content scrolls inside its table and reading preserves file bytes.","blocking":false,"authority":"GH #802; D-20261107-R11"}],
       "acceptableVariations": ["Column allocation, wrapping positions, table markup and spacing may vary while readable content fits the pane."],
@@ -31,7 +43,7 @@
         { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },
         { "class": "exact-safety-interoperability", "userOutcome": "Editing and clipboard transfers reach the exact expected Markdown file bytes, preserve the copied source and nested children, remove only the cut subtrees, and keep the reference target unchanged.", "blocking": false, "authority": "CM6 rollout acceptance D-20261025-CS / ET2 (#767), existing guarded save and outline clipboard semantics" },
         { "class": "core-operation", "userOutcome": "Synthetic composition events with a browser DOM insertion commit Unicode once, ignore a composing Enter, and allow the following ordinary Enter to split and save a new block.", "blocking": false },
-        { "class": "core-operation", "userOutcome": "Typed and clipboard-pasted Markdown property lines, and typing inside an existing value, offer their key's known values without choosing a property name; accepting a value updates the correct span and saves it on a routed page in either editor.", "blocking": false, "authority": "D-20261102-PERF follow-up 3; UI-PROPERTY-VALUES-TYPED" }
+        { "class": "core-operation", "userOutcome": "Typed and clipboard-pasted Markdown property lines, and typing inside an existing value, offer their key's known values without choosing a property name; a pending values reply refreshes the latest typed query without another keystroke; accepting a value updates the correct span and saves it on a routed page in either editor.", "blocking": false, "authority": "D-20261102-PERF follow-up 3; UI-PROPERTY-VALUES-TYPED" }
       ],
       "acceptableVariations": ["Native clipboard plumbing, editor DOM, selection painting, completion layout and save latency may vary while the semantic outcomes and persisted bytes hold."],
       "nonRequirements": ["A real OS IME candidate window, candidate selection/cancellation, dead keys, platform IME reconversion or mobile keyboards: these require human/device checks.", "macOS native UI certification: the repository currently has no macOS WebDriver app runner.", "Exact pixels, selection color, caret blink, timing or editor DOM structure."],

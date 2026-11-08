@@ -12,14 +12,14 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { requestFrame } from "../windowRealm";
 
-interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
+interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
 
 /** Present the complete keyed List without one graph-sized DOM commit. Existing
  * groups survive membership refreshes; at most 32 new shells mount per frame.
  * Pending groups reserve the same approximate height as their eventual shells.
  * A covering picker pauses new mounts while retaining the existing keyed rows.
  * Without browser layout all groups mount immediately, like observeNear. */
-export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean; hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }): JSX.Element {
+export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; paused?: boolean; hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }): JSX.Element {
   const [keys, setKeys] = createSignal<string[]>([]);
   let frame: (() => void) | undefined;
   let generation = 0;
@@ -68,7 +68,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     return rows * 1.9;
   });
   return <>
-    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
+    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} showBreadcrumb={props.showBreadcrumb} showPage={props.showPage} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
     <Show when={pendingHeight() > 0}>
       <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
     </Show>
@@ -117,7 +117,9 @@ function MountedQueryGroup(props: QueryGroupProps): JSX.Element {
     <Show when={props.group()}>
       {(g) => (
         <>
-          <div
+          {/* OG block.cljs/->hiccup keeps grouped page headings independently
+              of breadcrumb-show?; flat page crumbs follow the caller's option. */}
+          <Show when={props.showPage !== false}><div
             class={props.flat ? "query-crumb" : "query-page"}
             onClick={(e) => {
               e.stopPropagation();
@@ -140,8 +142,8 @@ function MountedQueryGroup(props: QueryGroupProps): JSX.Element {
             }}
           >
             {page()}
-          </div>
-          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
+          </div></Show>
+          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
         </>
       )}
     </Show>
