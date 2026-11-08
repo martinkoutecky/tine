@@ -1,13 +1,39 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import { backend } from "../backend";
 import { closeExportModal, exportModal } from "../ui";
 import { QueryResultsSelection } from "./QueryResultsSelection";
 import type { QueryHit } from "../types";
-import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+import { adoptResults, beginResultsChange, captureResultsTicket } from "../queryResultsEpoch";
+import { toasts } from "../toasts";
 
 afterEach(() => { document.body.replaceChildren(); closeExportModal(); vi.restoreAllMocks(); });
+it("GH #907: a frozen selection keeps its old positional source when retained display rows move", async () => {
+  const [hits, setHits] = createStore<QueryHit[]>([{
+    entity: "block", page: "Planning", kind: "page", path: "pages/Planning.md",
+    block: { id: "position-1", raw: "Upcoming task", collapsed: false, children: [], has_id: false },
+    display_text: "Upcoming task", evidence: [],
+  }]);
+  adoptResults(hits, captureResultsTicket());
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue({
+    id: "pages/Planning.md", name: "Planning", title: "Planning", kind: "page", pre_block: null,
+    blocks: [{ id: "position-2", raw: "Upcoming task", collapsed: false, children: [] }],
+  });
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <QueryResultsSelection hits={hits} />, root);
+  try {
+    root.querySelector<HTMLButtonElement>("button")!.click();
+    const finish = beginResultsChange();
+    setHits(0, "block", "id", "position-2");
+    finish();
+    adoptResults(hits, captureResultsTicket());
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Copy results")!.click();
+    await vi.waitFor(() => expect(toasts().some(toast => toast.message.includes("1 results changed since the query ran"))).toBe(true));
+    expect(exportModal()).toBeNull();
+  } finally { dispose(); }
+});
 it("toggles selection, keeps actions above rows and preserves page/block row content", () => {
   const hits: QueryHit[] = [
     { entity: "page", page: { name: "Project", path: "pages/Project.md", kind: "page", date_key: null }, display_text: "Project", evidence: [], score: 0 },

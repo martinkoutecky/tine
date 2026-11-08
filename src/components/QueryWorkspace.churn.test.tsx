@@ -57,6 +57,8 @@ it.each(["search", "list", "table", "board"] as const)("GH #907: external write 
     const pageSection = root.querySelector('[data-query-result-kind="page"]')!;
     const rows = [...root.querySelectorAll<HTMLButtonElement>("[data-query-result]")];
     const lower = rows.find(row => row.dataset.queryResult!.includes('"block-55"'))!;
+    const surface = root.querySelector("[data-inpage-find-surface]")!;
+    const locator = surface.getAttribute("data-inpage-find-surface");
     let removals = 0;
     const observer = new MutationObserver(records => { for (const record of records) {
       for (const removed of record.removedNodes) if (rows.some(row => removed === row || removed.contains(row))) removals++;
@@ -96,6 +98,7 @@ it.each(["search", "list", "table", "board"] as const)("GH #907: external write 
     expect(root.querySelectorAll("[data-query-result]")).toHaveLength(63);
     expect(rows.every(row => row.isConnected)).toBe(true);
     expect(removals).toBe(0);
+    expect(surface.getAttribute("data-inpage-find-surface")).not.toBe(locator);
     expect(root.scrollTop).toBe(900);
     lower.click();
     expect(router.openInNewTab).toHaveBeenCalledWith(expect.objectContaining({ name: "Needle results", block: "renewed-55", path: "pages/Needle results.md" }), true);
