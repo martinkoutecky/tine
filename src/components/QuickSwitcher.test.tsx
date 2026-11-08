@@ -1,18 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openCommandPalette, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
+import { closeSwitcher, installPaneTracker, openCommandPalette, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
 import { pageInventoryRev } from "../graphSession";
 import { toasts } from "../toasts";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { pinyinMatchingEnabled, setPinyinMatchingEnabled } from "../launcherRanking";
-import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
+import { closePane, focusPane, focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
 import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import type { PageRead } from "../types";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { setActiveLocale } from "../i18n";
+import * as keybindings from "../keybindings";
+import { changeCodeWrapping, codeWrapping } from "../codeDisplay";
 
 afterEach(() => {
   closeSwitcher();
@@ -26,6 +28,117 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it.each(["mouse", "touch", "pen"].flatMap(pointerType =>
+    ["page", "block", "create"].map(kind => ({ pointerType, kind }))))(
+    "opens a $kind row in the focused split through $pointerType input", async ({ pointerType, kind }) => {
+      await bindTestHost();
+      const name = kind === "create" ? `Fresh pointer page ${pointerType}` : "Alpha";
+      const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+        hits: kind === "block" ? [{ entity: "block", page: name, kind: "page", path: `pages/${name}.md`,
+          block: { id: "pointer-block", raw: "Pointer block", children: [], collapsed: false },
+          display_text: "Pointer block", evidence: [], match_class: "body_evidence" }] : [],
+        diagnostics: [], explanation: { branches: [] }, cancelled: false,
+      });
+      const save = vi.spyOn(backend(), "pageSubmit");
+      const pane = splitPane("main", "row")!;
+      setFocusedPaneId(pane);
+      setRecentPages([{ name: "Alpha", kind: "page", path: "pages/Alpha.md" }]);
+      const stopTracking = installPaneTracker();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QuickSwitcher />, root);
+      try {
+        openSwitcher(kind === "page" ? { mode: "pages" } : kind === "block" ? { mode: "content" } : undefined);
+        if (kind !== "page") {
+          const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+          input.value = kind === "create" ? name : "Pointer block";
+          input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        }
+        // Release line: the Create row is re-rendered when the debounced graph search settles, so take it after that.
+        if (kind === "create") { await vi.waitFor(() => expect(search).toHaveBeenCalled()); await new Promise(r => setTimeout(r, 0)); }
+        const row = await vi.waitFor(() => {
+          const row = [...root.querySelectorAll<HTMLElement>(".switcher-row")].find(row =>
+            kind === "create" ? row.textContent?.includes(`Create page: ${name}`) :
+            kind === "block" ? row.classList.contains("block-result") : row.textContent?.includes(name));
+          expect(row).toBeDefined();
+          return row!;
+        });
+        row.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, pointerType,
+        }));
+        row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+        row.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, pointerType }));
+        row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+        row.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+        await vi.waitFor(() => expect(paneRouter(pane).route()).toMatchObject({ kind: "page", name }));
+        expect(paneRouter("main").route()).toEqual({ kind: "journals" });
+        expect(focusedPaneId()).toBe(pane);
+        expect(root.querySelector(".switcher-input")).toBeNull();
+        if (kind === "create") expect(save).toHaveBeenCalledTimes(1);
+      } finally { stopTracking(); dispose(); search.mockRestore(); save.mockRestore(); }
+    });
+  it.each(["mouse", "touch", "pen"])("keeps the focused split when a %s press runs a palette row", async (pointerType) => {
+    const pane = splitPane("main", "row")!;
+    setFocusedPaneId(pane);
+    const stopTracking = installPaneTracker();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    const before = codeWrapping();
+    try {
+      openCommandPalette();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "Toggle code block wrap";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const row = await vi.waitFor(() => {
+        const row = root.querySelector<HTMLElement>(".switcher-row");
+        expect(row?.textContent).toContain("Toggle code block wrap");
+        return row!;
+      });
+      row.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, pointerType,
+      }));
+      row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+      row.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, pointerType }));
+      row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+      expect(codeWrapping()).toBe(!before);
+      expect(root.querySelector(".switcher-input")).toBeNull();
+      expect(focusedPaneId()).toBe(pane);
+    } finally { stopTracking(); dispose(); changeCodeWrapping(before); }
+  });
+  it.each(["mouse", "touch", "pen", "keyboard"])("runs a command once through the %s activation sequence", async (inputKind) => {
+    const run = vi.fn();
+    const commands = vi.spyOn(keybindings, "paletteCommands").mockReturnValue([
+      { id: "test/pointer", label: "Pointer command", english: "Pointer command", binding: "", run },
+    ]);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openCommandPalette();
+      const row = await vi.waitFor(() => {
+        const row = root.querySelector<HTMLElement>(".switcher-row");
+        expect(row?.textContent).toContain("Pointer command");
+        return row!;
+      });
+      if (inputKind === "keyboard") {
+        root.querySelector(".switcher-input")!.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", bubbles: true, cancelable: true,
+        }));
+      } else {
+        const pointer = (type: string) => new PointerEvent(type, {
+          bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, pointerType: inputKind,
+        });
+        // A normal tap includes compatibility mouse events. A pane-focus
+        // change must not detach the row before mousedown reaches delegation.
+        expect(row.dispatchEvent(pointer("pointerdown"))).toBe(true);
+        row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+        row.dispatchEvent(pointer("pointerup"));
+        row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+        row.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+      }
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(root.querySelector(".switcher-input")).toBeNull();
+    } finally { dispose(); commands.mockRestore(); }
+  });
   it("finds command palette rows by their shown Chinese label and English original (GH #107)", async () => {
     await setActiveLocale("zh-CN");
     const root = document.createElement("div");
