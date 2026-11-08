@@ -48,13 +48,20 @@ export function captureReadingViewport(root: HTMLElement, scroller = root.closes
   owners.get(scroller)?.();
   if (touchScrolling.has(scroller)) return;
   const focused = root.ownerDocument.activeElement;
-  const top = scroller.getBoundingClientRect().top;
-  // Outline parents include their children. Descend through the first visible
-  // branch so a stationary parent cannot hide reflow above a visible child.
+  const viewport = scroller.getBoundingClientRect();
+  // Prefer a block starting in view: the tail of a clipped code card can
+  // intersect the viewport while its stationary top is offscreen. Holding
+  // that top lets its own reflow push the visible reading row away. Outline
+  // parents include children; descend the intersecting branch as a fallback
+  // when no block starts in view (for example, a tall card fills the pane).
   let reading: HTMLElement | undefined;
   for (const el of root.querySelectorAll<HTMLElement>("[data-block-id], h1.journal-title")) {
-    if (reading && !reading.contains(el)) break;
-    if (el.getBoundingClientRect().bottom > top) reading = el;
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom <= viewport.top) continue;
+    // Document order: once a block starts below the viewport, none later starts in it.
+    if (reading && rect.top >= viewport.bottom) break;
+    if (!reading || reading.contains(el)) reading = el;
+    if (rect.top >= viewport.top && rect.top < viewport.bottom) { reading = el; break; }
   }
   const anchor = focused && focused !== root && root.contains(focused) ? focused : reading;
   if (!anchor) return;
