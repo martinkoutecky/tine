@@ -130,22 +130,25 @@ describe("a hidden comment margin", () => {
       flushFrames();
       expect(pane.querySelector(".margin-column")).not.toBeNull();
       expect(blockEl(pane.querySelector(".margin-column")!, "c1")).not.toBeNull();
-      expect(pane.querySelector(".page-blocks .margin-marker")!.textContent).toBe("2");
+      expect(pane.querySelector(".page-blocks button.margin-marker")).toBeNull();
       expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
     } finally {
       dispose();
     }
   });
 
-  it("does not fall back to the narrow-pane inline layout, and brings it back when shown", () => {
+  it("hides and restores narrow-pane entry points without any inline fallback", () => {
     const { pane, dispose } = mount(commented(), 800);
     try {
-      expect(anywhere(pane)).toEqual(COMMENTS.slice(0, 3));
+      expect(anywhere(pane)).toEqual([]);
+      expect(pane.querySelector(".margin-marker")?.textContent).toBe("2");
       setCommentMarginVisible(false);
       expect(anywhere(pane)).toEqual([]);
       expect(pane.querySelector(".comment-quote-anchor")).toBeNull();
       setCommentMarginVisible(true);
-      expect(anywhere(pane)).toEqual(COMMENTS);
+      expect(anywhere(pane)).toEqual([]);
+      pane.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      expect(anywhere(document.body)).toEqual(COMMENTS);
       expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
     } finally {
       dispose();
@@ -160,8 +163,8 @@ describe("a hidden comment margin", () => {
       </div>
     ));
     try {
-      expect(blockEl(pane.querySelector(".plain")!, "c1")).not.toBeNull();
-      expect(blockEl(pane.querySelector(".embed")!, "c1")).not.toBeNull();
+      expect(pane.querySelector(".plain .margin-marker")).not.toBeNull();
+      expect(pane.querySelector(".embed .margin-marker")).not.toBeNull();
       setCommentMarginVisible(false);
       for (const part of ["plain", "embed"]) {
         const surface = pane.querySelector(`.${part}`)!;

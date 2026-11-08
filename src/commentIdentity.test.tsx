@@ -27,7 +27,7 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
-function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
+function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
   loadSingle({ name: PAGE, kind: "page", title: PAGE, format: "md", pre_block: null, blocks });
   setGraphMeta({ root: "/fixture" } as any);
   const root = document.createElement("div");
@@ -38,7 +38,8 @@ function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
       {extra?.()}
     </>
   ), root);
-  return root;
+  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return document.body;
 }
 
 beforeAll(() => initParser());
@@ -109,7 +110,7 @@ describe("what is written", () => {
 });
 
 describe("what is shown", () => {
-  const chips = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(".author-chip")].map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
+  const chips = (root: HTMLElement) => ["c", "d", "e"].map(id => root.querySelector<HTMLElement>(`[data-block-id="${id}"] > .comment-header .author-chip`)!).map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
   const fixture = () => [block("p", "A passage to discuss.", [
     block("c", "Mine.\ntine.quote:: passage\ntine.author:: Ada"),
     block("d", "Theirs.\ntine.quote:: discuss\ntine.author:: claude"),

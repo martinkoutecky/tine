@@ -29,7 +29,8 @@ function mount(child = true, surfaceKey = "main") {
   const root = document.createElement("div");
   document.body.appendChild(root);
   dispose = render(() => <SurfaceContext.Provider value={surfaceKey}><For each={pageByName("M")!.roots}>{id => <Block id={id} />}</For></SurfaceContext.Provider>, root);
-  return root;
+  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return document.body;
 }
 function key(root: HTMLElement, id: string, key: string, end = false) {
   startEditing(id, end ? Number.MAX_SAFE_INTEGER : 0, null, mountedSurface);

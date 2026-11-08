@@ -297,6 +297,7 @@ export interface MessageArgs {
   "comment-below-expand": { "count": string | number };
   "comment-block-cannot-take": {};
   "comment-block-changed": {};
+  "comment-close-threads": {};
   "comment-delete": {};
   "comment-hide": {};
   "comment-margin-count": { "count": number };
@@ -312,7 +313,10 @@ export interface MessageArgs {
   "comment-name-prompt-scope": {};
   "comment-name-prompt-title": {};
   "comment-new-thread": {};
+  "comment-next-thread": {};
   "comment-on-whole-block": {};
+  "comment-open-thread": {};
+  "comment-prev-thread": {};
   "comment-quote-ambiguous": {};
   "comment-quote-changed": {};
   "comment-remove-author": {};
@@ -325,6 +329,7 @@ export interface MessageArgs {
   "comment-send": {};
   "comment-show": {};
   "comment-stale-write-what": {};
+  "comment-thread-position": { "count": string | number; "current": string | number };
   "comment-toolbar": {};
   "comment-toolbar-shortcut": {};
   "comment-written-by": { "author": string | number };

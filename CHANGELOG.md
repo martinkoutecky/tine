@@ -10,8 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Resolved comments remain reachable with Reopen and dates in narrow popovers and phone sheets, while staying out of open counts, passage markers and highlights (UI-MC010-COMPACT-RESOLVE; GH #891, #831).
 - Resolve closes a whole comment thread; the page's resolved count reveals it with Reopen, and replying reopens it. Closed threads leave highlights and open counts (UI-MC010-RESOLVE; GH #891).
 - New comments and replies show a localized creation date, stored once as a UTC minute; edits keep it and messages retain file order (UI-MC010-DATES; GH #831).
+- Narrow panes open live comment threads from passage markers, highlights and thread-count chips; phones use a bottom sheet with swipe navigation. The tiers follow pane width on pages, journals, splits, sidebars and embeds, and visible wide-margin threads no longer duplicate a count badge (GH #891; UI-MC010-MEDIUM; UI-MC010-PHONE).
 - Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
 - Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
 - The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).

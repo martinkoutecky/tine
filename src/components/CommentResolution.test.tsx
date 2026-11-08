@@ -12,16 +12,19 @@ import { resetCommentAuthorNameForTests } from "../commentIdentity";
 import { persistCommentMarginHidden } from "../commentMarginPref";
 import { backend } from "../backend";
 import type { BlockDto, Format } from "../types";
-import { CommentResolutionScope } from "./CommentResolutionScope";
+import { CommentSurface } from "./CommentSurface";
 import { quotedSourceRanges } from "../render/quoteHighlight";
 import { descendantOpenThreads } from "../commentGroups";
 import { editorIn } from "../tests/editorDriver";
 import { setActiveLocale } from "../i18n";
-import { setDoc } from "../document/model";
+import { pageByName, setDoc } from "../document/model";
 import { utf8ByteLength } from "../render/spans";
 
 let dispose: (() => void) | undefined;
-beforeAll(initParser);
+beforeAll(async () => {
+  await initParser();
+  if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+});
 beforeEach(async () => {
   const host = await bindTestHost(); answerOpensFromDocument(host);
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids => ids.map(() => null));
@@ -36,7 +39,8 @@ function mount(format: Format = "md") {
   loadSingle({ name: "Dates", title: "Dates", id: `/graph/pages/Dates.${format}`, rev: "fixture", kind: "page", format, pre_block: null,
     blocks: [b("p", "some words", [b("c", raw, [b("r", "Legacy reply")], format)], format)] });
   const el = document.createElement("div"); document.body.append(el);
-  dispose = render(() => <CommentResolutionScope roots={["p"]} format={format}><Block id="p" /></CommentResolutionScope>, el);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("comment-surface") ? 1400 : 0; });
+  dispose = render(() => <CommentSurface page={pageByName("Dates")}><Block id="p" /></CommentSurface>, el);
   return el;
 }
 it("offers a root-only Resolve action for the whole thread", () => {

@@ -225,7 +225,7 @@ fn guide_explains_margin_comments() {
         "Comment and reply editors hide every `tine.*` property",
         "speech bubble at the right edge",
         "click its **Reply…** box at the bottom",
-        "**Shift+Enter** adds a line",
+        "**Enter** and **Shift+Enter** insert a line break",
         "**Escape** or **Cancel** discards the draft",
         "empty reply creates no block and does not save the page",
         "short quote inside that same thread",
@@ -270,16 +270,17 @@ fn guide_explains_margin_comments() {
     assert!(tips
         .markdown
         .contains("Right-click the name chip (long-press on a phone) for the block menu"));
-    // Slice 2: the margin column on wide windows, and where it does not apply.
+    // D-20261107-MC3 §§5–7: width tiers and live annotation entry points.
     assert!(tips
         .markdown
         .contains("shows threads in a column on the right"));
     assert!(tips
         .markdown
-        .contains("**Enter** in a comment's text adds a reply under the thread root"));
-    assert!(tips
-        .markdown
-        .contains("in the sidebar or in an embed, comments stay in the outline"));
+        .contains("**Enter** and **Shift+Enter** insert a line break"));
+    assert!(tips.markdown.contains("slim passage rail"));
+    assert!(tips.markdown.contains("live popover"));
+    assert!(tips.markdown.contains("bottom sheet"));
+    assert!(tips.markdown.contains("swipe between passages"));
 }
 
 #[test]

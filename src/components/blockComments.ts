@@ -6,15 +6,14 @@ import type { OutlineScope } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
 import { AUTHOR_TINTS, authorTint, isOwnAuthor } from "../commentIdentity";
 import { isCommentId, marginNext, marginPrev, threadRootOf } from "../margin";
-import { commentsFirst, nextVisible, prevVisible } from "../document";
+import { nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
-import { facetsOf } from "../render/facets";
-import { commentGroups } from "../commentGroups";
 import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
+import { editingId } from "../editorController";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
@@ -66,31 +65,32 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
 
 const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:");
 
-/** Slice 2: on a page whose comments are drawn in the margin, the main column's
- * outline leaves them out (the count marker stands for them). Inside a margin
- * thread, without a margin, and in reference and embed copies every child is
- * drawn, the comments first, right under their block (commentOrder.ts). With the
- * margin hidden (GH #845) every surface leaves the comments out. */
-export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: () => "md" | "org") {
-  const place = useContext(MarginContext);
+/** Body outlines omit annotations at every width. Thread views retain their
+ * complete file pre-order, including quoted replies. */
+export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt: () => "md" | "org") {
   const showResolved = useResolvedComments();
-  const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
-  const groups = createMemo(() => {
-    if (main() || commentMarginHidden() || threadRootOf(node().id, fmt()) !== null) return null;
-    const all = commentGroups(node().id, fmt(), showResolved());
-    return all.length ? { first: new Map(all.map(ids => [ids[0], ids])), hidden: new Set(all.flatMap(ids => ids.slice(1))) } : null;
-  });
+  const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
+  // A body editor that is hand-writing its first quote property must finish
+  // that buffer before moving to an annotation surface. Otherwise accepting
+  // `tine.quote::` unmounts the editor in the middle of the property value.
+  const heldBody = createMemo<string | null>(previous => {
+    const n = node();
+    if (!n?.children.length) return null;
+    const id = editingId();
+    if (!id || !n.children.includes(id)) return null;
+    return previous === id || !isCommentId(id, fmt()) ? id : null;
+  }, null);
   // GH #845: with the margin hidden no surface draws a thread (not even inline).
   const outlineChildren = () => {
     const n = node();
-    if (main() || commentMarginHidden()) return n.children.filter(id => !isCommentId(id, fmt()));
+    if (!n) return [];
+    if (main() || commentMarginHidden()) return n.children.filter(id => id === heldBody() || !isCommentId(id, fmt()));
     // Replies retain file pre-order, even when a hand-nested reply has a quote.
-    if (inCommentThread(n.parent, fmt()) || (n.parent !== null && quoteSelectorOf(facetsOf(n.raw, fmt()).properties) !== null)) return n.children;
-    return commentsFirst(n.children).filter(id => (!isCommentId(id, fmt()) || showResolved() || !threadResolved(id)) && !groups()?.hidden.has(id));
+    return n.children;
   };
-  const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt()) && (showResolved() || !threadResolved(id))) : []);
-  const inlineGroup = (id: string) => groups()?.first.get(id);
-  return { outlineChildren, marginComments, inlineGroup };
+  const marginComments = () => (main() && !commentMarginHidden() ? node().children.filter((id) => id !== heldBody() && isCommentId(id, fmt())
+    && (showResolved() || !threadResolved(id))) : []);
+  return { outlineChildren, marginComments };
 }
 
 /** Body navigation skips annotations through the shared tree API. A margin

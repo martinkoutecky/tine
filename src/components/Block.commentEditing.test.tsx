@@ -41,7 +41,7 @@ it.each(["c", "deep"])("Enter and Shift+Enter keep %s multiline; modified Enter 
   const root = document.createElement("div"); document.body.append(root);
   dispose = render(() => <Block id="p" />, root);
   startEditing(id, 0);
-  const editor = editorIn(root);
+  const editor = editorIn(document.body);
   editor.select(0, editor.value().length);
   editor.keydown({ key: "Enter" });
   await Promise.resolve();
@@ -68,7 +68,8 @@ it("reply drafts keep Enter as text, ignore composing submission and send with m
   ] });
   const root = document.createElement("div"); document.body.append(root);
   dispose = render(() => <Block id="p" />, root);
-  const draft = root.querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
+  root.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+  const draft = document.querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
   draft.focus(); draft.value = "line one\nline two"; draft.dispatchEvent(new Event("input", { bubbles: true }));
   const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
   draft.dispatchEvent(enter);
@@ -95,7 +96,8 @@ it.each((["md", "org"] as const).flatMap(format => [false, true].flatMap(touch =
   globalThis.__TINE_E2E_TOUCH_GESTURES__ = touch ? "ios" : undefined;
   const body = id === "c" ? "Root" : "Reply";
   const hidden = id === "c" ? rootMetadata : metadata;
-  const content = root.querySelector(`[data-block-id="${id}"] > .block-main .block-content`)!;
+  root.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+  const content = document.querySelector(`[data-block-id="${id}"] > .block-main .block-content`)!;
   // A tap's compatibility mousedown enters the same Editor as a mouse.
   if (touch) for (const type of ["touchstart", "touchend"]) {
     const event = new Event(type, { bubbles: true, cancelable: true });
@@ -106,7 +108,7 @@ it.each((["md", "org"] as const).flatMap(format => [false, true].flatMap(touch =
   content.dispatchEvent(new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }));
   document.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
   expect(editingId()).toBe(id);
-  const editor = editorIn(root);
+  const editor = editorIn(document.body);
   expect(editor.value()).toBe(body);
   editor.input(`${body} revised`);
   endEdit("page-navigation");

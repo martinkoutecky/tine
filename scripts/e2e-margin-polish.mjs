@@ -9,6 +9,7 @@ import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = process.env.MARGIN_BASELINE === "1";
@@ -24,7 +25,8 @@ const NESTED = "That changes my view";
 const defects = [];
 fs.mkdirSync(OUT, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(OUT, "xdg", dir), { recursive: true });
+for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(path.join(OUT, "xdg", dir), { recursive: true });
+fs.mkdirSync(path.join(OUT, "home"), { recursive: true });
 // Under the repo's artifacts/ the graph sits in a git work tree, where the first
 // comment asks for a name (GH #841). This journey isn't about that prompt: the
 // device has already answered it with Skip.
@@ -38,7 +40,9 @@ const JOURNAL = path.join(GRAPH, "journals", `${day}.md`);
 fs.writeFileSync(JOURNAL, "- A journal passage worth discussing.\n");
 const driverPort = Number(process.env.E2E_DRIVER_PORT || 4680);
 const nativePort = Number(process.env.E2E_NATIVE_PORT || 4681);
+const account = installAccountHome(OUT, OUT);
 const env = { ...process.env, TINE_GRAPH: GRAPH,
+  HOME: path.join(OUT, "home"), XDG_STATE_HOME: path.join(OUT, "xdg/state"),
   XDG_DATA_HOME: path.join(OUT, "xdg/data"), XDG_CONFIG_HOME: path.join(OUT, "xdg/config"), XDG_CACHE_HOME: path.join(OUT, "xdg/cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const log = fs.openSync(path.join(OUT, "driver.log"), "w");
@@ -122,6 +126,7 @@ try {
   await browser.setTimeout({ implicit: 0, script: 10_000, pageLoad: 30_000 });
   console.log(await browser.execute(() => ({ ready: document.readyState, body: document.body?.innerText.slice(0, 1500) })));
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
+  await assertAppLease(account);
   await browser.setWindowSize(1600, 1000);
   await openPageByName(browser, PAGE);
   await editText(PHRASE);
@@ -196,9 +201,12 @@ try {
     check(await browser.execute((reply) => [...document.querySelectorAll(".margin-thread")].some(thread => thread.textContent.includes(reply)), REPLY), "Undo did not restore the thread and replies");
   }
   await browser.setWindowSize(1000, 820);
-  await browser.$(".page-blocks .comment-card").waitForExist({ timeout: 5000 });
-  await shot("10-narrow-inline");
+  await browser.$(".page-blocks .margin-marker").waitForExist({ timeout: 5000 });
+  await browser.$(".page-blocks .margin-marker").click();
+  await browser.$(".comment-thread-popup .comment-card").waitForExist({ timeout: 5000 });
+  await shot("10-narrow-popover");
   check(!await browser.$(".margin-column").isExisting(), "Narrow pane still has a margin column");
+  await browser.$(".comment-popup-close").click();
   await browser.setWindowSize(1600, 1000);
   // The existing split command is reached through the visible command palette.
   await browser.keys(["Control", "Shift", "p"]);
@@ -215,20 +223,26 @@ try {
     await browser.waitUntil(() => browser.execute((comment, reply) => {
       const panes = [...document.querySelectorAll(".pane-leaf")];
       return panes.length === 2 && panes.every(pane => {
-        const card = pane.querySelector(".page-blocks .comment-card");
-        return card?.textContent.includes(comment) && card.textContent.includes(reply);
+        return !!pane.querySelector(".page-blocks .margin-marker") && !pane.querySelector(".page-blocks .comment-card");
       });
-    }, COMMENT, REPLY), { timeout: 10_000, timeoutMsg: "split panes did not show the restored thread inline" });
-    await shot("11-split-inline");
+    }, COMMENT, REPLY), { timeout: 10_000, timeoutMsg: "split panes did not expose restored threads through their own chips" });
+    await shot("11-split-chips");
     check(!await browser.$(".margin-column").isExisting(), "Split pane still draws margin threads");
-    // Reload before continuing with the persisted outline.
-    await browser.refresh();
-    await browser.$(".ls-block").waitForExist({ timeout: 20_000 });
+    // Resume the unrelated stale-quote/editor checks on one wide pane.
+    await browser.keys(["Control", "Shift", "p"]);
+    await browser.$(".switcher-input").setValue("Close pane");
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".switcher-row")].some(el => el.textContent.includes("Close pane"))));
+    await browser.execute(() => [...document.querySelectorAll(".switcher-row")].find(el => el.textContent.includes("Close pane")).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".main-content").length === 1));
+    // Continue on the live wide pane. The explicit reload proof below checks
+    // persisted content after the remaining edits, rather than racing the
+    // unrelated pane-session debounce immediately after Close pane.
   } else { await browser.keys(["Escape"]); throw new Error("Split right palette command not found"); }
   await openPageByName(browser, PAGE);
   await editText(PHRASE); await select(PHRASE);
   await browser.keys("a revised claim"); await leave();
   await persisted("a revised claim", `tine.quote:: ${PHRASE}`, COMMENT);
+  if (!await browser.$(".comment-quote.stale").isExisting()) await browser.$(".page-blocks .margin-marker").click();
   await browser.$(".comment-quote.stale").waitForExist({ timeout: 5000 });
   await shot("12-stale-quote");
   await editText("Keep this remark"); await select("remark");

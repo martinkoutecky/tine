@@ -64,6 +64,7 @@ export function createMarginSurface(opts: {
   page: () => FeedPage | undefined;
   eligible: () => boolean;
   outline: () => HTMLElement | undefined;
+  pane?: () => HTMLElement | undefined;
 }): MarginSurface {
   const hasComment = createMemo(() => {
     if (!opts.eligible() || commentMarginHidden()) return false;
@@ -76,7 +77,7 @@ export function createMarginSurface(opts: {
   createEffect(() => {
     if (!hasComment()) return;
     const outline = opts.outline();
-    const pane = outline?.closest<HTMLElement>(".main-content") ?? outline?.parentElement?.parentElement;
+    const pane = opts.pane?.() ?? outline?.closest<HTMLElement>(".main-content") ?? outline?.parentElement?.parentElement;
     if (!pane) return;
     const read = () => setPaneWidth(pane.clientWidth);
     read();
@@ -92,7 +93,7 @@ export function createMarginSurface(opts: {
     const width = paneWidth();
     if (!active()) return;
     const outline = opts.outline();
-    const inner = outline?.closest<HTMLElement>(".main-content-inner");
+    const inner = opts.pane?.() ?? outline?.closest<HTMLElement>(".main-content-inner");
     if (!inner || !outline) return;
     const style = inner.ownerDocument.defaultView?.getComputedStyle(inner);
     const content = style ? parseFloat(style.getPropertyValue("--tine-main-content-max-width") || style.getPropertyValue("--ls-main-content-max-width")) : NaN;

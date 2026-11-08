@@ -104,13 +104,13 @@ try {
   await browser.keys(["Escape"]);
   await browser.keys(["Escape"]);
 
-  // Drawn in the margin, beside a count on the commented block.
+  // Visible margin threads need no duplicate count badge (MC3 §7).
   await browser.waitUntil(() => browser.execute((comment) => {
     const thread = document.querySelector(".margin-column .margin-thread .ls-block.comment-card");
     return !!thread && thread.textContent.includes(comment)
-      && document.querySelector(".page-blocks .ls-block.authored .margin-marker")?.textContent === "1"
+      && !document.querySelector(".page-blocks .ls-block.authored button.margin-marker")
       && !document.querySelector("textarea.block-editor");
-  }, COMMENT), { timeout: 5_000, timeoutMsg: "the comment is not drawn in the margin with a count marker" });
+  }, COMMENT), { timeout: 5_000, timeoutMsg: "the comment is not drawn in the margin without a duplicate badge" });
   const geometry = await browser.execute(() => {
     const thread = document.querySelector(".margin-thread").getBoundingClientRect();
     const outline = document.querySelector(".page-blocks").getBoundingClientRect();
@@ -193,7 +193,7 @@ try {
   await browser.waitUntil(() => browser.execute((comment, reply) => {
     const threads = [...document.querySelectorAll(".margin-column .margin-thread")];
     return threads.some((t) => t.textContent.includes(comment)) && threads.some((t) => t.textContent.includes(reply))
-      && document.querySelector(".page-blocks .ls-block.authored .margin-marker")?.textContent === "1";
+      && !document.querySelector(".page-blocks .ls-block.authored button.margin-marker");
   }, COMMENT, REPLY), { timeout: 5_000, timeoutMsg: "t m did not show the comment threads again" });
   if (fs.readFileSync(PAGE_FILE, "utf8") !== saved) throw new Error("showing the margin changed the page file");
   console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk; t m hides and shows every thread, across a reload, without touching the file");

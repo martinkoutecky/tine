@@ -64,6 +64,7 @@ import { revealCommentMarginFor } from "../commentMargin";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
 import { CommentResolutionScope } from "./CommentResolutionScope";
+import { CommentSurface } from "./CommentSurface";
 import { JournalFeedDays } from "./JournalFeedDays";
 import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
 import { createPageSeen } from "../seen/pageSeen";
@@ -985,12 +986,12 @@ function ZoomedView(props: { id: string }): JSX.Element {
           )}
         </For>
       </div>
-      <div class="page-blocks zoomed-block">
+      <div class="zoomed-block">
         {/* A zoom root is a viewing boundary: reveal its immediate subtree even
             when collapsed on the parent page, without mutating collapsed::.
             Descendants still honor their own individual collapse state. */}
         <OutlineScopeContext.Provider value={{ roots: [props.id], forceExpandedRoot: props.id }}>
-          <Block id={props.id} forceExpanded />
+          <CommentSurface main page={pageByName(pageName())} roots={[props.id]}><Block id={props.id} forceExpanded /></CommentSurface>
         </OutlineScopeContext.Provider>
       </div>
       <Show when={!pageByName(pageName())?.readOnly && !pageByName(pageName())?.guide}>

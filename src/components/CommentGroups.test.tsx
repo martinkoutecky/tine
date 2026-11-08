@@ -30,7 +30,8 @@ function mount(blocks: BlockDto[]) {
   loadSingle({ name: "Groups", title: "Groups", id: "/graph/pages/Groups.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks });
   const el = document.createElement("div"); document.body.append(el);
   dispose = render(() => <Block id="p" />, el);
-  return el;
+  el.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return document.body;
 }
 it("groups equal resolved ranges, quotes once, and keeps each thread's replies independent", () => {
   const el = mount([b("p", "some words", [b("a", "One\ntine.quote:: words", [b("r", "Reply")]), b("z", "Two\ntine.quote:: words")])]);
@@ -93,7 +94,7 @@ it("commenting from a secondary editor focuses that copy's reply box", async () 
   editor.keydown({ key: "r", ctrlKey: true });
   await Promise.resolve();
   expect(node("p")!.children).toEqual(["a"]);
-  expect(document.activeElement).toBe(copy.querySelector(".comment-reply-draft"));
+  expect(document.activeElement).toBe(document.querySelector(".comment-thread-popup .comment-reply-draft"));
 });
 
 it.each([false, true])("a Comment chord pre-cancelled by the native reload guard works (existing=%s)", async hasThread => {
