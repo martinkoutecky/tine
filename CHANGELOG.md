@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
 - Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).
 - Conflict review no longer suggests removing a block that both versions still contain when one device moved it and the other edited a neighbour; applying the suggestions, or choosing either whole version of its parent, lost that block (GH #901).
@@ -96,7 +97,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
-- The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged.
+- The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged (internal: UI-COMMENT-NAME-WORDING).
 - Comment threads read at one level in file order, including hand-nested replies; new replies attach directly to the thread root. Existing nesting stays unchanged on disk. Comment badges count threads, and the visibility command and setting are named Show/Hide comments (GH #110, GH #891).
 - Settings > Appearance shows the first few theme packages with **Show all**, so the settings below the list are no longer far down (#882).
 - Grids edit like an outline: click or arrow into a cell, keep editing across cells, and use Enter and Tab to build its child outline; Esc keeps your text and selects the cell (GH #874).
