@@ -33,7 +33,12 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 tempfile = "3"
 
-# Keep all integration cases in one linked executable.
+# Keep general integration cases in one linked executable. Allocation accounting
+# has its own target so its allocator cannot affect unrelated timing guards.
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+[[test]]
+name = "journal-step-cost"
+path = "tests/journal_step_cost.rs"

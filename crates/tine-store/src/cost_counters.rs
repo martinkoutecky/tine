@@ -46,11 +46,35 @@ pub(crate) static HOST_WORKER_KEY_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
+    static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set while the page host processes a watcher-forwarded observation.
     static OBSERVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Calling thread's journal day visits, inventory sorts, and reference-name visits.
+pub fn journal_work() -> (usize, usize, usize) {
+    JOURNAL_WORK.with(std::cell::Cell::get)
+}
+pub(crate) fn journal_day_visit() {
+    JOURNAL_WORK.with(|work| {
+        let (days, sorts, refs) = work.get();
+        work.set((days + 1, sorts, refs));
+    });
+}
+pub(crate) fn inventory_sort() {
+    JOURNAL_WORK.with(|work| {
+        let (days, sorts, refs) = work.get();
+        work.set((days, sorts + 1, refs));
+    });
+}
+pub(crate) fn journal_reference_visit() {
+    JOURNAL_WORK.with(|work| {
+        let (days, sorts, refs) = work.get();
+        work.set((days, sorts, refs + 1));
+    });
 }
 
 /// Run `observe`, the page host's processing of an observation the watcher

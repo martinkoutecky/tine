@@ -42,15 +42,26 @@ fn collect_feed_page<T, F>(
     limit: usize,
     before_day: Option<i64>,
     as_of_day: i64,
-    mut load: F,
+    load: F,
 ) -> Result<FeedPage<T>, io::Error>
 where
     F: FnMut(&PageId) -> Result<Loaded<T>, io::Error>,
 {
+    collect_feed_iter(entries.into_iter(), limit, before_day, as_of_day, load)
+}
+
+fn collect_feed_iter<T>(
+    entries: impl Iterator<Item = (Day, PageId)>,
+    limit: usize,
+    before_day: Option<i64>,
+    as_of_day: i64,
+    mut load: impl FnMut(&PageId) -> Result<Loaded<T>, io::Error>,
+) -> Result<FeedPage<T>, io::Error> {
+    let mut candidates = entries
+        .filter(|(day, _)| before_day.is_none_or(|before| day.0 < before))
+        .peekable();
     if limit == 0 {
-        let done = !entries
-            .iter()
-            .any(|(day, _)| before_day.is_none_or(|before| day.0 < before));
+        let done = candidates.peek().is_none();
         return Ok(FeedPage {
             pages: Vec::new(),
             upcoming: Vec::new(),
@@ -64,10 +75,6 @@ where
     let mut out = Vec::new();
     let mut unreadable = Vec::new();
     let mut last_examined = None;
-    let mut candidates = entries
-        .into_iter()
-        .filter(|(day, _)| before_day.is_none_or(|before| day.0 < before))
-        .peekable();
     while let Some((day, id)) = candidates.next() {
         last_examined = Some(day.0);
         match load(&id)? {
@@ -128,12 +135,29 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
     }
 }
 
+fn load_feed_read(
+    store: &Store,
+    id: &PageId,
+    referenced: impl FnOnce() -> Option<Day>,
+) -> io::Result<Loaded<FeedRead>> {
+    Ok(match store.page(id) {
+        Ok(read) => Loaded::Page(feed_read(read)),
+        Err(StoreError::NotFound) => {
+            referenced().map_or(Loaded::Gone, |day| Loaded::Page(virtual_day(store, day)))
+        }
+        Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
+        Err(error) => Loaded::Unreadable(store_error(error).to_string()),
+    })
+}
+
 /// Page file-backed journal days immediately, always leaving graph-wide
 /// additions pending for a separate completion request, even on a Ready graph.
 /// Unreadable files are skipped and named; store/index failures fail the read.
-/// Cost O((J + D) log(J + D) + R + returned page bytes), plus indexed alias
-/// lookups for date-shaped names on completion. J is journal files, R indexed reference names,
-/// D referenced dates. No reference-content scan or graph file write.
+/// First-page cost O((J + D) log(J + D) + R + returned page bytes), plus indexed
+/// alias lookups for date-shaped names on completion. Loaded scroll steps seek
+/// the day index and visit bounded windows; reference-name enumeration remains
+/// O(R log D). J is journal files, R reference names, D referenced dates.
+/// No reference-content scan or graph file write.
 /// Before a name index exists, active selection also discovers ordinary
 /// preambles once per invalidation (O(P)); it does not wait for graph parsing.
 #[cfg(any(test, feature = "test-faults"))]
@@ -167,17 +191,12 @@ pub fn feed_page_through(
     } else {
         None
     };
-    // A scroll step (`before_day`) on a loaded graph pages through the view's
-    // day index (cost audit 2026-11-02 row 8: it listed the journals
-    // directory per 3-day step, O(J) syscalls). The first page keeps the disk
-    // listing: it reports the listing's unreadable entries (only the first
-    // page ever did) and shows journal files that appeared where no watcher
-    // event published them; a file-only step (graph still loading) has no
-    // view to ask.
-    let (entries, listing_unreadable) = match (&graph, before_day) {
-        (Some(graph), Some(_)) => (indexed_days_through(graph, Day(as_of_day)), Vec::new()),
-        _ => feed_days_through(store, Day(as_of_day))?,
-    };
+    if let (Some(graph), Some(before)) = (&graph, before_day) {
+        return indexed_feed_page(store, graph, limit, before, through_day, as_of_day);
+    }
+    // First-page and file-only requests retain listing failures and discover
+    // files that no watcher publication has named yet.
+    let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
     let referenced: std::collections::BTreeSet<_> = graph
         .as_ref()
         .map(|graph| {
@@ -208,14 +227,9 @@ pub fn feed_page_through(
         )
     });
     let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
-        Ok(match store.page(id) {
-            Ok(read) => Loaded::Page(feed_read(read)),
-            Err(StoreError::NotFound) if referenced.contains(&by_id[id]) => {
-                Loaded::Page(virtual_day(store, by_id[id]))
-            }
-            Err(StoreError::NotFound) => Loaded::Gone,
-            Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
-            Err(error) => Loaded::Unreadable(store_error(error).to_string()),
+        load_feed_read(store, id, || {
+            let day = by_id[id];
+            referenced.contains(&day).then_some(day)
         })
     })?;
     page.references_pending = graph.is_none();
@@ -233,6 +247,119 @@ pub fn feed_page_through(
             .collect();
     }
     Ok(page)
+}
+
+/// Merge bounded file windows with the existing reference answer. No resident
+/// state: both answers belong to this captured view. Missing/unreadable bodies
+/// consume candidates, so the iterator continues until the page really fills.
+fn indexed_feed_page(
+    store: &Store,
+    graph: &tine_store::WholeGraph,
+    limit: usize,
+    before: i64,
+    through: Option<i64>,
+    as_of: i64,
+) -> io::Result<FeedPage<FeedRead>> {
+    let referenced: std::collections::BTreeSet<_> = graph
+        .inventory(tine_store::InventoryScope::ReferencedJournals)
+        .0
+        .iter()
+        .filter_map(|entry| entry.day)
+        .collect();
+    let references: BTreeMap<_, _> = referenced
+        .iter()
+        .copied()
+        .filter(|day| day.0 <= as_of)
+        .filter_map(|day| active_journal_id(store, day).map(|id| (day, id)))
+        .collect();
+    let by_id: BTreeMap<_, _> = references
+        .iter()
+        .map(|(day, id)| (id.clone(), *day))
+        .collect();
+    let mut references = references
+        .into_iter()
+        .rev()
+        .filter(|(day, _)| day.0 < before)
+        .peekable();
+    let mut cursor = before.min(as_of.saturating_add(1));
+    let batch = limit.saturating_add(1).max(1);
+    let mut buffer = Vec::new().into_iter();
+    let mut exhausted = false;
+    let mut files = std::iter::from_fn(|| loop {
+        if let Some(entry) = buffer.next() {
+            return Some(entry);
+        }
+        if exhausted {
+            return None;
+        }
+        let inventory = graph.inventory(tine_store::InventoryScope::JournalFilesBefore {
+            before: Day(cursor),
+            limit: batch,
+        });
+        exhausted = inventory.0.len() < batch;
+        let entries: Vec<_> = inventory
+            .0
+            .iter()
+            .filter_map(|entry| {
+                let tine_store::Resolved::Existing { id, .. } = &entry.target else {
+                    return None;
+                };
+                Some((entry.day?, id.clone()))
+            })
+            .collect();
+        if let Some((day, _)) = entries.last() {
+            cursor = day.0;
+        }
+        buffer = entries.into_iter();
+    })
+    .peekable();
+    let mut entries = std::iter::from_fn(|| match (files.peek(), references.peek()) {
+        (Some((file_day, _)), Some((ref_day, _))) if file_day >= ref_day => {
+            if file_day == ref_day {
+                references.next();
+            }
+            files.next()
+        }
+        (_, Some(_)) => references.next(),
+        (Some(_), None) => files.next(),
+        (None, None) => None,
+    })
+    .peekable();
+    // Preserve extension semantics: the old path raised the requested count
+    // by the number of candidates through the displayed suffix, even when
+    // some of those candidates subsequently fail to load.
+    let mut prefix = Vec::new();
+    if let Some(through) = through {
+        while entries.peek().is_some_and(|(day, _)| day.0 >= through) {
+            prefix.push(entries.next().unwrap());
+        }
+    }
+    let limit = limit.max(prefix.len());
+    collect_feed_iter(
+        prefix.into_iter().chain(entries),
+        limit,
+        None,
+        as_of,
+        |id| {
+            load_feed_read(store, id, || {
+                if referenced.is_empty() {
+                    return None;
+                }
+                // Preserve the full union's id-to-greatest-day answer even when
+                // a short-year format maps different centuries to the same path.
+                // Only a missing body needs this lookup. It reads the file list,
+                // not parsed pages: a file that failed to read keeps its day.
+                let physical_day = graph
+                    .inventory(tine_store::InventoryScope::JournalFile(id))
+                    .0
+                    .first()
+                    .and_then(|entry| entry.day)
+                    .filter(|day| day.0 <= as_of);
+                let day = physical_day.max(by_id.get(id).copied())?;
+                referenced.contains(&day).then_some(day)
+            })
+        },
+    )
 }
 
 #[cfg(test)]
@@ -487,8 +614,8 @@ pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<
     Ok(feed_days_through(store, cutoff)?.0)
 }
 
-/// [`feed_days_through`]'s days from the view's day index instead of the
-/// directory: no disk access, O(J log J) in memory.
+/// Frozen unbounded day-inventory oracle for the bounded-window tests.
+#[cfg(test)]
 fn indexed_days_through(graph: &tine_store::WholeGraph, cutoff: Day) -> Vec<(Day, PageId)> {
     let days: BTreeMap<Day, PageId> = graph
         .inventory(tine_store::InventoryScope::JournalFiles)
