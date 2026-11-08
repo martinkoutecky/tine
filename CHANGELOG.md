@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Author marks are centred in the bullet gap; same-author sibling runs share a continuous line and one leading chip, with each block's author available on hover or focus (GH #892, GH #893).
+- Show/Hide author marks has its own Settings switch beside Show/Hide comments and a rebindable command with no default shortcut (GH #896).
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
 
 ### Fixed

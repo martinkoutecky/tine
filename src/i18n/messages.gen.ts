@@ -260,6 +260,7 @@ export interface MessageArgs {
   "command-ui-open-settings": {};
   "command-ui-reload-window": {};
   "command-ui-reset-zoom": {};
+  "command-ui-toggle-author-marks": {};
   "command-ui-toggle-brackets": {};
   "command-ui-toggle-code-block-wrap": {};
   "command-ui-toggle-comment-margin": {};
@@ -2452,9 +2453,12 @@ export interface MessageArgs {
   "settings-accent-line-and-dot-only": {};
   "settings-agenda-days-ahead": { "source": string | number };
   "settings-alphabetically-by-the-page-each-result-lives": {};
+  "settings-annotation-visibility": {};
   "settings-appearance": {};
   "settings-asset-trash-confirmation": { "count": number; "size": string | number };
   "settings-asset-trash-emptied": { "count": number };
+  "settings-author-marks": {};
+  "settings-author-marks-hint": {};
   "settings-auto-embed-video-links": {};
   "settings-auto-embed-video-links-hint": {};
   "settings-autodetect": {};

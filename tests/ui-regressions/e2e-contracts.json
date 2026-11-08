@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-author-marks.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed page, author lines are centred in the bullet gap without moving text; same-author siblings join continuously with one leading chip, each block discloses its author on focus, and nested outlines, threads and embedded copies keep independent runs. Both editors retain the gutter and saved author bytes. Independent Settings, palette and rebound-key controls persist visibility; Remove author and undo update the run and guarded page file.","blocking":false,"authority":"D-20261107-MC3 §8/§10; GH #892, #893, #896"}],
+      "acceptableVariations": ["Tint, chip shape, tooltip styling, line length, and timing may vary. Centring, continuity and unchanged text coordinates are explicit geometry requirements."],
+      "nonRequirements": ["No authorship inheritance, new format, release burn-in, Windows/macOS/iOS/Android certification; no exact palette, font or screenshot matching."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-table-wrap.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Reading a routed Markdown page, journal, embed and sidebar in either editor keeps wide prose, many columns and URLs inside the pane with wrapping; unbreakable content scrolls inside its table and reading preserves file bytes.","blocking":false,"authority":"GH #802; D-20261107-R11"}],
       "acceptableVariations": ["Column allocation, wrapping positions, table markup and spacing may vary while readable content fits the pane."],

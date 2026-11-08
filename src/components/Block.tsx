@@ -129,6 +129,8 @@ import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
+import { AuthorGutter } from "./AuthorGutter";
+import type { AuthorNeighbors } from "./authorRuns";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
@@ -189,7 +191,7 @@ export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(n
 
 /** Render and edit one document block through the document door. Work scales
  * with its visible descendants; a failed structured paste shows fixed text. */
-export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
+export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean; authorNeighbors?: AuthorNeighbors }): JSX.Element {
   // Share one node read across this block's derivations.
   const node = createMemo(() => docNode(props.id));
   const propertySession = propertyEditorSession();
@@ -280,7 +282,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // the host's position (`rowHost`). Page embeds and hosts with text keep theirs.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
-  const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
+  const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
   // Thread rows have no bullet pins; the spacer would pull the body over its quote.
   // A page-embed host pins its own bullet while its embedded page scrolls (GH #898).
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
@@ -400,6 +402,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
+          <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />
           <Show
             when={editing() ? node() : undefined} keyed
             fallback={
@@ -414,9 +417,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   owner={instanceId}
                   outlineScope={outlineScope}
                   refCountBadge={<>
-                    {/* The first right float takes the outer edge. Anchor the
-                        author there, then place the optional count beside it
-                        so referenced blocks keep the same author position (#883). */}
                     <Show when={showsAuthor() && !bulletless()}>
                       <AuthorChip author={author()} menuOf={props.id} />
                     </Show>

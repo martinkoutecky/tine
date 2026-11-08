@@ -747,7 +747,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
           navOnly: true,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
-        <BlockList ids={groupedIds()} render={(id) => {
+        <BlockList ids={groupedIds()} render={(id, authorNeighbors) => {
             const crumb = createMemo<Crumb[]>((previous) => {
               if (!props.showBreadcrumb) return [];
               const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));
@@ -824,7 +824,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                       </div>
                     )}
                   </Show>
-                  <Block id={id} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
+                  <Block id={id} authorNeighbors={authorNeighbors} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
                 </Show>
               </>
             );
