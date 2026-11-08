@@ -832,7 +832,11 @@ A page's alias group (the page header's rows, `InventoryScope::AliasGroup`,
 D-20261019-AL2) is the class walk at read time; nothing is stored for it. The
 owners of an alias key are read in plain text order of their graph-relative
 paths, and every resolver opens the first (the owner rule); the stored owner
-map and its checkpoint encoding are unchanged. Proof:
+map and its checkpoint encoding are unchanged. Members retain their journal
+kind through inventory projection. When a fileless day's canonical title is
+claimed by an unrelated ordinary file, the string-only group wire carries an
+unclaimed authored spelling of that day. The day appears once, never as its
+unrelated ordinary claimant, and every spelling excludes its own day. Proof:
 `crates/tine-store/tests/alias_groups.rs`.
 
 What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
@@ -853,7 +857,10 @@ code). `page_inventory` entries carry the answer as an optional
 entries carry nothing). The field is in-memory and derived per read: nothing is
 persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
 delta's `rev` (a link depends on the key's alias owners, which travel in the
-delta, and on file claims, whose change refetches). Content changes alone do
+delta, and on file claims, whose change refetches). Reactive alternate-date
+readers subscribe to both their literal bucket and the canonical journal
+bucket they read, including a currently absent canonical row. Proof:
+`src/pageIndex.test.ts`, `src/render/PageRef.workingSet.test.tsx`. Content changes alone do
 not change name routing. Published `answers` v1 stores the lookup answers at
 publication time (`docs/contracts/quick-share.md`). Existing snapshots retain
 their stored redirects, including the former empty-alias answer; new snapshots
@@ -888,7 +895,13 @@ A virtual journal has no physical self page to exclude from references or links.
 Which references name a journal day (Linked References, `[[day]]` backlink
 counts' needles) is every spelling the journal answerer accepts for that day:
 the spellings it renders plus every explicitly referenced name it parses to the
-day, read from the in-memory explicit-reference index (no stored index).
+day, read from the in-memory explicit-reference index. The fixed 64 ordered
+shards are merged and joined to a sequential cursor over the resident authored
+name table: O(E log 64 + V) merge work over E explicit keys and V spelling
+rows, plus the existing active-referrer checks, without a per-digit-name
+spelling-table lookup or a new index. Publication and checkpoint
+representations are unchanged. Proof:
+`query/reference_spelling_tests.rs::authored_spelling_sweep_does_no_per_name_tree_lookup`.
 
 Every per-page index of a generation (this relation, the explicit-reference
 index, the candidate signatures, the name keys and the rest) is patched by the

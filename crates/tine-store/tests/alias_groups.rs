@@ -51,6 +51,56 @@ fn names(aliases: &[&str], pages: &[&str]) -> (Vec<String>, Vec<String>) {
 }
 
 #[test]
+fn date_alias_group_never_acquires_the_ordinary_canonical_claimant() {
+    let (dir, store) = graph(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
+        ),
+        (
+            "pages/2026_10_23.md",
+            "alias:: Literal\n\n- unrelated ordinary file\n",
+        ),
+        ("pages/Owner.md", "alias:: 2026-10-23\n\n- owner\n"),
+    ]);
+    let check = || {
+        let view = store.whole_graph().unwrap();
+        let entries = view.inventory(InventoryScope::AliasGroup("Owner"));
+        assert_eq!(entries.0.len(), 1, "one day member: {entries:?}");
+        let member = &entries.0[0];
+        assert!(
+            member.is_journal,
+            "ordinary claimant is unrelated: {member:?}"
+        );
+        assert_eq!(member.day, Some(tine_store::Day(20261023)));
+        assert!(matches!(member.target, Resolved::Alias { .. }));
+        assert_eq!(view.link_target(&member.name).name, "Owner");
+        assert_eq!(group(&view, "2026-10-23"), names(&[], &["Owner"]));
+        assert_eq!(group(&view, "2026_10_23"), names(&["Literal"], &[]));
+    };
+    check();
+    fs::write(
+        dir.path().join("pages/Owner.md"),
+        "alias:: 2026-10-23, [[Oct 23rd, 2026]]\n\n- owner\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    check();
+    fs::write(dir.path().join("journals/2026_10_23.md"), "- journal\n").unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    // The ordinary opening claimant masks this physical journal (OWN2).
+    check();
+    fs::remove_file(dir.path().join("pages/2026_10_23.md")).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let view = store.whole_graph().unwrap();
+    assert_eq!(group(&view, "Owner"), names(&[], &["2026_10_23"]));
+    for name in ["2026_10_23", "2026-10-23"] {
+        assert_eq!(group(&view, name), names(&[], &["Owner"]));
+    }
+    store.close();
+}
+
+#[test]
 fn date_alias_endpoints_share_opening_and_reference_class_without_a_journal_file() {
     let (dir, store) = graph(&[
         ("pages/Owner.md", "alias:: [[Oct 23rd, 2026]]\n\n- owner\n"),

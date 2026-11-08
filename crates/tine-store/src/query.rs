@@ -5,7 +5,7 @@
 //! references, properties, priority, and Boolean clauses. Unsupported
 //! clauses are returned as diagnostics in `AdvancedResult`.
 
-use crate::model::ReadSnapshot;
+use crate::model::{referenced_names::explicit_reference_spellings, ReadSnapshot};
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::model::{
@@ -25,6 +25,8 @@ pub(crate) mod link_graph;
 pub(crate) mod memo;
 pub(crate) mod page_counts;
 pub(crate) mod page_properties;
+#[cfg(test)]
+mod reference_spelling_tests;
 #[cfg(test)]
 mod sample_seed_tests;
 use page_properties::page_document_is_org;
@@ -428,7 +430,7 @@ mod page_names;
 pub(crate) use page_names::{real_page_names, RealPageNames, RealPageOwners};
 
 mod alias_relation;
-pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
+pub(crate) use alias_relation::{alias_group_members, AliasEdges, AliasRelation, AliasRow};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -596,20 +598,6 @@ pub(crate) fn referenced_day_keys<'a>(
         })
         .map(refs::page_key)
         .collect()
-}
-
-/// Parse configured literals from authored names, then return their keys.
-/// Reuse the existing persistent name table; edits already carry it by delta.
-fn explicit_reference_spellings(graph: &ReadSnapshot) -> impl Iterator<Item = &str> {
-    graph.explicit_reference_names().map(move |key| {
-        if !key.bytes().any(|byte| byte.is_ascii_digit()) {
-            return key;
-        }
-        graph
-            .referenced_name_table()
-            .get(key)
-            .map_or(key, |name| name.spelling.as_str())
-    })
 }
 
 /// The panel's resolver for many targets of one snapshot: the reads
@@ -1244,39 +1232,6 @@ pub(crate) fn tagged_pages_query(
     let (_, names_norm, _) = graph_equivalent_page_names(graph, target, true);
     let filter = tine_core::query::og::page_tags_filter(names_norm);
     Query::new(Anchor::Page, filter, Source::Builder)
-}
-
-/// The other names of `target`'s alias group (D-20261019-AL1/AL2) as (page
-/// key, the least spelling an `alias::` declared it with, else the key);
-/// `target` itself is not one. The group is the alias component Linked
-/// References use, without the journal-day spellings. Cost: O(component log
-/// P), with the generation's real-name table.
-pub(crate) fn alias_group_members(graph: &ReadSnapshot, target: &str) -> Vec<(String, String)> {
-    let real = real_page_names(graph);
-    let (_, component, _) = graph_equivalent_page_names(graph, target, false);
-    let own = refs::page_key(target);
-    let format = graph.config().journal_format();
-    let own_day = real
-        .get(&own)
-        .is_none()
-        .then(|| format.parse(target))
-        .flatten();
-    let mut members = std::collections::BTreeMap::new();
-    for key in component {
-        if key == own {
-            continue;
-        }
-        if real.get(&key).is_some() {
-            members.insert(key.clone(), key);
-        } else if let Some(spelling) = graph.alias_spelling(&key) {
-            let answer = crate::model::fileless_names::FilelessName::new(&format, &spelling);
-            if own_day.is_some() && answer.day == own_day {
-                continue;
-            }
-            members.insert(refs::page_key(&answer.name), answer.name);
-        }
-    }
-    members.into_iter().collect()
 }
 
 const BACKLINK_FILTER_MAX_BYTES: usize = 16 * 1024 * 1024;

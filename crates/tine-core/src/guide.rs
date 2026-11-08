@@ -739,6 +739,8 @@ mod parity_guide_tests {
             "opens the page whose file path comes first in plain character order",
             "A name with its own page file opens that file",
             "even when the file is empty",
+            "The alias group keeps that unrelated ordinary file separate",
+            "Links already on screen follow changes to the date's alias owner",
         ] {
             assert!(guide.contains(phrase), "Guide missing {phrase}");
         }

@@ -256,7 +256,8 @@ pub enum InventoryScope<'a> {
     /// `key/` and is a namespace name (a page and its namespace descendants):
     /// what a rename moves.
     FilesAtOrUnder(&'a str),
-    /// The other members of this name's alias group (D-20261019-AL1), as `All` lists them.
+    /// The other typed members of this name's alias group (D-20261019-AL1).
+    /// A fileless day uses an unclaimed spelling if its title names another file.
     AliasGroup(&'a str),
     /// Every journal day a file claims in this view, once per day: the
     /// view's day index, not a directory listing.
@@ -607,18 +608,19 @@ impl WholeGraph {
     /// [`InventoryScope::AliasGroup`]'s entries; see [`Self::inventory`].
     fn alias_group(&self, name: &str) -> Vec<InventoryEntry> {
         let mut entries = Vec::new();
-        for (key, spelling) in crate::query::alias_group_members(&self.graph, name) {
-            let claimant = [false, true].into_iter().find_map(|journal| {
-                let claimants = self.claimants.get(&(journal, key.clone()))?;
-                claimants.first().cloned()
-            });
+        let real = self.graph.real_page_owners();
+        for ((journal, key), spelling) in crate::query::alias_group_members(&self.graph, name) {
+            let claimant = real
+                .opening_entry(&key)
+                .filter(|page| (page.kind == PageKind::Journal) == journal);
             match claimant {
-                Some(page) => entries.extend(self.claimed_entries(&page, key)),
+                Some(page) => entries.extend(self.claimed_entries(page, key)),
                 None => {
-                    let answer = crate::model::fileless_names::FilelessName::new(
+                    let mut answer = crate::model::fileless_names::FilelessName::new(
                         &self.journal_format,
                         &spelling,
                     );
+                    answer.name = spelling;
                     entries.push(fileless_entry(
                         answer.clone(),
                         self.resolve(&answer.name, answer.day.is_some()),

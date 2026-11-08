@@ -1738,15 +1738,6 @@ impl ReadSnapshot {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
-    pub(crate) fn explicit_reference_names(&self) -> impl Iterator<Item = &str> {
-        self.explicit_index
-            .shards
-            .iter()
-            .flat_map(|shard| shard.iter())
-            .filter(|(_, paths)| paths.iter().any(|(path, _)| self.is_active_path(path)))
-            .map(|(name, _)| name.as_str())
-    }
-
     pub(crate) fn physical_explicit_referrers(&self, names: &[String]) -> Vec<crate::PageId> {
         let paths = self.explicit_index.candidates(names);
         self.physical_pages

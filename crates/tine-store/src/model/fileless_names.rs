@@ -182,6 +182,24 @@ impl FilelessName {
             path: Default::default(),
         }
     }
+
+    /// Complete an unclaimed spelling's identity: an active journal already
+    /// supplies the day; an ordinary canonical claimant needs a safe opening.
+    pub(crate) fn with_opening(
+        mut self,
+        real: &crate::query::RealPageOwners,
+        spelling: &str,
+    ) -> Option<Self> {
+        if self.day.is_some() {
+            if let Some(entry) = real.opening_entry(&refs::page_key(&self.name)) {
+                if entry.kind == PageKind::Journal {
+                    return None;
+                }
+                self.opening_name = Some(spelling.to_owned());
+            }
+        }
+        Some(self)
+    }
 }
 
 impl ReadSnapshot {
@@ -190,7 +208,7 @@ impl ReadSnapshot {
     /// A canonical ordinary file claims only its own spelling (KD), so an
     /// alternate spelling can still support a distinct virtual journal.
     pub(crate) fn fileless_name(&self, format: &JournalFormat, name: &str) -> Option<FilelessName> {
-        let mut answer = FilelessName::new(format, name);
+        let answer = FilelessName::new(format, name);
         let unclaimed = |key: &str| {
             self.real_page_names.owners(key).next().is_none()
                 && self
@@ -201,18 +219,7 @@ impl ReadSnapshot {
         if !unclaimed(&key) {
             return None;
         }
-        if answer.day.is_some() {
-            if let Some(entry) = self
-                .real_page_owners()
-                .opening_entry(&refs::page_key(&answer.name))
-            {
-                if entry.kind == PageKind::Journal {
-                    return None;
-                }
-                answer.opening_name = Some(name.to_owned());
-            }
-        }
-        Some(answer)
+        answer.with_opening(&self.real_page_owners(), name)
     }
 
     /// One row per fileless entity, in canonical key order. A direct

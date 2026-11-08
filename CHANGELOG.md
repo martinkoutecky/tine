@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Date aliases recognize every spelling accepted by the graph's journal formats in links, references, counts and queries. Namespace trees, macros and hierarchy attach date-prefixed children to the canonical journal parent (REG-CM-DATE-ALIAS-CONSUMERS, UI-CM-DATE-NAMESPACE-PARENTS).
+- Date aliases recognize every spelling accepted by the graph's journal formats in links, references, counts and queries. Their alias groups keep unrelated ordinary date files separate, and mounted links follow alias edits. Namespace trees, macros and hierarchy attach date-prefixed children to the canonical journal parent (REG-CM-DATE-ALIAS-CONSUMERS, REG-CM-DATE-ALIAS-GROUP-KIND, UI-CM-DATE-ALIAS-REACTIVE, UI-CM-DATE-NAMESPACE-PARENTS).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
 - Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).

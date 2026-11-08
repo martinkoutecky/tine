@@ -350,7 +350,7 @@ function createPeekBridge(disabled: () => boolean) {
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-// `file`: open the file claiming `name` itself (the alias group's Related pages row; EMPTY-ALIAS, D-20261103-CMA).
+// `file`: carry the physical claimant path for the alias group's Related pages row (R13-C4).
 export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs; file?: boolean }): JSX.Element {
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);

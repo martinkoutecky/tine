@@ -378,7 +378,7 @@ export { ownerPath, type LinkDestination } from "./inventoryRows";
  *  kind). O(1), no IPC. */
 export function linkTarget(name: string): LinkDestination {
   ensureInstalled();
-  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, !isPublishedExport());
+  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, !isPublishedExport(), nameAnswer);
 }
 
 /** The inventory's typed namespace identity, or its immediate parent.
@@ -388,7 +388,7 @@ export function namespaceTarget(name: string, parent = false, kind?: PageKind): 
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
   const entry = kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
-    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? (!isPublishedExport() ? journalRowIn(answer, name) : undefined);
+    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? (!isPublishedExport() ? journalRowIn(answer, name, nameAnswer) : undefined);
   if (kind && (!entry || entry.namespace_excluded)) return null;
   if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
   if (entry?.parent) return entry.parent;
@@ -424,7 +424,7 @@ export function navigationTarget(name: string): LinkDestination {
         kind: entry.is_journal ? "journal" : "page" };
     }
     if (entry?.target.kind === "alias" && !entry.link) return { name: navigationName(name), kind: "page" };
-    return linkTargetIn(answer, name, true);
+    return linkTargetIn(answer, name, true, nameAnswer);
   }
   const entry = answer?.pages.get(key);
   if ((entry?.target.kind === "alias" || (isPublishedExport() && entry?.empty_alias)) && entry.link) return entry.link;

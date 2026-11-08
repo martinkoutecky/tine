@@ -304,6 +304,44 @@ it("keeps readable names and reports unreadable files once when a file name can'
 // carries them; the index patches itself with no `page_inventory` IPC and
 // answers exactly as a fresh read would.
 describe("page index: name-only inventory deltas", () => {
+  it("refreshes mounted alternate-date readers when their canonical journal row changes", async () => {
+    const { createRoot, createComputed } = await import("solid-js");
+    const day = (owner: string): PageInventoryEntry => ({ ...alias("Oct 23rd, 2026", `pages/${owner}.md`),
+      is_journal: true, day: 20261023, link: { name: owner, kind: "page" } });
+    const index = await answers(inventory(1, file("Alpha"), file("Beta"), day("Alpha")));
+    const links: string[] = [];
+    const routes: string[] = [];
+    const namespaces: string[] = [];
+    let unrelated = 0;
+    const dispose = createRoot(dispose => {
+      createComputed(() => links.push(index.linkTarget("2026-10-23").name));
+      createComputed(() => routes.push(index.navigationTarget("2026-10-23").name));
+      createComputed(() => namespaces.push(index.namespaceTarget("2026-10-23")!.name));
+      createComputed(() => { index.linkTarget("Unrelated"); unrelated++; });
+      return dispose;
+    });
+    expect(links).toEqual(["Alpha"]);
+    index.patchPageIndex(2n, { keys: ["oct 23rd, 2026"], entries: [day("Beta")] });
+    expect(index.linkTarget("2026-10-23").name).toBe("Beta");
+    expect(links).toEqual(["Alpha", "Beta"]);
+    expect(routes).toEqual(["Alpha", "Beta"]);
+    expect(namespaces).toEqual(["Oct 23rd, 2026", "Oct 23rd, 2026"]);
+    index.patchPageIndex(3n, { keys: ["oct 23rd, 2026"], entries: [] });
+    expect(links.at(-1)).toBe("2026-10-23");
+    index.patchPageIndex(4n, { keys: ["oct 23rd, 2026"], entries: [day("Alpha")] });
+    expect(links.at(-1)).toBe("Alpha");
+    expect(backendMock.pageInventory).not.toHaveBeenCalled();
+    backendMock.pageInventory.mockResolvedValue(inventory(5, file("Alpha"), file("Beta"), day("Alpha"), file("2026-10-23")));
+    await index.refreshPageIndex();
+    expect(links.at(-1)).toBe("2026-10-23");
+    const runs = links.length;
+    index.patchPageIndex(6n, { keys: ["oct 23rd, 2026"], entries: [day("Beta")] });
+    expect(links.length).toBe(runs);
+    expect(unrelated).toBe(1);
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
   it.each([8, 32])("patches one name without visiting or notifying %i unrelated names", async (size) => {
     const { createRoot, createComputed } = await import("solid-js");
     let visits = 0;

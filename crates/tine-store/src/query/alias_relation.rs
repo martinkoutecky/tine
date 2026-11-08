@@ -24,6 +24,58 @@ use std::sync::Arc;
 
 type Multiset = Map<String, u32>;
 
+/// The other names of `target`'s alias group (D-20261019-AL1/AL2) as
+/// ((journal kind, page key), spelling). A fileless day retains an authored
+/// spelling when its canonical title belongs to an ordinary file, so the
+/// string-only alias-group wire answer can still open the day.
+/// `target` itself is not one. The group is the alias component Linked
+/// References use, without the journal-day spellings. Cost: O(component log
+/// P), with the generation's real-name table.
+pub(crate) fn alias_group_members(
+    graph: &ReadSnapshot,
+    target: &str,
+) -> Vec<((bool, String), String)> {
+    let real = real_page_names(graph);
+    let (_, component, _) = graph_equivalent_page_names(graph, target, false);
+    let own = refs::page_key(target);
+    let format = graph.config().journal_format();
+    let own_day = real
+        .opening_entry(&own)
+        .is_none_or(|entry| entry.kind == PageKind::Journal)
+        .then(|| format.parse(target))
+        .flatten();
+    let mut members = std::collections::BTreeMap::new();
+    for key in component {
+        if key == own {
+            continue;
+        }
+        if let Some(entry) = real.opening_entry(&key) {
+            if entry.kind == PageKind::Journal
+                && own_day.is_some()
+                && format.parse(&entry.name) == own_day
+            {
+                continue;
+            }
+            members.insert((entry.kind == PageKind::Journal, key.clone()), key);
+        } else if let Some(spelling) = graph.alias_spelling(&key) {
+            let Some(answer) = crate::model::fileless_names::FilelessName::new(&format, &spelling)
+                .with_opening(&real, &spelling)
+            else {
+                continue;
+            };
+            if own_day.is_some() && answer.day == own_day {
+                continue;
+            }
+            let canonical_key = refs::page_key(&answer.name);
+            let spelling = answer.opening_name.unwrap_or(answer.name);
+            members
+                .entry((answer.day.is_some(), canonical_key))
+                .or_insert(spelling);
+        }
+    }
+    members.into_iter().collect()
+}
+
 impl crate::model::ReadSnapshot {
     /// Direct alias owners through the configured date interpretation. Raw
     /// rows stay literal; the reader checks active ordinary claims (KD).

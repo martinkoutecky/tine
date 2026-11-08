@@ -14,9 +14,7 @@ import { PageRef } from "../render/inline";
  * of their own; a link to one opens the page declaring it (with several, the
  * one whose file path sorts first: `Resolved::Alias`). The second row lists
  * the other names that have their own file; a link to one opens that file,
- * even an empty alias page that every other link redirects to its owner
- * (EMPTY-ALIAS, `PageRef file`; Logseq's alias group headers bypass that
- * redirect too).
+ * including an empty file (R13-C4). `PageRef file` carries its physical path.
  * Blocks are never merged. The backend owns the group (`page_alias_group`,
  * transitive over every page's `alias::`); this page's own declared names
  * show at once while an edit is still publishing, sorted into the two rows by

@@ -42,11 +42,15 @@ export function ownerPath(
 /** Where a link or a named route goes: a page name and its kind. */
 export interface LinkDestination { readonly name: string; readonly kind: PageKind }
 
-/** Configured day lookup over the held typed rows; literal claims are checked first. */
-export function journalRowIn(index: InventoryRowIndex | null | undefined, name: string): PageInventoryEntry | undefined {
+/** Configured day lookup over the held typed rows; literal claims are checked first.
+ *  `readKey` tracks the canonical bucket, including a currently missing row. */
+export function journalRowIn(index: InventoryRowIndex | null | undefined, name: string, readKey?: (key: string) => void): PageInventoryEntry | undefined {
   if (!/\d/.test(name)) return undefined;
   const day = parseJournalTitle(name);
-  return day ? index?.journals.get(pageIdentityKey(journalTitle(day))) : undefined;
+  if (!day) return undefined;
+  const key = pageIdentityKey(journalTitle(day));
+  readKey?.(key);
+  return index?.journals.get(key);
 }
 
 /** What `[[name]]` opens over `index`. The store's answer
@@ -55,14 +59,14 @@ export function journalRowIn(index: InventoryRowIndex | null | undefined, name: 
  *  reference, so its answer is an absent page whose kind the Rust rule
  *  `JournalFormat::absent_link_is_journal` gives (through wasm). Decides
  *  nothing itself. O(1). */
-export function linkTargetIn(index: InventoryRowIndex | null | undefined, name: string, configuredDates = false): LinkDestination {
+export function linkTargetIn(index: InventoryRowIndex | null | undefined, name: string, configuredDates = false, readKey?: (key: string) => void): LinkDestination {
   const key = pageIdentityKey(name);
   const page = index?.pages.get(key);
   if (page) return page.link ?? { name: page.target.kind === "absent" ? name : page.name, kind: "page" };
   const journal = index?.journals.get(key);
   if (journal) return (configuredDates ? journal.link : undefined) ?? { name: journal.name, kind: "journal" };
   if (configuredDates && /\d/.test(name)) {
-    const canonical = journalRowIn(index, name);
+    const canonical = journalRowIn(index, name, readKey);
     if (canonical) return canonical.link ?? { name: canonical.name, kind: "journal" };
   }
   return { name, kind: absentLinkIsJournal(name) ? "journal" : "page" };
