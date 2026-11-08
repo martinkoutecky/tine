@@ -33,6 +33,7 @@ mod page_identity;
 mod page_parse;
 mod parse_depth;
 pub(crate) mod referenced_names;
+mod template_names;
 pub(crate) mod write_target;
 #[cfg(test)]
 pub(crate) use write_target::assert_checked_target;
@@ -574,8 +575,7 @@ pub(crate) struct ReadSnapshot {
     block_index: std::sync::OnceLock<SnapshotBlockIndex>,
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
-    /// Asset references by page and by name (`asset_ref_index.rs`): built on
-    /// first use, then carried by per-file deltas. In memory only.
+    /// Asset references by page/name, built lazily and carried by page deltas.
     asset_refs: std::sync::OnceLock<asset_ref_index::AssetRefIndex>,
     /// Graph-wide referenced names by page key, derived from
     /// `referenced_name_index` on first use and patched per generation
@@ -594,6 +594,7 @@ pub(crate) struct ReadSnapshot {
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
+    template_names: template_names::TemplateNames,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
     pub(crate) transliteration_names: Arc<NameKeyMap>,
@@ -794,10 +795,7 @@ impl ReadSnapshot {
         let (pages, semantic_paths) =
             active_pages::capture(&physical_pages, &real_page_names, old, changed_paths);
         let changed_paths = semantic_paths.as_slice();
-        // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
-            // First, on the page-parse workers: it builds every block
-            // projection the other indexes read (GJ5 S1).
             let explicit =
                 SnapshotExplicitIndex::capture(None, &physical_pages, &[], None, &config);
             std::thread::scope(|scope| {
@@ -996,6 +994,7 @@ impl ReadSnapshot {
                 let _ = active_list.set(Arc::clone(materialized));
             }
         }
+        let template_names = template_names::TemplateNames::capture(old, &pages, changed_paths);
         let mut snapshot = Self {
             physical_pages,
             pages,
@@ -1020,6 +1019,7 @@ impl ReadSnapshot {
             block_ref_counts: std::sync::OnceLock::new(),
             public_block_ref_counts: std::sync::OnceLock::new(),
             icon_index: std::sync::OnceLock::new(),
+            template_names,
             memos: SnapshotMemos::default(),
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),

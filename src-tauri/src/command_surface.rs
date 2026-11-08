@@ -103,6 +103,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 252] = [
     "list_known_graphs",
     "list_orphan_assets",
     "list_spellcheck_dictionaries",
+    "list_template_names",
     "list_templates",
     "live_conflict_diff",
     "load_graph",

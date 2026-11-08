@@ -78,6 +78,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "loadPluginRegistryCache",
   "readLocalImage",
   "listTemplates",
+  "listTemplateNames",
   "guidePages",
   "activateEditor",
   "activateAbsentEditor",

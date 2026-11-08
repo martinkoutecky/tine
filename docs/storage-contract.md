@@ -552,6 +552,17 @@ concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).
+`WholeGraph::template_names()` lists names in the same page/preorder order as
+`templates()`, including duplicates, in O(T + name bytes). Publication derives
+a sparse tree of template-bearing page slots through the core template visitor
+and patches changed pages. Checkpoint restore rebuilds it in memory; its format
+is unchanged. The Settings picker uses a fallible off-UI graph read; Edit resolves
+only the chosen name through the existing named-template lookup, and refreshes the
+names when that definition is gone. Unit cost (I-25): no persisted bytes, files or
+transport bytes per edit; an edit re-derives only the changed page's row. Resident,
+on 64-bit: about 8 B per view, 96 B per template-bearing page and 24 B per template,
+plus name bytes; pages without templates add nothing (estimate from the layout, not
+measured).
 `InventoryScope::JournalFiles` (cost audit 2026-11-02 row 8) lists the journal
 days files claim in the captured view, one entry per day, from the view's
 existing day index (O(J log J), no file reads, no new index). The Journals

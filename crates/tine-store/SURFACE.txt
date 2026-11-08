@@ -455,7 +455,10 @@ fn store::WholeGraph::search
 struct store::Cancel
 struct store::SearchRequest
 
-## WholeGraph: View meta (ceiling: 4)
+## WholeGraph: View meta (ceiling: 5)
+# AB template picker brief explicitly requires template_names alongside templates;
+# templates returns insertion trees needed by existing callers, not names alone.
+fn store::WholeGraph::template_names
 # GH #681: property_facets answers field presence/types, not page-reference
 # membership; a field parameter cannot name a reference target and count its
 # distinct referring blocks. page_modified answers times; block_ref_counts UUIDs.

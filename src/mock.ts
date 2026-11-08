@@ -660,6 +660,11 @@ type MockBackend = Backend & {
 };
 export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((blocks): PageDto => ({ name: CONFLICT_DEMO_PAGE, kind: "page", title: CONFLICT_DEMO_PAGE, pre_block: "title:: Project Plan", blocks })), removeAccents = true): MockBackend {
   const all = [...PAGES, ...NAMED, ...extraPages];
+  const templates = [{ name: "meeting", page: "Templates", kind: "page" as const, blocks: [
+    { id: "t1", raw: "## Meeting [[<% today %>]]", collapsed: false, children: [] },
+    { id: "t2", raw: "Attendees:", collapsed: false, children: [] },
+    { id: "t3", raw: "TODO Follow up", collapsed: false, children: [] },
+  ] }];
   // Page ownership uses narrow identity; search membership uses the graph fold.
   const identity = (name: string) => name.toLowerCase().normalize("NFC");
   const fold = (text: string) => searchFold(text, removeAccents);
@@ -1300,20 +1305,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         cancelled: false,
       };
     },
+    async listTemplateNames() { return templates.map(t => t.name); },
     async listTemplates(name?: string) {
-      const templates = [
-        {
-          name: "meeting",
-          page: "Templates",
-          kind: "page" as const,
-          blocks: [
-            { id: "t1", raw: "## Meeting [[<% today %>]]", collapsed: false, children: [] },
-            { id: "t2", raw: "Attendees:", collapsed: false, children: [] },
-            { id: "t3", raw: "TODO Follow up", collapsed: false, children: [] },
-          ],
-        },
-      ];
-      return name === undefined ? templates : templates.filter((t) => t.name === name).slice(0, 1);
+      return structuredClone(name === undefined ? templates : templates.filter((t) => t.name === name).slice(0, 1));
     },
     async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
       const q = fold(query.trim());
