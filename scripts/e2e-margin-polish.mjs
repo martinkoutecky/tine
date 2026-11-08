@@ -165,7 +165,7 @@ try {
     await browser.execute((text) => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(text.length, text.length); }, COMMENT);
     await browser.keys(["Enter"]);
   }
-  if (replyButton) { await browser.keys(REPLY); await browser.keys(["Enter"]); }
+  if (replyButton) { await browser.keys(REPLY); await browser.keys(["Control", "Enter"]); }
   else { await type(REPLY); await leave(); }
   await persisted(REPLY);
   await shot("05-reply");
@@ -251,8 +251,13 @@ try {
   check(journalBytes === fs.readFileSync(JOURNAL, "utf8"), "Reload changed the journal bytes");
   if (!BASELINE) {
     await editText("Keep this revised remark");
-    await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(ta.value.length, ta.value.length); });
-    await browser.keys(["Enter"]);
+    await leave();
+    const host = await browser.execute(() => [...document.querySelectorAll(".comment-card")].find(el => el.querySelector(":scope > .block-main")?.textContent.includes("Keep this revised remark"))?.dataset.blockId);
+    await browser.$(`[data-block-id="${host}"]`).moveTo();
+    await browser.$(`[data-block-id="${host}"] > .comment-composer textarea`).click();
+    await browser.keys("A hand note"); await browser.keys(["Control", "Enter"]);
+    await persisted("A hand note"); await editText("A hand note");
+    await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(0, ta.value.length); });
     await type("A hand note");
     await browser.keys(["Shift", "Enter"]);
     // Individual native key commands release duplicate ':' keys reliably.

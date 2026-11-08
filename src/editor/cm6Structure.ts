@@ -9,7 +9,7 @@ import {
   setRaw,
   bodyNeighbor, threadRootOf,
 } from "../document";
-import { captureEditIntent, editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
+import { captureEditIntent, editingId, endEdit, startEditing, type EditorSelection as CaretSelection } from "../editorController";
 import { navigateJournalDown } from "./journalNavigation";
 import { isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { guardedCommands } from "./cm6Commands";
@@ -18,7 +18,7 @@ import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { autoPairing, documentMode, docModeEnterForNewBlock } from "../ui";
 import { backspacePairEdit } from "./autopair";
-import { replyOnEnter } from "../commentActions";
+import { commentKey } from "./commentKeys";
 import { detectMacro } from "../components/Rendered";
 import { listLineAt } from "../components/blockParts";
 import { type CollapseSurfaceApi } from "../components/Block";
@@ -209,7 +209,6 @@ export function cm6Structure(ctx: StructureContext) {
     }
     if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
     ctx.commit(v.state.doc.toString());
-    if (s.empty && replyOnEnter(ctx.id, raw, s.from, editSurface())) return true;
     const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
     splitBlock(ctx.id, s.from, zoom, zoom, editSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE);
     return true;
@@ -236,6 +235,7 @@ export function cm6Structure(ctx: StructureContext) {
   };
   const keydown = (e: KeyboardEvent, v: EditorView) => {
     if (!ctx.current() || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
+    if (commentKey(e, ctx.id, () => { softNewline(v); }, () => { ctx.commit(v.state.doc.toString()); endEdit("page-navigation"); })) return true;
     if (isTabLikeEvent(e) && !isPermittedTabGesture(e)) return false;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     if (e.key === "Enter" && plain) {

@@ -59,7 +59,7 @@ export async function checkMarginThreads(browser, graph, artifact) {
   try {
     await openPageByName(browser, PAGE);
     await browser.$(".margin-column .margin-thread").waitForExist({ timeout: 10000 });
-    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".margin-thread").length === 5), { timeout: 10000 });
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".margin-thread").length === 4), { timeout: 10000 });
     if (process.env.E2E_MARGIN_BASE_CSS === "1") {
       const css = execFileSync("git", ["show", "f391144efb930724415efa2fc380b525e38d6d88:src/styles/comments.css"], { encoding: "utf8" });
       await browser.execute(text => {
@@ -81,7 +81,7 @@ export async function checkMarginThreads(browser, graph, artifact) {
       if (mark) before.setEndBefore(mark);
       const bodyX = id => row(id).querySelector(":scope > .block-main .block-content").getBoundingClientRect().left;
       return {
-        order: [...document.querySelectorAll(".margin-thread")].slice(0, 3).map(el => el.querySelector(".ls-block").dataset.blockRef),
+        order: [...document.querySelectorAll(".margin-thread")].slice(0, 2).flatMap(el => [...el.querySelectorAll(".comment-card")].map(row => row.dataset.blockRef)),
         beforeLast: mark ? before.toString() : null, parentText: content.textContent,
         xs: [ids.early, ids.reply, ids.deep].map(bodyX),
         count: p.querySelector(".margin-marker").textContent,

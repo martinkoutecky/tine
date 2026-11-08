@@ -2,12 +2,41 @@
    A comment block (`quote::` under a parent block) and its thread are one tinted
    card; agent-written blocks (`author::`) carry a chip and a quiet left mark. */
 
-.ls-block.comment-card {
+.ls-block.comment-card, .comment-group {
   margin: 4px 0;
   padding: 2px 8px 4px 8px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.comment-group > .ls-block.comment-card {
+  background: transparent;
+  box-shadow: none;
+  margin: 0;
+  padding: 0;
+}
+.comment-group > .ls-block.comment-card + .ls-block.comment-card {
+  border-top: 1px solid var(--border-color);
+  border-radius: 0;
+  margin-top: 8px;
+}
+.comment-new-thread {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.comment-below-chip {
+  align-self: flex-start;
+  flex: none;
+  margin: 4px 6px;
+  padding: 0 6px;
+  border: 1px solid var(--text-muted);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
 }
 
 .comment-quote {
@@ -112,13 +141,43 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--author-color) 22%, transparent);
 }
 
-/* "Not yours": a block an agent wrote keeps a quiet mark at its content edge. */
+/* Authorship never adds padding or changes text coordinates (GH #893).
+   The two-pixel line is centred in the existing six-pixel bullet gap.
+   Each row covers its own block-main padding so sibling segments meet. */
 .ls-block.authored > .block-main > .block-content-wrapper {
-  box-shadow: -2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
-  /* Authorship is decoration, not an extra outline level. In particular this
-     wrapper can hold a whole embedded outline or query, not just prose. Keep
-     the line in the gutter so it cannot paint over the first character. */
+  position: relative;
 }
+.author-mark {
+  position: absolute;
+  inset-inline-start: -4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--author-color, var(--accent)) 45%, transparent);
+  z-index: 1;
+}
+.author-run-continued > .block-main > .block-content-wrapper > .author-mark { top: -1px; }
+.author-run-continues > .block-main > .block-content-wrapper > .author-mark { bottom: -1px; }
+/* Numbered bullets already use a four-pixel gap, in either note direction. */
+.block-main:has(> .block-controls > .bullet-container.ordered) > .block-content-wrapper > .author-mark { inset-inline-start: -3px; }
+.author-mark-label {
+  display: none;
+  position: absolute;
+  inset-inline-start: 6px;
+  bottom: 100%;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.author-mark:hover > .author-mark-label,
+.block-main:hover > .block-content-wrapper > .author-mark > .author-mark-label,
+.author-mark:focus > .author-mark-label { display: block; }
+.author-mark:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
 /* Threads read flat in file pre-order, including hand-nested replies.
    Keep the stored tree intact: no structure or save operation runs to flatten it. */
@@ -133,12 +192,7 @@
 .ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
   display: none;
 }
-/* Inside a thread the chip alone says who wrote it: the quiet "not yours" edge
-   would read as a second depth rule. */
-.ls-block.comment-in-thread.authored > .block-main > .block-content-wrapper {
-  box-shadow: none;
-  padding-inline-start: 0;
-}
+/* Inside a thread the chip keeps the block menu. */
 .comment-handle {
   cursor: context-menu;
 }
@@ -172,7 +226,7 @@
 .comment-composer { display: none; margin: 8px 0 2px; }
 .comment-card:hover > .comment-composer,
 .comment-card:focus-within > .comment-composer,
-.margin-thread.active > .comment-card > .comment-composer,
+.margin-thread.active > .comment-group > .comment-card > .comment-composer,
 .comment-composer.expanded { display: block; }
 .comment-reply-draft {
   display: block;
@@ -249,11 +303,11 @@
   inset-inline-start: 0;
   inset-inline-end: 0;
 }
-.margin-thread > .ls-block.comment-card {
+.margin-thread > .comment-group {
   margin: 0;
   font-size: 0.93em;
 }
-.margin-thread.active > .ls-block.comment-card {
+.margin-thread.active > .comment-group {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
     0 1px 6px color-mix(in srgb, var(--accent) 18%, transparent);
 }

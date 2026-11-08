@@ -23,6 +23,7 @@ import { preserveAboveViewport } from "../scrollContainer";
 import { observeViewportWindow } from "../viewportWindow";
 import { trackRetirementPin } from "../retirementPins";
 import { inPageFindOpen } from "../inpageFind";
+import { authorSiblingNeighbors, type AuthorNeighbors } from "./authorRuns";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -94,7 +95,7 @@ export function stablePartition(ids: readonly string[], sizes: readonly number[]
   return out;
 }
 
-export function BlockList(props: { ids: readonly string[]; render?: (id: string) => JSX.Element }): JSX.Element {
+export function BlockList(props: { ids: readonly string[]; render?: (id: string, neighbours: AuthorNeighbors) => JSX.Element }): JSX.Element {
   return <For {...blockListProps(() => props.ids, props.render)} />;
 }
 
@@ -103,8 +104,10 @@ export function BlockList(props: { ids: readonly string[]; render?: (id: string)
  * depth. The getter stays reactive; this module owns grouping and rendering.
  * Pass these props intact; destructuring each takes a snapshot. Same costs
  * and lifetime as BlockList, no document mutation. */
-export function blockListProps(idsOf: () => readonly string[], render = (id: string): JSX.Element => <Block id={id} />): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
+export function blockListProps(idsOf: () => readonly string[], render?: (id: string, neighbours: AuthorNeighbors) => JSX.Element): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
   onCleanup(listenForOutlinePrint());
+  const siblings = authorSiblingNeighbors(idsOf);
+  const renderRow = (id: string) => render ? render(id, siblings.neighbours(id)) : <Block id={id} authorNeighbors={siblings.neighbours(id)} />;
   const collapseSurface = useContext(CollapseSurfaceContext);
   const [groups, setGroups] = createSignal<readonly WindowGroup[]>([]);
   // Keep the list owner across structural edits. For keys windows by their
@@ -116,7 +119,7 @@ export function blockListProps(idsOf: () => readonly string[], render = (id: str
     return ids;
   };
   const entries = (): readonly OutlineEntry[] => {
-    const ids = idsOf();
+    const ids = siblings.ids();
     if (ids.length <= 1) return plain(ids);
     // A shallow list can still own thousands of expanded descendants. Weight
     // groups by rendered subtree size, capped at the small-list threshold.
@@ -161,7 +164,7 @@ export function blockListProps(idsOf: () => readonly string[], render = (id: str
   return {
     get each() { return entries(); },
     children: (entry: OutlineEntry): JSX.Element => typeof entry === "string"
-      ? render(entry) : <WindowedList groups={entry.groups} render={render} />,
+      ? renderRow(entry) : <WindowedList groups={entry.groups} render={renderRow} />,
   };
 }
 

@@ -61,7 +61,7 @@ export function cm6Formatting(ctx: {
     const view = ctx.view()!, s = view.state.selection.main;
     ctx.closeCompletion();
     commentFromEditor(ctx.id, { value: view.state.doc.toString(), selectionStart: s.from, selectionEnd: s.to },
-      ctx.commit, ctx.surface.startsWith("embed:") ? ctx.surface : null, ctx.owner);
+      ctx.commit, ctx.surface, ctx.owner);
   };
   const commands = guardedCommands(current, {
     ...Object.fromEntries(Object.entries(inlineCommands).map(([id, kind]) => [id, () => {

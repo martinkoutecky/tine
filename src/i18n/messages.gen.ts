@@ -260,6 +260,7 @@ export interface MessageArgs {
   "command-ui-open-settings": {};
   "command-ui-reload-window": {};
   "command-ui-reset-zoom": {};
+  "command-ui-toggle-author-marks": {};
   "command-ui-toggle-brackets": {};
   "command-ui-toggle-code-block-wrap": {};
   "command-ui-toggle-comment-margin": {};
@@ -292,9 +293,12 @@ export interface MessageArgs {
   "commands-select-text-in-a-block-then-use": {};
   "commands-undo-redo-mode": { "mode": string | number };
   "comment-author-you": {};
+  "comment-below": { "count": string | number };
+  "comment-below-expand": { "count": string | number };
   "comment-block-cannot-take": {};
   "comment-block-changed": {};
   "comment-delete": {};
+  "comment-hide": {};
   "comment-margin-count": { "count": number };
   "comment-margin-draft-pending": {};
   "comment-margin-label": {};
@@ -307,6 +311,7 @@ export interface MessageArgs {
   "comment-name-prompt-save": {};
   "comment-name-prompt-scope": {};
   "comment-name-prompt-title": {};
+  "comment-new-thread": {};
   "comment-on-whole-block": {};
   "comment-quote-ambiguous": {};
   "comment-quote-changed": {};
@@ -314,6 +319,8 @@ export interface MessageArgs {
   "comment-reply": {};
   "comment-reply-placeholder": {};
   "comment-select-first": {};
+  "comment-send": {};
+  "comment-show": {};
   "comment-stale-write-what": {};
   "comment-toolbar": {};
   "comment-toolbar-shortcut": {};
@@ -2456,9 +2463,12 @@ export interface MessageArgs {
   "settings-accent-line-and-dot-only": {};
   "settings-agenda-days-ahead": { "source": string | number };
   "settings-alphabetically-by-the-page-each-result-lives": {};
+  "settings-annotation-visibility": {};
   "settings-appearance": {};
   "settings-asset-trash-confirmation": { "count": number; "size": string | number };
   "settings-asset-trash-emptied": { "count": number };
+  "settings-author-marks": {};
+  "settings-author-marks-hint": {};
   "settings-auto-embed-video-links": {};
   "settings-auto-embed-video-links-hint": {};
   "settings-autodetect": {};

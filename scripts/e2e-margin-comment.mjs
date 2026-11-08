@@ -6,7 +6,7 @@
 // scripts/e2e-margin-column.mjs). The graph is under git and no name is set, so
 // the first comment asks for "Your name" once (tine#841); the name given there
 // is a device setting, shown in Settings, and the comment and the reply written
-// with Enter both carry `tine.author:: <name>`.
+// with the composer both carry `tine.author:: <name>`.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -205,10 +205,11 @@ try {
   if ((await browser.execute(() => window.__marginE2E)) !== "alive") throw new Error("Ctrl+R reloaded the webview");
 
   await browser.keys(REPLY);
-  // Enter in the comment's text starts a reply as its last child.
-  await browser.keys(["Enter"]);
-  await browser.keys(REPLY_2);
   await browser.keys(["Escape"]);
+  await browser.$(".comment-card").moveTo();
+  await browser.$(".comment-reply-draft").click();
+  await browser.keys(REPLY_2);
+  await browser.keys(["Control", "Enter"]);
 
   // On disk: the reply is a child of the agent block and carries tine.quote::.
   const saved = await waitForFileText(PAGE_FILE, (text) => text.includes(REPLY_2) && text.includes(`tine.quote:: ${PHRASE}`), { timeoutMs: 20_000 });
@@ -222,7 +223,7 @@ try {
   const props = [];
   for (let i = replyLine + 1; i < lines.length && !lines[i].trimStart().startsWith("- "); i++) props.push(lines[i].trim());
   if (!props.some((line) => line.startsWith("tine.quote-prefix:: "))) throw new Error(`the comment carries no tine.quote-prefix:: (MC2): ${JSON.stringify(saved)}`);
-  // Your name: the comment carries it, and so does the reply written with Enter.
+  // Your name: the comment carries it, and so does the reply from the composer.
   if (props[props.length - 1] !== `tine.author:: ${MY_NAME}`) throw new Error(`the comment does not carry tine.author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
   const secondReply = lines.findIndex((line) => line.trimStart() === `- ${REPLY_2}`);
   if (secondReply < 0 || indent(lines[secondReply]) <= indent(lines[replyLine]) || lines[secondReply + 1]?.trim() !== `tine.author:: ${MY_NAME}`) {
@@ -268,7 +269,7 @@ try {
   await browser.$(".comment-card").moveTo();
   await draft.click();
   await browser.keys("A draft reply");
-  await browser.keys(["Enter"]);
+  await browser.keys(["Control", "Enter"]);
   const drafted = await waitForFileText(PAGE_FILE, text => text.includes("A draft reply"), { timeoutMs: 20_000 });
   const draftLines = drafted.split("\n");
   const draftAt = draftLines.findIndex(line => line.trim() === "- A draft reply");
