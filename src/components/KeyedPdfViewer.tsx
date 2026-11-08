@@ -4,6 +4,7 @@ import { pdfNavigationIntent } from "../pdfNavigation";
 import { pdfOwnershipKey, type PdfOwnership } from "../pdfOwnership";
 import type { PdfTarget } from "./pdfViewerPrimitives";
 import { PdfViewer } from "./PdfViewer";
+import { takeExternalPdfSource } from "../externalPdfSource";
 
 /**
  * A view (viewId) is the mount identity, not a navigation request: page and
@@ -38,9 +39,11 @@ export function KeyedPdfViewer(props: {
     <Show when={resourceKey()} keyed>
       {(_key) => {
         const target = resolvedTarget()!;
+        const externalRead = takeExternalPdfSource(props.route()!.viewId, target.filename);
         return (
           <PdfViewer
             filename={target.filename}
+            externalRead={externalRead}
             label={resolvedTarget()?.label ?? target.filename}
             owner={target.owner}
             page={resolvedTarget()?.page}

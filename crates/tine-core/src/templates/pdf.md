@@ -3,6 +3,10 @@ icon:: 📄
 - # PDF annotation
 	- Open a PDF that lives in your graph's `assets/` (or drop one in). On desktop it opens as a tab in a companion pane, keeping your notes visible. On a phone it opens in the same one-pane history.
 	- Opening and reading a PDF changes no graph files. Its highlight sidecar and notes page are created when you first highlight or annotate; existing highlights and notes stay available.
+	- **Outside PDFs (desktop):** use `![label](file:///absolute/path/paper.pdf)` in Markdown or `[[file:///absolute/path/paper.pdf][label]]` in Org. Click the link to open the file in the same reader, without copying it into `assets/`. Windows drive links such as `file:///C:/Papers/paper.pdf` work too; encode spaces as `%20`.
+		- Outside PDFs are **read-only**: find text, zoom, jump to pages, and select/copy text. Highlights, area capture and highlight notes are unavailable until outside files have a stable annotation identity. Opening, scrolling and zooming write nothing into the graph.
+		- A plain Markdown `[label](file:///absolute/path/paper.pdf)` link opens in your system's default app. iOS and Android keep their existing outside-link behavior; they cannot access outside files in Tine's reader.
+		- The file is read only after you click its link. After restarting Tine, open the original link again to authorize the read. A missing file, permission error, wrong file type or file above 256 MiB shows an error in the reader with its path.
 	- **Select text** in the PDF to highlight it; click a highlight again to change its color.
 	- Hold **Shift** while dragging a rectangle on Linux or Windows, or **Command** on macOS, then choose a color to clip a figure or equation as an image highlight. Dismissing the color chooser writes nothing.
 	- Use the reader toolbar to choose a persistent **Light**, **Warm**, or **Dark** page theme, and open **Outline** to navigate a PDF's nested table of contents.

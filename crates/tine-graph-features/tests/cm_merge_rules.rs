@@ -346,25 +346,17 @@ fn alias_source_empty_target_and_same_key() {
         ],
     );
     assert!(
-        matches!(rename_offer(&store, "ML", "AI", None).unwrap(), RenameOffer::AliasOf {
-        owner, merge: true, own_page: false, ..
-    } if owner == "pages/target.md")
+        matches!(rename_offer(&store, "ML", "AI", None).unwrap(), RenameOffer::Merge {
+        into, ..
+    } if into == "pages/AI.md")
     );
     assert!(rename(&store, "ML", "AI", RenameChoice::OwnPage).is_err());
-    rename(
-        &store,
-        "ML",
-        "AI",
-        RenameChoice::MergeInto("pages/target.md"),
-    )
-    .unwrap();
+    rename(&store, "ML", "AI", RenameChoice::MergeInto("pages/AI.md")).unwrap();
     let after = snapshot(&root);
     assert_eq!(after["pages/AI.md"], "");
     assert_eq!(after["pages/owner.md"], "alias:: AI\n\n- owner\n");
-    assert_eq!(
-        after["pages/q.md"],
-        "- [[AI]]\n- {{query (page \"target\")}}\n"
-    );
+    assert_eq!(after["pages/q.md"], "- [[AI]]\n- {{query (page \"AI\")}}\n");
+    assert_eq!(after["pages/target.md"], "alias:: AI\n\n- target\n");
     assert_eq!(
         rename_offer(&store, "AI", "ai", None).unwrap(),
         RenameOffer::Rename
@@ -387,20 +379,18 @@ fn alias_source_empty_target_and_same_key() {
     assert_eq!(snapshot(&root)["pages/b.md"], "alias:: ml\n");
 }
 
-/// CM-R9-EMPTYDIALOG: an empty alias target must offer the owner, retain the
-/// empty file on merge, and fill that exact file on OwnPage.
+/// R13-C4: an empty real target receives content through the guarded merge.
 #[test]
 fn empty_alias_target_dialog_and_both_answers() {
     let _guard = crate::integration_lock();
-    for own in [false, true] {
+    for text in ["", "- \n", "- existing\n"] {
         let mut files = ML.to_vec();
-        files.push(("pages/ML.md", "- \n"));
+        files.push(("pages/ML.md", text));
         let (root, store) = fixture("empty-target", &files);
         let offer =
             serde_json::to_value(rename_offer(&store, "ML notes", "ML", None).unwrap()).unwrap();
-        assert_eq!(offer["kind"], "aliasOf", "{offer}");
-        assert_eq!(offer["owner"], "pages/Machine Learning.md");
-        assert_eq!(offer["ownPage"], true);
+        assert_eq!(offer["kind"], "merge", "{offer}");
+        assert_eq!(offer["into"], "pages/ML.md");
         let before = snapshot(&root);
         assert!(rename(&store, "ML notes", "ML", RenameChoice::Rename).is_err());
         assert_eq!(snapshot(&root), before, "no answer writes nothing");
@@ -408,25 +398,16 @@ fn empty_alias_target_dialog_and_both_answers() {
             &store,
             "ML notes",
             "ML",
-            if own {
-                RenameChoice::OwnPage
-            } else {
-                RenameChoice::MergeInto("pages/Machine Learning.md")
-            },
+            RenameChoice::MergeInto("pages/ML.md"),
         )
         .unwrap();
         let after = snapshot(&root);
         assert!(!after.contains_key("pages/ML notes.md"));
         assert!(after["pages/ML%2Fx.md"].contains("child"));
         assert!(after["pages/Machine Learning.md"].contains("alias:: ML"));
-        if own {
-            assert!(after["pages/ML.md"].contains("notes"));
-            assert!(after["pages/q.md"].contains("(page \"ML\")"));
-        } else {
-            assert_eq!(after["pages/ML.md"], "- \n");
-            assert!(after["pages/Machine Learning.md"].contains("notes"));
-            assert!(after["pages/q.md"].contains("(page \"Machine Learning\")"));
-        }
+        assert!(after["pages/ML.md"].contains("notes"));
+        assert!(!after["pages/Machine Learning.md"].contains("notes"));
+        assert!(after["pages/q.md"].contains("(page \"ML\")"));
         assert!(after["pages/q.md"].contains("see [[ML]]"));
         assert!(backlink_pages(&store, "Machine Learning").contains(&"q".to_owned()));
     }
@@ -447,13 +428,28 @@ fn fileless_alias_offer_rejects_own_page() {
         }
         let (root, store) = fixture("fileless-alias", &files);
         let offer = serde_json::to_value(rename_offer(&store, "B", "ML", None).unwrap()).unwrap();
-        assert_eq!(offer["kind"], "aliasOf");
-        assert_eq!(offer["merge"], true);
-        assert_eq!(offer["ownPage"], false);
+        assert_eq!(
+            offer["kind"],
+            if empty_target { "merge" } else { "aliasOf" }
+        );
+        if !empty_target {
+            assert_eq!(offer["merge"], true);
+            assert_eq!(offer["ownPage"], false);
+        }
         let before = snapshot(&root);
         assert!(rename(&store, "B", "ML", RenameChoice::OwnPage).is_err());
         assert_eq!(snapshot(&root), before);
-        rename(&store, "B", "ML", RenameChoice::MergeInto("pages/owner.md")).unwrap();
+        rename(
+            &store,
+            "B",
+            "ML",
+            RenameChoice::MergeInto(if empty_target {
+                "pages/ML.md"
+            } else {
+                "pages/owner.md"
+            }),
+        )
+        .unwrap();
         assert!(snapshot(&root)["pages/refs.md"].contains("[[ML]]"));
     }
     let (root, store) = fixture(

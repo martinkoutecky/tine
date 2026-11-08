@@ -101,7 +101,9 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// preambles, so both old query indexes and memoized answers must rebuild.
 // 27 (R13 G1 / OWN2): only active claimants supply semantic indexes and
 // answers; every physical file is retained. Older answers rebuild once.
-pub(crate) const FORMAT: u32 = 27;
+// 28 (R13 G11): configured date-alias classes change retained reference and
+// query answers. The body schema and graph files are unchanged.
+pub(crate) const FORMAT: u32 = 28;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import { patchPageIndex, refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { readPageProperty, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { initParser } from "../render/parse";
@@ -120,4 +120,26 @@ it("follows live inventory changes and real-page precedence without another grap
   expect(visible(s.root)).toBe("15");
   expect(vi.mocked(backend().pageInventory).mock.calls.length).toBe(reads);
   s.dispose();
+});
+
+it("re-resolves a saved date filter when that day's alias owner changes", async () => {
+  const day = (owner: string) => ({ name: "Oct 23rd, 2026", key: "oct 23rd, 2026", is_journal: true, day: 20261023,
+    target: { kind: "alias" as const, owners: [`pages/${owner}.md`] }, link: { name: owner, kind: "page" as const } });
+  const file = (name: string) => ({ name, key: name.toLowerCase(), is_journal: false, day: null,
+    target: { kind: "existing" as const, id: `pages/${name}.md`, others: [] } });
+  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [file("Alpha"), file("Beta"), day("Alpha")] });
+  await refreshPageIndex();
+  loadSingle({ name: "Target", kind: "page", title: "Target", pre_block: 'filters:: {"2026-10-23" true}', format: "md", blocks: [] });
+  const names = [...Array(5).fill("Alpha"), ...Array(2).fill("Beta")];
+  const groups: RefGroup[] = [{ page: "Source", kind: "page", blocks: names.map((name, i) => ({ id: `r${i}`, raw: `[[Target]] [[${name}]]`, tags: [name], children: [], collapsed: false })) }];
+  vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+  vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({ entries: names.map((name, i) => ({ page: "Source", kind: "page", block_id: `r${i}`, text: name, facets: [name] })) });
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <LinkedReferences name="Target" />, root);
+  await vi.waitFor(() => expect(root.querySelector(".references-count")?.textContent).toBe("5"));
+  const reads = vi.mocked(backend().pageInventory).mock.calls.length;
+  expect(patchPageIndex(2n, { keys: ["oct 23rd, 2026"], entries: [day("Beta")] })).not.toBeNull();
+  await vi.waitFor(() => expect(visible(root)).toBe("2"));
+  expect(vi.mocked(backend().pageInventory).mock.calls.length).toBe(reads);
+  dispose();
 });

@@ -10,7 +10,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
-import { allPageNameKeys, isNamespaceName, isNamespacePage } from "../pageIndex";
+import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, namespaceTarget } from "../pageIndex";
 import { isPublishedExport } from "../publishedBackend";
 import { EmojiText } from "../render/emoji";
 import { SidebarTitle } from "./SidebarTitle";
@@ -26,19 +26,21 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
  *  Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab
  *  (GH #283), Alt → other pane (GH #438). `stop` keeps a row's own click
  *  handler from also firing. */
-export function nsLink(name: string, after?: () => void, stop = false) {
+export function nsLink(name: string, after?: () => void, stop = false, kind: PageKind = "page") {
+  const opening = () => entityOpening(name, kind);
   return {
     "data-ref": pageIdentityKey(name),
     onMouseDown: internalLinkMouseDown,
     onClick: (e: MouseEvent) => {
       if (stop) e.stopPropagation();
       const dest = internalLinkDest(e);
-      if (dest === "sidebar") openPageInSidebar(name, "page");
-      else if (dest === "background") openPageInNewTab(name, "page");
-      else if (dest === "pane") openRouteInOtherPane({ kind: "page", name, pageKind: "page" });
-      else { openPage(name, "page"); after?.(); }
+      const target = opening();
+      if (dest === "sidebar") openPageInSidebar(target.name, target.kind);
+      else if (dest === "background") openPageInNewTab(target.name, target.kind);
+      else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: target.name, pageKind: target.kind });
+      else { openPage(target.name, target.kind); after?.(); }
     },
-    onAuxClick: (e: MouseEvent) => internalLinkAuxClick(e, () => openPageInNewTab(name, "page")),
+    onAuxClick: (e: MouseEvent) => internalLinkAuxClick(e, () => { const target = opening(); openPageInNewTab(target.name, target.kind); }),
   };
 }
 
@@ -51,9 +53,11 @@ export function NamespaceCrumb(props: { name: string }): JSX.Element {
         <For each={parts().slice(0, -1)}>
           {(_, i) => {
             const prefix = () => parts().slice(0, i() + 1).join("/");
+            const target = () => isPublishedExport() ? { name: prefix(), kind: "page" as const }
+              : namespaceTarget(parts().slice(0, i() + 2).join("/"), true) ?? { name: prefix(), kind: "page" as const };
             return (
               <>
-                <span class="ns-crumb-item" {...nsLink(prefix())}>
+                <span class="ns-crumb-item" {...nsLink(target().name, undefined, false, target().kind)}>
                   {parts()[i()]}
                 </span>
                 <span class="ns-crumb-sep">/</span>
@@ -72,6 +76,7 @@ export interface NsNode {
   seg: string;
   full: string;
   children: NsNode[];
+  kind?: PageKind;
 }
 
 /** The namespace tree of the inventory's names (CM step 2 batch 10, model rule 1):
@@ -89,6 +94,8 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
   // Published answers v1 is frozen (ANSWERS-V2): keep its former namespace
   // interpretation until the publication format can carry the live answers.
   const legacy = isPublishedExport();
+  const identity = (name: string) => legacy ? { name, kind: "page" as const } : namespaceTarget(name)!;
+  const typedKey = (name: string, kind: PageKind = "page") => `${kind}:${pageIdentityKey(name)}`;
   // Every namespace name is a node. A name without `/` can only be a first
   // segment, so only first-segment keys are wanted from plain names.
   const nodes = new Map<string, NsNode>();
@@ -96,21 +103,32 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
   const wanted = new Set<string>();
   for (const name of names) {
     if (!name.includes("/")) continue;
-    const key = pageIdentityKey(name);
-    if (nodes.has(key) || !isNamespaceName(name, key) || !isNamespacePage(name, key)) continue;
-    const node: NsNode = { seg: name, full: name, children: [] };
+    const rawKey = pageIdentityKey(name);
+    const target = identity(name);
+    const key = typedKey(target.name, target.kind);
+    if (nodes.has(key) || !isNamespaceName(name, rawKey) || !isNamespacePage(name, rawKey)) continue;
+    const node: NsNode = { seg: name, full: name, children: [], ...(target.kind === "journal" ? { kind: target.kind } : {}) };
     nodes.set(key, node);
     const segs = name.split("/");
     slashed.push([node, segs]);
-    wanted.add(pageIdentityKey(segs[0]));
+    const parent = legacy ? { name: segs[0], kind: "page" as const } : namespaceTarget(name, true);
+    if (parent) wanted.add(typedKey(parent.name, parent.kind));
   }
   // `allPageNames()` already holds every name's key (`allPageNameKeys`); any
   // other list pays one key call per plain name.
   const known = allPageNameKeys(names);
   names.forEach((name, at) => {
     if (name.includes("/")) return;
-    const key = known?.[at] ?? pageIdentityKey(name);
-    if (wanted.has(key) && !nodes.has(key) && isNamespacePage(name, key)) nodes.set(key, { seg: name, full: name, children: [] });
+    const rawKey = known?.[at] ?? pageIdentityKey(name);
+    if (!wanted.has(`page:${rawKey}`) && !wanted.has(`journal:${rawKey}`)) return;
+    const targets = legacy ? [identity(name)] : [namespaceTarget(name, false, "page"), namespaceTarget(name, false, "journal")];
+    // Names supplied before the inventory arrives still have the plain-page fallback.
+    if (!targets.some(Boolean)) targets.push(identity(name));
+    for (const target of targets) {
+      if (!target) continue;
+      const key = typedKey(target.name, target.kind);
+      if (wanted.has(key) && !nodes.has(key) && isNamespacePage(name, rawKey)) nodes.set(key, { seg: name, full: name, children: [], ...(target.kind === "journal" ? { kind: target.kind } : {}) });
+    }
   });
   // One key call per immediate parent. Missing alias-only intermediates do
   // not attach a child to a more distant ancestor (model round 11, C12).
@@ -122,11 +140,12 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
     // r11 C12: no edge across an alias-only immediate parent. Empty
     // prefixes are skipped, as the model's shared nsParent answers them.
     while (depth > 0 && !segs.slice(0, depth).join("/")) depth--;
-    const candidate = nodes.get(pageIdentityKey(segs.slice(0, depth).join("/")));
+    const target = legacy ? { name: segs.slice(0, depth).join("/"), kind: "page" as const } : namespaceTarget(node.full, true);
+    const candidate = target ? nodes.get(typedKey(target.name, target.kind)) : undefined;
     if (depth > 0 && candidate !== node) parent = candidate;
     if (legacy && !parent) {
       for (depth--; depth > 0; depth--) {
-        const ancestor = nodes.get(pageIdentityKey(segs.slice(0, depth).join("/")));
+        const ancestor = nodes.get(typedKey(segs.slice(0, depth).join("/")));
         if (ancestor && ancestor !== node) { parent = ancestor; break; }
       }
     }
@@ -181,10 +200,11 @@ function NsNodeView(props: {
         </Show>
         <span
           class="ns-node-label"
-          {...nsLink(props.node.full, props.onActiveNavigationComplete)}
+          {...nsLink(props.node.full, props.onActiveNavigationComplete, false, props.node.kind)}
           onContextMenu={(e) => {
             if (!shouldOpenTextContextMenu(e.target)) return;
-            props.onPageContextMenu?.(e, props.node.full, "page");
+            const target = entityOpening(props.node.full, props.node.kind ?? "page");
+            props.onPageContextMenu?.(e, target.name, target.kind);
           }}
         >
           <SidebarTitle text={props.node.seg} fullTitle={props.node.full} />
@@ -251,7 +271,7 @@ function NsMacroNode(props: { node: NsNode; depth: number }): JSX.Element {
             <PageIcon value={pageIcon(props.node.full)} name={props.node.full} />
           </span>
         </Show>
-        <a class="page-ref" {...nsLink(props.node.full, undefined, true)}>
+        <a class="page-ref" {...nsLink(props.node.full, undefined, true, props.node.kind)}>
           <EmojiText text={props.node.seg} />
         </a>
       </div>
@@ -263,11 +283,13 @@ function NsMacroNode(props: { node: NsNode; depth: number }): JSX.Element {
  *  see `buildNamespaceTree`), or null when the list does not hold `root` or
  *  nothing lies below it. Cost O(names x depth). */
 export function namespaceNode(names: readonly string[], root: string): NsNode | null {
-  const key = pageIdentityKey(root);
-  const pending = [...buildNamespaceTree(names)];
+  const target = isPublishedExport() ? { name: root, kind: "page" } : namespaceTarget(root);
+  const key = pageIdentityKey(target?.name ?? root);
+  const kind = target?.kind ?? "page";
+  const pending = [...namespaceTreeFor(names)];
   while (pending.length) {
     const node = pending.pop()!;
-    if (pageIdentityKey(node.full) === key) return node.children.length ? node : null;
+    if (pageIdentityKey(node.full) === key && (node.kind ?? "page") === kind) return node.children.length ? node : null;
     pending.push(...node.children);
   }
   return null;
@@ -280,13 +302,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   // inventory (src/pages.ts). Icons use the shared reactive batched lookup,
   // including unsaved loaded-page edits and publications for unloaded pages.
   const treeData = createMemo(() => {
-    const key = pageIdentityKey(props.root);
-    const prefix = `${key}/`;
-    const names = allPageNames().filter((n) => {
-      const nameKey = pageIdentityKey(n);
-      return nameKey === key || nameKey.startsWith(prefix);
-    });
-    const node = namespaceNode(names, props.root);
+    const node = namespaceNode(allPageNames(), props.root);
     return { tree: node ? [node] : [] };
   });
   const iconOf = pageIcon;
@@ -308,7 +324,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
                   <PageIcon value={iconOf(root.full)!} name={root.full} />
                 </span>
               </Show>
-              <a class="page-ref" {...nsLink(root.full, undefined, true)}>
+              <a class="page-ref" {...nsLink(root.full, undefined, true, root.kind)}>
                 <EmojiText text={root.full} />
               </a>
             </div>
@@ -344,11 +360,12 @@ export function namespaceHierarchyRows(allNames: readonly string[], name: string
     return isNamespaceName(name) ? [name.split("/").slice(0, -1)] : [];
   }
   if (!isNamespacePage(name)) return [];
-  const key = pageIdentityKey(name);
+  const target = namespaceTarget(name);
+  const key = pageIdentityKey(target?.name ?? name);
   const pending = namespaceTreeFor(allNames).map((node) => ({ node, parent: null as NsNode | null }));
   while (pending.length) {
     const { node, parent } = pending.pop()!;
-    if (pageIdentityKey(node.full) === key) {
+    if (pageIdentityKey(node.full) === key && (node.kind ?? "page") === target?.kind) {
       const below = namespaceRows(node.children).map((row) => row.node.full);
       if (below.length) return below.sort((a, b) => pageIdentityKey(a).localeCompare(pageIdentityKey(b))).map((n) => n.split("/"));
       return parent ? [parent.full.split("/")] : [];
@@ -392,6 +409,13 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                   <For each={segs}>
                     {(seg, i) => {
                       const full = () => segs.slice(0, i() + 1).join("/");
+                      const target = () => {
+                        if (isPublishedExport()) return { name: full(), kind: "page" as const };
+                        const parent = namespaceTarget(props.name, true);
+                        return (i() < segs.length - 1 ? namespaceTarget(segs.slice(0, i() + 2).join("/"), true)
+                          : parent?.name === full() ? parent : namespaceTarget(full()))
+                          ?? { name: full(), kind: "page" as const };
+                      };
                       return (
                         <>
                           <Show when={i() > 0}>
@@ -399,7 +423,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                           </Show>
                           <a
                             class="page-ref"
-                            {...nsLink(full(), undefined, true)}
+                            {...nsLink(target().name, undefined, true, target().kind)}
                           >
                             <span class="bracket">[[</span>
                             {seg}

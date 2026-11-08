@@ -505,6 +505,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
             const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
               fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>
               <QueryMacro body={`${entry().extent!.name} ${entry().extent!.argument}`} blockId={props.blockId}
+                hostRaw={{ raw: props.raw, format: props.format ?? "md" }}
                 sourceExtent={entry().extent} sourceRaw={props.raw.slice(entry().extent!.start, entry().extent!.end)} />
             </Show>}</Index>;
             return <><Show when={blockIndex > 0}><br /></Show>

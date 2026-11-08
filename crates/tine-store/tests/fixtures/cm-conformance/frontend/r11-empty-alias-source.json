@@ -66,13 +66,8 @@
   "inventory": [
     {
       "day": null,
-      "empty_alias": true,
       "is_journal": false,
       "key": "b",
-      "link": {
-        "kind": "page",
-        "name": "Machine Learning"
-      },
       "name": "B",
       "target": {
         "id": "pages/B.md",
@@ -220,7 +215,7 @@
     "B": {
       "backend": [
         "page",
-        "machine learning"
+        "b"
       ],
       "day": null,
       "model": [

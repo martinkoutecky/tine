@@ -6,7 +6,7 @@ import { changed } from "../changeKeys";
 import type { PaneRouter } from "../router";
 import type { PageEntry } from "../types";
 import { allPages, pageListLabels } from "../pages";
-import { installPageIndex, referenceOnlyPages } from "../pageIndex";
+import { entityOpening, installPageIndex, referenceOnlyPages } from "../pageIndex";
 import { hidden_from_all_pages } from "../render/wasm/lsdoc_wasm";
 import { createQuietRun } from "../querySubscription";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
@@ -142,10 +142,13 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
     sort().key !== key ? "none" : sort().desc ? "descending" : "ascending";
   const arrow = (key: AllPagesSortKey) => (sort().key !== key ? "" : sort().desc ? " ▾" : " ▴");
 
-  const open = (row: AllPagesRow, event: MouseEvent) => {
-    const { entry } = row;
+  const targetFor = (entry: PageEntry) => {
     // A reference-only page has no file: it opens by name (path `""`).
-    const target = { name: entry.name, pageKind: entry.kind, path: entry.path || undefined };
+    const opening = entry.path ? { name: entry.name, kind: entry.kind } : entityOpening(entry.name, entry.kind);
+    return { name: opening.name, pageKind: opening.kind, path: entry.path || undefined };
+  };
+  const open = (row: AllPagesRow, event: MouseEvent) => {
+    const target = targetFor(row.entry);
     const dest = internalLinkDest(event);
     if (dest === "sidebar") openPageInSidebar(target);
     else if (dest === "background") props.router.openPageTargetInNewTab(target);
@@ -220,7 +223,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                     onMouseDown={internalLinkMouseDown}
                     onContextMenu={(event) => {
                       event.preventDefault();
-                      openPageContextMenu(event.clientX, event.clientY, { name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path || undefined });
+                      openPageContextMenu(event.clientX, event.clientY, targetFor(row.entry));
                     }}
                   >
                     <button
@@ -230,7 +233,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                       title={row.entry.path}
                       onClick={(event) => open(row, event)}
                       onAuxClick={(event) =>
-                        internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path || undefined }))}
+                        internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab(targetFor(row.entry)))}
                     >
                       {/* OG all-pages table: `icon::` before the name (page.cljs :td.name). */}
                       <Show when={pageIcon(row.entry.name)}>{(icon) => <span class="all-pages-icon"><PageIcon value={icon()} name={row.entry.name} /> </span>}</Show>

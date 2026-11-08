@@ -483,19 +483,11 @@ pub(super) fn plan_rename(
         let id = ids[0].clone();
         // An alias names its owner's page, so it is taken like a file name;
         // a journal day is taken by its journal (M-Q7).
-        let destination = if refs::normalize(&new_name) != old_key {
-            graph
-                .redirecting_alias_owners(&new_name)
-                .map(Holder::Aliases)
-        } else {
-            None
+        let (mut taken, alias_only) = match holder(&graph, &journal_format, &new_name) {
+            Holder::Free => (Vec::new(), false),
+            Holder::Files(files) => (files, false),
+            Holder::Aliases(owners) => (owners, true),
         };
-        let (mut taken, alias_only) =
-            match destination.unwrap_or_else(|| holder(&graph, &journal_format, &new_name)) {
-                Holder::Free => (Vec::new(), false),
-                Holder::Files(files) => (files, false),
-                Holder::Aliases(owners) => (owners, true),
-            };
         if alias_only {
             validate_target(&existing(graph.resolve(&new_name, false)), None)?;
         }
@@ -642,7 +634,7 @@ pub(super) fn plan_rename(
             // when several pages declare it. No source owner is selected.
             Some(Holder::Free)
         } else {
-            graph.redirecting_alias_owners(new).map(Holder::Aliases)
+            None
         };
         let (taken, alias_only) =
             match destination.unwrap_or_else(|| holder(&graph, &journal_format, new)) {

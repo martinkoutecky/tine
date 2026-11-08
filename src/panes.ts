@@ -17,6 +17,7 @@ import {
   type PdfRoute,
 } from "./router";
 import { publishPdfNavigationIntent } from "./pdfNavigation";
+import { authorizeExternalPdf, type ExternalPdfRead } from "./externalPdfSource";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
@@ -639,6 +640,8 @@ function pdfTab(filename: string): { paneId: string; tabId: string; route: PdfRo
 }
 
 export interface OpenPdfOptions {
+  /** Memory-only authorization supplied by Tine's own outside-PDF link click. */
+  externalRead?: ExternalPdfRead;
   sourcePaneId?: string;
   inPlace?: boolean;
   background?: boolean;
@@ -649,7 +652,7 @@ export interface OpenPdfOptions {
   scale?: number;
 }
 
-/** Open a graph PDF as an ordinary route. A plain open reuses an existing view
+/** Open a PDF as an ordinary route. A plain open reuses an existing view
  * of the file, keeping its page when no target is requested; anotherView always
  * opens a new one. Desktop uses a companion pane; mobile uses the current tab's
  * history (and has no second view). Cost O(open tabs), no graph I/O. */
@@ -663,16 +666,25 @@ export function openPdf(filename: string, label: string, page?: number,
   if (existing) {
     const router = paneRouter(existing.paneId);
     router.setActiveTab(existing.tabId);
+    // A restored outside route has no read authorization. An explicit link
+    // open refreshes its mount in the same tab, preserving page and zoom.
+    const route = options.externalRead ? makePdfRoute(filename, label,
+      { page: existing.route.page, scale: existing.route.scale }) : existing.route;
+    if (options.externalRead) {
+      authorizeExternalPdf(route.viewId, filename, options.externalRead);
+      router.replaceActiveRoute(route);
+    }
     if (page !== undefined) router.updateActivePdfViewState({ page });
     if (page !== undefined || highlightId !== undefined) {
-      publishPdfNavigationIntent(existing.route.viewId, { page, highlightId });
+      publishPdfNavigationIntent(route.viewId, { page, highlightId });
     }
     if (!options.background) focusPane(existing.paneId);
-    return existing.route;
+    return route;
   }
   // A phone shows one PDF per pane; a second view there would only replace it.
   if (options.anotherView && pdfTakesOverPane()) return null;
   const route = makePdfRoute(filename, label, { page, scale: options.scale });
+  if (options.externalRead) authorizeExternalPdf(route.viewId, filename, options.externalRead);
   publishPdfNavigationIntent(route.viewId, { page, highlightId });
   if (pdfTakesOverPane() || options.inPlace) {
     paneRouter(sourcePaneId).openPdf(route);

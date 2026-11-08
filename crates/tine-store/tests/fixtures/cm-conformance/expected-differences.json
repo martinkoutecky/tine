@@ -307,10 +307,26 @@
       "d4-date-named-page-file-format": [
         "frontend navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), frontend (\"journal\", \"oct 25th, 2026\") via (journal, Oct 25th, 2026); backend agrees with the frontend"
       ],
-      "d6-fileless-date-parent": [
-        "frontend navigate [[2026-10-22]]: model (\"page\", \"owner\"), frontend (\"journal\", \"2026_22_10\") via (journal, 2026-10-22); backend agrees with the frontend",
-        "frontend navigate [[22.10.2026]]: model (\"page\", \"owner\"), frontend (\"journal\", \"2026_22_10\") via (journal, 22.10.2026); backend agrees with the frontend",
-        "frontend navigate [[Oct 22nd, 2026]]: model (\"page\", \"owner\"), frontend (\"journal\", \"2026_22_10\") via (journal, Oct 22nd, 2026); backend agrees with the frontend"
+      "r11-empty-alias-source": [
+        "frontend navigate [[B]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"b\") via (page, B); backend agrees with the frontend"
+      ],
+      "r11-empty-alias-target": [
+        "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
+      ],
+      "r11-fileless-empty-alias-target": [
+        "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
+      ],
+      "r12-alias-source-empty-target": [
+        "frontend navigate [[AI]]: model (\"page\", \"artificial intelligence\"), frontend (\"page\", \"ai\") via (page, AI); backend agrees with the frontend"
+      ],
+      "r12-alias-source-two-empty-targets": [
+        "frontend navigate [[AI]]: model (\"page\", \"one\"), frontend (\"page\", \"ai\") via (page, AI); backend agrees with the frontend"
+      ],
+      "r3-empty-own-file": [
+        "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
+      ],
+      "r9-empty-alias-blank-block": [
+        "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
       ]
     }
   },
@@ -343,10 +359,6 @@
         "frontend all pages count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, All Pages 1",
         "frontend all pages: row ref:oct 25th, 2026 (count 1) owns no model page",
         "frontend linked refs header of (\"page\", \"oct 25th, 2026\") [[25-10-2026]]: model 2, header 1"
-      ],
-      "d6-fileless-date-parent": [
-        "frontend all pages count of (\"page\", \"owner\") (pages/Owner.md): model 1, All Pages 0",
-        "frontend linked refs header of (\"page\", \"owner\") [[Owner]]: model 1, header 0"
       ],
       "n1-legacy-codec": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
@@ -398,7 +410,7 @@
         "frontend all pages: row pages/other.md (count —) owns no model page"
       ],
       "q1-page-and-journal-same-day": [
-        "frontend all pages: row journals/2026_10_26.md (count 1) owns no model page",
+        "frontend all pages: row journals/2026_10_26.md (count 0) owns no model page",
         "frontend all pages: row pages/2026-10-26.md (count 1) owns no model page"
       ],
       "q6-task-and-priority-pages": [
@@ -591,15 +603,7 @@
     "fixtures": {}
   },
   "frontendNamespaces": {
-    "fixtures": {
-      "d6-fileless-date-parent": [
-        "frontend hierarchy \"2026_23_10\": model [23.10.2026/child], Tine []",
-        "frontend hierarchy \"23.10.2026/child\": model [2026_23_10], Tine []",
-        "frontend namespace tree: model has node \"2026_23_10\" (under the top), Tine does not",
-        "frontend namespace tree: model has node \"23.10.2026/child\" (under 2026_23_10), Tine does not",
-        "frontend {{namespace 2026_23_10}}: model [23.10.2026/child], Tine []"
-      ]
-    }
+    "fixtures": {}
   },
   "frontendRefs": {
     "fixtures": {}
@@ -1337,24 +1341,18 @@
         "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"machine learning\"],[\"page\",\"ml\"]],[[\"page\",\"machine learning\"],[\"page\",\"machine learning\"]]], actual writer [[[\"page\",\"machine learning\"],[\"page\",\"ml\"]]]"
       ],
       "r11-empty-alias-target: ML notes -> ML: offers/automatic": [
-        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"},{\"destination\":\"ML\",\"survivor\":null}]"
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"}]"
       ],
-      "r11-empty-alias-target: ML notes -> ML: {\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"}": [
-        "G3/B4: safe candidate cannot be selected through the original request"
-      ],
+      "r11-empty-alias-target: ML notes -> ML: {\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"}": [],
       "r11-empty-alias-target: ML notes -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [
-        "G3/B4: physical output paths: model [\"pages/ML.md\", \"pages/Machine Learning%2Fx.md\", \"pages/Machine Learning.md\", \"pages/c.md\"], Tine [\"pages/ML%2Fx.md\", \"pages/ML.md\", \"pages/Machine Learning.md\", \"pages/c.md\"]",
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Machine Learning\"],[\"link\",\"ML\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning/x\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"ML\"],[\"link\",\"ML\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"ML/x\"}}]}],\"name\":\"c\"}",
-        "G3/B4: computed after-meaning pages: model [[\"page\",\"machine learning/x\"],[\"page\",\"ml\"],[\"page\",\"machine learning\"],[\"page\",\"c\"]], actual writer [[\"page\",\"ml/x\"],[\"page\",\"ml\"],[\"page\",\"machine learning\"],[\"page\",\"c\"]]"
+        "G3/B4: safe candidate cannot be selected through the original request"
       ],
       "r11-fileless-empty-alias-target: B -> ML: offers/automatic": [
-        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":null}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":null}]"
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":null}], Tine [{\"destination\":\"ML\",\"survivor\":null}]"
       ],
-      "r11-fileless-empty-alias-target: B -> ML: {\"destination\":\"ML\",\"survivor\":null}": [
-        "G3/B4: safe candidate cannot be selected through the original request"
-      ],
+      "r11-fileless-empty-alias-target: B -> ML: {\"destination\":\"ML\",\"survivor\":null}": [],
       "r11-fileless-empty-alias-target: B -> ML: {\"destination\":\"Machine Learning\",\"survivor\":null}": [
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Machine Learning\"],[\"link\",\"ML\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"ML\"],[\"link\",\"ML\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]}],\"name\":\"c\"}"
+        "G3/B4: safe candidate cannot be selected through the original request"
       ],
       "r11-leading-legacy-stem: /n -> z: offers/automatic": [],
       "r11-leading-legacy-stem: /n -> z: {\"destination\":\"z\",\"survivor\":null}": [],
@@ -1374,15 +1372,11 @@
         "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"owner\"],[\"journal\",\"oct 26th, 2026\"]],[[\"page\",\"owner\"],[\"page\",\"owner\"]]], actual writer [[[\"page\",\"owner\"],[\"journal\",\"oct 26th, 2026\"]]]"
       ],
       "r12-alias-source-empty-target: ML -> AI: offers/automatic": [
-        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"Artificial Intelligence\",\"survivor\":null}], Tine [{\"destination\":\"Artificial Intelligence\",\"survivor\":null}]"
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"Artificial Intelligence\",\"survivor\":null}], Tine [{\"destination\":\"AI\",\"survivor\":null}]"
       ],
-      "r12-alias-source-empty-target: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
-        "G3/B4: safe candidate cannot be selected through the original request"
-      ],
+      "r12-alias-source-empty-target: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
       "r12-alias-source-empty-target: ML -> AI: {\"destination\":\"Artificial Intelligence\",\"survivor\":null}": [
-        "G3/B4: ordered file projection pages/Machine Learning.md: model {\"aliases\":[\"Artificial Intelligence\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Artificial Intelligence\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}, Tine {\"aliases\":[\"AI\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}",
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Artificial Intelligence\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence\"}}]}],\"name\":\"c\"}",
-        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"artificial intelligence\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"artificial intelligence\"]]], actual writer [[[\"page\",\"artificial intelligence\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"ai\"]]]"
+        "G3/B4: safe candidate cannot be selected through the original request"
       ],
       "r12-alias-source-journal-declarer: ML -> AI: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null}], Tine []",
@@ -1481,11 +1475,9 @@
       "r12-alias-source-two-declarers: ML -> AI: offers/automatic": [],
       "r12-alias-source-two-declarers: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
       "r12-alias-source-two-empty-targets: ML -> AI: offers/automatic": [
-        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"one\",\"survivor\":null},{\"destination\":\"two\",\"survivor\":null}], Tine []"
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"one\",\"survivor\":null},{\"destination\":\"two\",\"survivor\":null}], Tine [{\"destination\":\"AI\",\"survivor\":null}]"
       ],
-      "r12-alias-source-two-empty-targets: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
-        "G3/B4: safe candidate cannot be selected through the original request"
-      ],
+      "r12-alias-source-two-empty-targets: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
       "r12-alias-source-two-empty-targets: ML -> AI: {\"destination\":\"one\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
@@ -2481,7 +2473,9 @@
       "c5-property-pages-disabled": [],
       "c6-markers-and-priorities": [],
       "c7-ref-only-page-queries": [],
-      "d1-file-format-links": [],
+      "d1-file-format-links": [
+        "[[24-10-2026]]: first owner pages/Plan.md, inventory None"
+      ],
       "d2-title-format-links": [],
       "d3-both-formats-alias-group": [],
       "d4-date-named-page-file-format": [
@@ -2489,20 +2483,11 @@
         "Linked References of (\"page\", \"oct 25th, 2026\"): model has block (\"pages/x.md\", 1), Tine does not",
         "navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), Tine (\"journal\", \"oct 25th, 2026\")",
         "pages: Tine has (\"journal\", \"oct 25th, 2026\"), model does not",
-        "query \"[[25-10-2026]]\": model has block (\"pages/x.md\", 1), Tine does not",
-        "query \"@page and name = '25-10-2026'\": Tine has page (\"journal\", \"oct 25th, 2026\"), model does not"
+        "query \"[[25-10-2026]]\": model has block (\"pages/x.md\", 1), Tine does not"
       ],
       "d5-lenient-spellings": [],
       "d6-fileless-date-parent": [
-        "backlink count of (\"page\", \"owner\") (pages/Owner.md): model 1, Tine 0 (as Tine's Linked References, which differ from the model's)",
-        "Linked References of (\"page\", \"owner\"): model has block (\"pages/Notes.md\", 0), Tine does not",
-        "link \"notes\" -> \"2026_22_10\": Tine has it, model does not",
-        "link \"owner\" -> \"2026_22_10\": Tine has it, model does not",
-        "link \"notes\" -> \"owner\": model has it, Tine does not",
-        "navigate [[2026-10-22]]: model (\"page\", \"owner\"), Tine (\"journal\", \"2026_22_10\")",
-        "navigate [[22.10.2026]]: model (\"page\", \"owner\"), Tine (\"journal\", \"2026_22_10\")",
-        "navigate [[Oct 22nd, 2026]]: model (\"page\", \"owner\"), Tine (\"journal\", \"2026_22_10\")",
-        "query \"[[2026_22_10]]\": model has block (\"pages/Notes.md\", 0), Tine does not"
+        "[[2026_22_10]]: first owner pages/Owner.md, inventory None"
       ],
       "n1-legacy-codec": [],
       "n2-triple-lowbar-codec": [],
@@ -2517,13 +2502,17 @@
       "o1-twin-title-vs-file-name": [],
       "o2-alias-on-non-owner-twin": [],
       "o2-alias-owner-path-order": [],
-      "o2-date-alias-on-owner": [],
+      "o2-date-alias-on-owner": [
+        "[[2026-10-26]]: first owner pages/A.md, inventory None"
+      ],
       "o2-date-alias-on-twin": [
         "query \"any(direct_refs, journal = true)\": native list reads [\"2026-10-26\", \"2026-10-26\"] in block (\"pages/A.md\", 0) as a day, the query does not"
       ],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [
-        "conflicts: model \"oct 26th, 2026\" conflicted, Tine not"
+        "conflicts: model \"oct 26th, 2026\" conflicted, Tine not",
+        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (as Tine's Linked References, which differ from the model's)",
+        "Linked References of (\"journal\", \"oct 26th, 2026\"): model has block (\"pages/Notes.md\", 0), Tine does not"
       ],
       "q6-task-and-priority-pages": [],
       "r1-namespace-parent": [],
@@ -2540,14 +2529,24 @@
       "r10-relative-real-pages": [],
       "r10-url-real-pages": [],
       "r11-alias-namespace": [],
-      "r11-empty-alias-source": [],
-      "r11-empty-alias-target": [],
-      "r11-fileless-empty-alias-target": [],
+      "r11-empty-alias-source": [
+        "navigate [[B]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"b\")"
+      ],
+      "r11-empty-alias-target": [
+        "navigate [[ML]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"ml\")"
+      ],
+      "r11-fileless-empty-alias-target": [
+        "navigate [[ML]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"ml\")"
+      ],
       "r11-leading-legacy-stem": [],
       "r11-leading-title": [],
       "r11-sparse-alias-parent": [],
-      "r12-alias-source-date": [],
-      "r12-alias-source-empty-target": [],
+      "r12-alias-source-date": [
+        "[[2026-10-26]]: first owner pages/owner.md, inventory None"
+      ],
+      "r12-alias-source-empty-target": [
+        "navigate [[AI]]: model (\"page\", \"artificial intelligence\"), Tine (\"page\", \"ai\")"
+      ],
       "r12-alias-source-journal": [],
       "r12-alias-source-journal-declarer": [],
       "r12-alias-source-journal-target": [],
@@ -2559,7 +2558,9 @@
       "r12-alias-source-same-key": [],
       "r12-alias-source-same-owner": [],
       "r12-alias-source-two-declarers": [],
-      "r12-alias-source-two-empty-targets": [],
+      "r12-alias-source-two-empty-targets": [
+        "navigate [[AI]]: model (\"page\", \"one\"), Tine (\"page\", \"ai\")"
+      ],
       "r12-alias-source-two-targets": [],
       "r12-alias-source-unused": [],
       "r12-preamble-queries": [],
@@ -2567,7 +2568,9 @@
       "r2-alias-chain": [],
       "r2-journal-in-alias-group": [],
       "r3-capital-sorts-first": [],
-      "r3-empty-own-file": [],
+      "r3-empty-own-file": [
+        "navigate [[ML]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"ml\")"
+      ],
       "r3-indirect-declarer": [],
       "r3-own-file-wins": [],
       "r3-two-declarers": [],
@@ -2592,7 +2595,9 @@
       ],
       "r7-page-queries": [],
       "r9-case-rename-onto-taken-file": [],
-      "r9-empty-alias-blank-block": [],
+      "r9-empty-alias-blank-block": [
+        "navigate [[ML]]: model (\"page\", \"machine learning\"), Tine (\"page\", \"ml\")"
+      ],
       "r9-empty-alias-undeclared": [],
       "r9-empty-alias-with-content": [],
       "r9-journal-title": [],
@@ -2631,6 +2636,33 @@
           ]
         }
       },
+      "[duplicate claim] alias owner: inventory vs first owner by path": {
+        "detail": "[[2026-10-26]]: first owner journals/2026_10_26.md, inventory None",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: 2026-10-26\n\n- see [[a]]\n",
+            "pages/N%2Fy.md": "",
+            "pages/n%2Fy.md": "alias:: n/y, B\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "2026-10-26"
+                  },
+                  {
+                    "refs": "n"
+                  }
+                ]
+              },
+              "tine": "(or [[2026-10-26]] [[n]])"
+            }
+          ]
+        }
+      },
       "[duplicate claim] conflicts: model-only": {
         "detail": "conflicts: model \"oct 26th, 2026\" conflicted, Tine not",
         "graph": {
@@ -2659,34 +2691,7 @@
         }
       },
       "[duplicate claim] counts: as Tine's Linked References": {
-        "detail": "backlink count of (\"page\", \"oct 26th, 2026\") (pages/2026-10-26.md): model 0, Tine 1 (as Tine's Linked References, which differ from the model's)",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "",
-            "pages/2026-10-26.md": "alias:: x, 2026-10-26\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "refs": "x"
-              },
-              "tine": "[[x]]"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "name": "n/y"
-              },
-              "tine": "@page and name = 'n/y'"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] linked refs: Tine-only": {
-        "detail": "Linked References of (\"page\", \"oct 26th, 2026\"): Tine has block (\"pages/2026-10-26.md\", 0), model does not",
+        "detail": "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (as Tine's Linked References, which differ from the model's)",
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
@@ -2717,33 +2722,24 @@
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
-            "pages/2026-10-26.md": "alias:: n/y\n\n- [#A] priority\n  - child [[a]]\n"
+            "pages/2026-10-26.md": "alias:: x, 2026-10-26\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "refs": "n/y"
+                "refs": "x"
               },
-              "tine": "[[n/y]]"
+              "tine": "[[x]]"
             },
             {
               "anchor": "page",
               "dialect": "tql",
               "q": {
-                "and": [
-                  {
-                    "name": "N/y"
-                  },
-                  {
-                    "not": {
-                      "name": "x"
-                    }
-                  }
-                ]
+                "name": "n/y"
               },
-              "tine": "@page and (name = 'N/y' and not (name = 'x'))"
+              "tine": "@page and name = 'n/y'"
             }
           ]
         }
@@ -2752,29 +2748,71 @@
         "detail": "link \"oct 26th, 2026\" -> \"oct 26th, 2026\": model has it, Tine does not",
         "graph": {
           "files": {
-            "journals/2026_10_26.md": "alias:: n, a\n\n- note\n  rel:: [[n/y]]\n  - child [[n]]\n",
-            "pages/2026-10-26.md": ""
+            "journals/2026_10_26.md": "",
+            "pages/2026-10-26.md": "alias:: x, 2026-10-26\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "not": {
-                  "page": {
-                    "name": "A"
-                  }
-                }
+                "refs": "x"
               },
-              "tine": "(not (page \"A\"))"
+              "tine": "[[x]]"
             },
             {
               "anchor": "page",
               "dialect": "tql",
               "q": {
-                "name": "N/y"
+                "name": "n/y"
               },
-              "tine": "@page and name = 'N/y'"
+              "tine": "@page and name = 'n/y'"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] navigate: model journal vs Tine page": {
+        "detail": "navigate [[A]]: model (\"journal\", \"oct 26th, 2026\"), Tine (\"page\", \"a\")",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: A\n\n- note\n  rel:: [[x]]\n- TODO task [[n]]\n  - child [[x]]\n- [#A] priority\n",
+            "pages/A.md": "",
+            "pages/a.md": "",
+            "pages/n%2Fy.md": "- TODO task [[a]]\n- note\n  rel:: [[N/y]]\n- see [[n]]\n",
+            "pages/x.md": "- plain words\n- see [[A]]\n- 2026-10-26 mentioned\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "and": [
+                  {
+                    "refs": "n/y"
+                  },
+                  {
+                    "not": {
+                      "refs": "2026-10-26"
+                    }
+                  }
+                ]
+              },
+              "tine": "(and [[n/y]] (not [[2026-10-26]]))"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "or": [
+                  {
+                    "name": "n"
+                  },
+                  {
+                    "name": "2026-10-26"
+                  }
+                ]
+              },
+              "tine": "@page and (name = 'n' or name = '2026-10-26')"
             }
           ]
         }
@@ -2869,6 +2907,299 @@
                 ]
               },
               "tine": "@page and (name = 'N/y' and not (name = 'x'))"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] query @page with not: Tine-only page": {
+        "detail": "query \"@page and not (name = '2026-10-26')\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: n/y\n",
+            "journals/2026_10_27.md": "",
+            "pages/2026-10-26.md": "alias:: 2026-10-26, 2026-10-26\n\n- N/y mentioned\n- [#A] priority\n- [#A] priority\n",
+            "pages/a.md": "- see [[a]]\n  - child [[A]]\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "N/y"
+                  },
+                  {
+                    "refs": "a"
+                  }
+                ]
+              },
+              "tine": "(or [[N/y]] [[a]])"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "not": {
+                  "name": "2026-10-26"
+                }
+              },
+              "tine": "@page and not (name = '2026-10-26')"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] query @page with not: model-only page": {
+        "detail": "query \"@page and (name = '2026-10-26' and not (name = 'B'))\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: B\n\n- note\n  rel:: [[2026-10-26]]\n- [[B]] and [[a]]\n- #A tagged\n  - child [[x]]\n",
+            "journals/2026_10_27.md": "alias:: B\n\n- #N/y tagged\n- see [[A]]\n",
+            "pages/2026-10-26.md": "",
+            "pages/N%2Fy.md": "- plain words\n  - child [[N/y]]\n- plain words\n  - child [[a]]\n- see [[B]]\n  - child [[2026-10-26]]\n",
+            "pages/n%2Fy.md": "alias:: A, x\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "n/y"
+                  },
+                  {
+                    "refs": "n/y"
+                  }
+                ]
+              },
+              "tine": "(or [[n/y]] [[n/y]])"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "and": [
+                  {
+                    "name": "2026-10-26"
+                  },
+                  {
+                    "not": {
+                      "name": "B"
+                    }
+                  }
+                ]
+              },
+              "tine": "@page and (name = '2026-10-26' and not (name = 'B'))"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] query @page: model-only page": {
+        "detail": "query \"@page and name = '2026-10-26'\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "",
+            "pages/2026-10-26.md": "- [#A] priority\n- [[A]] and [[N/y]]\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "and": [
+                  {
+                    "refs": "x"
+                  },
+                  {
+                    "not": {
+                      "page": {
+                        "name": "n/y"
+                      }
+                    }
+                  }
+                ]
+              },
+              "tine": "(and [[x]] (not (page \"n/y\")))"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "name": "2026-10-26"
+              },
+              "tine": "@page and name = '2026-10-26'"
+            }
+          ]
+        }
+      },
+      "alias owner: inventory vs first owner by path (one owner)": {
+        "detail": "[[2026-10-26]]: first owner pages/N%2Fy.md, inventory None",
+        "graph": {
+          "files": {
+            "pages/N%2Fy.md": "alias:: 2026-10-26\n\n- #2026-10-26 tagged\n- a mentioned\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "refs": "n"
+              },
+              "tine": "[[n]]"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "and": [
+                  {
+                    "name": "x"
+                  },
+                  {
+                    "not": {
+                      "name": "A"
+                    }
+                  }
+                ]
+              },
+              "tine": "@page and (name = 'x' and not (name = 'A'))"
+            }
+          ]
+        }
+      },
+      "alias owner: inventory vs first owner by path (several owners)": {
+        "detail": "[[2026-10-26]]: first owner pages/n%2Fy.md, inventory None",
+        "graph": {
+          "files": {
+            "pages/B.md": "title:: n\n\n- #A tagged\n  - child [[A]]\n- note\n  rel:: [[B]]\n  - child [[N/y]]\n- see [[x]]\n",
+            "pages/n%2Fy.md": "alias:: 2026-10-26\n\n- note\n  rel:: [[2026-10-26]]\n- plain words\n- B mentioned\n",
+            "pages/x.md": "alias:: n/y, 2026-10-26\n\n- plain words\n- note\n  rel:: [[A]]\n  - child [[a]]\n- plain words\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "and": [
+                  {
+                    "page": {
+                      "name": "N/y"
+                    }
+                  },
+                  {
+                    "not": {
+                      "page": {
+                        "name": "N/y"
+                      }
+                    }
+                  }
+                ]
+              },
+              "tine": "(and (page \"N/y\") (not (page \"N/y\")))"
+            }
+          ]
+        }
+      },
+      "navigate: model journal vs Tine page (claimed,occurrence,alias-edge)": {
+        "detail": "navigate [[N/y]]: model (\"journal\", \"oct 27th, 2026\"), Tine (\"page\", \"n/y\")",
+        "graph": {
+          "files": {
+            "journals/2026_10_27.md": "alias:: n/y\n\n- see [[A]]\n- plain words\n",
+            "pages/N%2Fy.md": ""
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "not": {
+                  "refs": "n"
+                }
+              },
+              "tine": "(not [[n]])"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "name": "x"
+              },
+              "tine": "@page and name = 'x'"
+            }
+          ]
+        }
+      },
+      "navigate: model page vs Tine page (claimed,occurrence,alias-edge)": {
+        "detail": "navigate [[N/y]]: model (\"page\", \"x\"), Tine (\"page\", \"n/y\")",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "",
+            "pages/B.md": "",
+            "pages/N%2Fy.md": "",
+            "pages/x.md": "alias:: n/y, n\n\n- n mentioned\n  - child [[n]]\n- plain words\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "a"
+                  },
+                  {
+                    "page": {
+                      "name": "N/y"
+                    }
+                  }
+                ]
+              },
+              "tine": "(or [[a]] (page \"N/y\"))"
+            }
+          ]
+        }
+      },
+      "navigate: model page vs Tine page (claimed,occurrence,file-name-prefix,alias-edge)": {
+        "detail": "navigate [[n]]: model (\"page\", \"n/y\"), Tine (\"page\", \"n\")",
+        "graph": {
+          "files": {
+            "journals/2026_10_27.md": "- #n tagged\n- n/y mentioned\n- B mentioned\n",
+            "pages/n%2Fy.md": "alias:: n\n",
+            "pages/n.md": ""
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "N/y"
+                  },
+                  {
+                    "refs": "2026-10-26"
+                  }
+                ]
+              },
+              "tine": "(or [[N/y]] [[2026-10-26]])"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "and": [
+                  {
+                    "name": "A"
+                  },
+                  {
+                    "not": {
+                      "name": "B"
+                    }
+                  }
+                ]
+              },
+              "tine": "@page and (name = 'A' and not (name = 'B'))"
             }
           ]
         }
@@ -3123,21 +3454,9 @@
       "d1-file-format-links": [],
       "d2-title-format-links": [],
       "d3-both-formats-alias-group": [],
-      "d4-date-named-page-file-format": [
-        "G11/B2a: query @page: Tine-only page (journal ref-only): query \"@page and name = '25-10-2026'\": Tine has page (\"journal\", \"oct 25th, 2026\"), model does not"
-      ],
+      "d4-date-named-page-file-format": [],
       "d5-lenient-spellings": [],
-      "d6-fileless-date-parent": [
-        "G11/B2a: navigation: \"2026-10-22\": model [\"page\",\"owner\"], Tine (\"journal\", \"2026_22_10\")",
-        "G11/B2a: navigation: \"22.10.2026\": model [\"page\",\"owner\"], Tine (\"journal\", \"2026_22_10\")",
-        "G11/B2a: navigation: \"Oct 22nd, 2026\": model [\"page\",\"owner\"], Tine (\"journal\", \"2026_22_10\")",
-        "G11/B2a: linked refs: (\"page\", \"owner\"): model {(\"pages/Notes.md\", 0)}, Tine {}",
-        "G11/B2a: counts: (\"page\", \"owner\") (pages/Owner.md): model 1, Tine Some(0)",
-        "G11/B2a: query @block: model-only block (): query \"[[2026_22_10]]\": model has block (\"pages/Notes.md\", 0), Tine does not",
-        "G11/B2a: links: link \"notes\" -> \"2026_22_10\": model=false, Tine=true",
-        "G11/B2a: links: link \"notes\" -> \"owner\": model=true, Tine=false",
-        "G11/B2a: links: link \"owner\" -> \"2026_22_10\": model=false, Tine=true"
-      ],
+      "d6-fileless-date-parent": [],
       "n1-legacy-codec": [],
       "n2-triple-lowbar-codec": [],
       "n3-org-file-links-legacy": [],
@@ -3154,11 +3473,7 @@
       "o2-date-alias-on-owner": [],
       "o2-date-alias-on-twin": [],
       "q1-duplicate-claim": [],
-      "q1-page-and-journal-same-day": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/Notes.md\", 0)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
-        "G11/B2a: links: link \"notes\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "q1-page-and-journal-same-day": [],
       "q6-task-and-priority-pages": [],
       "r1-namespace-parent": [],
       "r1-one-name-one-page": [],
@@ -3174,22 +3489,14 @@
       "r10-relative-real-pages": [],
       "r10-url-real-pages": [],
       "r11-alias-namespace": [],
-      "r11-empty-alias-source": [
-        "G2/B2: navigation real file: \"B\": model [\"page\",\"b\"], Tine (\"page\", \"machine learning\")"
-      ],
-      "r11-empty-alias-target": [
-        "G2/B2: navigation real file: \"ML\": model [\"page\",\"ml\"], Tine (\"page\", \"machine learning\")"
-      ],
-      "r11-fileless-empty-alias-target": [
-        "G2/B2: navigation real file: \"ML\": model [\"page\",\"ml\"], Tine (\"page\", \"machine learning\")"
-      ],
+      "r11-empty-alias-source": [],
+      "r11-empty-alias-target": [],
+      "r11-fileless-empty-alias-target": [],
       "r11-leading-legacy-stem": [],
       "r11-leading-title": [],
       "r11-sparse-alias-parent": [],
       "r12-alias-source-date": [],
-      "r12-alias-source-empty-target": [
-        "G2/B2: navigation real file: \"AI\": model [\"page\",\"ai\"], Tine (\"page\", \"artificial intelligence\")"
-      ],
+      "r12-alias-source-empty-target": [],
       "r12-alias-source-journal": [],
       "r12-alias-source-journal-declarer": [],
       "r12-alias-source-journal-target": [],
@@ -3201,9 +3508,7 @@
       "r12-alias-source-same-key": [],
       "r12-alias-source-same-owner": [],
       "r12-alias-source-two-declarers": [],
-      "r12-alias-source-two-empty-targets": [
-        "G2/B2: navigation real file: \"AI\": model [\"page\",\"ai\"], Tine (\"page\", \"one\")"
-      ],
+      "r12-alias-source-two-empty-targets": [],
       "r12-alias-source-two-targets": [],
       "r12-alias-source-unused": [],
       "r12-preamble-queries": [],
@@ -3212,9 +3517,7 @@
       "r13-configured-date-literal": [],
       "r13-empty-child-gains-parent": [],
       "r13-empty-namespace-output": [],
-      "r13-empty-real-opens-self": [
-        "G2/B2: navigation real file: \"B\": model [\"page\",\"b\"], Tine (\"page\", \"a\")"
-      ],
+      "r13-empty-real-opens-self": [],
       "r13-favorite-image-conflict": [],
       "r13-fileless-multiple": [],
       "r13-fixed-favorites-setting": [],
@@ -3244,9 +3547,7 @@
       "r2-alias-chain": [],
       "r2-journal-in-alias-group": [],
       "r3-capital-sorts-first": [],
-      "r3-empty-own-file": [
-        "G2/B2: navigation real file: \"ML\": model [\"page\",\"ml\"], Tine (\"page\", \"machine learning\")"
-      ],
+      "r3-empty-own-file": [],
       "r3-indirect-declarer": [],
       "r3-own-file-wins": [],
       "r3-two-declarers": [],
@@ -3269,9 +3570,7 @@
       "r7-nested-match": [],
       "r7-page-queries": [],
       "r9-case-rename-onto-taken-file": [],
-      "r9-empty-alias-blank-block": [
-        "G2/B2: navigation real file: \"ML\": model [\"page\",\"ml\"], Tine (\"page\", \"machine learning\")"
-      ],
+      "r9-empty-alias-blank-block": [],
       "r9-empty-alias-undeclared": [],
       "r9-empty-alias-with-content": [],
       "r9-journal-title": [],
@@ -3287,23 +3586,11 @@
       "random-101": [],
       "random-102": [],
       "random-103": [],
-      "random-104": [
-        "G11/B2a: query @page: Tine-only page (journal real): query \"@page and name = '2026-10-26'\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not"
-      ],
+      "random-104": [],
       "random-105": [],
       "random-106": [],
       "random-107": [],
-      "random-108": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(1)",
-        "G11/B2a: query @block: Tine-only block (pre-block): query \"(or [[N/y]] [[a]])\": Tine has block (\"pages/2026-10-26.md\", 0), model does not",
-        "G11/B2a: query @block: Tine-only block (): query \"(or [[N/y]] [[a]])\": Tine has block (\"pages/2026-10-26.md\", 1), model does not",
-        "G11/B2a: query @page with not: model-only page (journal real): query \"@page and not (name = '2026-10-26')\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "random-108": [],
       "random-109": [],
       "random-11": [],
       "random-110": [],
@@ -3312,16 +3599,11 @@
       "random-113": [],
       "random-114": [],
       "random-115": [],
-      "random-116": [
-        "G2/B2: navigation real file: \"B\": model [\"page\",\"b\"], Tine (\"page\", \"2026-10-26\")"
-      ],
+      "random-116": [],
       "random-117": [],
       "random-118": [],
       "random-119": [],
-      "random-12": [
-        "G2/B2: navigation real file: \"N/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"x\")",
-        "G2/B2: navigation real file: \"n/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"x\")"
-      ],
+      "random-12": [],
       "random-120": [],
       "random-121": [],
       "random-122": [],
@@ -3335,16 +3617,7 @@
       "random-13": [],
       "random-130": [],
       "random-131": [],
-      "random-132": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {(\"journals/2026_10_27.md\", 0), (\"pages/N%2Fy.md\", 4)}, Tine {(\"journals/2026_10_27.md\", 0), (\"pages/N%2Fy.md\", 4), (\"pages/N%2Fy.md\", 5)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 2, Tine Some(3)",
-        "G11/B2a: linked refs: (\"journal\", \"oct 27th, 2026\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"pages/N%2Fy.md\", 4)}, Tine {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"journals/2026_10_26.md\", 2), (\"pages/N%2Fy.md\", 4), (\"pages/N%2Fy.md\", 5)}",
-        "G11/B2a: counts: (\"journal\", \"oct 27th, 2026\") (journals/2026_10_27.md): model 3, Tine Some(5)",
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 1), (\"pages/N%2Fy.md\", 5)}, Tine {(\"pages/N%2Fy.md\", 5)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 2, Tine Some(1)",
-        "G11/B2a: query @page with not: Tine-only page (journal real): query \"@page and (name = '2026-10-26' and not (name = 'B'))\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
-        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
-      ],
+      "random-132": [],
       "random-133": [],
       "random-134": [],
       "random-135": [],
@@ -3370,9 +3643,7 @@
       "random-153": [],
       "random-154": [],
       "random-155": [],
-      "random-156": [
-        "G2/B2: navigation real file: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"n/y\")"
-      ],
+      "random-156": [],
       "random-157": [],
       "random-158": [],
       "random-159": [],
@@ -3404,10 +3675,7 @@
       "random-182": [],
       "random-183": [],
       "random-184": [],
-      "random-185": [
-        "G2/B2: navigation real file: \"A\": model [\"page\",\"a\"], Tine (\"page\", \"n/y\")",
-        "G2/B2: navigation real file: \"a\": model [\"page\",\"a\"], Tine (\"page\", \"n/y\")"
-      ],
+      "random-185": [],
       "random-186": [],
       "random-187": [],
       "random-188": [],
@@ -3426,15 +3694,7 @@
       "random-2": [],
       "random-20": [],
       "random-200": [],
-      "random-201": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/N%2Fy.md\", 2), (\"pages/a.md\", 2)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(2)",
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"pages/a.md\", 2)}, Tine {(\"pages/N%2Fy.md\", 2), (\"pages/a.md\", 2)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/N%2Fy.md): model 1, Tine Some(2)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true",
-        "G11/B2a: links: link \"a\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "random-201": [],
       "random-202": [],
       "random-203": [],
       "random-204": [],
@@ -3465,33 +3725,15 @@
       "random-227": [],
       "random-228": [],
       "random-229": [],
-      "random-23": [
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(1)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true"
-      ],
+      "random-23": [],
       "random-230": [],
       "random-231": [],
       "random-232": [],
-      "random-233": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(1)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "random-233": [],
       "random-234": [],
       "random-235": [],
       "random-236": [],
-      "random-237": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(1)",
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {}, Tine {(\"pages/2026-10-26.md\", 0)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 0, Tine Some(1)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true"
-      ],
+      "random-237": [],
       "random-238": [],
       "random-239": [],
       "random-24": [],
@@ -3500,34 +3742,18 @@
       "random-242": [],
       "random-243": [],
       "random-244": [],
-      "random-245": [
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"pages/n.md\", 0), (\"pages/n.md\", 1), (\"pages/n.md\", 2), (\"pages/n.md\", 4)}, Tine {(\"pages/n%2Fy.md\", 2), (\"pages/n.md\", 0), (\"pages/n.md\", 1), (\"pages/n.md\", 2), (\"pages/n.md\", 4)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/n%2Fy.md): model 7, Tine Some(5)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
-      ],
-      "random-246": [
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 7, Tine Some(6)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
-      ],
+      "random-245": [],
+      "random-246": [],
       "random-247": [],
       "random-248": [],
       "random-249": [],
       "random-25": [],
       "random-250": [],
-      "random-251": [
-        "G2/B2: navigation real file: \"n\": model [\"page\",\"n\"], Tine (\"page\", \"n/y\")"
-      ],
+      "random-251": [],
       "random-252": [],
       "random-253": [],
       "random-254": [],
-      "random-255": [
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"pages/N%2Fy.md\", 0)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/N%2Fy.md\", 0)}",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
-      ],
+      "random-255": [],
       "random-256": [],
       "random-257": [],
       "random-258": [],
@@ -3547,10 +3773,7 @@
       "random-270": [],
       "random-271": [],
       "random-272": [],
-      "random-273": [
-        "G2/B2: navigation real file: \"N/y\": model [\"page\",\"n/y\"], Tine (\"journal\", \"oct 26th, 2026\")",
-        "G2/B2: navigation real file: \"n/y\": model [\"page\",\"n/y\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
+      "random-273": [],
       "random-274": [],
       "random-275": [],
       "random-276": [],
@@ -3569,20 +3792,14 @@
       "random-288": [],
       "random-289": [],
       "random-29": [],
-      "random-290": [
-        "G2/B2: navigation real file: \"N/y\": model [\"page\",\"n/y\"], Tine (\"journal\", \"oct 27th, 2026\")",
-        "G2/B2: navigation real file: \"n/y\": model [\"page\",\"n/y\"], Tine (\"journal\", \"oct 27th, 2026\")"
-      ],
+      "random-290": [],
       "random-291": [],
       "random-292": [],
       "random-293": [],
       "random-294": [],
       "random-295": [],
       "random-296": [],
-      "random-297": [
-        "G2/B2: navigation real file: \"N/y\": model [\"page\",\"n/y\"], Tine (\"journal\", \"oct 27th, 2026\")",
-        "G2/B2: navigation real file: \"n/y\": model [\"page\",\"n/y\"], Tine (\"journal\", \"oct 27th, 2026\")"
-      ],
+      "random-297": [],
       "random-298": [],
       "random-299": [],
       "random-3": [],
@@ -3620,10 +3837,7 @@
       "random-59": [],
       "random-6": [],
       "random-60": [],
-      "random-61": [
-        "G2/B2: navigation real file: \"A\": model [\"page\",\"a\"], Tine (\"journal\", \"oct 26th, 2026\")",
-        "G2/B2: navigation real file: \"a\": model [\"page\",\"a\"], Tine (\"journal\", \"oct 26th, 2026\")"
-      ],
+      "random-61": [],
       "random-62": [],
       "random-63": [],
       "random-64": [],
@@ -3642,9 +3856,7 @@
       "random-76": [],
       "random-77": [],
       "random-78": [],
-      "random-79": [
-        "G2/B2: navigation real file: \"n\": model [\"page\",\"n\"], Tine (\"page\", \"a\")"
-      ],
+      "random-79": [],
       "random-8": [],
       "random-80": [],
       "random-81": [],
@@ -3665,16 +3877,7 @@
       "random-95": [],
       "random-96": [],
       "random-97": [],
-      "random-98": [
-        "G11/B2a: linked refs: (\"journal\", \"oct 26th, 2026\"): model {}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/A.md\", 1)}",
-        "G11/B2a: counts: (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 0, Tine Some(2)",
-        "G11/B2a: linked refs: (\"page\", \"2026-10-26\"): model {(\"journals/2026_10_26.md\", 0), (\"pages/A.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/2026-10-26.md\", 2), (\"pages/A.md\", 1)}",
-        "G11/B2a: counts: (\"page\", \"2026-10-26\") (pages/2026-10-26.md): model 2, Tine Some(3)",
-        "G11/B2a: links: link \"2026-10-26\" -> \"2026-10-26\": model=false, Tine=true",
-        "G11/B2a: links: link \"2026-10-26\" -> \"oct 26th, 2026\": model=false, Tine=true",
-        "G11/B2a: links: link \"a\" -> \"oct 26th, 2026\": model=false, Tine=true",
-        "G11/B2a: links: link \"oct 26th, 2026\" -> \"2026-10-26\": model=true, Tine=false"
-      ],
+      "random-98": [],
       "random-99": []
     },
     "harnessSkipped": [],

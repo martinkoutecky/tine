@@ -134,7 +134,7 @@ async function runCase(c: Case): Promise<string[]> {
   for (const [key, name] of model) {
     const want = below(key);
     const node = ns.namespaceNode(
-      names.filter((n) => { const k = pageIdentityKey(n); return k === key || k.startsWith(`${key}/`); }),
+      names,
       name,
     );
     const macro = new Set<string>();

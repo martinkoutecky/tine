@@ -13,6 +13,7 @@ import { COLORS, COLOR_RGBA, PDF_THEMES, type PdfTheme } from "./pdfViewerPalett
  * owned by PdfViewer; these signals and actions only render controls and relay
  * user events. Cost O(visible controls), with no graph I/O in this module. */
 export interface PdfViewerViewModel {
+  readOnly?: boolean;
   props: { filename: string; label: string; navigation?: () => { highlightId?: string } | null;
     onOpenNotes?: (block?: string) => void;
     onAnotherView?: (state: { page: number; scale: number }) => void };
@@ -172,6 +173,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
               ↕
             </button>
           </div>
+          <Show when={!view.readOnly} fallback={<span class="pdf-read-only" role="status">{t("pdf-external-read-only")}</span>}>
           <button
             class="icon-btn pdf-overflow-action"
             classList={{ active: areaMode() }}
@@ -186,6 +188,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
             onClick={() => props.onOpenNotes ? props.onOpenNotes() : openPage(hlsPageName(props.filename), "page")}
           >
             {t("pdf-notes")}</button>
+          </Show>
           <button
             ref={setOutlineTriggerEl}
             type="button"
@@ -242,6 +245,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
           <div class="pdf-settings-overflow" aria-label={t("pdf-reader-tools")}>
             <button type="button" onClick={() => { setScale(fitWidthScale()); setSettingsOpen(false); }}>{t("pdf-fit-width")}</button>
             <button type="button" onClick={() => { setScale(fitHeightScale()); setSettingsOpen(false); }}>{t("pdf-fit-height")}</button>
+            <Show when={!view.readOnly} fallback={<span class="pdf-read-only">{t("pdf-external-read-only")}</span>}>
             <button
               type="button"
               aria-pressed={areaMode()}
@@ -249,6 +253,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
             >
               {t("pdf-area-highlight")}</button>
             <button type="button" onClick={() => { if (props.onOpenNotes) props.onOpenNotes(); else openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>{t("pdf-notes")}</button>
+            </Show>
             <button type="button" onClick={() => { setSettingsOpen(false); setOutlineOpen(true); }}>{t("pdf-outline")}</button>
           </div>
           <Show when={props.onAnotherView && !pdfTakesOverPane()}>
