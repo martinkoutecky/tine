@@ -43,7 +43,7 @@ export const SURFACES = Object.freeze({
 
   // --- Settings ---------------------------------------------------------------
   "settings.tabs": { env: "desktop", budget: 10, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" },
-  "settings.appearance.open": settingsOpen("appearance", 30),
+  "settings.appearance.open": settingsOpen("appearance", 31),
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
   "settings.appearance.advanced": settingsAdvanced("appearance", 16),
   // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.

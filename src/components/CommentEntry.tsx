@@ -1,4 +1,4 @@
-// Width-only annotation entry points. Only annotated, mounted body rows own an
+// Annotation entry points for the pane's tier. Only mounted annotated rows own an
 // observer; measuring a rail reads one rectangle per thread and writes offsets
 // together in a coalesced frame. No document writes or additional source loads.
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";

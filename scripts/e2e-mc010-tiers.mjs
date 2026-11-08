@@ -1,4 +1,4 @@
-// D-20261107-MC3 §§6–7: native routed-page proof in both editor engines.
+// D-20261107-MC3 §§6–7 / D-20261108-MC4: routed-page proof in both editors.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -85,6 +85,26 @@ async function activate(selector, scaled = false) {
   await browser.execute(selector => document.querySelector(selector).focus(), selector); await keys("Enter");
 }
 async function closePopup(scaled = false) { await activate(".comment-popup-close", scaled); await browser.$(".comment-thread-popup").waitForExist({ reverse: true }); }
+async function commentsDisplay(choice) {
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-search-input").setValue("Comments");
+  await browser.$('[data-setting-target="settings-comments-display"]').click();
+  const select = await browser.$('[data-setting-id="settings-comments-display"] select');
+  await select.waitForDisplayed(); await select.selectByAttribute("value", choice);
+  assert.equal(await select.getValue(), choice);
+  await shot(stage.replaceAll(": ", "-").replaceAll(" ", "-").toLowerCase() + "-" + choice);
+  await keys("Escape");
+}
+async function readThreadTargets() {
+  await browser.$('.page-blocks ' + row(ids.parent) + ' .comment-quote-anchor').waitForDisplayed();
+  const targets = await browser.execute(parent => {
+    const marks = [...document.querySelectorAll('.page-blocks .ls-block[data-block-ref="' + parent + '"] .comment-quote-anchor')];
+    return { one: marks.find(mark => mark.textContent === "First")?.dataset.commentId,
+      two: marks.find(mark => mark.textContent === "second")?.dataset.commentId };
+  }, ids.parent);
+  assert.ok(targets.one && targets.two, "Passage highlights identify both thread targets");
+  return targets;
+}
 async function enterPhone() {
   await browser.setWindowSize(700, 1000);
   let steps = 0;
@@ -136,8 +156,7 @@ try {
     await keys("Escape"); await openPageByName(browser, `Comments ${mode}`);
     stage = `${mode}: wide`;
     await browser.$(".margin-column .comment-card").waitForDisplayed();
-    runtimeIds = await browser.execute(ids => Object.fromEntries(Object.entries(ids).map(([key, id]) => [key,
-      document.querySelector('.ls-block[data-block-ref="' + id + '"]')?.dataset.blockId])), ids);
+    runtimeIds = await readThreadTargets();
     if (process.env.MC010_LAYOUT_PROBE === "1") {
       stage = `${mode}: baseline layout probe`;
       const observations = [{ tier: "wide", ...await layoutState() }];
@@ -157,6 +176,28 @@ try {
     assert.equal(await browser.$$(row(ids.parent) + " > .block-main button.margin-marker").then(items => items.length), 0);
     assert.equal(fs.readFileSync(file, "utf8"), expectedSeed);
     await shot(`${mode}-01-wide`);
+    stage = `${mode}: wide On click setting`;
+    await commentsDisplay("click");
+    await browser.$('[data-comment-marker="' + runtimeIds.one + '"]').waitForDisplayed();
+    assert.equal(await browser.execute(() => document.querySelectorAll(".margin-column,.page-blocks .comment-card").length), 0);
+    await browser.refresh(); await browser.$(".app-container").waitForExist({ timeout: 30000 });
+    await openPageByName(browser, `Comments ${mode}`);
+    await browser.$('.page-blocks ' + row(ids.parent)).waitForDisplayed();
+    runtimeIds = await readThreadTargets();
+    await browser.$('[data-comment-marker="' + runtimeIds.one + '"]').waitForDisplayed();
+    assert.equal(await browser.execute(() => document.querySelectorAll(".margin-column").length), 0, "On click survives reload");
+    await activate('[data-comment-marker="' + runtimeIds.one + '"]');
+    await browser.$(".comment-thread-popup").waitForDisplayed();
+    assert.equal(await browser.$(".comment-bottom-sheet").isExisting(), false);
+    await reply("On click reply");
+    let expected = expectedSeed.replace("    - An existing reply\n", "    - An existing reply\n    - On click reply\n      tine.author:: Ada Test\n");
+    await waitForFileText(file, text => text === expected);
+    await shot(`${mode}-wide-on-click-marker`); await closePopup();
+    await activate('.page-blocks [data-comment-id="' + runtimeIds.two + '"]');
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".comment-thread-popup [data-block-ref]")].some(el => !el.closest("[hidden]") && el.textContent.includes("Second thread"))));
+    await shot(`${mode}-wide-on-click-highlight`); await closePopup();
+    await commentsDisplay("margin");
+    await browser.$(".margin-column .comment-card").waitForDisplayed(); await shot(`${mode}-wide-margin-restored`);
     stage = `${mode}: medium marker`;
     // Below margin fit even after phone layout closes the left sidebar.
     await browser.setWindowSize(850, 1000);
@@ -164,7 +205,7 @@ try {
     assert.equal(await browser.execute(() => document.querySelectorAll(".page-blocks .comment-card,.margin-column").length), 0);
     await activate('[data-comment-marker="' + runtimeIds.one + '"]');
     await browser.$(".comment-thread-popup").waitForDisplayed(); await reply("Medium reply");
-    let expected = expectedSeed.replace("    - An existing reply\n", "    - An existing reply\n    - Medium reply\n      tine.author:: Ada Test\n");
+    expected = expected.replace("    - On click reply\n      tine.author:: Ada Test\n", "    - On click reply\n      tine.author:: Ada Test\n    - Medium reply\n      tine.author:: Ada Test\n");
     await waitForFileText(file, text => text === expected);
     await shot(`${mode}-02-medium-popover`); await closePopup();
     stage = `${mode}: medium highlight`;
@@ -177,10 +218,11 @@ try {
     assert.ok(await browser.execute(() => document.querySelector(".comment-thread-popup").textContent.includes("Own folded thread")));
     await closePopup();
     stage = `${mode}: phone`;
+    await commentsDisplay("click");
     await enterPhone();
     await activate('.page-blocks [data-comment-id="' + runtimeIds.one + '"]', true);
     await browser.$(".comment-bottom-sheet").waitForDisplayed(); await reply("Phone reply", true);
-    expected = expected.replace("      tine.author:: Ada Test\n", "      tine.author:: Ada Test\n    - Phone reply\n      tine.author:: Ada Test\n");
+    expected = expected.replace("    - Medium reply\n      tine.author:: Ada Test\n", "    - Medium reply\n      tine.author:: Ada Test\n    - Phone reply\n      tine.author:: Ada Test\n");
     await waitForFileText(file, text => text === expected);
     const geometry = await browser.execute(() => {
       const sheet = document.querySelector(".comment-bottom-sheet").getBoundingClientRect();
@@ -206,7 +248,9 @@ try {
     await activate(row(ids.parent) + " > .block-main .margin-marker", true);
     await browser.$(".comment-bottom-sheet").waitForDisplayed(); await closePopup(true);
     await keys("Control", "0"); await browser.waitUntil(() => browser.execute(() => innerWidth > 420));
-    proof.outcomes.push({ mode, exactMarkdown: true, wide: true, mediumMarker: true, mediumHighlight: true, phoneHighlight: true, phoneChip: true, foldedOwnChip: true, syntheticSwipe, geometry });
+    await commentsDisplay("margin");
+    assert.equal(fs.readFileSync(file, "utf8"), expected, "Display changes and thread browsing preserve exact Markdown");
+    proof.outcomes.push({ mode, exactMarkdown: true, wide: true, onClickMarker: true, onClickHighlight: true, displaySurvivesReload: true, marginRestored: true, mediumMarker: true, mediumHighlight: true, phoneOnClick: true, phoneHighlight: true, phoneChip: true, foldedOwnChip: true, syntheticSwipe, geometry });
   }
   fixture.verify();
   if (process.env.MC010_LAYOUT_PROBE === "1") {
@@ -225,7 +269,7 @@ try {
     markers: [...document.querySelectorAll(".comment-rail-marker")].map(el => ({ id: el.dataset.commentMarker, rect: el.getBoundingClientRect().toJSON(),
       chain: [...(function* () { for (let at = el; at && at !== document.body; at = at.parentElement) yield at; })()].map(at => ({ cls: at.className, display: getComputedStyle(at).display, visibility: getComputedStyle(at).visibility, rect: at.getBoundingClientRect().toJSON() })) })) })); } catch { /* retain original error */ }
   try { await shot("failure"); } catch { /* preserve original error */ }
-  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, expected: "Width-only live threads and exact saved replies", observed: error.stack, classification: error.code === "ERR_ASSERTION" ? "product" : "ambiguous harness/infrastructure" }, null, 2)); throw error;
+  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, expected: "Viewer display choice and pane tiers open live threads and preserve exact saved Markdown", observed: error.stack, classification: error.code === "ERR_ASSERTION" ? "product" : "ambiguous harness/infrastructure" }, null, 2)); throw error;
 } finally {
   try { await browser?.deleteSession(); } catch { /* session may have failed */ }
   try { process.kill(-driver.pid, "SIGTERM"); } catch { /* driver may have exited */ }

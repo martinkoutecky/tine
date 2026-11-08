@@ -403,6 +403,10 @@ settings-ui-smaller-ctrl = 缩小（Ctrl −）
 settings-ui-larger-ctrl = 放大（Ctrl +）
 
 settings-ui-wide-mode = 宽屏模式
+settings-comments-display = 评论
+settings-comments-display-hint = “在页边显示”根据窗格宽度调整。“点击时显示”通过高亮文字或标记打开评论，宽屏模式下也一样；手机使用底部面板。保存在本设备上。
+settings-comments-in-margin = 在页边显示
+settings-comments-on-click = 点击时显示
 
 settings-ui-drops-the-reading-width-cap = 取消阅读宽度上限。
 

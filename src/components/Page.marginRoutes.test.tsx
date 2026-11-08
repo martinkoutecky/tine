@@ -10,12 +10,14 @@ import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { endEdit } from "../editorController";
 import { PaneContext, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
 import type { PageRead } from "../types";
+import { changeCommentsOnClick } from "../commentMarginPref";
 
 let dispose: (() => void) | undefined;
 beforeAll(initParser);
 beforeEach(async () => { await bindTestHost(); });
 afterEach(() => {
   endEdit("page-navigation"); dispose?.(); resetStore(); resetTabsToJournals(); resetPaneLayoutToSingle();
+  changeCommentsOnClick(false);
   document.body.replaceChildren(); vi.restoreAllMocks();
 });
 function page(date: Date, id: string): PageRead {
@@ -55,6 +57,14 @@ it.each(["journals", "page", "zoom", "split-main", "split-secondary"] as const)(
       expect(section.querySelectorAll(".margin-column .comment-card")).toHaveLength(1);
       expect(section.querySelector(".page-blocks .comment-card")).toBeNull();
     }
+    changeCommentsOnClick(true);
+    expect(pane.querySelector(".margin-column")).toBeNull();
+    expect(pane.querySelectorAll(".page-blocks .margin-marker")).toHaveLength(count);
+    pane.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+    expect(document.querySelector(".comment-thread-popup .comment-card")).not.toBeNull();
+    document.querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+    changeCommentsOnClick(false);
+    expect(pane.querySelectorAll(".margin-column")).toHaveLength(count);
     width = 800;
     for (const cb of [...resize]) cb([], {} as ResizeObserver);
     await vi.waitFor(() => expect(pane.querySelector(".margin-column")).toBeNull());

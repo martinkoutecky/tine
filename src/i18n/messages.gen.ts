@@ -2482,6 +2482,10 @@ export interface MessageArgs {
   "settings-cm6-label": {};
   "settings-color-indent-guides-by-level": {};
   "settings-color-indent-guides-by-level-hint": {};
+  "settings-comments-display": {};
+  "settings-comments-display-hint": {};
+  "settings-comments-in-margin": {};
+  "settings-comments-on-click": {};
   "settings-conflicts-summary": { "count": number };
   "settings-could-not-apply-spellcheck-settings": {};
   "settings-could-not-load-asset-filename-format": {};

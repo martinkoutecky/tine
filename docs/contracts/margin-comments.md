@@ -2,9 +2,20 @@
 
 Authority: D-20261107-MC3, design §§5–7; internal IDs UI-MC010-KEYBOARD,
 UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-MEDIUM,
-UI-MC010-PHONE.
+UI-MC010-PHONE; D-20261108-MC4, UI-MC010-CLICK-DISPLAY.
 
-- Layout uses the containing pane's CSS width, including interface zoom. At
+- Settings > Appearance > Comments offers **In the margin** (default) and
+  **On click**. This viewer preference uses the same device-local display
+  preference storage as Wide mode. On click substitutes the medium tier for
+  the wide tier, including in Wide mode; phone widths still use the bottom
+  sheet. It applies live on every comment surface without changing the graph.
+  Switching preserves unsent reply drafts by thread and surface, just as
+  crossing tier widths does. Show/Hide comments takes precedence over either
+  display choice. Changing the preference costs one local preference write
+  and an O(1) tier comparison per mounted surface, with no graph I/O or IPC;
+  rendering the newly visible threads costs O(visible threads).
+
+- With In the margin, layout uses the containing pane's CSS width, including interface zoom. At
   960 px the existing margin fits; below that threads never fall back to inline
   cards. Medium panes retain highlights and a slim per-thread passage rail.
   Markers, highlights and the block's own-thread chip open the live thread in

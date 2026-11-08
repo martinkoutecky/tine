@@ -3,6 +3,7 @@
 import type { SettingDescriptor } from "./settingsDescriptor";
 
 export const settings = {
+  "settings-comments-display": {"id":"settings-comments-display","tab":"appearance","label":{"kind":"msg","id":"settings-comments-display"},"description":{"kind":"msg","id":"settings-comments-display-hint"}},
   "settings-author-marks": {"id":"settings-author-marks","tab":"appearance","label":{"kind":"msg","id":"settings-author-marks"},"description":{"kind":"msg","id":"settings-author-marks-hint"}},
   "themes-default": { id: "theme.gallery.default", tab: "appearance", label: { kind: "msg", id: "themes-default" }, description: { kind: "msg", id: "themes-stock" } },
   "settings-ui-interface-size": {"id":"settings-ui-interface-size","tab":"appearance","label":{"kind":"msg","id":"settings-ui-interface-size"},"description":{"kind":"msg","id":"settings-ui-zoom-the-whole-interface-ctrl-ctrl-ctrl-0-or"},"searchDescription":{"kind":"msg","id":"settings-search-zoom-scale-ctrl-scroll"}},

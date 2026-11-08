@@ -1105,7 +1105,7 @@ mod rename_guide_tests {
             "**Ctrl/Cmd+Z** restores them together",
             "The journal feed uses the same width rule, with each day's page owning its margin column; split panes also use their own available width",
             "slim passage rail",
-            "bottom sheet",
+            "**On click** keeps highlights and passage markers at every width, including Wide mode; phones still use the bottom sheet.",
             "press **t** then **m**, run **Show/Hide comments** from the command palette",
             "switch off **Show/Hide comments** in Settings > Appearance",
             "the comments stay in your file and nothing is deleted",

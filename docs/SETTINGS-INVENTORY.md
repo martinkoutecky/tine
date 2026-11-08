@@ -15,6 +15,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 
 | Setting ID | Catalog key / package label | Label | Level |
 |---|---|---|---|
+| `settings-comments-display` | `settings-comments-display` | Comments | Basic |
 | `settings-author-marks` | `settings-author-marks` | Show/Hide author marks | Basic |
 | `theme.gallery.default` | `themes-default` | Default | Basic |
 | `settings-ui-interface-size` | `settings-ui-interface-size` | Interface size | Basic |

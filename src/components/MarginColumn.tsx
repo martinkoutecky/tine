@@ -1,5 +1,5 @@
 // Margin dialogue, slice 2 (vision 2026-10 §3.7 "Layout"): the comment column.
-// On a wide main pane, a page that holds comments shifts its outline left and
+// In the wide tier, a page that holds comments shifts its outline left and
 // draws each comment thread in a right-hand column, top-aligned to the passage
 // it quotes (or to the commented block when the quote is stale or whole-block).
 // Threads that would overlap stack downward in document order; nothing overlaps.
@@ -17,7 +17,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, 
 import { Block } from "./Block";
 import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
-import { countMarginMeasurePass, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
+import { countMarginMeasurePass, commentTier, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
 import { type FeedPage } from "../document";
 import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
@@ -54,8 +54,8 @@ function reserveColumnWidth(inner: HTMLElement, outline: HTMLElement, width: num
 }
 
 /** The margin for one page section. `eligible` says whether this surface may
- * have a margin at all; the pane width and
- * whether the page holds a comment decide the rest. `outline` is the section's
+ * have a margin at all; the viewer's tier policy and whether the page holds
+ * a comment decide the rest. `outline` is the section's
  * `.page-blocks`; the column renders as its next sibling. */
 export function createMarginSurface(opts: {
   page: () => FeedPage | undefined;
@@ -82,7 +82,7 @@ export function createMarginSurface(opts: {
     observer?.observe(pane);
     onCleanup(() => observer?.disconnect());
   });
-  const active = createMemo(() => hasComment() && paneWidth() >= MARGIN_MIN_PANE_WIDTH);
+  const active = createMemo(() => hasComment() && commentTier(paneWidth()) === "wide");
   // A pane with room to spare beside the reading column gives it to the threads
   // (Martin 2026-10-31): the column grows from 280 px up to a readable maximum,
   // never taking width from the outline.

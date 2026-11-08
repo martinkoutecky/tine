@@ -18,13 +18,24 @@ import { installKeybindings } from "../keybindings";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import type { BlockDto } from "../types";
+import { AnnotationVisibilitySettings } from "./AnnotationVisibilitySettings";
 
 let dispose: (() => void) | undefined;
 let keys: (() => void) | undefined;
+let disposeSettings: (() => void) | undefined;
 beforeAll(async () => { await initParser(); keys = installKeybindings(); });
 afterAll(() => keys?.());
 beforeEach(async () => { answerOpensFromDocument(await bindTestHost()); persistCommentMarginHidden(false); resetCommentAuthorNameForTests("Ada"); });
-afterEach(() => { endEdit("page-navigation"); dispose?.(); resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { endEdit("page-navigation"); dispose?.(); if (disposeSettings) chooseComments("margin"); disposeSettings?.(); disposeSettings = undefined; resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+function chooseComments(value: "margin" | "click") {
+  if (!disposeSettings) {
+    const root = document.createElement("div"); document.body.append(root);
+    disposeSettings = render(() => <AnnotationVisibilitySettings />, root);
+  }
+  const select = document.querySelector<HTMLSelectElement>('[data-setting-id="settings-comments-display"] select');
+  expect(select, "Settings offers the Comments display choice").not.toBeNull();
+  select!.value = value; select!.dispatchEvent(new Event("change", { bubbles: true }));
+}
 function b(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, children, collapsed: false, properties: blockRegions(raw, "md").properties.filter(p => p.primary).map(p => [p.key, p.value]) };
 }
@@ -175,4 +186,42 @@ it.each([800, 390])("Show/Hide comments removes every entry point and open surfa
 it("wide expanded blocks have no count badge beside visible margin threads", () => {
   const pane = mount(1400); expect(pane.querySelectorAll(".margin-column .comment-card")).toHaveLength(2);
   expect(pane.querySelector("button.margin-marker")).toBeNull();
+});
+it("On click replaces the wide margin live, opens markers and highlights, and retains drafts when switched back", () => {
+  const pane = mount(1400);
+  expect(pane.querySelectorAll(".margin-column .comment-card")).toHaveLength(2);
+  chooseComments("click");
+  expect(pane.querySelector(".margin-column,.page-blocks .comment-card")).toBeNull();
+  pane.querySelector<HTMLButtonElement>('[data-comment-marker="two"]')!.click();
+  expect(popup().textContent).toContain("Second thread");
+  expect(popup().querySelector('[data-comment-group="two"]')!.closest("[hidden]")).toBeNull();
+  popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+  pane.querySelector<HTMLElement>('[data-comment-id="one"]')!.click();
+  expect(popup().textContent).toContain("First thread");
+  expect(popup().querySelector('[data-comment-group="one"]')!.closest("[hidden]")).toBeNull();
+  const draft = popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
+  draft.value = "Keep across display choices"; draft.dispatchEvent(new Event("input", { bubbles: true }));
+  chooseComments("margin");
+  expect(popup()).toBeNull(); expect(pane.querySelectorAll(".margin-column .comment-card")).toHaveLength(2);
+  expect(pane.querySelector<HTMLTextAreaElement>('[data-reply-root="one"]')!.value).toBe("Keep across display choices");
+  chooseComments("click"); chip(pane).click();
+  expect(popup().querySelector<HTMLTextAreaElement>('[data-reply-root="one"]')!.value).toBe("Keep across display choices");
+  persistCommentMarginHidden(true);
+  expect(document.querySelector(".comment-thread-popup,.margin-column,.margin-marker,.comment-rail-marker,.comment-quote-anchor")).toBeNull();
+});
+it.each(["main", "sidebar:item", "ref:item", "embed:item"])("On click applies to %s at wide width, including Wide mode", surface => {
+  const pane = mount(1400, surface); pane.classList.add("wide-mode");
+  chooseComments("click");
+  expect(pane.querySelector(".margin-column")).toBeNull(); chip(pane).click();
+  expect(popup()).not.toBeNull(); expect(popup().classList.contains("comment-bottom-sheet")).toBe(false);
+});
+it("On click keeps the phone sheet and switching the choice preserves its open draft", () => {
+  const pane = mount(390); chip(pane).click();
+  const draft = popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
+  draft.value = "Phone draft"; draft.dispatchEvent(new Event("input", { bubbles: true }));
+  chooseComments("click");
+  expect(popup().classList.contains("comment-bottom-sheet")).toBe(true);
+  expect(popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!.value).toBe("Phone draft");
+  chooseComments("margin");
+  expect(popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!.value).toBe("Phone draft");
 });

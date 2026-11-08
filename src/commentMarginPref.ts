@@ -11,6 +11,16 @@ import { createSignal } from "solid-js";
 import { loadStr, saveStr } from "./ui";
 
 const KEY = "logseq-claude.comment-margin-hidden";
+const CLICK_KEY = "logseq-claude.comments-on-click";
+const [onClick, setOnClick] = createSignal(loadStr(CLICK_KEY) === "1");
+export const commentsOnClick = onClick;
+
+/** Viewer preference, like Wide mode: one local write, no graph I/O or IPC.
+ * A refused write leaves the current display choice intact. */
+export function changeCommentsOnClick(value: boolean): void {
+  if (saveStr(CLICK_KEY, value ? "1" : null)) setOnClick(value);
+}
+
 const [hidden, setHidden] = createSignal(loadStr(KEY) === "1");
 export const commentMarginHidden = hidden;
 

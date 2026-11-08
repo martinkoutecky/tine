@@ -2,7 +2,7 @@
 // a page holding comments gets a right-hand comment column. This module is the
 // model side: which blocks belong in the margin, how threads stack, and where the
 // arrow keys go when part of the outline is drawn beside it. Everything is
-// derived from the outline at render time; nothing is persisted.
+// derived from the outline at render time, with a device-local display policy.
 
 import { createSignal } from "solid-js";
 import { anchorQuote, quoteSelectorOf } from "./comments";
@@ -10,6 +10,7 @@ import { facetsOf } from "./render/facets";
 import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
 import { isCommentId, bodyNeighbor } from "./document";
+import { commentsOnClick } from "./commentMarginPref";
 export { isCommentId, threadRootOf } from "./document";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The
@@ -19,8 +20,9 @@ export const MARGIN_MIN_PANE_WIDTH = 960;
 /** Below this pane width there is no useful side rail: use a bottom sheet.
  * Measured in the same CSS pixels as margin fit, including interface zoom. */
 export const COMMENT_PHONE_MAX_WIDTH = 480;
+/** O(1) viewer policy: On click uses medium entry at wide widths too. */
 export function commentTier(width: number): "wide" | "medium" | "phone" {
-  return width >= MARGIN_MIN_PANE_WIDTH ? "wide" : width <= COMMENT_PHONE_MAX_WIDTH ? "phone" : "medium";
+  return width <= COMMENT_PHONE_MAX_WIDTH ? "phone" : width >= MARGIN_MIN_PANE_WIDTH && !commentsOnClick() ? "wide" : "medium";
 }
 /** The comment column's width bounds, px (`--margin-column-width` in comments.css
  * is the narrow end). */
