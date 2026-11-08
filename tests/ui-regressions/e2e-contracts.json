@@ -116,6 +116,12 @@
       "nonRequirements": ["No typing or saving in the editors, no platform other than Linux WebKitGTK, no burn-in."],
       "stability":"burn-in"
     },
+    "scripts/e2e-og-window-805-815.mjs": {
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"Ctrl+Q with an active unsaved edit persists it, closes every graph window and releases the owner locks. The frameless desktop sidebar header has the same drag marker as the title bar, while its workspace switcher and menu remain clickable.","blocking":false,"authority":"GH #805; GH #815"}],
+      "acceptableVariations": ["Menu layout, save latency, window geometry and driver replies during process exit may vary."],
+      "nonRequirements": ["No physical window movement or maximize assertion without an Xvfb window manager; the header delegates both gestures to the existing Tauri title-bar handler. No Windows or macOS runtime certification, private graph, or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-set-depth.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A bound Set depth 2 on a folded block opens it and its child and folds the grandchild in the file, leaving a folded great-grandchild's own fold unchanged; a bound Set depth 0 then folds the block. With a high :ref/default-open-blocks-level in config.edn every row of a linked reference shows, and the referencing page's file is unchanged.","blocking":false,"authority":"GH #794; GH #793; D-20261101-L5"}],
       "acceptableVariations": ["Selection styling, animation, save latency and the exact reference-section layout may vary while the saved collapsed properties and visible rows agree."],
