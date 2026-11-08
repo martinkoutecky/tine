@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- CodeMirror page and tag completion uses one search per typed query, showing choices on the first reply without a duplicate read or empty intermediate list (GH #767; internal: UI-CM6-COMPLETION-SINGLE-INPUT).
 - Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Advanced query lists honor `:breadcrumb-show? false`, hiding ancestor trails while retaining grouped page headings, including in the sidebar and embeds (GH #881).
 - Clicking or tapping a command palette or Search row keeps the focused split pane and runs the chosen row; slash and page-reference suggestions also keep their editor's pane focused (internal: UI-PALETTE-POINTER-ACTIVATION, UI-EDITOR-COMPLETION-POINTER-PANE).

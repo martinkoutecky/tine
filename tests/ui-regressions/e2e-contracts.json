@@ -9,7 +9,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-completion-perf.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL"}],
+      "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path. COMPLETION_ASSERT_SINGLE_INPUT requires one page read per key and rows on its first reply; COMPLETION_INPUT_CENSUS also counts tag, block, slash and property reads, preserving local command filtering and shared property sessions.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL; UI-CM6-COMPLETION-SINGLE-INPUT; ET2 GH #767"}],
       "acceptableVariations": ["Paint times vary with host load; timings are observations, not a flaky threshold oracle."],
       "nonRequirements": ["Release burn-in and Windows/macOS/mobile runtime certification."],
       "stability":"burn-in"

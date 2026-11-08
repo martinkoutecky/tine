@@ -29,6 +29,21 @@ vi.mock("./backend", () => ({ backend: () => ({
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 30));
 
+// Under gate load the reconcile chain can outlast a fixed timer (flaked 10/23, 11/08).
+// Wait for the final state, then check it is still there one tick later: a
+// transient value on the way to the wrong end state must not pass.
+type Ranking = typeof import("./launcherRanking");
+async function settledOnStored(main: Ranking, other: Ranking) {
+  const expectStored = () => {
+    expect(bus.stored).toBe(false);
+    expect(other.pinyinMatchingEnabled()).toBe(false);
+    expect(main.pinyinMatchingEnabled()).toBe(false);
+  };
+  await vi.waitFor(expectStored, { timeout: 5000 });
+  await settle();
+  expectStored();
+}
+
 async function twoWindows() {
   vi.resetModules();
   bus.listeners.clear(); bus.stored = false; bus.heldTrue = null;
@@ -49,10 +64,7 @@ it("a failed local write overlapped by another window's broadcast ends on the st
   other.setPinyinMatchingEnabled(false);
   await settle();
   bus.heldTrue!.fail(new Error("disk full"));
-  await settle();
-  expect(bus.stored).toBe(false);
-  expect(other.pinyinMatchingEnabled()).toBe(false);
-  expect(main.pinyinMatchingEnabled()).toBe(false);
+  await settledOnStored(main, other);
 });
 
 it("a local write whose reply lands after another window's newer write ends on the stored value", async () => {
@@ -64,8 +76,5 @@ it("a local write whose reply lands after another window's newer write ends on t
   other.setPinyinMatchingEnabled(false);
   await settle();
   bus.heldTrue!.reply();
-  await settle();
-  expect(bus.stored).toBe(false);
-  expect(other.pinyinMatchingEnabled()).toBe(false);
-  expect(main.pinyinMatchingEnabled()).toBe(false);
+  await settledOnStored(main, other);
 });
