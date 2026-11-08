@@ -32,6 +32,7 @@ import { annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { visibleBody } from "../render/block";
 import { MeasuredContentWindow } from "./MeasuredContentWindow";
+import { createBulletHistory } from "../seen/bulletHistory";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -153,6 +154,8 @@ function RefBlock(props: {
     ...(props.path ? { path: props.path } : {}),
   });
   const sourceId = createMemo(() => props.pageBody && !props.localFolds && props.page ? resolveBlockRef(refTarget()) : null);
+  const history = createBulletHistory(() => props.block.page_property || props.block.page_preamble ? null : resolveBlockRef(refTarget()),
+    () => props.block.page_property ? t("macro-ref-blocks-page-property-reference") : t("macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new"));
   const folded = () => {
     if (!props.pageBody || !hasKids()) return false;
     if (props.localFolds) return localFold() ?? props.block.collapsed;
@@ -221,7 +224,7 @@ function RefBlock(props: {
           <span
             class="bullet-container"
             classList={{ "bullet-closed": folded() }}
-            title={props.block.page_property ? t("macro-ref-blocks-page-property-reference") : t("macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new")}
+            title={history.nativeTitle()} onMouseEnter={history.enter} onMouseLeave={history.leave}
             onMouseDown={(e) => {
               // GH #207's other half: suppress shift-range selection and
               // middle-button autoscroll / PRIMARY-paste for the gestures this
@@ -256,6 +259,7 @@ function RefBlock(props: {
             }}
           >
             <span class="bullet" />
+            <Show when={history.visible()}><span class="clock-tooltip bullet-tooltip" role="tooltip">{history.text()}</span></Show>
           </span>
         </div>
         <div class="block-content-wrapper">

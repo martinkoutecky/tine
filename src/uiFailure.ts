@@ -8,6 +8,7 @@ import { dbg } from "./debug";
 import { pushToastUnique } from "./toasts";
 
 export type UiFailureFamily =
+  | "block-history"
   | "external-link"
   | "capture-preference"
   | "audio-load"
@@ -43,6 +44,7 @@ export type UiFailureFamily =
   | "sheet-export";
 
 const MESSAGES: Record<UiFailureFamily, Msg> = {
+  "block-history": msg("ui-failure-block-history"),
   "custom-css": msg("ui-failure-custom-css"),
   "css-draft": msg("ui-failure-css-draft"),
   "asset-read": msg("ui-failure-asset-read"),
@@ -81,6 +83,7 @@ const MESSAGES: Record<UiFailureFamily, Msg> = {
 
 /** Families whose cause is a read of the window's bound graph. */
 const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
+  "block-history",
   "query-hydration", "page-inventory", "session-read", "template-read", "journal-feed",
   "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory",
   "custom-css", "config-read", "conflict-inventory", "graph-verification",

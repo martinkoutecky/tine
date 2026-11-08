@@ -657,6 +657,10 @@ export interface Backend {
    * is the complete rendered page snapshot, including unsaved local edits.
    * Re-read on page focus/visibility and external page-file changes. */
   getPageChanges(pageKey: string, path: string, currentText: string): Promise<import("./backendTypes").SeenPageChanges>;
+  /** Hover-only, read-only git attribution for the supplied unsaved-inclusive
+   * page snapshot. One IPC; cached by page and HEAD, bounded to 500 commits.
+   * Unknown outside git; failures reject. See block-last-changed contract. */
+  getPageLastChanged(path: string, currentText: string): Promise<import("./backendTypes").PageBlockLastChanged[]>;
   /** Call on leave, or explicitly from Mark page seen; never per edit. */
   markPageSeen(pageKey: string, path: string): Promise<void>;
   markGraphSeen(): Promise<void>;

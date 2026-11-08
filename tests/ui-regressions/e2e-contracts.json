@@ -512,6 +512,12 @@
       "nonRequirements":["Exact pixels, merge-commit histories or the 200-commit fallback (Rust tests), Android and iOS (testers' device runs after 0.9.0-beta.1, D-20261028-GM) or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-block-last-changed.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed git page with three dated commits, hovering the second block shows commit 2's local date, the untouched block shows its creating commit, and an uncommitted block says so. Repeated hovers retain gesture help and change neither graph bytes nor HEAD.","blocking":true,"authority":"D-20261107-MC3 §9; GH #831"}],
+      "acceptableVariations":["Locale-specific date rendering, tooltip placement, and native tooltip timing may vary."],
+      "nonRequirements":["Creation-time UI, persisted properties, touch gestures, the 500-commit boundary (Rust tests), or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-r2-polish2.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Settings highlights matching English and Chinese labels; Diagnostics retains real reporting, clear and rescan without the parser comparison runner.","blocking":true}],
       "acceptableVariations":["Typography, matching counts and diagnostic report content may vary while matches are highlighted and the remaining tools work."],

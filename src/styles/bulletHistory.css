@@ -1,0 +1,10 @@
+.bullet-container { position: relative; }
+.bullet-container > .bullet-tooltip {
+  pointer-events: none;
+  white-space: pre-line;
+  text-align: start;
+  font-size: 13px;
+  font-weight: normal;
+  line-height: 1.5;
+}
+.right-sidebar .bullet-tooltip { inset-inline-start: auto; inset-inline-end: 0; }

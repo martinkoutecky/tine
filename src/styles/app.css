@@ -5147,7 +5147,7 @@ body.file-drop-active::after {
   white-space: normal;
 }
 
-.clock-badge:hover .clock-tooltip,
+.clock-badge:hover .clock-tooltip, .bullet-container:hover > .clock-tooltip,
 .clock-badge:focus-within .clock-tooltip {
   display: block;
 }

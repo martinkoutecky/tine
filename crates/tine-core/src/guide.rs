@@ -1091,6 +1091,27 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn bullet_last_changed_is_documented() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for behavior in [
+            "**bullet**",
+            "**Last changed**",
+            "local date and time",
+            "**Changed, not yet committed**",
+            "**Unknown**",
+            "**Unknown — history limit reached**",
+            "500 first-parent commits",
+            "stores no creation or update properties",
+            "touch gestures stay the same",
+        ] {
+            assert!(
+                files.contains(behavior),
+                "missing bullet history Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn margin_comments_are_documented() {
         let tips = include_str!("templates/tips.md");
         for behavior in [

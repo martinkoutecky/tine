@@ -64,6 +64,23 @@ pub(crate) fn bound(app: &tauri::AppHandle, slot: &crate::state::GraphSlot) {
 }
 
 #[tauri::command]
+pub(crate) async fn get_page_last_changed(
+    path: String,
+    current_text: String,
+    state: crate::state::GraphContext<'_>,
+) -> Result<Vec<imp::last_changed::BlockChanged>, String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.block_dates
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .read_page_dates(&slot.root_key, &path, &current_text)
+            .map(|blocks| blocks.as_ref().clone())
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn get_page_changes(
     page_key: String,
     path: String,

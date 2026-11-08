@@ -1,5 +1,5 @@
 import { type BlockDto, type Format, type PageDto, type RefGroup } from "../types";
-import { Node, FeedPage, DocState, doc, freshId } from "./model";
+import { Node, FeedPage, DocState, doc, freshId, pageByName, type ReadonlyFeedPage } from "./model";
 import { facetsFromDto } from "../render/facets";
 import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
@@ -249,7 +249,7 @@ function toDto(id: string): BlockDto {
     // is preserved user data, including its trailing bytes. Ask the same
     // parser and hide policy as the editor, only when trimming changed bytes.
     const end = utf8ByteLength(n.raw);
-    const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
+    const format = pageByName(n.page)?.format ?? "md";
     const own = blockRegions(n.raw, format).properties.filter((p) => p.primary);
     const properties = own.map((p): [string, string] => [p.key, p.value]);
     const hide = commentEditorHide(n, properties, format, (parent) => doc.byId[parent]);
@@ -275,7 +275,7 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
  *  page-header root (`beginPageHeaderEdit`) folds back into the pre-block,
  *  with the terminal newlines Enter leaves in the live editor removed. Null
  *  for an invalid header draft, which never reaches the disk. O(1). */
-export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; rootIds: string[] } | null {
+export function foldMarkedPageHeader(p: ReadonlyFeedPage): { preBlock: string | null; rootIds: readonly string[] } | null {
   const first = doc.byId[p.roots[0]];
   if (!first?.originatedFromPageHeader) return { preBlock: p.preBlock, rootIds: p.roots };
   // Tolerate only Enter's authoring artifacts (blank edge lines) at the disk firewall; keep the
@@ -289,7 +289,7 @@ export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; ro
   return { preBlock: canonicalRaw ? canonicalRaw + (p.preBlock ?? "") : p.preBlock, rootIds: p.roots.slice(1) };
 }
 
-/** Project one loaded page for guarded save. Cost: O(loaded pages + blocks and
+/** Project one loaded page for guarded save. Cost: O(blocks and
  * text bytes of this page). Ordinary loaded blocks with unchanged raw keep it exactly;
  * edited ones get OG's trailing-space trim (which retains a bare list marker's
  * final space). A page-header root is folded into pre_block with terminal
@@ -297,7 +297,7 @@ export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; ro
  * an absent page or invalid page-header draft; the save caller leaves an
  * invalid draft dirty for retry. Reads only the in-memory document. */
 export function pageToDto(pageName: string): PageDto | null {
-  const p = doc.pages.find((x) => x.name === pageName);
+  const p = pageByName(pageName);
   if (!p) return null;
   const folded = foldMarkedPageHeader(p);
   if (!folded) return null;

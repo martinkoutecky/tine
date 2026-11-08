@@ -29,3 +29,9 @@ seen-settings-label = 自上次查看以来的更改
 seen-settings-hint = 在 git 图谱中，Tine 会标出你上次离开页面后其他人或工具提交的块。该记录只保存在本设备上，不会写入图谱。未提交的编辑不可见，你自己的提交永远不会计入。
 seen-settings-mark-graph = 标记整个图谱为已看
 seen-settings-forget = 忘记已看状态
+# $date (string): 以本地日期和时间格式显示的 Git 提交时间。
+block-last-changed-date = 上次更改：{ $date }
+block-last-changed-uncommitted = 已更改，尚未提交
+block-last-changed-limit = 未知 — 已达到历史记录查询上限
+block-last-changed-unknown = 未知
+ui-failure-block-history = 无法读取此块的 Git 历史记录。

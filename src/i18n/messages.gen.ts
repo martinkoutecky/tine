@@ -90,6 +90,10 @@ export interface MessageArgs {
   "begin-query-unsupported": { "reason": string | number };
   "binding-some-state-of-the-previous-graph-could-not": { "failures": string | number };
   "binding-was-not-saved-it-was-opened-in-a": { "what": string | number };
+  "block-last-changed-date": { "date": string | number };
+  "block-last-changed-limit": {};
+  "block-last-changed-uncommitted": {};
+  "block-last-changed-unknown": {};
   "block-link-copy-copied": { "count": number; "kind": string | number };
   "block-link-copy-copied-tine-link": {};
   "block-link-copy-couldn-t-copy-block-save-or-clipboard-write": { "kind": string | number };
@@ -3151,6 +3155,7 @@ export interface MessageArgs {
   "ui-failure-backup-feedback": {};
   "ui-failure-backup-read": {};
   "ui-failure-block-counts": {};
+  "ui-failure-block-history": {};
   "ui-failure-block-resolution": {};
   "ui-failure-capture-preference": {};
   "ui-failure-clipboard-association": {};

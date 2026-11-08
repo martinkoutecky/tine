@@ -114,6 +114,16 @@ export interface GitRemote {
 /** Paths index roots, then each child list, in the exact currentText snapshot.
  * They are structural addresses, not runtime document ids or persisted id::. */
 export type SeenBlockPath = number[];
+/** A git-derived body change, or an explicit reason that it has no date. */
+export type BlockLastChanged =
+  | { kind: "committed"; time: number }
+  | { kind: "uncommitted" | "history_limit" | "unknown" };
+/** One fact addressed into the unsaved-inclusive snapshot sent by the caller. */
+export interface PageBlockLastChanged {
+  block_path: number[];
+  changed: BlockLastChanged;
+}
+
 export interface SeenPageChanges {
   available: boolean;
   /** Why the page is unavailable; on an available result, a note on how the

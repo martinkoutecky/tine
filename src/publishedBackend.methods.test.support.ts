@@ -94,6 +94,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "gitSyncNotice",
   "gitAppLifecycle",
   "getPageChanges",
+  "getPageLastChanged",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",

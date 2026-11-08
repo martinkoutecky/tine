@@ -1245,6 +1245,7 @@ pub fn run() {
             git_settings::git_sign_out,
             git_settings::git_app_lifecycle,
             seen::get_page_changes,
+            seen::get_page_last_changed,
             seen::mark_page_seen,
             seen::mark_graph_seen,
             seen::forget_seen_state

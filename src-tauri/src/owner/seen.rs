@@ -11,6 +11,8 @@ use tine_core::sync_diff::{diff_blocks, diff_blocks_trimmed, DiffRow, PersistedI
 
 use crate::seen::{SeenBlock, SeenChanges, SeenRemoved};
 
+pub(crate) mod last_changed;
+
 const COMMIT_LIMIT: usize = 200;
 static RECORD_LOCK: Mutex<()> = Mutex::new(());
 type BlockPath = Vec<usize>;
@@ -107,13 +109,15 @@ fn relative(path: &str) -> Result<(), String> {
 /// Mirror git_run's discovery and canonical worktree-prefix convention, without
 /// its write-side checks (detached HEAD and index.lock do not prevent a read).
 fn open(root: &Path) -> Result<(Repository, PathBuf), String> {
-    let repo = super::git_run::discover(root).map_err(|e| {
-        if e.code() == ErrorCode::NotFound {
-            "The graph is not in a git repository.".into()
-        } else {
-            e.to_string()
-        }
-    })?;
+    open_if_repository(root)?.ok_or_else(|| "The graph is not in a git repository.".into())
+}
+
+fn open_if_repository(root: &Path) -> Result<Option<(Repository, PathBuf)>, String> {
+    let repo = match super::git_run::discover(root) {
+        Ok(repo) => repo,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
     let work = repo.workdir().ok_or("The graph's repository is bare.")?;
     let work = work.canonicalize().map_err(|e| e.to_string())?;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
@@ -121,15 +125,14 @@ fn open(root: &Path) -> Result<(Repository, PathBuf), String> {
         .strip_prefix(work)
         .map_err(|_| "The graph is outside its repository work tree.")?
         .to_owned();
-    Ok((repo, prefix))
+    Ok(Some((repo, prefix)))
 }
 
 fn head(repo: &Repository) -> Result<Option<Oid>, String> {
+    #[cfg(test)]
+    last_changed::count(5);
     match repo.head() {
-        Ok(r) => r
-            .peel_to_commit()
-            .map(|c| Some(c.id()))
-            .map_err(|e| e.to_string()),
+        Ok(r) => Ok(r.target()),
         Err(e) if matches!(e.code(), ErrorCode::UnbornBranch | ErrorCode::NotFound) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -247,6 +250,8 @@ pub(crate) fn forget(data: &Path, root: &Path) -> Result<(), String> {
 }
 
 fn blob_id(repo: &Repository, commit: Oid, path: &Path) -> Result<Option<Oid>, String> {
+    #[cfg(test)]
+    last_changed::count(0);
     let tree = repo
         .find_commit(commit)
         .and_then(|c| c.tree())
@@ -260,6 +265,8 @@ fn blob_id(repo: &Repository, commit: Oid, path: &Path) -> Result<Option<Oid>, S
 }
 
 fn parse(text: &str, org: bool) -> Document {
+    #[cfg(test)]
+    last_changed::count(3);
     if org {
         tine_core::org::parse_org(text)
     } else {
@@ -389,6 +396,8 @@ fn equal(old: &DocBlock, a: BlockPath, b: BlockPath, out: &mut Alignment) {
 /// keeps the per-block lsdoc projections that `diff_blocks` needs to that
 /// window.
 fn align(old: &[DocBlock], new: &[DocBlock], ids: &mut PersistedIds) -> Alignment {
+    #[cfg(test)]
+    last_changed::count(4);
     fn walk(
         rows: &[DiffRow],
         old: &[DocBlock],
@@ -535,6 +544,8 @@ impl<'r> History<'r> {
             let text = match self.blobs[i] {
                 None => String::new(),
                 Some(oid) => {
+                    #[cfg(test)]
+                    last_changed::count(2);
                     let blob = self.repo.find_blob(oid).map_err(|e| e.to_string())?;
                     String::from_utf8(blob.content().to_vec()).map_err(|_| NOT_UTF8)?
                 }
@@ -549,6 +560,8 @@ impl<'r> History<'r> {
             let mut doc = parse(self.snapshot_text(i)?, org);
             normalize(&mut doc.roots, org);
             self.docs[i] = Some(doc);
+            #[cfg(test)]
+            last_changed::record_docs(self.docs.iter().filter(|d| d.is_some()).count());
         }
         Ok(self.docs[i].as_ref().unwrap())
     }
@@ -571,22 +584,59 @@ impl<'r> History<'r> {
     /// alignments. A step whose earlier snapshot cannot contain the block's
     /// body changed it, whatever the alignment, so that step needs no parse.
     fn changed_by_other(&mut self, path: &BlockPath) -> Result<bool, String> {
-        let mut path = path.clone();
+        Ok(self
+            .last_changed_steps(vec![path.clone()], true)?
+            .get(path)
+            .is_some_and(|i| self.other[*i]))
+    }
+
+    /// Newest touching step that changed this HEAD block's body, or no
+    /// attribution within this history. Shared by seen and bullet dates.
+    fn last_changed_steps(
+        &mut self,
+        paths: Vec<BlockPath>,
+        retain_steps: bool,
+    ) -> Result<HashMap<BlockPath, usize>, String> {
+        let mut pending: Vec<_> = paths.into_iter().map(|p| (p.clone(), p)).collect();
+        let mut changed = HashMap::new();
         for i in (1..=self.last()).rev() {
-            let body = block_at(&self.snapshot_doc(i)?.roots, &path)
-                .raw()
-                .to_owned();
-            if !may_contain(self.snapshot_text(i - 1)?, &body) {
-                return Ok(self.other[i]);
+            if pending.is_empty() {
+                break;
+            }
+            // Seen usually asks about just one changed block. Keep its cheap
+            // absent-body shortcut; for a page-wide request align once rather
+            // than repeatedly searching the page text for each block's lines.
+            if pending.len() == 1 {
+                let body = block_at(&self.snapshot_doc(i)?.roots, &pending[0].1)
+                    .raw()
+                    .to_owned();
+                if !may_contain(self.snapshot_text(i - 1)?, &body) {
+                    changed.insert(pending.pop().unwrap().0, i);
+                    break;
+                }
             }
             let step = self.snapshot_step(i)?;
-            if step.changed.contains(&path) {
-                return Ok(self.other[i]);
+            pending = pending
+                .into_iter()
+                .filter_map(|(origin, path)| {
+                    if step.changed.contains(&path) {
+                        changed.insert(origin, i);
+                        None
+                    } else {
+                        Some((
+                            origin,
+                            step.back(&path).expect("an unchanged block is paired"),
+                        ))
+                    }
+                })
+                .collect();
+            if !retain_steps {
+                self.docs[i] = None;
+                self.texts[i] = None;
+                self.steps[i] = None;
             }
-            // Every block of a later snapshot is changed or paired.
-            path = step.back(&path).expect("an unchanged block is paired");
         }
-        Ok(false)
+        Ok(changed)
     }
 
     /// For each baseline block path, the last removal of its lineage: who
@@ -659,6 +709,7 @@ struct Link {
     before: Option<Oid>,
     /// Committed by someone other than me.
     other: bool,
+    time: i64,
 }
 
 /// The first-parent line from HEAD, newest first, until the baseline, the
@@ -690,7 +741,7 @@ impl Walk {
         tip_blob: Option<Oid>,
         base: Option<Oid>,
         path: &Path,
-        me: &super::git_run::UserIdentity,
+        me: Option<&super::git_run::UserIdentity>,
     ) -> Result<Self, String> {
         let mut walk = Walk {
             links: Vec::new(),
@@ -712,6 +763,8 @@ impl Walk {
                 break;
             }
             let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+            #[cfg(test)]
+            last_changed::count(1);
             let parent = if commit.parent_count() == 0 {
                 None
             } else {
@@ -725,7 +778,8 @@ impl Walk {
                 oid,
                 after,
                 before,
-                other: !me.wrote(&commit.author()),
+                other: me.is_some_and(|me| !me.wrote(&commit.author())),
+                time: commit.time().seconds(),
             });
             after = before;
             cursor = parent;
@@ -850,7 +904,7 @@ fn changes_in(
     // First-parent history describes the successive page snapshots actually
     // integrated into this branch; a merge's resulting edits belong to its
     // author (ADR 0079). The walk is bounded in total (D-10).
-    let walk = Walk::new(&repo, tip, tip_blob, base, &repo_path, &me)?;
+    let walk = Walk::new(&repo, tip, tip_blob, base, &repo_path, Some(&me))?;
     let mut located = walk.locate(&repo, base);
     if matches!(located, Located::Unrelated)
         && page.is_some()
