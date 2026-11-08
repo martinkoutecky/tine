@@ -80,7 +80,7 @@ export interface QueryFooterCell {
   fn: QueryAggFn | null;
   /** The value, computed by the caller through the ONE query summary. */
   text: string;
-  set: (fn: QueryAggFn | null) => void;
+  set?: (fn: QueryAggFn | null) => void;
 }
 
 const QUERY_AGGREGATE_FNS: readonly QueryAggFn[] = ["count", "sum", "avg"];
@@ -108,7 +108,8 @@ export function SheetAggregateFooterCell(props: {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const query = props.query;
     if (query) {
-      const item = (label: () => string, value: QueryAggFn | null) => aggregateMenuItem(label, value, query.fn ?? null, (value) => query.set(value));
+      if (!query.set) return;
+      const item = (label: () => string, value: QueryAggFn | null) => aggregateMenuItem(label, value, query.fn ?? null, (value) => query.set?.(value));
       openActionContextMenu(rect.left, rect.bottom + 4, [
         item(() => t("sheet-aggregate-none"), null),
         ...QUERY_AGGREGATE_FNS.map(fn => item(() => queryAggregateLabel(fn), fn)),
@@ -140,7 +141,7 @@ export function SheetAggregateFooterCell(props: {
       <Show
         when={activeFn()}
         fallback={
-          <Show when={props.showEmpty}>
+          <Show when={props.showEmpty && (!props.query || props.query.set)}>
             <button class="sheet-aggregate-add" title={t("sheet-aggregate-footer-add-aggregate")} onClick={openMenu}>
               Σ
             </button>
@@ -148,13 +149,13 @@ export function SheetAggregateFooterCell(props: {
         }
       >
         {(fn) => (
-          <button
+          <Show when={!props.query || props.query.set} fallback={<span class="sheet-aggregate-value">{props.query?.text}</span>}><button
             class="sheet-aggregate-value"
             title={t("sheet-aggregate-footer-change-aggregate", { active_label: String(activeLabel()) })}
             onClick={openMenu}
           >
             {props.query ? props.query.text : aggregate(fn() as AggregateFn, props.values)}
-          </button>
+          </button></Show>
         )}
       </Show>
     </div>

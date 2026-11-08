@@ -1,5 +1,5 @@
-// GH #605: literal Customize → ordinary query edit → live journal → delete.
-// Run against a custom-protocol debug build under xvfb-run. Fixtures stay local.
+// GH #605 / #914: Customize → ordinary query edit → shared View → live result edit → delete.
+// Run against a custom-protocol build under xvfb-run. Fixtures stay local.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -9,6 +9,7 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 import { openJournals, openPageByName, currentPageTitle } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
+import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
@@ -36,11 +37,13 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
   const configFile = path.join(graph, "logseq/config.edn");
   fs.writeFileSync(configFile, config);
   fs.writeFileSync(path.join(graph, "journals", `${year}_${month}_${day}.${format}`), `${bullet} Today's fixture journal\n`);
-  fs.writeFileSync(path.join(graph, `pages/Tasks.${format}`), `${bullet} TODO Config answer sentinel\n${bullet} DOING Edited answer sentinel\n${bullet} LATER Agenda answer sentinel\n  SCHEDULED: <${year}-${month}-${day}>\n`);
+  const points = value => format === "org" ? `  :PROPERTIES:\n  :points: ${value}\n  :END:` : `  points:: ${value}`;
+  fs.writeFileSync(path.join(graph, `pages/Tasks.${format}`), `${bullet} TODO Config answer sentinel\n${bullet} DOING Edited answer sentinel\n${bullet} LATER Agenda answer sentinel\n  SCHEDULED: <${year}-${month}-${day}>\n${bullet} NOW Low points sentinel\n  DEADLINE: <${year}-${month}-${day}>\n${points(2)}\n${bullet} NOW High points sentinel\n  DEADLINE: <${year}-${month}-${day}>\n${points(7)}\n`);
   const occupied = path.join(graph, `pages/Journal sections.${format}`);
   const occupiedBytes = `${bullet} My existing notes must survive\n`;
   if (collision) fs.writeFileSync(occupied, occupiedBytes);
-  const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
+  const account = accountHomeFixture(out);
+  const env = { ...account.env, HOME: out, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
     XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
     WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
   const log = fs.openSync(path.join(out, "driver.log"), "w");
@@ -141,9 +144,86 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
     check(await browser.execute(value => window.__sectionsJourneyWitness === value, witness), "journal changed by reloading the app");
     proof.steps.push(journey);
 
+    mark("GH #914: section View survives the sections page, routed journal and journals feed");
+    const viewProperties = [["tine.view", "table"], ["tine.columns", "points"], ["tine.sort", "points desc"], ["tine.col-aggregates", "points=sum"]];
+    const propertyText = format === "org"
+      ? `\n  :PROPERTIES:\n${viewProperties.map(([key, value]) => `  :${key}: ${value}`).join("\n")}\n  :END:`
+      : `\n${viewProperties.map(([key, value]) => `  ${key}:: ${value}`).join("\n")}`;
+    const reporterQuery = "{{tine-query @block and task in ('NOW', 'LATER') and deadline < 'tomorrow' }}";
+    fs.appendFileSync(file, `${bullet} ${reporterQuery}${propertyText}\n`);
+    const assertTable = async (selector, shot) => {
+      await waitSections(selector, ["High points sentinel", "Low points sentinel"]);
+      await browser.execute(region => [...document.querySelectorAll(`${region} .query-block`)]
+        .filter(node => node.textContent?.includes("High points sentinel") && node.textContent?.includes("Low points sentinel"))
+        .at(-1)?.scrollIntoView({ block: "center" }), selector);
+      await browser.saveScreenshot(path.join(out, `${shot}.png`));
+      await browser.waitUntil(() => browser.execute(region => {
+        const tables = [...document.querySelectorAll(`${region} .sheet-table`)];
+        return tables.some(table => {
+          const rows = [...table.querySelectorAll(".sheet-title-cell")].map(node => node.textContent ?? "");
+          const headers = [...table.querySelectorAll(".sheet-header-cell")].map(node => node.textContent ?? "");
+          return rows.length === 2 && rows[0].includes("High points sentinel") && rows[1].includes("Low points sentinel")
+            && headers.length === 2 && headers[1].includes("points")
+            && table.querySelector(".sheet-aggregate-value")?.textContent?.trim() === "9";
+        });
+      }, selector), { timeout: 10_000, interval: 100, timeoutMsg: `${shot}: section lost table, columns, sort or aggregate` });
+      await browser.saveScreenshot(path.join(out, `${shot}.png`));
+    };
+    await openPageByName(browser, name);
+    await assertTable(".main-content .page-blocks", "914-sections-page");
+    await openJournals(browser);
+    const todayTitle = await currentPageTitle(browser);
+    // The feed's first title is also today's name. Leave it before using the
+    // shared helper, whose same-title fast path would otherwise keep the feed.
+    await openPageByName(browser, "Tasks");
+    await openPageByName(browser, todayTitle);
+    await assertTable(".main-content .today-sections", "914-routed-journal");
+    await openJournals(browser);
+    await assertTable(".main-content .today-sections", "914-journals-feed");
+    // A sidebar page renders the source query block itself. Journal sections
+    // are not appended to sidebar journals (the same boundary as Logseq).
+    await browser.execute(wanted => {
+      const recent = [...document.querySelectorAll("#sidebar-recent-list .nav-page")]
+        .find(node => node.textContent?.trim().toLowerCase() === wanted.toLowerCase());
+      if (!recent) throw new Error("the sections page is absent from Recent");
+      recent.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    }, name);
+    await assertTable(".right-sidebar", "914-sidebar-sections-page");
+    await browser.$(".right-sidebar-header .rs-close").click();
+    proof.steps.push(journey);
+
+    mark("GH #914: result edits save the live task while the section View stays unchanged");
+    const sectionBytes = fs.readFileSync(file, "utf8");
+    await browser.waitUntil(() => browser.execute(() => {
+      const cell = [...document.querySelectorAll(".main-content .today-sections .sheet-title-cell")]
+        .find(node => node.textContent?.includes("High points sentinel") && node.querySelector(".sheet-cell-handle"));
+      if (!cell) return false;
+      cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+      return true;
+    }), { timeout: 15_000, timeoutMsg: "the query result never became editable" });
+    const resultEditor = await browser.$(".main-content .today-sections textarea.block-editor");
+    await resultEditor.waitForExist({ timeout: 10_000 });
+    await resultEditor.click();
+    await browser.execute(() => {
+      const input = document.querySelector(".main-content .today-sections textarea.block-editor");
+      const at = input.value.indexOf("High points sentinel") + "High points sentinel".length;
+      input.setSelectionRange(at, at);
+    });
+    await browser.keys(" edited");
+    await browser.$("h1.page-title").click();
+    await waitForFileText(path.join(graph, `pages/Tasks.${format}`), text => text.includes("High points sentinel edited"));
+    check(fs.readFileSync(file, "utf8") === sectionBytes, "editing a result changed the section's host block");
+    await assertTable(".main-content .today-sections", "914-editable-result");
+    proof.steps.push(journey);
+
     mark("delete the sections page and restore config sections live");
     // Shared navigation owns switcher activation and title readiness.
     await openPageByName(browser, name);
+    await browser.execute(() => document.querySelector("h1.page-title").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 })));
+    await browser.$('[data-page-action-id="delete-page"]').waitForExist({ timeout: 10_000 });
+    await browser.execute(() => document.querySelector('[data-page-action-id="delete-page"]').click());
+    await answerNativeDialog("no", { env });
+    check(fs.existsSync(file), "Cancel deleted the sections page");
     await browser.execute(() => document.querySelector("h1.page-title").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 })));
     await browser.$('[data-page-action-id="delete-page"]').waitForExist({ timeout: 10_000 });
     await browser.execute(() => document.querySelector('[data-page-action-id="delete-page"]').click());
@@ -158,14 +238,19 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
     proof.steps.push(journey);
     console.log(`PASS ${format} collision=${collision}`);
   } catch (error) {
-    proof.failure = { journey, expected: "seed, live edit and fallback preserve the user's graph", observed: String(error), classification: browser ? "ambiguous; inspect DOM and driver log" : "infrastructure: driver/session startup" };
-    if (browser) fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
+    proof.failure = { journey, expected: journey.startsWith("GH #914") ? "the source page and journal retain the configured table, columns, sort and aggregate" : "seed, live edit and fallback preserve the user's graph", observed: String(error), classification: String(error).includes("section lost table") ? "product" : browser ? "ambiguous; inspect DOM and driver log" : "infrastructure: driver/session startup" };
+    if (browser) {
+      await browser.saveScreenshot(path.join(out, "failure.png")).catch(() => {});
+      fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
+    }
     throw error;
   } finally {
     fs.writeFileSync(path.join(out, "proof.json"), `${JSON.stringify(proof, null, 2)}\n`);
     await browser?.deleteSession().catch(() => {});
     try { process.kill(-driver.pid, "SIGTERM"); } catch {}
     fs.closeSync(log);
+    account.close();
+    account.verify();
     console.log(`Artifacts: ${out}`);
   }
 }

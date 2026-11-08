@@ -5,7 +5,7 @@ import { Rich } from "../i18n/Rich";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 export { ClozeMacro, TweetMacro, VideoMacro, YoutubeTimestamp, ZoteroMacro, youtubeTimestampMacroFor } from "./MediaMacros";
 import { TableWrap } from "./TableWrap";
-import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, useContext, type JSX } from "solid-js";
 import { reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { SurfaceContext } from "./Block";
@@ -203,8 +203,8 @@ export function QueryMacro(props: {
   configQuery?: boolean;
   /** GH #855: the text of the block this query lives in, when it is shown away
    *  from that block (a journal section on the journal feed, no `blockId`).
-   *  Its view properties (`tine.sort`, `tine.group-field`, legacy table keys)
-   *  apply as on the block itself; nothing is written back to it. */
+   *  Its complete properties feed the same query and sheet readers as the live
+   *  block; without a blockId no host editing controls are offered. */
   hostRaw?: { raw: string; format: Format };
 }): JSX.Element {
   return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
@@ -234,13 +234,15 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   }, [], { equals: sameJson });
   /** One host property, matched case-insensitively like `blockProperty`. */
   const hostProperty = (key: string): string | null => {
-    if (props.blockId) return blockProperty(props.blockId, key);
     const lower = key.toLowerCase();
     const found = hostAllProperties().find(([k]) => k.toLowerCase() === lower);
     return found ? found[1].trim() : null;
   };
   const hostProperties = createMemo<[string, string][]>(
-    () => hostAllProperties().filter(([key]) => key.startsWith("tine.") || key === "query-table"),
+    () => hostAllProperties().filter(([key]) => {
+      const lower = key.toLowerCase();
+      return lower.startsWith("tine.") || lower === "query-table";
+    }),
     [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
     () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
@@ -318,20 +320,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;
   });
 
-  const sheet = createMemo(() => {
-    if (!props.blockId || !docNode(props.blockId)) return null;
-    return sheetConfig(facetsOf(docNode(props.blockId).raw, formatForBlock(props.blockId)).properties);
-  });
-  const currentView = (): QueryView => {
-    const view = hostProperty("tine.view");
-    return view === "search" || view === "table" || view === "board" ? view : "list";
-  };
-  const blockFace = (): QueryView => {
-    const face = runnable()?.block_presentation ?? currentView();
-    // GH #855: a table or board edits its own block; away from that block (the
-    // journal feed) the rows show as the list, as they did before.
-    return !props.blockId && (face === "table" || face === "board") ? "list" : face;
-  };
+  const sheet = createMemo(() => sheetConfig(hostAllProperties()));
+  const detachedOwnerId = createUniqueId();
+  const sheetOwnerId = () => props.blockId ?? detachedOwnerId;
+  const currentView = (): QueryView => reading()?.view.view ?? "list";
+  const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
   const legacyTable = () => blockFace() === "list"
     && hostProperty("tine.view") === null
@@ -1193,17 +1186,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                           // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
                             <Switch fallback={listResults()}>
-                              <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
+                              <Match when={blockFace() === "table"}>
                                 <SheetContainer>
-                                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                                    queryDisplay={{ view: reading()?.view ?? {},
+                                  <SheetTable ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
+                                    queryDisplay={{ view: displayView(),
                                       ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
-                                      apply: (next) => void applyDisplay(next) }} />
+                                      apply: props.blockId ? (next) => void applyDisplay(next) : undefined }} />
                                 </SheetContainer>
                               </Match>
-                              <Match when={sheetFace() && !!props.blockId && blockFace() === "board"}>
+                              <Match when={blockFace() === "board"}>
                                 <SheetContainer>
-                                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                                  <SheetBoard ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
                                 </SheetContainer>
                               </Match>
                             </Switch>
@@ -1227,19 +1220,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 </Match>
                 <Match when={sheetFace()}>
                   <Show when={groups().length > 0} fallback={empty()}>
-                    <Show when={!!props.blockId}>
                       <SheetContainer>
                         <Switch>
                           <Match when={blockFace() === "table"}>
-                            <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                              queryDisplay={{ view: reading()?.view ?? {}, statistics: displayed()?.statistics, statisticsView: runnable()?.view, apply: (next) => void applyDisplay(next) }} />
+                            <SheetTable ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
+                              queryDisplay={{ view: displayView(), statistics: displayed()?.statistics, statisticsView: runnable()?.view,
+                                apply: props.blockId ? (next) => void applyDisplay(next) : undefined }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
-                            <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                            <SheetBoard ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
                           </Match>
                         </Switch>
                       </SheetContainer>
-                    </Show>
                   </Show>
                 </Match>
                 <Match when={currentView() === "search"}>
