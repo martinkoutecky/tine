@@ -1,4 +1,3 @@
-import { Show } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -49,7 +48,8 @@ function installHarness(initialMatches = true) {
     removeListener() {},
     dispatchEvent() { return true; },
   } as unknown as MediaQueryList;
-  Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: () => query });
+  Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: (media: string) => media.includes("reduced-motion")
+    ? { matches: false, addEventListener() {}, removeEventListener() {} } : query });
 
   setLeftSidebarOpen(false);
   setRightSidebarOpen(false);
@@ -59,12 +59,10 @@ function installHarness(initialMatches = true) {
   const underClick = vi.fn();
   const dispose = render(() => (
     <div class="app-container" data-mobile-drawer-mode={mobileDrawerMode() ? "true" : "false"} data-active-drawer={activeDrawer() ?? ""}>
-      <Show when={sidebarOpen()}>
-        <MobileDrawerPanel side="left" label="Navigation sidebar" class="left-sidebar">
+        <MobileDrawerPanel open={sidebarOpen()} side="left" label="Navigation sidebar" class="left-sidebar">
           <button class="left-first" onClick={() => dismissDrawerAndRestore("explicit")}>Close left</button>
           <button class="left-last">Last left action</button>
         </MobileDrawerPanel>
-      </Show>
       <DrawerBackground class="main-container" blockedBy="left">
         <DrawerBackground class="top-region" blockedBy="right">
           <button class="under-target" onClick={underClick}>Underlying action</button>
@@ -72,12 +70,10 @@ function installHarness(initialMatches = true) {
         <DrawerBackground class="drawer-workspace" blockedBy="right">
           <main class="main-content pane-focused" tabIndex={-1}>Main</main>
         </DrawerBackground>
-        <Show when={rightSidebarOpen()}>
-          <MobileDrawerPanel side="right" label="Reference sidebar" class="right-sidebar">
+          <MobileDrawerPanel open={rightSidebarOpen()} side="right" label="Reference sidebar" class="right-sidebar">
             <button class="right-first" onClick={() => dismissDrawerAndRestore("explicit")}>Close right</button>
             <button class="right-last">Last right action</button>
           </MobileDrawerPanel>
-        </Show>
       </DrawerBackground>
       <MobileDrawerController />
       {/* The shared editing dock serves the focused drawer too (GH #751). */}

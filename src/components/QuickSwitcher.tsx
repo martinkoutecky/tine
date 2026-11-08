@@ -5,7 +5,8 @@ import { nextResultIndex } from "../resultNavigation";
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
-import { bindingOwner, readOwned, writeOwned, type Owned } from "../owned";
+import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned, type Owned } from "../owned";
+import { coalescedRead } from "../coalescedRead";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPrefill, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -18,7 +19,7 @@ import { fuzzyScore } from "../editor/autocomplete";
 import { SEARCH_SYNTAX } from "../editor/searchQuery";
 import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
-import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
+import type { MatchSpan, ObjectiveMatchClass, PageKind, QueryExecution } from "../types";
 import { rankLauncherItems, recordLauncherActivation, pinyinMatchingEnabled } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
@@ -94,9 +95,8 @@ export function QuickSwitcher(): JSX.Element {
   const pagesOnly = () => switcherMode() === "pages";
   const contentOnly = () => switcherMode() === "content";
   const currentPageOnly = () => currentPageScope() !== null;
-  // The backend search/quick-switch IPC keys off a debounced query so holding
-  // keys doesn't fire a whole-graph scan per character; local sections (recents,
-  // commands, create-option) still react to `query()` instantly.
+  // Only block search waits for a pause: page names must arrive while typing,
+  // independently of the more expensive block scan (GH #899).
   const [debouncedQuery, setDebouncedQuery] = createSignal("");
   let qTimer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
@@ -105,40 +105,53 @@ export function QuickSwitcher(): JSX.Element {
     qTimer = setTimeout(() => setDebouncedQuery(q), 110);
   });
   onCleanup(() => clearTimeout(qTimer));
-  // Fetch OG's complete ranked pools once per query. Presentation paging below
-  // changes only the rendered slice and therefore does not trigger another scan.
-  const [graphResultsResource, { refetch: retrySearch }] = createResource(
-    () => (commandsOnly() ? null : {
-      q: debouncedQuery(),
-      pages: currentPageOnly() || contentOnly() ? 0 : PAGE_POOL,
-      blocks: pagesOnly() ? 0 : BLOCK_POOL,
+  const pagesWanted = () => !currentPageOnly() && !contentOnly();
+  const blocksWanted = () => !pagesOnly();
+  const searchScope = {};
+  let searchLive = true;
+  const pageReads = coalescedRead<Owned<QueryExecution>>();
+  onCleanup(() => { searchLive = false; pageReads.cancel(); });
+  // Both branches still ask the same QueryPlan for its full ranked pool. A
+  // zero limit skips the other branch, so pages never wait for block ranking.
+  // Separate cancellation lanes keep the two requests from cancelling each
+  // other. Presentation paging below only slices these already-ranked pools.
+  const searchResource = (target: "pages" | "blocks") => createResource(
+    () => (!switcherOpen() || commandsOnly() || !(target === "pages" ? pagesWanted() : blocksWanted()) ? null : {
+      q: target === "pages" ? query() : debouncedQuery(),
       scope: currentPageScope(),
-      // Hits belong to one graph: a switch re-keys the search so the old graph's
-      // rows are neither shown nor reused.
       graphRoot: graphMeta()?.root ?? "",
       binding: bindingIdentity(),
       transliteration: pinyinMatchingEnabled(),
     }),
-    (s) => s && s.q.trim()
-      ? backend().runGraphSearch(
-          s.q,
-          s.pages,
-          s.blocks,
-          s.scope ? "quick-switch:current-page" : "quick-switch",
-          false,
-          s.scope ?? undefined,
-          undefined,
-          undefined,
-          s.transliteration,
-        )
-      : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
+    async s => {
+      if (!s.q.trim()) return undefined;
+      const requestOwner = latestOwner(searchScope, target, graphOwner(() => searchLive && switcherOpen()
+        && s.q === (target === "pages" ? query() : debouncedQuery())));
+      const read = () => readOwned(requestOwner, backend().runGraphSearch(
+        s.q, target === "pages" ? PAGE_POOL : 0, target === "blocks" ? BLOCK_POOL : 0,
+        `${s.scope ? "quick-switch:current-page" : "quick-switch"}:${target}`,
+        false, s.scope ?? undefined, undefined, undefined, s.transliteration,
+      ));
+      const answer = target === "pages" ? await pageReads.run(requestOwner, read) : await read();
+      return answer?.kind === "current" ? answer.value : undefined;
+    },
   );
+  const [pageResultsResource, { refetch: retryPages }] = searchResource("pages");
+  const [blockResultsResource, { refetch: retryBlocks }] = searchResource("blocks");
+  const retrySearch = () => { void retryPages(); void retryBlocks(); };
+  const searchLoading = () => pageResultsResource.loading || (blocksWanted()
+    && (blockResultsResource.loading || debouncedQuery() !== query()));
   // A failed search says so (below) instead of throwing into the switcher's render
   // or claiming "No matched results".
   const graphResults = () => {
-    const result = readOr(graphResultsResource, undefined, "search results");
-    return pinyinMatchingEnabled() || !result ? result : {
-      ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
+    const pages = pagesWanted() ? readOr(pageResultsResource, undefined, "search results") : undefined;
+    const blocks = blocksWanted() ? readOr(blockResultsResource, undefined, "search results") : undefined;
+    const hits = [...(pages?.hits ?? []).filter(hit => hit.entity === "page"),
+      ...(blocks?.hits ?? []).filter(hit => hit.entity === "block")];
+    return {
+      hits: pinyinMatchingEnabled() ? hits : hits.filter(hit => hit.match_class !== "transliteration"),
+      diagnostics: (pages ?? blocks)?.diagnostics ?? [],
+      has_more: { pages: pages?.has_more?.pages ?? false, blocks: blocks?.has_more?.blocks ?? false },
     };
   };
 
@@ -656,11 +669,11 @@ export function QuickSwitcher(): JSX.Element {
                 {graphResults()!.diagnostics.map((diagnostic) => diagnostic.message).join(" · ")}
               </div>
             </Show>
-            <ResourceFailure of={graphResultsResource} what="search results" onRetry={() => void retrySearch()} />
-            <Show when={query().trim() && (graphResultsResource.loading || debouncedQuery() !== query())}>
+            <ResourceFailure of={pageResultsResource.error ? pageResultsResource : blockResultsResource} what="search results" onRetry={retrySearch} />
+            <Show when={query().trim() && searchLoading()}>
               <div class="switcher-empty" role="status">{t("quick-switcher-searching")}</div>
             </Show>
-            <Show when={query().trim() && !graphResultsResource.loading && debouncedQuery() === query() && flat().length === 0 && graphResultsResource.error === undefined && !(graphResults()?.diagnostics.length ?? 0)}>
+            <Show when={query().trim() && !searchLoading() && flat().length === 0 && pageResultsResource.error === undefined && blockResultsResource.error === undefined && !(graphResults()?.diagnostics.length ?? 0)}>
               <div class="switcher-empty">{t("quick-switcher-no-matched-results")}</div>
             </Show>
           </div>

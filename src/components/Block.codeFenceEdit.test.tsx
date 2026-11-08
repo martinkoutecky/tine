@@ -1,5 +1,6 @@
-import { maybeEditorIn } from "../tests/editorDriver";
-import { describe, expect, it } from "vitest";
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
+import { describe, expect, it, vi } from "vitest";
+import { writeClipboardText } from "../clipboard";
 import { For } from "solid-js";
 import { pageByName, setRaw } from "../document";
 import { loadSingle } from "../document/workingSet";
@@ -23,7 +24,39 @@ import { Editor } from "./Block";
 
 installBlockEditorLifecycle();
 
+vi.mock("../clipboard", () => ({ writeClipboardText: vi.fn().mockResolvedValue(undefined) }));
+
 describe("code-fence editor presentation", () => {
+  it.each(["md", "org"] as const)("copies the current %s code body while preserving the editor and caret", async format => {
+    const open = format === "md" ? "```js\n" : "#+BEGIN_SRC js\n";
+    const close = format === "md" ? "\n```" : "\n#+END_SRC";
+    loadSingle({ ...page("Copy code", [blk("copy-code", `${open}const old = 1;${close}`)]), format });
+    const id = pageByName("Copy code")!.roots[0];
+    startEditing(id, open.length);
+    const { root, dispose } = mount(() => <Block id={id} />);
+    try {
+      const editor = editorIn(root);
+      editor.input("const fresh = '文😀';", 6);
+      editor.focus();
+      const copy = root.querySelector<HTMLButtonElement>(".code-copy");
+      expect(copy).not.toBeNull();
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      copy!.dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+      copy!.click();
+      await Promise.resolve();
+      expect(writeClipboardText).toHaveBeenLastCalledWith("const fresh = '文😀';");
+      expect(document.activeElement).toBe(editor.element);
+      expect(editor.selection()).toEqual([6, 6]);
+      // Revealing the fences keeps Copy code bound to the payload, not source.
+      editor.keydown({ key: "Escape" });
+      expect(editorIn(root).value()).toBe(`${open}const fresh = '文😀';${close}`);
+      root.querySelector<HTMLButtonElement>(".code-copy")!.click();
+      await Promise.resolve();
+      expect(writeClipboardText).toHaveBeenLastCalledWith("const fresh = '文😀';");
+    } finally { dispose(); }
+  });
+
   it("presents the editor of a code-only fenced block as the same code card", () => {
     loadSingle(page("Code", [blk("c1", "```js\nconst x = 1;\nconsole.log(x);\n```")]));
     const id = pageByName("Code")!.roots[0];

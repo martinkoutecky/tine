@@ -23,6 +23,7 @@ const EPSILON = 1;
 
 const productionInputs = [
   "src/components/MobileDrawerShell.tsx",
+  "src/mobileDrawerMotion.ts",
   "src/mobileDrawers.ts",
   "src/ui.ts",
   "src/styles/theme.css",
@@ -108,8 +109,7 @@ const entrySource = String.raw`
         data-mobile-drawer-mode={mobileDrawerMode() ? "true" : "false"}
         data-active-drawer={activeDrawer() ?? ""}
       >
-        <Show when={sidebarOpen()}>
-          <MobileDrawerPanel side="left" label="Navigation sidebar" class="left-sidebar" style={leftStyle()}>
+          <MobileDrawerPanel open={sidebarOpen()} side="left" label="Navigation sidebar" class="left-sidebar" style={leftStyle()}>
             <div class="left-sidebar-scroll">
               <Show when={mobileDrawerMode()}>
                 <button class="mobile-drawer-close e1-left-close" onClick={() => dismissDrawerAndRestore("explicit")}>Close navigation sidebar</button>
@@ -118,7 +118,6 @@ const entrySource = String.raw`
             </div>
             <div class="sidebar-resizer" data-e1-resizer="left" />
           </MobileDrawerPanel>
-        </Show>
 
         <DrawerBackground class="main-container" blockedBy="left">
           <DrawerBackground class="e1-top-region" blockedBy="right">
@@ -140,8 +139,7 @@ const entrySource = String.raw`
                 >Under right edge</button>
               </main>
             </DrawerBackground>
-            <Show when={rightSidebarOpen()}>
-              <MobileDrawerPanel side="right" label="Reference sidebar" class="right-sidebar" style={rightStyle()}>
+              <MobileDrawerPanel open={rightSidebarOpen()} side="right" label="Reference sidebar" class="right-sidebar" style={rightStyle()}>
                 <div class="rs-resizer" data-e1-resizer="right" />
                 <div class="right-sidebar-header">
                   <span>Reference sidebar</span>
@@ -149,7 +147,6 @@ const entrySource = String.raw`
                 </div>
                 <button class="e1-right-action">Right drawer action</button>
               </MobileDrawerPanel>
-            </Show>
           </div>
         </DrawerBackground>
 
@@ -267,6 +264,10 @@ async function startHarnessServer() {
 }
 
 async function snapshot(page) {
+  // These are settled geometry assertions. Native touch acceptance separately
+  // samples interpolation; visibility state changes before motion completes.
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-mobile-drawer-panel], [data-mobile-drawer-scrim]")]
+    .every(element => element.getAnimations().length === 0 && element.dataset.drawerMotion !== "closing"));
   return page.evaluate(() => {
     const box = (selector) => {
       const element = document.querySelector(selector);

@@ -201,7 +201,7 @@ pub(super) fn serve_exit(result: Result<(), super::serve::ServeFailure>) -> i32 
 }
 
 /// `--graph`, else `$TINE_GRAPH`, else the graph around the working
-/// directory (the nearest ancestor with a `logseq/` folder).
+/// directory (`graph_around`).
 fn graph_root(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     let chosen = explicit
         .or_else(|| {
@@ -211,12 +211,21 @@ fn graph_root(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
         })
         .or_else(|| {
             let cwd = std::env::current_dir().ok()?;
-            cwd.ancestors()
-                .find(|dir| dir.join("logseq").is_dir())
-                .map(Path::to_path_buf)
+            graph_around(&cwd)
         })
         .ok_or("no graph: pass --graph, set TINE_GRAPH, or run inside a graph folder")?;
     crate::state::canonical_graph_root(&chosen.display().to_string())
+}
+
+/// The nearest ancestor of `dir` (itself included) holding `logseq/config.edn`,
+/// the file Logseq writes into every graph. A bare `logseq/` folder is not
+/// enough (GH #908): run from `~` with the graph at `~/logseq`, that rule
+/// took `~` for the graph, so `logseq/logseq/bak` escaped the backup
+/// exclusions and journals lost their journal identity.
+pub(crate) fn graph_around(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .find(|dir| dir.join("logseq").join("config.edn").is_file())
+        .map(Path::to_path_buf)
 }
 
 /// The error on stderr: one line with the stable discriminator

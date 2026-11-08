@@ -7,20 +7,8 @@
 // that arrow keys and range selection follow (tree.ts) uses the same function.
 
 import { untrack } from "solid-js";
-import { doc, formatForBlock } from "./model";
-import { quoteSelectorOf } from "../comments";
-import { facetsOf } from "../render/facets";
+import { isCommentId } from "./commentThreads";
 import { commentMarginHidden } from "../commentMarginPref";
-
-// A cheap screen before the property parse: a comment carries `tine.quote::`
-// (md) or `:tine.quote:` (org drawers).
-const MAY_QUOTE = /tine\.quote::|:tine\.quote:/i;
-
-function isCommentChild(id: string): boolean {
-  const n = doc.byId[id];
-  if (!n || n.parent === null || !MAY_QUOTE.test(n.raw)) return false;
-  return quoteSelectorOf(facetsOf(n.raw, formatForBlock(id)).properties) !== null;
-}
 
 /** `children` with the comments first, each group in its stored order. Returns
  * the same array when no comment follows an ordinary child (the common case,
@@ -34,7 +22,7 @@ export function commentsFirst(children: readonly string[]): readonly string[] {
     let seenOrdinary = false;
     let late = false;
     const comment = children.map((id) => {
-      const c = isCommentChild(id);
+      const c = isCommentId(id);
       if (c && seenOrdinary) late = true;
       if (!c) seenOrdinary = true;
       return c;
@@ -52,7 +40,7 @@ export function commentsFirst(children: readonly string[]): readonly string[] {
 export function visibleChildren(children: readonly string[]): readonly string[] {
   if (!commentMarginHidden()) return commentsFirst(children);
   return untrack(() => {
-    const kept = children.filter((id) => !isCommentChild(id));
+    const kept = children.filter((id) => !isCommentId(id));
     return kept.length === children.length ? children : kept;
   });
 }

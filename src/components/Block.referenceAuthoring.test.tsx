@@ -515,7 +515,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
     } finally { dispose(); }
   });
 
-  it("does not let an older same-location page lookup overwrite newer results", async () => {
+  it("does not show a superseded same-location page reply while the newest lookup is queued", async () => {
     const pending: { query: string; resolve: (pages: PageEntry[]) => void }[] = [];
     vi.spyOn(backend(), "quickSwitch").mockImplementation((query) =>
       new Promise<PageEntry[]>((resolve) => pending.push({ query, resolve }))
@@ -531,14 +531,14 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
       await vi.waitFor(() => expect(pending.map((request) => request.query)).toEqual(["P"]));
 
       inputAt(textarea, "[[Parity]]", 8);
+      // GH #899 bounds page reads to one active request. The old reply must
+      // never appear, including while its successor is waiting to start.
+      pending[0].resolve([entry("Parity Old")]);
       await vi.waitFor(() => expect(pending.map((request) => request.query)).toEqual(["P", "Parity"]));
+      expect([...document.body.querySelectorAll(".autocomplete .ac-label")].map(row => row.textContent)).not.toContain("Parity Old");
 
       pending[1].resolve([entry("Parity New")]);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity New"));
-      pending[0].resolve([entry("Parity Old")]);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity New");
     } finally {
       dispose();
     }

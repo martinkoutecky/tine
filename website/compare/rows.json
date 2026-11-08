@@ -1240,10 +1240,10 @@
       "section": "Platforms",
       "feature": "iPhone / iPad",
       "tine": {
-        "text": "Public beta via TestFlight",
+        "text": "On the App Store; Betas via TestFlight",
         "evidence": {
           "path": "website/index.html",
-          "contains": "https://testflight.apple.com/join/rpGGpTVW"
+          "contains": "https://apps.apple.com/us/app/tineoutline/id6804403687"
         }
       },
       "logseq": {

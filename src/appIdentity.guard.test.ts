@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { APP_ID, IDENTITIES, SHIP, deriveIdentityFiles } from "../scripts/lib/app-identity.mjs";
+import { APP_ID, IDENTITIES, SHIP, IOS_IDENTITY_FILES, deriveIdentityFiles, iosIdentity } from "../scripts/lib/app-identity.mjs";
 
 // The app identity has ONE switch: src-tauri/app-identity.json (docs/app-identity.md).
 // Every identity-bearing file derives from it; nothing else spells an identity.
@@ -21,15 +21,12 @@ function files(dir: string, keep: RegExp): string[] {
 }
 
 const SHORTCUTS = "src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml";
-const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts", SHORTCUTS];
+const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts", SHORTCUTS, ...IOS_IDENTITY_FILES];
 // The released identity's packaging: Flatpak names its files and ids by it; other
 // identities are derived from those files at build time
 // (scripts/derive-flatpak-identity.mjs, .github/workflows/flatpak.yml). Its
-// workflow refuses an experiment tree (.github/workflows/flatpak.yml). The iOS
-// Info.ios.plist names the iCloud container Apple registered for the release
-// identity; ios-testflight.yml refuses an experiment tree before signing, and
-// scripts/test-ios-distribution.mjs pins that guard to app-identity.json.
-const RELEASE_PACKAGING = /^(flatpak\/|src-tauri\/Info\.ios\.plist$)/;
+// workflow checks that its requested identity matches the checkout.
+const RELEASE_PACKAGING = /^flatpak\//;
 const FRONT_DOOR = "scripts/lib/app-identity.mjs";
 
 function identityLiterals(): RegExp {
@@ -43,7 +40,9 @@ function identityLiterals(): RegExp {
 
 describe("app identity switch", () => {
   it("the Beta identity is fixed, and the shipped identity matches the updater channel", () => {
-    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og", iconDirectory: "icons-beta" });
+    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og", iconDirectory: "icons-beta", ios: {
+      displayName: "Tine Beta", appStoreAppleId: "6832052325", provisioningProfileSecret: "IOS_BETA_MOBILE_PROVISION", shareExtensionProvisioningProfileSecret: "IOS_BETA_SHARE_EXTENSION_MOBILE_PROVISION",
+    } });
     // The Beta identity updates only from the beta release and stable Tine only
     // from the latest stable release (scripts/release-policy.mjs releaseChannel).
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
@@ -59,6 +58,16 @@ describe("app identity switch", () => {
     }
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
     expect(conf.identifier).toBe(APP_ID);
+    for (const file of [
+      "src-tauri/Tine.ios.entitlements",
+      "src-tauri/Info.ios.plist",
+      "src-tauri/ios-app/ShareExtension/TineShareExtension.entitlements",
+      "src-tauri/ios-app/Shared/ShareInbox.swift",
+      "src-tauri/ios-native-integrations/ios/Sources/NativeIntegrationsPlugin.swift",
+      "src-tauri/ios-folder-picker-native/ios/Sources/GraphFolderPickerPlugin.swift",
+    ]) {
+      expect(fs.readFileSync(path.join(ROOT, file), "utf8"), file).toContain(APP_ID);
+    }
   });
 
   it("both settings of the switch derive a complete, distinct identity and round-trip", () => {
@@ -83,6 +92,21 @@ describe("app identity switch", () => {
         expect(targets.length).toBeGreaterThan(0);
         expect(new Set(targets)).toEqual(new Set([identity.androidApplicationId]));
         expect(JSON.parse(derived["src-tauri/app-identity.json"]).ship).toBe(ship);
+        const ios = iosIdentity(identity);
+        expect(derived["src-tauri/Info.ios.plist"]).toContain(`<key>${ios.iCloudContainer}</key>`);
+        expect(derived["src-tauri/Info.ios.plist"]).toContain(`<string>${ios.displayName}</string>`);
+        expect(derived["src-tauri/Tine.ios.entitlements"]).toContain(`<string>${ios.appGroup}</string>`);
+        expect(derived["src-tauri/Tine.ios.entitlements"].split(ios.iCloudContainer)).toHaveLength(3);
+        expect(derived["src-tauri/ios-app/ShareExtension/TineShareExtension.entitlements"]).toContain(ios.appGroup);
+        expect(derived["src-tauri/ios-app/Shared/ShareInbox.swift"]).toContain(`"${ios.appGroup}"`);
+        expect(derived["src-tauri/ios-native-integrations/ios/Sources/NativeIntegrationsPlugin.swift"]).toContain(`"${ios.appGroup}"`);
+        expect(derived["src-tauri/ios-folder-picker-native/ios/Sources/GraphFolderPickerPlugin.swift"]).toContain(`"${ios.iCloudContainer}"`);
+        for (const file of IOS_IDENTITY_FILES) {
+          const other = IDENTITIES[ship === "release" ? "experiment" : "release"];
+          // The stable identifier is a prefix of Beta's: require a token boundary.
+          const token = new RegExp(`${other.identifier.replace(/\./g, "\\.")}(?![\\w])`);
+          expect(derived[file], file).not.toMatch(token);
+        }
         for (const key of ["identifier", "androidApplicationId", "deployName"] as const) {
           expect(seen.has(`${key}=${identity[key]}`), `${ship} shares ${key}`).toBe(false);
           seen.add(`${key}=${identity[key]}`);
@@ -108,6 +132,32 @@ describe("app identity switch", () => {
     expect(fs.readFileSync(path.join(ROOT, ".github/workflows/flatpak.yml"), "utf8")).toContain("derive-flatpak-identity.mjs --identity");
   });
 
+  it("derivation repairs unknown iOS group and container ids, so --check detects their drift", () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "tine-ios-identity-drift-"));
+    try {
+      const ios = iosIdentity();
+      for (const file of DERIVED) {
+        fs.mkdirSync(path.dirname(path.join(scratch, file)), { recursive: true });
+        let text = fs.readFileSync(path.join(ROOT, file), "utf8");
+        if (IOS_IDENTITY_FILES.includes(file)) {
+          text = text.replaceAll(ios.appGroup, "group.invalid.app").replaceAll(ios.iCloudContainer, "iCloud.invalid.app");
+          if (file.endsWith(".entitlements")) {
+            text = text.replace("<array>", "<array>\n\t\t<string>group.extra.app</string>")
+              .replaceAll("<string>iCloud.invalid.app</string>", "<string>iCloud.invalid.app</string>\n\t\t<string>iCloud.extra.app</string>");
+          }
+        }
+        fs.writeFileSync(path.join(scratch, file), text);
+      }
+      expect(fs.readFileSync(path.join(scratch, "src-tauri/Tine.ios.entitlements"), "utf8"))
+        .toContain("group.invalid.app");
+      for (const [file, text] of Object.entries(deriveIdentityFiles(scratch, SHIP))) {
+        expect(text, file).toBe(fs.readFileSync(path.join(ROOT, file), "utf8"));
+      }
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it("the experiment config seed exists only while the build ships an experiment identity", () => {
     // Scope D is a temporary convenience (docs/app-identity.md): when the switch
     // ships the released identity, delete src-tauri/src/experiment_config_seed.rs
@@ -120,7 +170,9 @@ describe("app identity switch", () => {
   it("docs/app-identity.md states the switch and the seed allowlist the code uses", () => {
     const doc = fs.readFileSync(path.join(ROOT, "docs/app-identity.md"), "utf8");
     for (const identity of Object.values(IDENTITIES)) {
-      for (const value of Object.values(identity)) expect(doc, String(value)).toContain(`"${value}"`);
+      for (const value of [...Object.values(identity).filter((value) => typeof value === "string"), ...Object.values(identity.ios)]) {
+        expect(doc, String(value)).toContain(`"${value}"`);
+      }
     }
     const seedPath = path.join(ROOT, "src-tauri/src/experiment_config_seed.rs");
     if (!fs.existsSync(seedPath)) return;
@@ -137,7 +189,7 @@ describe("app identity switch", () => {
     const scanned = [
       ...files(path.join(ROOT, "src"), /\.(ts|tsx|js|mjs)$/),
       ...files(path.join(ROOT, "scripts"), /\.(mjs|js|cjs|sh|rs)$/),
-      ...files(path.join(ROOT, "src-tauri"), /\.(rs|json|kts|kt|xml|plist)$/),
+      ...files(path.join(ROOT, "src-tauri"), /\.(rs|swift|json|kts|kt|xml|plist|entitlements)$/),
       ...files(path.join(ROOT, "crates"), /\.rs$/),
     ];
     const offenders = scanned

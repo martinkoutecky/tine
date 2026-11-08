@@ -184,6 +184,19 @@ describe("left drawer pull (OG container.cljs: opens past 40px; Tine adds the ve
     expect(h.openDrawer).toHaveBeenCalledOnce();
   });
 
+  it("keeps following the finger after opening and settles on release or cancellation (GH #501)", () => {
+    const drawerProgress = vi.fn(), drawerSettle = vi.fn();
+    const h = host({ platform: "android", drawerProgress, drawerSettle });
+    const s = createEdgeSwipe(h);
+    s.start(5, 100, 0);
+    s.move(65, 100, 10); s.move(105, 100, 20);
+    expect(drawerProgress.mock.calls).toEqual([[60], [100]]);
+    s.end(105, 100, 30);
+    expect(drawerSettle).toHaveBeenCalledOnce();
+    s.start(5, 100, 40); s.move(65, 100, 50); s.cancel();
+    expect(drawerSettle).toHaveBeenCalledTimes(2);
+  });
+
   it("does not open from a diagonal scroll", () => {
     const h = android();
     drag(h, 5, 100, [[5 + 12, 100 + 40], [5 + 90, 100 + 90]]);

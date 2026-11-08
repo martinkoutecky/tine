@@ -9,7 +9,7 @@ import { focusMountedEditor } from "../editor/surfaceFocus";
 import { cm6CaretReveal } from "../editor/cm6CaretReveal";
 import { cm6EmptyCaret } from "../editor/cm6EmptyCaret";
 import { cm6CodeHighlight, refreshCodeHighlight } from "../editor/cm6CodeHighlight";
-import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
+import { SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
@@ -25,7 +25,7 @@ import { cm6Structure } from "../editor/cm6Structure";
 import { CaptureCtx, CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
 import { captureKeyIntent } from "../editor/captureKeys";
 import { cm6CommandHandlers } from "../editor/cm6Commands";
-import { marginNavigation } from "./blockComments";
+import { commentEditorHide, marginNavigation } from "./blockComments";
 import { SheetCellContext } from "../sheet/context";
 import { cellOwner } from "../sheet/selection";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
@@ -40,7 +40,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { documentHasFocus, isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeFenceOnly } from "../editor/codeFence";
+import { codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { codeFences } from "../editor/fences";
 import { calcSource, evalCalc, serializeCalcExitCommit } from "../editor/calc";
 import { codeWrapping } from "../codeDisplay";
@@ -72,7 +72,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const current = () => alive && node(props.id) === shownNode && blockWritable(props.id);
   const cell = useContext(SheetCellContext);
   const capture = useContext(CaptureCtx);
-  const hiddenProperties = cell ? SHEET_CELL_HIDE : BUILTIN_HIDE;
+  const hiddenProperties = cell ? SHEET_CELL_HIDE
+    : commentEditorHide(shownNode, propertySession.facets(shownNode.raw, format).properties, format, node);
   // A directly mounted editor can outlive its node during graph replacement.
   // Its projections remain readable until disposal; current() gates all writes.
   const source = () => node(props.id)?.raw ?? shownNode.raw;
@@ -495,6 +496,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(code() ?? codeFenceOnly(visible(), format))?.lang.toLowerCase()}</span>
+        <Show when={code() ?? codeBodyProjection(visible(), format)}>
+          {body => <CopyButton text={body().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
+        </Show>
         <LineGutter lines={shown().split("\n")} code />
       </Show>
       <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>

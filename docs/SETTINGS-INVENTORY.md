@@ -21,7 +21,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `settings-ui-wide-mode` | `settings-ui-wide-mode` | Wide mode | Basic |
 | `settings-ui-document-mode` | `settings-ui-document-mode` | Document mode | Basic |
 | `settings-ui-document-mode-enter-creates-a-new-block` | `settings-ui-document-mode-enter-creates-a-new-block` | Document-mode Enter creates a new block | Basic |
-| `settings-ui-comment-margin` | `settings-ui-comment-margin` | Comment margin | Basic |
+| `settings-ui-comment-margin` | `settings-ui-comment-margin` | Show/Hide comments | Basic |
 | `settings-ui-show-brackets` | `settings-ui-show-brackets` | Show brackets | Basic |
 | `settings-ui-typographic-replacements` | `settings-ui-typographic-replacements` | Typographic replacements | Basic |
 | `settings-ui-wrap-code-lines` | `settings-ui-wrap-code-lines` | Wrap code lines | Basic |

@@ -30,7 +30,7 @@ describe("the comment margin command", () => {
     expect(defaults["ui/toggle-comment-margin"]).toBe("t m");
     // No other command, in Tine, holds the chord.
     expect(Object.entries(defaults).filter(([, binding]) => binding === "t m").map(([id]) => id)).toEqual(["ui/toggle-comment-margin"]);
-    expect(paletteCommands().find((c) => c.id === "ui/toggle-comment-margin")?.label).toBe("Toggle comment margin");
+    expect(paletteCommands().find((c) => c.id === "ui/toggle-comment-margin")?.label).toBe("Show/Hide comments");
   });
 
   it("toggles from the palette command and remembers the choice", () => {

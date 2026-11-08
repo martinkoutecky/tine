@@ -70,12 +70,11 @@ function toolbarRevealTop(toolbarTop: number): number {
   return formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
 }
 
-/** Scroll the focused block editor's nearest scroller (or the window) just enough
- *  that the editor's bottom sits 8px above `toolbarTop` (GH #384), or above the
- *  editor's docked formatting row when one is shown, which sits above the dock
- *  (GH #375: measuring only the dock left a selection just above it under the
- *  formatting row). Returns true only when it scrolled; a non-editor focus or an
- *  already-visible editor is a no-op returning false. O(1) layout reads. */
+/** Leave three body lines below a low caret (GH #783), measured from the docked
+ * formatting row when shown (GH #375). The shared caret rule protects the
+ * visible top, including sticky parents, independently of the block's height.
+ * A non-editor focus, unmeasurable row or caret already above the band is a
+ * no-op. One caret-row measurement, O(editor text). */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
   if (!isBlockEditor(editor)) {
@@ -201,8 +200,8 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
       if (!isBlockEditor(editor)) return;
       const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");
       if (!scroller) return;
-      // A line that left the view goes back just above the toolbar, not to the
-      // top edge under the pinned parents (GH #783 beta.4 report; 0.7.4's place).
+      // Use the same three-body-line clearance as toolbar/input reveals, while
+      // retaining late WebView scroll/focus repairs (GH #783).
       const reveal = () => revealCaretAboveKeyboard(editor, scroller, {
         top: window.visualViewport?.offsetTop ?? 0,
         bottom: toolbarRef ? toolbarRevealTop(toolbarRef.getBoundingClientRect().top) : viewportKeyboardTop(),

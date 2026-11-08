@@ -12,6 +12,7 @@ import {
 } from "../mobileDrawers";
 import { mainWindow } from "../windowRealm";
 import { rootIsRtl } from "../render/textDirection";
+import { createDrawerMotion, dragMobileDrawer, settleMobileDrawer } from "../mobileDrawerMotion";
 
 type BackgroundSide = DrawerSide | "any";
 
@@ -44,12 +45,15 @@ export function DrawerBackground(props: {
 
 /** The exact dialog/focus semantics shared by both production sidebar panels. */
 export function MobileDrawerPanel(props: {
+  open: boolean;
   side: DrawerSide;
   label: string;
   class: string;
   style?: JSX.CSSProperties;
   children: JSX.Element;
 }): JSX.Element {
+  const open = () => props.open;
+  const motion = createDrawerMotion(open, props.side);
   const modal = () => mobileDrawerMode() && activeDrawer() === props.side;
 
   // Swipe-to-close: dragging the drawer toward its own closed edge dismisses it,
@@ -70,7 +74,9 @@ export function MobileDrawerPanel(props: {
   let swiping = false;
   const onTouchStart = (event: TouchEvent) => {
     if (!modal() || event.touches.length !== 1) {
+      if (swiping) settleMobileDrawer(props.side);
       tracking = false;
+      swiping = false;
       return;
     }
     const touch = event.touches[0];
@@ -82,16 +88,22 @@ export function MobileDrawerPanel(props: {
     swiping = false;
   };
   const onTouchMove = (event: TouchEvent) => {
-    if (!tracking || event.touches.length !== 1) return;
-    if (decided) return;
+    if (!tracking) return;
+    if (event.touches.length !== 1) { onTouchCancel(); return; }
     const touch = event.touches[0];
     const dx = touch.clientX - startX;
     const dy = touch.clientY - startY;
-    if (Math.abs(dx) < DECIDE_PX && Math.abs(dy) < DECIDE_PX) return;
-    decided = true;
-    // Only a horizontal-dominant drag toward the closed edge is a close gesture;
-    // anything vertical (or opening-ward) is left to normal scrolling.
-    swiping = Math.abs(dx) > Math.abs(dy) && towardClose(dx) > 0;
+    if (!decided) {
+      if (Math.abs(dx) < DECIDE_PX && Math.abs(dy) < DECIDE_PX) return;
+      decided = true;
+      // Only a horizontal-dominant drag toward the closed edge is a close gesture;
+      // anything vertical (or opening-ward) is left to normal scrolling.
+      swiping = Math.abs(dx) > Math.abs(dy) && towardClose(dx) > 0;
+    }
+    if (swiping) {
+      if (event.cancelable) event.preventDefault();
+      dragMobileDrawer(props.side, towardClose(dx));
+    }
   };
   const onTouchEnd = (event: TouchEvent) => {
     if (!tracking) return;
@@ -99,21 +111,27 @@ export function MobileDrawerPanel(props: {
     if (!swiping) return;
     swiping = false;
     const touch = event.changedTouches[0];
-    if (!touch) return;
+    if (!touch) { settleMobileDrawer(props.side); return; }
     const closeDistance = towardClose(touch.clientX - startX);
     if (closeDistance >= Math.max(MIN_CLOSE_PX, width * CLOSE_FRACTION)) {
       dismiss("back");
-    }
+    } else settleMobileDrawer(props.side);
   };
   const onTouchCancel = () => {
     tracking = false;
     swiping = false;
+    settleMobileDrawer(props.side);
   };
 
   return (
+    <Show when={motion.present()}>
     <div
+      ref={motion.ref}
       class={props.class}
       data-mobile-drawer-panel={props.side}
+      data-drawer-motion={open() ? "open" : "closing"}
+      inert={!open() ? true : undefined}
+      aria-hidden={!open() ? "true" : undefined}
       role={modal() ? "dialog" : undefined}
       aria-modal={modal() ? "true" : undefined}
       aria-label={modal() ? props.label : undefined}
@@ -122,13 +140,14 @@ export function MobileDrawerPanel(props: {
         if (modal() && event.key === "Tab") trapDrawerTab(event, event.currentTarget);
       }}
       onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
+      on:touchmove={onTouchMove}
       onTouchEnd={onTouchEnd}
       onTouchCancel={onTouchCancel}
       style={props.style}
     >
       {props.children}
     </div>
+    </Show>
   );
 }
 
@@ -143,6 +162,7 @@ function dismiss(reason: DrawerDismissReason) {
  * global transients remain siblings above it and suspend containment through
  * topTransientLayer(). */
 export function MobileDrawerController(): JSX.Element {
+  const motion = createDrawerMotion(() => activeDrawer() !== null, "scrim");
   onMount(() => {
     const dispose = installMobileDrawerMode();
     onCleanup(dispose);
@@ -174,10 +194,13 @@ export function MobileDrawerController(): JSX.Element {
   });
 
   return (
-    <Show when={activeDrawer()}>
+    <Show when={motion.present()}>
       <div
+        ref={motion.ref}
         class="mobile-drawer-scrim"
         data-mobile-drawer-scrim
+        data-drawer-motion={activeDrawer() ? "open" : "closing"}
+        style={{ "pointer-events": activeDrawer() ? undefined : "none" }}
         aria-hidden="true"
         onPointerDown={(event) => {
           event.preventDefault();

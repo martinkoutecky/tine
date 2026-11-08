@@ -35,6 +35,7 @@ const NAMED_BEST_EFFORT_HELPERS: Record<string, string[]> = {
   "src/components/pdfViewerPrimitives.ts": ["ignorePdfDestroyFailure", "discardPdfDocument"],
   "src/document/host/wiring.ts": ["ignoreSaveHintFailure", "ignoreLostFlushAnswer"],
   "src/plugins/startup.ts": ["observePluginInitializationFailure"],
+  "src/workspaceWindows.ts": ["ignoreOpenStageDiagnosticFailure"],
 };
 
 export function swallowViolations(file: string, source: string): string[] {

@@ -135,42 +135,27 @@ export function revealCaretRect(editor: HTMLElement, scroller: HTMLElement | nul
   return scrollToShow(scroller, caretViewBounds(editor, scroller, row));
 }
 
-/** How far to scroll so the focused editor clears a keyboard toolbar whose top is
- * `toolbarTop` (GH #384; GH #783). The rule is the editor's bottom edge, 8px above
- * the toolbar, but only while the whole editor fits the room between the pins and
- * the toolbar: then the caret row, which is inside it, stays visible too. An
- * editor taller than that room (a long paragraph) cannot fit, and scrolling its
- * bottom above the toolbar carried the caret row off the top of the screen - once
- * from the dock appearing before the keyboard had resized the view, again at the
- * resize, and nothing scrolled it back when the keyboard outran the settled
- * reveal. For such an editor only the caret row is brought clear of the toolbar,
- * and never upward. Without layout the rule is the editor's bottom, as before. */
+/** The downward part of the keyboard caret rule, used when the toolbar appears
+ * or editing changes the caret. The keyboard's settled watcher also repairs a
+ * caret above the view. Neither path anchors the editor's bottom: that hid the
+ * children of short parents and could carry a tall block's caret off the top. */
 export function scrollToClearToolbar(editor: HTMLElement, scroller: HTMLElement | null, toolbarTop: number): number {
-  const limit = toolbarTop - MARGIN * zoom();
-  const bottomRule = editor.getBoundingClientRect().bottom - limit;
-  if (bottomRule <= 0) return 0;
-  // CM6 supplies its measured caret row through `registerCaretRowSource`.
-  const g = editorCaretRow(editor, scroller);
-  if (!g) return bottomRule;
-  const room = limit - g.visibleTop;
-  if (editor.getBoundingClientRect().height <= room) return bottomRule;
-  return Math.max(0, g.bottom - limit);
+  return Math.max(0, keyboardCaretOffset(editor, scroller, {
+    top: windowOf(editor).visualViewport?.offsetTop ?? 0,
+    bottom: toolbarTop,
+  }));
 }
 
 /** Where the keyboard puts the edited line back when something has moved it out
- * of view after the keyboard opened (GH #783, beta.4 report). Not the minimum
- * move: that parked the line at the top edge, just under the pinned parents, and
- * on the reporter's phone the pins still covered it (the block's first line was
- * hidden under the pin, its caret line squeezed beneath). The line goes as low as
- * it can instead, just above the keyboard toolbar - where 0.7.4's only rule, the
- * editor's bottom 8px above the toolbar (GH #384), left it and the reporter found
- * it right. The same anchor as `scrollToClearToolbar`, so the next keystroke's
- * toolbar reveal does not move it again: the editor's bottom while the whole
- * editor fits between the pins and the toolbar, else the caret row's bottom.
- * A caret row already inside the visible band is left alone, as 0.7.4 did; the
- * scroller clamps at either end of the page. `band` is the visual viewport's top
- * and the toolbar's top in viewport pixels, converted to scrollTop pixels under
- * Android's CSS interface zoom. Returns whether it scrolled. */
+ * of view or too close to the toolbar (GH #783, comment 14). Leave three body
+ * lines below the caret so following content, including a short parent's
+ * children, remains visible. This is the reported 0.7.4 placement; that tag's
+ * toolbar code itself only cleared the editor by 8px and allowed native focus
+ * scrolling. Use the same explicit caret anchor for toolbar/input and late
+ * resize/focus/scroll repairs. A row already above this band stays put. Pins
+ * take priority over the gap when space is tight, and the browser clamps at
+ * either end of the page. `band` is in viewport pixels; scrollTop is in CSS
+ * pixels under Android interface zoom. Returns whether it scrolled. */
 export function revealCaretAboveKeyboard(editor: HTMLElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): boolean {
   const delta = keyboardCaretOffset(editor, scroller, band);
   if (!scroller || Math.abs(delta) <= 0.5) return false;
@@ -179,15 +164,19 @@ export function revealCaretAboveKeyboard(editor: HTMLElement, scroller: HTMLElem
 }
 
 /** The viewport-pixel scroll `revealCaretAboveKeyboard` makes; 0 while the caret
- * row is visible or without layout. Exported for its unit test. */
+  * row is visible above the three-line band, or without layout. Exported for its unit test. */
 export function keyboardCaretOffset(editor: HTMLElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): number {
+  // CM6 supplies its measured caret row through `registerCaretRowSource`.
   const g = editorCaretRow(editor, scroller);
   if (!g) return 0;
   const top = Math.max(g.visibleTop, band.top + MARGIN * zoom());
-  const bottom = Math.min(g.visibleBottom, band.bottom - MARGIN * zoom());
+  const height = g.bottom - g.top;
+  // The ordinary body token follows typography settings even in heading/code
+  // editors. Without that stylesheet, the measured caret row is the fallback.
+  const bodyLine = parseFloat(windowOf(editor).getComputedStyle(editor).getPropertyValue("--ls-block-line-height")) * zoom() || height;
+  const bottom = Math.min(g.visibleBottom, band.bottom - MARGIN * zoom(), Math.max(top + height, band.bottom - 3 * bodyLine));
   if (g.top >= top && g.bottom <= bottom) return 0;
-  const box = editor.getBoundingClientRect();
-  return (box.height <= bottom - top ? box.bottom : g.bottom) - bottom;
+  return g.bottom - bottom;
 }
 
 /** Reveal the caret once the layout around the freshly focused editor has

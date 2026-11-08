@@ -58,6 +58,8 @@ export interface EdgeSwipeHost {
   /** Back mode: the gesture ended. `committed` tells whether to perform Back. */
   settle(committed: boolean, dx: number): void;
   openDrawer(): void;
+  drawerProgress?(dx: number): void;
+  drawerSettle?(): void;
   back(): void;
 }
 
@@ -77,10 +79,12 @@ export function createEdgeSwipe(host: EdgeSwipeHost): EdgeSwipe {
   let y0 = 0;
   let t0 = 0;
   let lastDx = 0;
+  let drawerOpened = false;
 
   const reset = () => {
     state = "idle";
     kind = null;
+    drawerOpened = false;
   };
 
   return {
@@ -112,10 +116,11 @@ export function createEdgeSwipe(host: EdgeSwipeHost): EdgeSwipe {
       void t;
       lastDx = Math.max(0, dx);
       if (kind === "drawer") {
-        if (dx > DRAWER_OPEN_PX) {
-          state = "done";
+        if (dx > DRAWER_OPEN_PX && !drawerOpened) {
+          drawerOpened = true;
           host.openDrawer();
         }
+        if (drawerOpened) host.drawerProgress?.(lastDx);
       } else {
         host.progress(lastDx);
       }
@@ -126,6 +131,7 @@ export function createEdgeSwipe(host: EdgeSwipeHost): EdgeSwipe {
       if (state !== "tracking") { reset(); return; }
       const dx = Math.max(0, x - x0);
       const k = kind;
+      if (k === "drawer" && drawerOpened) host.drawerSettle?.();
       reset();
       if (k !== "back") return;
       const elapsed = Math.max(1, t - t0);
@@ -139,6 +145,7 @@ export function createEdgeSwipe(host: EdgeSwipeHost): EdgeSwipe {
 
     cancel() {
       if (state === "tracking" && kind === "back") host.settle(false, lastDx);
+      if (kind === "drawer" && drawerOpened) host.drawerSettle?.();
       reset();
     },
   };
@@ -154,6 +161,8 @@ export interface EdgeSwipeInstallDeps {
   drawerOpenable(): boolean;
   back(): void;
   openDrawer(): void;
+  drawerProgress?(dx: number): void;
+  drawerSettle?(): void;
   /** The element translated while Back follows the finger. */
   surface(): HTMLElement | null;
   doc?: Document;
@@ -195,6 +204,8 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
     drawerOpenable: deps.drawerOpenable,
     viewportWidth,
     openDrawer: deps.openDrawer,
+    drawerProgress: deps.drawerProgress,
+    drawerSettle: deps.drawerSettle,
     back: () => {
       if (skipBack) { skipBack = false; return; }
       deps.back();

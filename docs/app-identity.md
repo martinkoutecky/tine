@@ -18,8 +18,9 @@ Beta uses amber `#e8890c` masters (`docs/app-icon-beta.svg` and
 `docs/app-icon-beta-macos.svg`), with only the background fill changed from the
 stable masters. Regenerate with `node scripts/render-beta-icons.mjs` (Playwright
 Chromium and Python Pillow required); it uses the shared renderer, Tauri icon
-tooling and macOS ICNS renderer, and skips iOS outputs. No Beta iOS app is shipped;
-the stable iOS set remains untouched.
+tooling and macOS ICNS renderer, including opaque iOS assets in
+`src-tauri/icons-beta/ios`. The stable iOS set remains untouched.
+Use `node scripts/render-beta-icons.mjs --ios-only` to regenerate just that set.
 `docs/app-icon-nightly.svg` is reserved for a possible nightly identity and is unused.
 
 Desktop seeding still reads only stable Tine's compatible settings and leaves
@@ -35,8 +36,26 @@ remain accepted for the current campaign build and stable tooling.
 ```json
 { "ship": "experiment",
   "identities": {
-    "release":    { "identifier": "page.tine.Tine",   "productName": "Tine",    "androidApplicationId": "page.tine.app", "deployName": "tine", "iconDirectory": "icons" },
-    "experiment": { "identifier": "page.tine.TineBeta", "productName": "Tine Beta", "androidApplicationId": "page.tine.beta",  "deployName": "tine-og", "iconDirectory": "icons-beta" } } }
+    "release": {
+      "identifier": "page.tine.Tine", "productName": "Tine",
+      "androidApplicationId": "page.tine.app", "deployName": "tine", "iconDirectory": "icons",
+      "ios": {
+        "displayName": "TineOutline", "appStoreAppleId": "6804403687",
+        "provisioningProfileSecret": "IOS_MOBILE_PROVISION",
+        "shareExtensionProvisioningProfileSecret": "IOS_SHARE_EXTENSION_MOBILE_PROVISION"
+      }
+    },
+    "experiment": {
+      "identifier": "page.tine.TineBeta", "productName": "Tine Beta",
+      "androidApplicationId": "page.tine.beta", "deployName": "tine-og", "iconDirectory": "icons-beta",
+      "ios": {
+        "displayName": "Tine Beta", "appStoreAppleId": "6832052325",
+        "provisioningProfileSecret": "IOS_BETA_MOBILE_PROVISION",
+        "shareExtensionProvisioningProfileSecret": "IOS_BETA_SHARE_EXTENSION_MOBILE_PROVISION"
+      }
+    }
+  }
+}
 ```
 
 To flip it, run `node scripts/set-app-identity.mjs release` (or
@@ -47,6 +66,10 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | `src-tauri/tauri.conf.json` `identifier`, `productName`, main window `title` | rewritten by the script; `src-tauri/build.rs` refuses to compile when they disagree with the switch |
 | Desktop bundle/window/tray icons and Linux runtime desktop icons | `iconDirectory` selects the bundle icon list and `build.rs` emits `TINE_ICON_DIRECTORY` for embedded Linux PNGs |
 | Android launcher/adaptive icons | the derived Gradle `tineIconDirectory` adds Beta resources to both build types, overriding the stable main resources only for Beta |
+| iOS plists, app and Share Extension entitlements, native Swift group/container/notification/Spotlight identifiers | `IOS_IDENTITY_FILES` in the front door derives them, including display and iCloud folder names; `iosIdentity()` derives the extension bundle ID, App Group and iCloud container from `identifier` |
+| Generated iOS project and export options | `prepare-ios-project.mjs` selects the identity's opaque iOS icon catalog, app and extension bundle IDs and their separate profiles; `ios-native-integrations.mjs` adds the matching extension target |
+| iOS TestFlight workflow | `ios-distribution-inputs.mjs` checks tag/version/identity agreement before signing and selects the profile secret names and App Store Connect app ID from the switch |
+| iOS Welcome and folder-refusal messages | `APP_IOS_DISPLAY_NAME` in `src/appIdentity.ts` supplies the selected display name to the localized catalogs |
 | Rust code (`app_identity.rs`, `linux_window_identity.rs`, the seed) | `build.rs` emits `TINE_APP_IDENTIFIER`, `TINE_PRODUCT_NAME` and `TINE_RELEASE_IDENTIFIER` |
 | Release filenames (`scripts/release-layout.mjs`) | derive from `productName`; whitespace becomes `-` for GitHub assets, while `sourceAssets` names Tauri outputs verbatim |
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
@@ -79,11 +102,15 @@ A few identity-bearing places need no file of their own:
 
 - The iOS bundle id is Tauri's `identifier`. No `gen/apple` project is
   checked in.
-- iOS has no Beta app yet, so `ios-testflight.yml` with `beta_as_release`
-  builds a Beta tag under the stable identity `page.tine.Tine`, with marketing
-  version `X.Y.Z` (the `-beta.N` suffix stripped) and "What to Test" naming the
-  Beta (D-20261018-I1 option A). From 0.9 a separate TestFlight-only Tine Beta
-  app replaces this (option B).
+- iOS Betas use the separate TestFlight-only **Tine Beta** app
+  (`page.tine.TineBeta`, App Store Connect **TineOutline Beta**, 6832052325).
+  Stable uses **TineOutline** (`page.tine.Tine`, 6804403687). Both install
+  together. Beta uses `group.page.tine.TineBeta` and
+  `iCloud.page.tine.TineBeta`; stable keeps `group.page.tine.Tine` and
+  `iCloud.page.tine.Tine`. The workflow has no `beta_as_release` fallback:
+  retaining it would allow a Beta to replace the App Store app again.
+  Marketing versions remain `X.Y.Z`, stripping `-beta.N`; Tauri prefixes the
+  Actions run number with that version for `CFBundleVersion`.
 - The Linux window class, Wayland `app_id` and runtime `.desktop` file come
   from `TINE_APP_IDENTIFIER`. Tauri's deb/rpm launcher filename uses the
   product name. When that packaged launcher is present, the runtime app-ID
@@ -103,6 +130,21 @@ every derived file matches it, that both settings round-trip, and that the
 release identity is the one master ships. It also checks that no source file
 outside the derived set and this front door spells either identifier or
 "Tine Beta".
+
+## iOS Beta first launch
+
+Tine Beta starts on Welcome with fresh settings and no remembered graph. Its
+local Documents folder, iCloud Drive folder and share inbox are separate from
+stable's. It cannot see stable's settings or `iCloud Drive → TineOutline`;
+the desktop config seed never runs on mobile. Open or create a graph under
+`On My iPhone/iPad → Tine Beta` or `iCloud Drive → Tine Beta`. To try existing
+notes, copy the graph into one of those Beta folders using Files. The copy is
+independent of the original. Existing TestFlight data under the stable identity
+stays with TineOutline and is not automatically imported.
+
+The old TineOutline TestFlight invitation belongs to the stable app record;
+the new app needs its own testers and invitation. See
+`docs/APPLE-DISTRIBUTION.md` for signing and delivery.
 
 ## What the released identity finds in a master user's dir
 
