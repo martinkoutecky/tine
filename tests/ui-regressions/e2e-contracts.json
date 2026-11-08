@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-query-breadcrumbs.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Advanced query lists hide ancestor trails with :breadcrumb-show? false in routed main pages, right sidebar and block embeds; grouped page headings remain, explicit ungrouped lists omit headings, defaults show trails and tables are unaffected. Reading preserves authored bytes.","blocking":false,"authority":"GH #881; OG 6e7afa8eb query.cljs/custom-query-inner, block.cljs/->hiccup"}],
+      "acceptableVariations": ["Markup, spacing and row allocation may vary while context visibility and results remain correct."],
+      "nonRequirements": ["Simple-query View switch and tine.breadcrumbs persistence await Martin.", "Windows, macOS, iOS and Android certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-completion-perf.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path. COMPLETION_ASSERT_SINGLE_INPUT requires one page read per key and rows on its first reply; COMPLETION_INPUT_CENSUS also counts tag, block, slash and property reads, preserving local command filtering and shared property sessions.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL; UI-CM6-COMPLETION-SINGLE-INPUT; ET2 GH #767"}],
       "acceptableVariations": ["Paint times vary with host load; timings are observations, not a flaky threshold oracle."],

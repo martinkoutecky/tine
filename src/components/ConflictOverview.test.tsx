@@ -54,6 +54,24 @@ afterEach(() => {
 });
 
 describe("the conflict overview", () => {
+  it("lists every name claimant and opens each exact file with its own kind", async () => {
+    const conflict: ConflictObject = {
+      id: "name:nov 6th, 2026", source: "duplicate-name", page_name: "Nov 6th, 2026", page_path: "pages/A.org", kind: "page",
+      sides: [
+        { role: "mine", label: "pages/A.org", path: "pages/A.org", kind: "page" },
+        { role: "theirs", label: "journals/2026_11_06.md", path: "journals/2026_11_06.md", kind: "journal" },
+      ],
+    };
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValue({ sync_conflicts: [], vcs_markers: [], queue: [conflict] });
+    const router = { openPageTarget: vi.fn() } as unknown as PaneRouter;
+    const { host, dispose } = mount(() => <ConflictOverview router={router} />);
+    await settle();
+    expect(host.textContent).toContain("Opens for this name");
+    const journal = [...host.querySelectorAll("button")].find((button) => button.textContent === "journals/2026_11_06.md")!;
+    journal.click();
+    expect(router.openPageTarget).toHaveBeenCalledWith({ name: "Nov 6th, 2026", path: "journals/2026_11_06.md", pageKind: "journal" });
+    dispose();
+  });
   it("lists every conflicted page by source with its block count, absent shown as —", async () => {
     vi.spyOn(backend(), "conflictInventory").mockResolvedValue(inventory);
     const router = { openPageTarget: vi.fn() } as unknown as PaneRouter;

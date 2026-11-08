@@ -2,7 +2,7 @@ use tine_core::model::PageKind;
 use tine_store::{PageId, Resolved, Store};
 
 #[test]
-fn date_link_falls_back_to_page_file_but_journal_keeps_precedence() {
+fn a_literal_real_date_page_opens_before_a_journal_in_cold_and_ready_reads() {
     let _guard = super::integration_lock();
     for (name, filename, preamble) in [
         ("Oct 26th, 2026", "Oct 26th, 2026.md", ""),
@@ -33,11 +33,7 @@ fn date_link_falls_back_to_page_file_but_journal_keeps_precedence() {
             let pause = temp.path().join(".tine-test-pause-load");
             std::fs::write(&pause, "").unwrap();
             let store = Store::open(temp.path(), Default::default()).unwrap().0;
-            let expected = if journal {
-                "journals/2026_10_26.md".to_owned()
-            } else {
-                format!("pages/{filename}")
-            };
+            let expected = format!("pages/{filename}");
             let early = store.page_named(name, PageKind::Journal);
             std::fs::remove_file(pause).unwrap();
             assert_eq!(early.unwrap().unwrap().id, PageId::from(expected.clone()));
@@ -47,15 +43,9 @@ fn date_link_falls_back_to_page_file_but_journal_keeps_precedence() {
             );
             let read = store.page_named(name, PageKind::Journal).unwrap().unwrap();
             assert_eq!(read.id, PageId::from(expected));
-            assert_eq!(
-                read.doc.kind,
-                if journal {
-                    PageKind::Journal
-                } else {
-                    PageKind::Page
-                }
-            );
-            // The fallback changes link resolution, never the ordinary file's identity.
+            assert_eq!(read.doc.kind, PageKind::Page);
+            // KD preserves the literal ordinary file's identity even when a
+            // journal exists for its day; OWN2 prefers it for a shared key.
             assert!(
                 matches!(view.resolve(name, false), Resolved::Existing { id, .. } if id == PageId::from(format!("pages/{filename}")))
             );

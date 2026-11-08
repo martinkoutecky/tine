@@ -579,7 +579,7 @@ fn doctor_report(path: &Path) -> Result<DoctorReport, String> {
     let graph = store
         .whole_graph()
         .map_err(|e| format!("cannot parse graph: {e:?}"))?;
-    let corpus = graph.corpus(None);
+    let corpus = graph.corpus(None, false);
     // One identity per page name under the store's own fold (`page_key`): two
     // files claiming it make links and edits land on only one of them.
     let mut identities: std::collections::BTreeMap<String, Vec<String>> = Default::default();

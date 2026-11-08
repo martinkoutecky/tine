@@ -15,7 +15,7 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let corpus = whole.corpus(None);
+    let corpus = whole.corpus(None, true);
     let config = store.config();
     let graph = RenderGraph::new(&corpus, &whole, store, None);
     let mut count = 0;
@@ -86,7 +86,7 @@ pub fn sheet_export_inputs(
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let mut corpus = whole.corpus(None);
+    let mut corpus = whole.corpus(None, true);
     // Page order comes from directory enumeration, which differs by platform;
     // hand sheets over by page name so the handoff and its MAX_SHEETS cut are stable.
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));

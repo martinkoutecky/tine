@@ -223,7 +223,7 @@ fn rewrite_target_pages(
         }
     };
     graph
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .into_iter()
         .filter(|page| {

@@ -19,12 +19,14 @@ const GROUPS: { source: ConflictSource; title: Msg }[] = [
   { source: "sync-copy", title: msg("conflict-overview-sync-conflict-copies") },
   { source: "vcs-markers", title: msg("conflict-overview-version-control-merge-markers") },
   { source: "duplicate-journal", title: msg("conflict-overview-duplicate-journal-days") },
+  { source: "duplicate-name", title: msg("conflict-overview-duplicate-names") },
 ];
 
 export function conflictSourceLabel(conflict: ConflictObject): string {
   const side = (role: "mine" | "theirs") => conflict.sides.find((s) => s.role === role)?.label;
   if (conflict.source === "live-save") return t("conflicts-prose-unsaved-draft");
   if (conflict.source === "duplicate-journal") return t("conflicts-prose-day-files", { count: conflict.sides.length });
+  if (conflict.source === "duplicate-name") return t("conflicts-prose-name-files", { count: conflict.sides.length });
   return conflict.source === "sync-copy"
     ? t("conflicts-prose-sync-copy", { side: side("theirs") ?? t("conflicts-prose-copy-fallback") })
     : t("conflicts-prose-merge-sides", { mine: side("mine") ?? t("conflicts-prose-local-fallback"), theirs: side("theirs") ?? t("conflicts-prose-incoming-fallback") });
@@ -93,6 +95,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
               <Show when={rows().length || extra().length}>
                 <section class="conflict-overview-group" aria-label={render(group.title)}>
                   <h2>{render(group.title)}</h2>
+                  <Show when={group.source === "duplicate-name"}><p>{t("conflict-overview-name-order")}</p></Show>
                   <For each={rows()}>
                     {(conflict) => (
                       <div class="conflict-overview-row">
@@ -106,6 +109,17 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
                         </button>
                         <span class="conflict-overview-source">{conflictSourceLabel(conflict)}</span>
                         <span class="conflict-overview-count">{conflictBlockCount(conflict)}</span>
+                        <Show when={conflict.source === "duplicate-name"}>
+                          <div class="conflict-overview-name-files">
+                          <For each={conflict.sides}>{(side, index) => <Show when={side.path}>
+                            <button class="settings-btn" onClick={(event) => {
+                              const target = { name: conflict.page_name, pageKind: side.kind ?? conflict.kind, path: side.path! };
+                              if (event.shiftKey) openPageInSidebar(target);
+                              else props.router.openPageTarget(target);
+                            }}>{side.label}{index() === 0 ? ` · ${t("conflict-overview-opening-file")}` : ""}</button>
+                          </Show>}</For>
+                          </div>
+                        </Show>
                         <Show when={conflict.source === "sync-copy" && copyPath(conflict)}>
                           {(path) => (
                             <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(path(), conflict.page_name)}>{t("conflict-overview-discard-copy")}</button>

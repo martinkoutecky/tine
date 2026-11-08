@@ -65,7 +65,7 @@ export function setSyncConflicts(sync_conflicts: SyncConflict[]): void {
 
 /** The queued conflict for the page file at `path`, if any. */
 export function conflictForPage(path: string | undefined): ConflictObject | undefined {
-  return path ? conflictQueue().find((conflict) => conflict.page_path === path) : undefined;
+  return path ? conflictQueue().find((conflict) => conflict.source !== "duplicate-name" && conflict.page_path === path) : undefined;
 }
 
 /** Retire one object a guarded resolve just proved gone, without waiting for a

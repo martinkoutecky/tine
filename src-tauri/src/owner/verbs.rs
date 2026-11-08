@@ -81,7 +81,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "journal" => {
             let JournalArgs { date } = parse(args)?;
             let day = journal_day(slot, date.as_deref())?;
-            let id = slot.store.journal_id(Day(day.ordinal_key()));
+            let id = slot.store.journal_id(Day(day.ordinal_key()), true);
             page_answer(slot, id, "journal", None)
         }
         "block.show" => {
@@ -500,7 +500,7 @@ pub(super) fn journal_write_page(
             return Err(several_claimants(&title, &others, false));
         }
     }
-    Ok(slot.store.journal_id(Day(day.ordinal_key())))
+    Ok(slot.store.journal_id(Day(day.ordinal_key()), false))
 }
 
 /// The refusal of a write whose page name several files (or alias owners)

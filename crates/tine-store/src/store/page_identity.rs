@@ -19,8 +19,8 @@ impl Store {
     /// created after `open`, and warm lookups reuse it. This remains available after a
     /// failed initial parse; aliases require a successful graph view and are
     /// not resolved here. When files claim the same name or journal day, it
-    /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
-    /// date-stem journal first, then Markdown before Org). A missing name
+    /// uses the same claimant ranking as `WholeGraph::resolve` (ordinary
+    /// kind first, then unsigned UTF-8 relative paths). A missing name
     /// returns `None`, also while a file's name is undecodable: that file is
     /// listed in `unreadable_files()` and one bad file never blocks the graph.
     /// The selected file is read through `page()`, with the same safety, revision, and publication
@@ -32,13 +32,25 @@ impl Store {
     ) -> Result<Option<PageRead>, StoreError> {
         // The ready view's lookup rule, without reclassifying the file.
         let lookup = crate::model::claim_lookup(&self.graph.current_journal_format(), name, kind);
+        let literal = lookup
+            .page_fallback
+            .filter(|name| self.graph.find_entry(name, PageKind::Page).is_some());
+        let claim_name = literal.unwrap_or(&lookup.name);
         let entry = self
             .graph
-            .find_entry_named_file_first(&lookup.name, kind)
-            .or_else(|| {
-                lookup
-                    .page_fallback
-                    .and_then(|name| self.graph.find_entry_named_file_first(name, PageKind::Page))
+            .find_entry(
+                claim_name,
+                if literal.is_some() {
+                    PageKind::Page
+                } else {
+                    kind
+                },
+            )
+            .and_then(|_| {
+                [PageKind::Page, PageKind::Journal]
+                    .into_iter()
+                    .filter_map(|kind| self.graph.find_entry(claim_name, kind))
+                    .min_by(|a, b| crate::model::compare_page_claimants(a, b))
             });
         let Some(entry) = entry else {
             return Ok(None);

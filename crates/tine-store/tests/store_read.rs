@@ -409,7 +409,7 @@ fn direct_first_read_updates_journal_day_and_derived_answers() {
             .unwrap()
             .ordinal_key(),
     );
-    assert_eq!(store.journal_id(day), id);
+    assert_eq!(store.journal_id(day, false), id);
     let view = store.whole_graph().unwrap();
     assert!(
         matches!(view.resolve("Sep 25th, 2026", true), Resolved::Existing { id: found, .. } if found == id)
@@ -569,7 +569,7 @@ fn unreadable_files_reports_skipped_non_utf8_page() {
         .iter()
         .any(|(id, reason)| id.as_str() == "pages/Bad.md" && !reason.is_empty()));
     assert!(view
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .all(|page| page.id != "pages/Bad.md"));

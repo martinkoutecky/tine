@@ -153,7 +153,7 @@ fn main() {
     let view = store.whole_graph().expect("ready");
     let ready_ms = began.elapsed().as_secs_f64() * 1e3;
     let peak_at_ready = status_kib("VmHWM:");
-    let pages = view.corpus(None).pages.len();
+    let pages = view.corpus(None, false).pages.len();
     let rss = status_kib("VmRSS:");
     let reads = (mode != "write").then(|| timed_reads(&view, &first, &second));
     let write = (mode == "write").then(|| {

@@ -249,10 +249,10 @@ pub struct Change {
     /// `Origin::External` `assets/<path relative to that directory>` tuple with
     /// no revision, from file metadata only (cost: `asset_watch.rs`).
     /// Sync-conflict
-    /// copies may appear as files while [`Self::page`] returns `None` for them;
+    /// copies and inactive twins may appear as files while [`Self::pages`] omits them;
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-    pages: Vec<(FileId, PageKind, String)>,
+    pages: Vec<(FileId, ChangeKind, PageKind, String)>,
     answers: Answers,
     /// The watcher batch that produced this publication, for latency
     /// receipts (GH #337 diagnosis); `None` for every other publisher.
@@ -296,29 +296,28 @@ impl Change {
     /// not change, or changed so that it must be reread: a page created,
     /// removed or renamed, a config or unreadable-set change, or a session
     /// that had not yet read an inventory or completed a name. O(1).
-    pub fn inventory_delta(&self) -> Option<(&[String], &Inventory)> {
-        self.answers
-            .3
-            .as_deref()
-            .map(|delta| (delta.keys.as_slice(), &delta.entries))
+    /// The first element is the same change flag sent as `inventoryChanged`;
+    /// a changed inventory without a delta requires a refetch.
+    pub fn inventory_delta(&self) -> (bool, Option<(&[String], &Inventory)>) {
+        (
+            self.answers.0,
+            self.answers
+                .3
+                .as_deref()
+                .map(|delta| (delta.keys.as_slice(), &delta.entries)),
+        )
     }
 
-    /// The parsed graph page altered by an external observation or an external
-    /// writer whose bytes survived transaction undo, using its effective
-    /// `title::`-aware name (the old name for a removal). Own writes
-    /// list changed files but carry no parsed page entries, so this returns
-    /// `None` for them. It also returns `None` for a file with no parsed page
-    /// change, including a duplicate journal claimant or sync-conflict copy.
-    /// A move lists its old file as removed and its destination as created,
-    /// without a pairing identifier;
-    /// `page()` can describe either only when parsed page evidence is present.
-    /// Cost O(parsed page entries in this publication) per call; calling it
-    /// for every file can be quadratic in a large publication.
-    pub fn page(&self, file: &FileId) -> Option<(PageKind, &str)> {
+    /// Active graph pages altered by an external observation or an external
+    /// writer whose bytes survived transaction undo, with effective names
+    /// (the old name for a removal). Includes an unchanged sibling promoted
+    /// to opening claimant, whose file need not appear in `files`. Inactive
+    /// twins and sync-conflict copies contribute no pages. Own writes carry
+    /// no entries. Cost O(affected active pages), without a graph walk.
+    pub fn pages(&self) -> impl Iterator<Item = (&FileId, ChangeKind, PageKind, &str)> {
         self.pages
             .iter()
-            .find(|(id, _, _)| id == file)
-            .map(|(_, kind, name)| (*kind, name.as_str()))
+            .map(|(id, change, kind, name)| (id, *change, *kind, name.as_str()))
     }
 }
 
@@ -891,7 +890,6 @@ impl Store {
         let writer = Arc::new(Mutex::new(()));
         let load = Arc::new(LoadState::new(LoadStatus::Ready));
         let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
-            &graph,
             graph.list_pages_shared().as_ref(),
         )));
         let config_state = Arc::new(RwLock::new(ConfigState::of(
@@ -1135,7 +1133,7 @@ impl Store {
                 })?;
         graph.install_live_config();
         let journals = graph.scan_journal_names();
-        let journal_ids = journal_ids_from_entries(&graph, &journals);
+        let journal_ids = journal_ids_from_entries(&journals);
         let problem = graph.config_read_problem.clone();
         let graph = Arc::new(graph);
         let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
@@ -1462,17 +1460,36 @@ impl Store {
         self.load.closed.load(Ordering::Acquire)
     }
 
-    /// Return a cached canonical journal id or propose a configured path (directory,
+    /// Return a cached physical journal id or propose a configured path (directory,
     /// filename format, preferred extension). The day index covers accessible files
     /// before open and refreshes before relevant publications: direct reads/writes,
-    /// transactions, restore, watcher and refresh. Cost O(format + path bytes);
-    /// no parse or disk read. Unreadable subtrees or unobserved external creations
+    /// transactions, restore, watcher and refresh. With `active_only = false`,
+    /// cost O(format + path bytes), with no parse or disk read.
+    /// Unreadable subtrees or unobserved external creations
     /// can yield a duplicate-day proposal. It does not indicate existence: `page(id)`
     /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
     /// Use guarded `CreateNew` saves; handle conflicts, twins, I/O and target-safety
     /// refusals, including unreadable destination directories.
-    pub fn journal_id(&self, day: Day) -> PageId {
+    /// `active_only` selects the day's opening claimant across kinds, including
+    /// an ordinary owner. False retains the physical journal identity for guarded
+    /// mutations and exact-file inspection. Active lookup uses the published
+    /// names, or the live preamble index before a view exists (one O(P) discovery
+    /// per invalidation, then indexed lookups); it never reads journal bodies.
+    pub fn journal_id(&self, day: Day, active_only: bool) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
+        if active_only {
+            let title = self.graph.current_journal_format().title(date);
+            // Use the same comparator as every name opening, over both physical
+            // claim buckets. The lookup also works before Ready and after a
+            // contained load failure, without waiting or reading journal bodies.
+            if let Some(entry) = [PageKind::Page, PageKind::Journal]
+                .into_iter()
+                .filter_map(|kind| self.move_claimant(&title, kind))
+                .min_by(crate::model::compare_page_claimants)
+            {
+                return PageId::from(self.graph.rel_path(&entry.path));
+            }
+        }
         if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
             return id.clone();
         }
@@ -2332,7 +2349,7 @@ pub enum Resolved {
     /// references, backlinks, and search. A
     /// subscriber should re-resolve this name after a claimant is removed.
     /// For an `Origin::Own` removal, remember the name from the earlier view:
-    /// `Change::page` has no parsed name for that event.
+    /// `Change::pages` has no parsed name for that event.
     Existing {
         /// Canonical claimant.
         id: PageId,
@@ -2752,17 +2769,29 @@ impl WholeGraph {
     /// page for `None`; for `Some(name)`, the parsed pages whose Logseq
     /// identity (`refs::page_key`) is `name`'s, ordinary pages and journals
     /// alike, in page order (what filtering the whole corpus by that key
-    /// gives). Set-aside duplicate-day files are absent either way. Cost O(P)
+    /// gives). `active_only` selects semantic documents; false retains every
+    /// physical claimant for mutation and safety checks. Cost O(P)
     /// for `None`, O(C log P) for C claimants of the name; parsed documents
     /// are shared while the result is held.
     // The evaluator receives a copy of the parsed-page table.
-    pub fn corpus(&self, name: Option<&str>) -> tine_core::Corpus {
+    pub fn corpus(&self, name: Option<&str>, active_only: bool) -> tine_core::Corpus {
         if let Some(name) = name {
-            return self.corpus_named(name);
+            let mut corpus = self.corpus_named(name);
+            if active_only {
+                corpus
+                    .pages
+                    .retain(|page| self.graph.pages.positions.contains_key(page.id.as_str()));
+            }
+            return corpus;
         }
         #[cfg(feature = "test-faults")]
         crate::cost_counters::corpus();
-        let pages = self.graph.with_pages(|pages| {
+        let pages = {
+            let pages = if active_only {
+                &self.graph.pages
+            } else {
+                &self.graph.physical_pages
+            };
             pages
                 .iter()
                 .filter_map(|(entry, document)| {
@@ -2774,7 +2803,7 @@ impl WholeGraph {
                     })
                 })
                 .collect()
-        });
+        };
         tine_core::Corpus { pages }
     }
 
@@ -2787,11 +2816,12 @@ impl WholeGraph {
     #[cfg(test)]
     pub(crate) fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
-        self.graph.with_pages(|pages| {
-            for (_, doc) in pages {
+        {
+            let pages = &self.graph.physical_pages;
+            for (_, doc) in pages.iter() {
                 crate::model::collect_document_asset_refs(doc, &mut names);
             }
-        });
+        }
         Arc::new(names)
     }
 
@@ -2813,24 +2843,9 @@ impl WholeGraph {
             .iter()
             .map(|name| tine_core::refs::page_key(name))
             .collect();
-        let candidates = self
-            .graph
-            .reference_candidate_pages(&keys, tine_core::model::ReferenceKind::Explicit);
-        let mut ids: Vec<PageId> = candidates
-            .pages
-            .iter()
-            .filter(|(entry, doc)| {
-                candidates.indexed
-                    || crate::query::document_explicit_reference_names(
-                        entry,
-                        doc,
-                        self.graph.config(),
-                    )
-                    .iter()
-                    .any(|name| keys.contains(name))
-            })
-            .map(|(entry, _)| PageId::from(entry.rel_path_str()))
-            .collect();
+        // Mutation discovery includes inactive twins: their physical sites
+        // must still be rewritten and checked even though they supply no meaning.
+        let mut ids = self.graph.physical_explicit_referrers(&keys);
         ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
         ids.dedup();
         ids
@@ -2842,10 +2857,9 @@ impl WholeGraph {
     /// its storage identity stays ordinary. This intentionally differs from
     /// OG 0.10.9 `convert-page-if-journal-impl`, which classifies by name.
     /// Other wrong-kind lookups may propose a new file. Real files win over aliases.
-    /// Journal files with a configured date stem rank first, then Markdown
-    /// before Org, then filename and full path lexicographically. Ordinary
-    /// page claimants prefer the file named for the page, then use the latter
-    /// three rules. Ordinary page claims use a preamble `title::` or Org title
+    /// Claimants prefer ordinary kind, then unsigned UTF-8 graph-relative
+    /// paths; the extension and matching filename have no separate rank.
+    /// Ordinary page claims use a preamble `title::` or Org title
     /// directive when present, then the decoded filename. After a
     /// journal-format change, a new view uses the new title format for date
     /// claims; the parser still tries its documented fallback formats. Old
@@ -2863,9 +2877,22 @@ impl WholeGraph {
             PageKind::Page
         };
         let lookup = crate::model::claim_lookup(&self.journal_format, name, kind);
-        let mut entries = self.name_claimants(&lookup.name, kind);
-        if let Some(name) = lookup.page_fallback.filter(|_| entries.is_empty()) {
-            entries = self.name_claimants(name, PageKind::Page);
+        // KD: a real ordinary date spelling keeps its own identity before
+        // the typed journal fallback normalizes that spelling to a day title.
+        let literal = lookup
+            .page_fallback
+            .filter(|name| !self.name_claimants(name, PageKind::Page).is_empty());
+        let claim_name = literal.unwrap_or(&lookup.name);
+        let mut entries = self.name_claimants(
+            claim_name,
+            if literal.is_some() {
+                PageKind::Page
+            } else {
+                kind
+            },
+        );
+        if !entries.is_empty() {
+            entries = self.all_name_claimants(claim_name);
         }
         if !entries.is_empty() {
             let mut ids = entries
@@ -3117,7 +3144,13 @@ impl WholeGraph {
     /// More than 20,000 requested ids returns
     /// `ResultTooLarge` with `RequestedBlockRefs`; result data is also limited
     /// to 20,000 rows and 32 MiB.
-    pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
+    /// `active_only` selects semantic block references; false also admits
+    /// physical losing twins for explicit file navigation.
+    pub fn blocks(
+        &self,
+        uuids: &[String],
+        active_only: bool,
+    ) -> Result<Vec<Option<RefGroup>>, QueryError> {
         if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
             return Err(QueryError::bridge_result_too_large(
                 Budget::RequestedBlockRefs,
@@ -3128,6 +3161,7 @@ impl WholeGraph {
         let (groups, exceeded, total) = crate::query::resolve_blocks_bounded(
             &self.graph,
             uuids,
+            active_only,
             RESULT_BRIDGE_MAX_ROWS,
             RESULT_BRIDGE_MAX_BYTES,
         );
@@ -3605,7 +3639,7 @@ mod rev5_tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         let recovered = store.whole_graph().unwrap();
         assert!(recovered.rev() > prior);
-        assert!(recovered.corpus(None).pages.iter().any(|page| {
+        assert!(recovered.corpus(None, false).pages.iter().any(|page| {
             page.name == "A"
                 && page.document.roots[0]
                     .raw()
@@ -3673,7 +3707,7 @@ mod rev5_tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(matches!(store.is_graph_ready(), Ok(true)));
         let view = store.whole_graph().unwrap();
-        assert!(view.corpus(None).pages.iter().any(|page| {
+        assert!(view.corpus(None, false).pages.iter().any(|page| {
             page.name == "A" && page.document.roots[0].raw().contains("changed here")
         }));
         assert!(store.page(&id).unwrap().doc.blocks[0]
@@ -3712,7 +3746,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| { page.name == "A" && page.document.roots[0].raw().contains("arrived") }));
@@ -3774,7 +3808,7 @@ mod rev5_tests {
         assert!(matches!(save.join().unwrap(), Ok(_)));
         let view = store.whole_graph().unwrap();
         assert!(view.rev() > old.rev());
-        assert!(view.corpus(None).pages.iter().any(|page| {
+        assert!(view.corpus(None, false).pages.iter().any(|page| {
             page.name == "A"
                 && page.document.roots[0]
                     .raw()
@@ -3886,12 +3920,12 @@ mod rev5_tests {
         release_hook(&pause);
         let view = store.whole_graph().unwrap();
         assert!(view
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| page.name == "A" && page.document.roots[0].raw().contains("new A")));
         assert!(view
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| page.name == "B" && page.document.roots[0].raw().contains("external B")));
@@ -3955,7 +3989,7 @@ mod rev5_tests {
         assert!(matches!(save.join().unwrap(), Ok(_)));
         let view = store.whole_graph().unwrap();
         assert!(view
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| page.name == "Meta"));
@@ -4043,7 +4077,7 @@ mod rev5_tests {
             assert!(store
                 .whole_graph()
                 .unwrap()
-                .corpus(None)
+                .corpus(None, false)
                 .pages
                 .iter()
                 .any(|page| {
@@ -4093,7 +4127,7 @@ mod rev5_tests {
                 restored.resolve("B", false),
                 Resolved::Existing { .. }
             ));
-            assert!(restored.corpus(None).pages.iter().any(|page| {
+            assert!(restored.corpus(None, false).pages.iter().any(|page| {
                 page.name == "C" && page.document.roots[0].raw().contains("restored word")
             }));
             store.close();
@@ -4168,7 +4202,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| {
@@ -4228,7 +4262,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| {
@@ -4295,7 +4329,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| page.name == "A" && page.document.roots[0].raw().contains("before")));
@@ -4330,7 +4364,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .all(|page| page.name != "A"));
@@ -4384,7 +4418,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| page.name == "B"));
@@ -4403,7 +4437,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .corpus(None)
+            .corpus(None, false)
             .pages
             .iter()
             .any(|page| {
@@ -5095,13 +5129,13 @@ mod rev5_tests {
                 while !stop.load(Ordering::Acquire) {
                     let view = store.whole_graph().unwrap();
                     let rev = view.rev();
-                    let page_count = view.corpus(None).pages.len();
+                    let page_count = view.corpus(None, false).pages.len();
                     let _ = view.backlinks("Target").unwrap();
                     let _ = view.query("[[Target]]", QueryDialect::Simple).unwrap();
                     let _ = view.resolve("External", false);
                     let _ = view.inventory(crate::InventoryScope::All);
                     assert_eq!(view.rev(), rev);
-                    assert_eq!(view.corpus(None).pages.len(), page_count);
+                    assert_eq!(view.corpus(None, false).pages.len(), page_count);
                     reads.fetch_add(1, Ordering::Relaxed);
                 }
             }));
@@ -5171,7 +5205,7 @@ mod rev5_tests {
                 "corpus",
                 format!(
                     "{:?}",
-                    view.corpus(None)
+                    view.corpus(None, false)
                         .pages
                         .iter()
                         .map(|p| &p.name)
@@ -5234,7 +5268,7 @@ mod rev5_tests {
             ),
             (
                 "blocks",
-                format!("{:?}", view.blocks(&["d3-block".into()]).unwrap()),
+                format!("{:?}", view.blocks(&["d3-block".into()], true).unwrap()),
             ),
             (
                 "preview_block",
@@ -5304,7 +5338,7 @@ mod rev5_tests {
         let host_writer = crate::test_host_writer::HostWriter::start(&store);
         let old = store.whole_graph().unwrap();
         let original_answers = view_answers(&old);
-        let old_corpus = old.corpus(None).pages.len();
+        let old_corpus = old.corpus(None, false).pages.len();
         let old_backlinks = old.backlinks("Target").unwrap().len();
         let old_inventory = old.inventory(crate::InventoryScope::All).0.len();
         assert!(matches!(
@@ -5368,7 +5402,7 @@ mod rev5_tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         let fresh = store.whole_graph().unwrap();
         assert!(fresh.rev() != old.rev());
-        assert_eq!(old.corpus(None).pages.len(), old_corpus);
+        assert_eq!(old.corpus(None, false).pages.len(), old_corpus);
         assert_eq!(old.backlinks("Target").unwrap().len(), old_backlinks);
         assert_eq!(
             old.inventory(crate::InventoryScope::All).0.len(),

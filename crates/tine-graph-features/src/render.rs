@@ -2259,6 +2259,26 @@ pub(crate) fn page_public_flag(page: &CorpusPage) -> Option<bool> {
     }
     flag
 }
+/// Physical source ambiguity for publication admission. The old corpus kept
+/// every ordinary file and one file per journal day; preserve that safety
+/// boundary while semantic rendering/query inputs use the active projection.
+pub(crate) fn ambiguous_source_keys(whole: &WholeGraph) -> HashSet<String> {
+    let inventory = whole.inventory(tine_store::InventoryScope::ConflictingFiles(None));
+    let mut buckets = std::collections::HashMap::<String, (usize, HashSet<i64>)>::new();
+    for entry in &inventory.0 {
+        let (count, days) = buckets
+            .entry(tine_core::refs::page_key(&entry.name))
+            .or_default();
+        if !entry.is_journal || entry.day.is_none_or(|day| days.insert(day.0)) {
+            *count += 1;
+        }
+    }
+    buckets
+        .into_iter()
+        .filter_map(|(key, (count, _))| (count > 1).then_some(key))
+        .collect()
+}
+
 /// Emit the complete site's files and return the public page count.
 pub(crate) fn publish_graph(
     graph: &RenderGraph<'_>,
@@ -2288,6 +2308,12 @@ pub(crate) fn publish_graph(
         *source_identity_counts
             .entry(tine_core::refs::page_key(&page.name))
             .or_default() += 1;
+    }
+    // Rendering reads active documents; the existing publication admission
+    // check still inspects physical ordinary/cross-kind twins. Masking a
+    // private file must not erase the ambiguity this guard refuses.
+    for key in ambiguous_source_keys(graph.whole) {
+        source_identity_counts.insert(key, 2);
     }
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));

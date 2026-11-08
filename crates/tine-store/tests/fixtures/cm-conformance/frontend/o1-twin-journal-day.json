@@ -12,7 +12,7 @@
         0
       ],
       [
-        "journals/2026_10_26.md",
+        "journals/2026-10-26.md",
         1
       ]
     ],
@@ -36,10 +36,10 @@
       "key": "oct 26th, 2026",
       "name": "Oct 26th, 2026",
       "target": {
-        "id": "journals/2026_10_26.md",
+        "id": "journals/2026-10-26.md",
         "kind": "existing",
         "others": [
-          "journals/2026-10-26.md"
+          "journals/2026_10_26.md"
         ]
       }
     }
@@ -53,16 +53,6 @@
   "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
-    "2026-10-26": {
-      "journal": [
-        "journal",
-        "oct 26th, 2026"
-      ],
-      "page": [
-        "page",
-        "oct 26th, 2026"
-      ]
-    },
     "Notes": {
       "journal": [
         "journal",
@@ -85,16 +75,12 @@
     }
   },
   "owner": {
-    "2026-10-26": {
-      "journal": "journals/2026_10_26.md",
-      "page": null
-    },
     "Notes": {
       "journal": null,
       "page": "pages/Notes.md"
     },
     "Oct 26th, 2026": {
-      "journal": "journals/2026_10_26.md",
+      "journal": "journals/2026-10-26.md",
       "page": null
     }
   },
@@ -109,21 +95,6 @@
     }
   ],
   "spellings": {
-    "2026-10-26": {
-      "backend": [
-        "journal",
-        "oct 26th, 2026"
-      ],
-      "day": [
-        2026,
-        10,
-        26
-      ],
-      "model": [
-        "journal",
-        "oct 26th, 2026"
-      ]
-    },
     "Notes": {
       "backend": [
         "page",

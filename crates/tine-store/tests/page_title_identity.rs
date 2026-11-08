@@ -268,7 +268,7 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
 }
 
 #[test]
-fn filename_owner_wins_over_a_title_claimant() {
+fn the_first_path_wins_even_when_its_claim_comes_from_a_title() {
     let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-title-claimants-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -281,7 +281,7 @@ fn filename_owner_wins_over_a_title_claimant() {
         Resolved::Existing { id, .. } => id,
         _ => panic!("Z must resolve"),
     };
-    assert_eq!(id.as_str(), "pages/Z.md");
+    assert_eq!(id.as_str(), "pages/A.md");
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

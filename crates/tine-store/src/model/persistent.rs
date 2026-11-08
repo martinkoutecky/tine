@@ -400,6 +400,12 @@ impl Pages {
         }
         self.rows.remove(&slot);
     }
+    /// Retain a physical page's stable slot in a semantic projection.
+    pub(crate) fn set(&mut self, slot: usize, page: Page) {
+        self.next = self.next.max(slot + 1);
+        Arc::make_mut(&mut self.positions).insert(page.0.rel_path_str().to_owned(), slot);
+        self.rows.insert(slot, page);
+    }
 }
 impl Pages {
     /// The next free slot (the checkpoint keeps slots stable across a reload).

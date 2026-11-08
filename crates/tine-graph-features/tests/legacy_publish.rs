@@ -40,7 +40,7 @@ fn publication_snapshot_uses_live_file_runtime_identity() {
     let store = Store::open(&dir, Default::default()).unwrap().0;
     let whole = store.whole_graph().unwrap();
     let live_id = whole.backlinks("Target").unwrap()[0].blocks[0].id.clone();
-    let corpus = whole.corpus(None);
+    let corpus = whole.corpus(None, false);
     let source = corpus
         .pages
         .iter()
@@ -248,7 +248,7 @@ fn publish_uses_one_fresh_snapshot_after_external_visibility_rewrite() {
     .unwrap();
 
     let graph = Store::open(&dir, Default::default()).unwrap().0;
-    graph.whole_graph().unwrap().corpus(None);
+    graph.whole_graph().unwrap().corpus(None, false);
 
     // Simulate a sync/editor outside Tine changing both visibility and body
     // after the live graph cache was populated. Publication must not combine

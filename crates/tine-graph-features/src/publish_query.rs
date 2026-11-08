@@ -94,7 +94,7 @@ pub fn query_request_by_uuid(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let corpus = graph.corpus(None);
+    let corpus = graph.corpus(None, true);
     let mut found = None;
     for page in &corpus.pages {
         let mut stack: Vec<_> = page.document.roots.iter().collect();
@@ -339,11 +339,12 @@ fn resolve_plan_review(
         result.total = groups.iter().map(|group| group.blocks.len()).sum();
         result.matched_total = Some(result.total);
     }
-    let corpus = graph.corpus(None);
+    let corpus = graph.corpus(None, true);
     // Owner files by (kind, page_key), built once rather than per group. Page
     // identity is `page_key` everywhere here (census Q1), as in the reader
     // (`publishedBackend.ts pageByName`): two files claiming one key are an
     // ambiguous owner for every name, not only an ASCII one.
+    let ambiguous = render::ambiguous_source_keys(&graph);
     let mut owners: HashMap<_, Vec<&str>> = HashMap::new();
     for page in &corpus.pages {
         (owners.entry((page.kind, page_key(&page.name))).or_default()).push(page.id.as_str());
@@ -359,7 +360,11 @@ fn resolve_plan_review(
         QueryRows::Block { groups } => {
             for group in groups {
                 match owners.get(&(group.kind, page_key(&group.page))) {
-                    Some(files) if files.len() == 1 => paths.insert(files[0].to_owned()),
+                    Some(files)
+                        if files.len() == 1 && !ambiguous.contains(&page_key(&group.page)) =>
+                    {
+                        paths.insert(files[0].to_owned())
+                    }
                     _ => return Err(refusal("query result has an ambiguous page owner")),
                 };
             }
@@ -1218,7 +1223,7 @@ fn live(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let mut corpus = graph.corpus(None);
+    let mut corpus = graph.corpus(None, true);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
     if corpus.pages.len() > MAX_PAGES {
@@ -1287,7 +1292,7 @@ pub fn publish_static(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let mut corpus = graph.corpus(None);
+    let mut corpus = graph.corpus(None, true);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
     if corpus.pages.len() > MAX_PAGES {
@@ -1340,7 +1345,7 @@ mod snapshot_consistency_tests {
         )
         .unwrap();
         let (store, _, _) = Store::open(root, Default::default()).unwrap();
-        let corpus = store.whole_graph().unwrap().corpus(None);
+        let corpus = store.whole_graph().unwrap().corpus(None, true);
         let assets =
             publication_assets(&store, &corpus, 32 * 1024 * 1024, &mut Vec::new()).unwrap();
         let names: Vec<_> = assets.iter().map(|(name, _)| name.as_str()).collect();

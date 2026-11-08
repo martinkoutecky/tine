@@ -17,7 +17,7 @@ fn malformed_graph_view_config_keeps_pages_readable_at_graph_open() {
     let (store, _, _) = Store::open(root.path(), Default::default()).unwrap();
     let view = store.whole_graph().unwrap();
     assert_eq!(
-        view.corpus(None).pages.len(),
+        view.corpus(None, false).pages.len(),
         2,
         "invalid config must never erase the inventory"
     );
@@ -43,6 +43,9 @@ fn malformed_graph_view_config_keeps_pages_readable_at_graph_open() {
     );
     // Live redelivery of the same shape keeps the inventory too.
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 2);
+    assert_eq!(
+        store.whole_graph().unwrap().corpus(None, false).pages.len(),
+        2
+    );
     store.close();
 }

@@ -407,7 +407,7 @@ fn a_merge_waits_for_its_deleted_sources_index_publication() {
             live.store
                 .whole_graph()
                 .unwrap()
-                .corpus(None)
+                .corpus(None, false)
                 .pages
                 .iter()
                 .any(|p| p.name == "MiXeD1"),
@@ -426,7 +426,7 @@ fn a_merge_waits_for_its_deleted_sources_index_publication() {
         );
     });
     let view = live.store.whole_graph().unwrap();
-    let corpus = view.corpus(None);
+    let corpus = view.corpus(None, false);
     assert!(!corpus.pages.iter().any(|p| p.name == "MiXeD1"));
     assert_eq!(
         corpus
@@ -492,7 +492,7 @@ fn a_delete_waits_for_its_index_while_the_store_writer_is_busy() {
         .store
         .whole_graph()
         .unwrap()
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .is_empty());
     live.host.stop();

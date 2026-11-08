@@ -1155,26 +1155,31 @@ mod tests {
 
     #[test]
     fn a_panicking_promoted_journal_leaves_other_pages_usable() {
-        let (dir, store) = open();
-        store.watch.stop_background_for_test();
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/P1.md"), "- original\n").unwrap();
         fs::create_dir(dir.path().join("journals")).unwrap();
-        let winner = dir.path().join("journals/2026_10_02.md");
-        let loser = dir.path().join("journals/2026-10-02.md");
+        let winner = dir.path().join("journals/2026-10-02.md");
+        let loser = dir.path().join("journals/2026_10_02.md");
         fs::write(&winner, "- winning journal [[P1]]\n").unwrap();
         fs::write(
             &loser,
-            format!("- {}\n", crate::model::TEST_PAGE_PARSE_PANIC_SENTINEL),
+            format!(
+                "- {}\n",
+                crate::model::TEST_EXTERNAL_SYNC_PARSE_PANIC_SENTINEL
+            ),
         )
         .unwrap();
-        store.refresh(crate::Depth::Bytes).unwrap();
-        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph_reconciled().unwrap();
+        store.watch.stop_background_for_test();
+        // Losing files are parsed for physical safety now. Their parse errors
+        // remain isolated when the file later becomes the opening claimant.
+        assert_eq!(store.whole_graph().unwrap().unreadable_files().len(), 1);
         fs::remove_file(&winner).unwrap();
-        store
-            .graph
-            .fail_sync_parse_once
-            .store(true, Ordering::Release);
         store.refresh(crate::Depth::Bytes).unwrap();
-        assert!(!store.graph.fail_sync_parse_once.load(Ordering::Acquire));
         let view = store.whole_graph().unwrap();
         let unreadable: Vec<_> = view
             .unreadable_files()
@@ -1183,7 +1188,7 @@ mod tests {
             .collect();
         assert_eq!(
             unreadable,
-            [crate::FileId::from("journals/2026-10-02.md".to_owned())]
+            [crate::FileId::from("journals/2026_10_02.md".to_owned())]
         );
         assert!(view.explicit_referrers(&["P1".into()]).is_empty());
         assert_eq!(

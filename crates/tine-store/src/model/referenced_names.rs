@@ -340,6 +340,9 @@ impl ReadSnapshot {
             .real_page_names
             .owners(&tine_core::refs::page_key(name))
         {
+            if !self.is_active_path(path) {
+                continue;
+            }
             if claimed != name {
                 continue;
             }

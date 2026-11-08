@@ -803,7 +803,7 @@ fn transaction_journal_create_updates_day_and_view() {
     tx.create(&id, Content::Bytes(b"* arrived\n".to_vec()));
     host.apply(tx.plan().unwrap()).unwrap();
     assert_eq!(
-        f.store.journal_id(crate::Day(20260925)).as_str(),
+        f.store.journal_id(crate::Day(20260925), false).as_str(),
         id.as_str()
     );
     let view = f.store.whole_graph().unwrap();

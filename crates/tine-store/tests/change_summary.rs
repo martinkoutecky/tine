@@ -379,7 +379,7 @@ fn answers(store: &Store, root: &std::path::Path) -> Answers {
         }
     }
     for id in ids {
-        let answer = view.blocks(std::slice::from_ref(&id)).unwrap();
+        let answer = view.blocks(std::slice::from_ref(&id), true).unwrap();
         out.blocks
             .insert(id, serde_json::to_value(&answer[0]).unwrap());
     }
