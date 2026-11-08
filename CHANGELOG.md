@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- CodeMirror page and tag completion uses one search per typed query, showing choices on the first reply without a duplicate read or empty intermediate list (GH #767; internal: UI-CM6-COMPLETION-SINGLE-INPUT).
 - Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
