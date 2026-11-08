@@ -66,6 +66,11 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-08, GH #896 (D-20261107-MC3 §10 and the 0.10 author-marks lane brief):
+  `commands.registry` 149→150, `commands.palette` 90→91 and
+  `settings.appearance.open` 29→30 for the explicitly requested independent
+  **Show/Hide author marks** command and switch beside **Show/Hide comments**.
+  The command has no default key; there is no additional topbar or menu control.
 - 2026-11-07, GH #805 (0.10 lane brief, Martin's 10/30 AA and TRIAGE-1031 placement):
   `commands.registry` 148→149 for the explicitly requested remappable **Quit Tine**
   command (`app/quit`, Ctrl+Q on Linux/Windows). It reaches the existing safe Quit

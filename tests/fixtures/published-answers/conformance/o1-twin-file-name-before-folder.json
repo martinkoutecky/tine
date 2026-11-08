@@ -7,26 +7,11 @@
         "day": null,
         "is_journal": false,
         "key": "foo",
-        "name": "Foo",
-        "target": {
-          "id": "pages/sub/Foo.md",
-          "kind": "existing",
-          "others": [
-            "pages/foo.md"
-          ]
-        }
-      },
-      {
-        "day": null,
-        "is_journal": false,
-        "key": "foo",
         "name": "foo",
         "target": {
-          "id": "pages/sub/Foo.md",
+          "id": "pages/foo.md",
           "kind": "existing",
-          "others": [
-            "pages/foo.md"
-          ]
+          "others": []
         }
       },
       {
@@ -55,12 +40,6 @@
     {
       "date_key": null,
       "kind": "page",
-      "name": "Foo",
-      "path": "pages/sub/Foo.md"
-    },
-    {
-      "date_key": null,
-      "kind": "page",
       "name": "Notes",
       "path": "pages/Notes.md"
     },
@@ -72,20 +51,10 @@
     }
   ],
   "exported_at": "",
-  "home": "Foo",
+  "home": "Notes",
   "icons": {},
   "name": "Site",
   "pages": [
-    {
-      "blocks": [],
-      "format": "md",
-      "kind": "page",
-      "name": "Foo",
-      "path": "pages/sub/Foo.md",
-      "pre_block": null,
-      "read_only": true,
-      "title": "Foo"
-    },
     {
       "blocks": [],
       "format": "md",

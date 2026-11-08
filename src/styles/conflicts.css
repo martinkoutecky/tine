@@ -384,6 +384,19 @@
   font-variant-numeric: tabular-nums;
   text-align: end;
 }
+.conflict-overview-name-files {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.conflict-overview-name-files .settings-btn {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
 @media (max-width: 640px) {
   .conflict-overview-row {
     grid-template-columns: minmax(0, 1fr) auto;

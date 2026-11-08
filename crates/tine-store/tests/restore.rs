@@ -559,7 +559,7 @@ fn restore_journal_updates_day_and_view() {
         )
         .unwrap();
     assert_eq!(
-        store.journal_id(tine_store::Day(20260925)).as_str(),
+        store.journal_id(tine_store::Day(20260925), false).as_str(),
         "journals/2026_09_25.org"
     );
     let view = store.whole_graph().unwrap();

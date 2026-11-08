@@ -32,6 +32,8 @@ mod answer_changes;
 mod c3s_content_loss;
 #[path = "../tests/change_summary.rs"]
 mod change_summary;
+#[path = "../tests/cm_active_twins.rs"]
+mod cm_active_twins;
 #[path = "../tests/cm_preamble_refs.rs"]
 mod cm_preamble_refs;
 #[path = "../tests/conformance_fixture.rs"]

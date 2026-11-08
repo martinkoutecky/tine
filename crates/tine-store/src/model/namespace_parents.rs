@@ -11,7 +11,7 @@
 //!
 //! Seeds (model `pageSeedKeys`): the proper namespace prefixes
 //! ([`tine_core::refs::namespace_refs`], the same closure references use, Q6)
-//! of every non-blank page file's name (journals and twins included; OG's
+//! of every non-blank active page file's name (journals included; OG's
 //! outer `extract` skips blank content, so an empty file supplies its own page
 //! but no parents) and of every referenced name. A seed key is a parent page
 //! only when no file of either kind claims it, no page declares it as an

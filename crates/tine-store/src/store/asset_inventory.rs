@@ -19,7 +19,7 @@ impl Snapshot {
         for rel in changed {
             let path = graph.root.join(rel);
             let set_aside =
-                self.name_by_path.contains_key(&path) && !self.graph.holds_page_at(rel, &path);
+                self.name_by_path.contains_key(&path) && !self.graph.asset_cache_covers(rel, &path);
             if set_aside != unparsed.contains_key(&path) {
                 let map = Arc::make_mut(&mut unparsed);
                 if set_aside {
@@ -39,7 +39,7 @@ impl Snapshot {
             Arc::new(
                 self.name_by_path
                     .iter()
-                    .filter(|(path, _)| !self.graph.holds_page_at(&graph.rel_path(path), path))
+                    .filter(|(path, _)| !self.graph.asset_cache_covers(&graph.rel_path(path), path))
                     .map(|(path, _)| (path.clone(), ()))
                     .collect(),
             )
@@ -49,8 +49,17 @@ impl Snapshot {
             // Oracle: the carried set is the full comparison's answer.
             let parsed: HashSet<_> = self
                 .graph
-                .pages
+                .physical_pages
                 .iter()
+                .filter(|(entry, _)| {
+                    entry.kind != PageKind::Journal
+                        || entry.date_key.is_none()
+                        || self
+                            .graph
+                            .pages
+                            .positions
+                            .contains_key(entry.rel_path_str())
+                })
                 .map(|(entry, _)| &entry.path)
                 .collect();
             let scanned: Vec<_> = (self.name_by_path.iter())
@@ -154,8 +163,8 @@ mod tests {
             for dir in ["journals", "assets", "logseq"] {
                 fs::create_dir_all(root.path().join(dir)).unwrap();
             }
-            fs::write(root.path().join("journals/2026_10_02.md"), "- day\n").unwrap();
-            let stray = root.path().join("journals/2026-10-02.md");
+            fs::write(root.path().join("journals/2026-10-02.md"), "- day\n").unwrap();
+            let stray = root.path().join("journals/2026_10_02.md");
             let referenced = "- ![photo](../assets/photo.png)\n";
             fs::write(&stray, " ".repeat(referenced.len())).unwrap();
             let asset = root.path().join("assets/photo.png");
@@ -230,7 +239,7 @@ mod tests {
                     }
                 });
             assert!(
-                (result.as_ref().is_err_and(|error| error.contains("journals/2026-10-02.md")) || counted_rewrite) && *kept,
+                (result.as_ref().is_err_and(|error| error.contains("journals/2026_10_02.md")) || counted_rewrite) && *kept,
                 "trash={trash}, {delivery}: a changing stray read authorized an orphan decision: {observations:?}"
             );
         }

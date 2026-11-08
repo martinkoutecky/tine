@@ -68,14 +68,7 @@ impl Graph {
             let entries = self.certify(list_graph_pages(self), None);
             // A duplicate-day journal (canonical + leftover title-named file)
             // shows once in quick-switch and All Pages: both resolve to one page.
-            let entries = Arc::new(EntryList::from(
-                dedup_journal_days(
-                    entries.0,
-                    &self.current_journal_format(),
-                    self.current_config().file_name_format,
-                )
-                .as_slice(),
-            ));
+            let entries = Arc::new(EntryList::from(dedup_journal_days(entries.0).as_slice()));
             let installed = self.install_name_memo(stamp, || {
                 *self.derived.page_list_cache.write().unwrap() =
                     Some((stamp.0, Arc::clone(&entries)));
@@ -96,7 +89,7 @@ impl Graph {
             }
             let listed = self.certify(list_graph_pages_kind(self, Some(kind)), Some(kind));
             let mut built = FindEntryIndex::new();
-            built.entries = Arc::new(page_claimants(self, &listed.0));
+            built.entries = Arc::new(page_claimants(&listed.0));
             built.mark_kind_loaded(kind);
             let key = claimant_key(&key);
             let found = self.install_name_memo(stamp, || {
@@ -174,14 +167,10 @@ impl Graph {
                 *cache = None;
                 return;
             }
-            let (format, name_format) = (
-                self.current_journal_format(),
-                self.current_config().file_name_format,
-            );
             let entries = Arc::make_mut(&mut index.entries);
             let mut bucket = entries.get(&key).cloned().unwrap_or_default();
             bucket.push(entry.clone());
-            bucket.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
+            bucket.sort_by(|a, b| compare_page_claimants(a, b));
             entries.insert(key, bucket);
         });
         if observed.is_none() {
@@ -200,7 +189,7 @@ impl Graph {
             Some(PageKind::Journal),
         );
         let mut index = FindEntryIndex::new();
-        index.entries = Arc::new(page_claimants(self, &entries.0));
+        index.entries = Arc::new(page_claimants(&entries.0));
         index.mark_kind_loaded(PageKind::Journal);
         *self.derived.find_entry_cache.write().unwrap() = Some((gen, index));
         entries.0
@@ -230,7 +219,6 @@ impl Graph {
     /// The capture calls it under the writer, so its walk needs no stamp.
     pub(crate) fn snapshot_name_roots(&self) -> (Arc<EntryList>, Arc<ClaimantMap>) {
         let gen = self.cache_gen.load(Ordering::Acquire);
-        let format = self.current_journal_format();
         // The build that produced this generation already listed and named
         // every file from its own reads (GH #623: one read per file); a
         // later generation walks again.
@@ -245,7 +233,7 @@ impl Graph {
             Some((_, entries)) => entries,
             None => self.certify(list_graph_pages(self), None),
         };
-        let claimants = Arc::new(page_claimants(self, &entries.0));
+        let claimants = Arc::new(page_claimants(&entries.0));
         *self.derived.find_entry_cache.write().unwrap() = Some((
             gen,
             FindEntryIndex {
@@ -256,10 +244,7 @@ impl Graph {
                 journals_loaded: false,
             },
         ));
-        let list = Arc::new(EntryList::from(
-            dedup_journal_days(entries.0, &format, self.current_config().file_name_format)
-                .as_slice(),
-        ));
+        let list = Arc::new(EntryList::from(dedup_journal_days(entries.0).as_slice()));
         *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
         (list, claimants)
     }

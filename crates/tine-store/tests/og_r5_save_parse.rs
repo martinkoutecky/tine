@@ -40,7 +40,10 @@ fn ordinary_host_save_plans_two_parses_and_publishes_the_written_tree() {
             "I-15: the host adds one reparse of the bytes it publishes"
         );
         assert_eq!(store.page(&id).unwrap().doc.blocks[0].raw, "after");
-        assert_eq!(held.corpus(None).pages[0].document.roots[0].raw(), "before");
+        assert_eq!(
+            held.corpus(None, false).pages[0].document.roots[0].raw(),
+            "before"
+        );
         store.close();
     }
 }

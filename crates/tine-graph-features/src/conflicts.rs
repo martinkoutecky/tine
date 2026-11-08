@@ -1101,7 +1101,9 @@ pub fn resolve_duplicate_journal_day(
         );
     }
     // `journal_conflicts` sorts canonical-first: files[0] is the keeper.
-    if day.files.first().map(|file| file.path.as_str()) != Some(canonical) {
+    if day.files.first().map(|file| file.path.as_str()) != Some(canonical)
+        || !day.files.first().is_some_and(|file| file.canonical)
+    {
         return refuse(
             io::ErrorKind::InvalidInput,
             "that file is not the day's canonical file",

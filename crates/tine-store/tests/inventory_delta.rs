@@ -236,11 +236,11 @@ fn save(
     while let Some(change) = sub.try_recv().unwrap() {
         let wire = serde_json::to_value(&change).unwrap();
         if wire["inventoryChanged"] != true {
-            assert!(change.inventory_delta().is_none());
+            assert!(change.inventory_delta().1.is_none());
             continue;
         }
         changed = true;
-        match (change.inventory_delta(), deltas.as_mut()) {
+        match (change.inventory_delta().1, deltas.as_mut()) {
             (Some((keys, entries)), Some(all)) => all.push(Delta {
                 keys: keys.to_vec(),
                 entries: entries.0.clone(),
@@ -394,7 +394,7 @@ fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
     assert!(
         std::iter::from_fn(|| sub.try_recv().unwrap()).any(|change| {
             serde_json::to_value(&change).unwrap()["inventoryChanged"] == true
-                && change.inventory_delta().is_none()
+                && change.inventory_delta().1.is_none()
         })
     );
     let view = store.whole_graph().unwrap();
@@ -718,7 +718,7 @@ fn a_page_created_or_renamed_still_refetches() {
     let mut refetch = false;
     while let Some(change) = sub.try_recv().unwrap() {
         let wire = serde_json::to_value(&change).unwrap();
-        refetch |= wire["inventoryChanged"] == true && change.inventory_delta().is_none();
+        refetch |= wire["inventoryChanged"] == true && change.inventory_delta().1.is_none();
     }
     assert!(refetch, "a claim change is a refetch, never a delta");
     store.close();

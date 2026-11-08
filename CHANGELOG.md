@@ -13,7 +13,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
 - Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
 - The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).
+- Author marks are centred in the bullet gap; same-author sibling runs share a continuous line and one leading chip, with each block's author available on hover or focus (GH #892, GH #893).
+- Show/Hide author marks has its own Settings switch beside Show/Hide comments and a rebindable command with no default shortcut (GH #896).
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
+- When two files claim one page name, Tine opens the ordinary page before a journal, then the file whose graph-relative path sorts first by UTF-8 bytes. Only that file supplies aliases, references and query results; the Journals feed hides a journal masked by an ordinary page. Both files are kept (REG-CM-ACTIVE-TWINS).
+- Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
 

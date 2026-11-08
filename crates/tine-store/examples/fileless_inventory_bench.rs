@@ -41,7 +41,7 @@ fn main() {
         let mut held = inventory.0.clone();
         while let Some(change) = sub.try_recv().unwrap() {
             if serde_json::to_value(&change).unwrap()["inventoryChanged"] == true {
-                if let Some((keys, rows)) = change.inventory_delta() {
+                if let Some((keys, rows)) = change.inventory_delta().1 {
                     held.retain(|entry| {
                         matches!(entry.target, tine_store::Resolved::Existing { .. })
                             || !keys.contains(&tine_core::refs::page_key(&entry.name))

@@ -20,16 +20,6 @@ impl Graph {
         if path_is_sync_conflict(path) {
             return None;
         }
-        if entry.kind == PageKind::Journal {
-            if let Some(date) = entry
-                .date_key
-                .map(tine_core::date::JournalDate::from_ordinal)
-            {
-                if self.is_shadow_journal(path, date) {
-                    return None;
-                }
-            }
-        }
         Some(entry)
     }
 }
@@ -60,7 +50,9 @@ pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, Dis
     let rev = DiskObs::of(content);
     let mut doc = parse_doc(&e.path, content);
     #[cfg(test)]
-    if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
+    if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL)
+        || content.contains(TEST_EXTERNAL_SYNC_PARSE_PANIC_SENTINEL)
+    {
         panic!("deterministic test sentinel for a page projection panic");
     }
     assign_doc_runtime_ids(&mut doc.roots, e.rel_path_str());

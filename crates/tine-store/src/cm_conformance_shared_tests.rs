@@ -1299,7 +1299,7 @@ fn tine_block_ids(view: &WholeGraph) -> BTreeMap<String, BlockId> {
         }
     }
     let mut out = BTreeMap::new();
-    for page in view.corpus(None).pages {
+    for page in view.corpus(None, true).pages {
         let path = page.id.to_string();
         let mut i = 0;
         if let Some(pre) = &page.document.pre_block {
@@ -2337,7 +2337,7 @@ pub fn compare_file_names(view: &WholeGraph, spec: &GraphSpec) -> Vec<Diff> {
 /// title (`page_title_from_preamble`) and answered name; per Org block with
 /// a file link its raw text and the linked file's answered name.
 pub fn names_case(view: &WholeGraph, spec: &GraphSpec) -> Option<Value> {
-    let corpus = view.corpus(None);
+    let corpus = view.corpus(None, false);
     let mut files = Vec::new();
     let mut links = Vec::new();
     for (rel, text) in &spec.files {

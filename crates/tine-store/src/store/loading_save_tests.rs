@@ -135,7 +135,7 @@ fn declined_passes(store: &Store) -> Vec<String> {
 /// The first complete view holds `name` once, with `text`.
 fn assert_once(store: &Store, name: &str, text: &str) {
     let view = store.whole_graph().unwrap();
-    let corpus = view.corpus(None);
+    let corpus = view.corpus(None, false);
     let found: Vec<_> = (corpus.pages.iter())
         .filter(|page| page.name == name)
         .collect();
@@ -559,7 +559,7 @@ fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
     let names: Vec<_> = view
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .map(|p| p.name.clone())
@@ -607,7 +607,7 @@ fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
     let names: Vec<_> = view
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .map(|p| p.name.to_lowercase())

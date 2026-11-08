@@ -173,6 +173,9 @@ pub enum ConflictSource {
     /// title-named one, usually left by a journal date-format change). The
     /// filename migration never clobbers, so both survive (master 9dc54e4a7).
     DuplicateJournal,
+    /// Multiple physical files claim one page name, including across kinds.
+    /// The overview lists exact files; automatic pairwise merging is absent.
+    DuplicateName,
 }
 
 /// Which version of the page a side is. Three roles, not two — the base is a
@@ -199,6 +202,9 @@ pub struct ConflictSide {
     /// sides that live inside a marker-bearing file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Physical kind for an exact-file name-conflict link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PageKind>,
 }
 
 /// One item in the conflict queue.

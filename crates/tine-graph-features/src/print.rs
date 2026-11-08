@@ -75,7 +75,7 @@ pub(crate) fn fresh_named_pages(
     let named = |whole: &WholeGraph| -> Vec<CorpusPage> {
         let mut pages: Vec<CorpusPage> = (names.iter())
             .flat_map(|name| {
-                (whole.corpus(Some(name.as_str())).pages.into_iter())
+                (whole.corpus(Some(name.as_str()), true).pages.into_iter())
                     .filter(move |page| page.name == **name)
             })
             .collect();

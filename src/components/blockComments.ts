@@ -12,15 +12,16 @@ import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
 import { facetsOf } from "../render/facets";
 import { commentGroups } from "../commentGroups";
+import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];
 
-/** Plain functions over the block's facets: an ordinary block pays two property
- * scans and allocates nothing. The thread test walks up the parents rather than
- * providing a context per level (128-level outlines must render). */
-export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org") {
+/** Local facets and a memo for the adjacent authorship pairs. The thread test
+ * walks up the parents rather than providing a context per level (128-level
+ * outlines must render). Unauthored blocks do no neighbour comparisons. */
+export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org", run?: { id: () => string; neighbours: () => AuthorNeighbors | undefined }) {
   const inThread = () => inCommentThread(node().parent, fmt());
   const commentSelector = () => (node().parent !== null ? quoteSelectorOf(properties()) : null);
   // Your own name (Settings → Your name) is "you": null, as for a block without `tine.author::`.
@@ -28,7 +29,18 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     const written = authorOf(properties());
     return written !== null && isOwnAuthor(written) ? null : written;
   };
-  const showsAuthor = () => author() !== null || commentSelector() !== null || inThread();
+  // Keep pair comparisons independent of unrelated row-chrome invalidations.
+  // Only the list IDs and these three nodes' local fields invalidate this memo.
+  const joins = createMemo(() => {
+    // Thread presentation is gated below. Do not read ancestors here: their
+    // raw text would make a parent's keystroke recompute every descendant run.
+    if (author() === null || commentSelector() !== null) return [false, false];
+    const neighbours = run?.neighbours()?.();
+    return [authorRunContinues(neighbours?.[0], run?.id(), fmt()), authorRunContinues(run?.id(), neighbours?.[1], fmt())];
+  });
+  const continued = () => joins()[0];
+  const continues = () => joins()[1];
+  const showsAuthor = () => (author() !== null && !continued()) || commentSelector() !== null || inThread();
   // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => commentSelector() !== null || inThread();
   const commentClasses = () => {
@@ -37,10 +49,12 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
       "comment-card": commentSelector() !== null && !inThread(),
       "comment-in-thread": bulletless(),
       authored: by !== null,
+      "author-run-continued": !bulletless() && continued(),
+      "author-run-continues": !bulletless() && continues(),
     };
     // Someone else's comment or reply gets its own background, one tint per name
     // (Martin 2026-10-31: the chip alone did not tell them apart).
-    const tint = by !== null && bulletless() ? authorTint(by) : -1;
+    const tint = by !== null ? authorTint(by) : -1;
     for (let i = 0; i < AUTHOR_TINTS; i++) classes[`author-tint-${i}`] = i === tint;
     return classes;
   };

@@ -12,7 +12,7 @@
         0
       ],
       [
-        "pages/sub/Foo.md",
+        "pages/foo.md",
         1
       ]
     ],
@@ -25,10 +25,10 @@
       "key": "foo",
       "name": "Foo",
       "target": {
-        "id": "pages/sub/Foo.md",
+        "id": "pages/foo.md",
         "kind": "existing",
         "others": [
-          "pages/foo.md"
+          "pages/sub/Foo.md"
         ]
       }
     },
@@ -38,10 +38,10 @@
       "key": "foo",
       "name": "foo",
       "target": {
-        "id": "pages/sub/Foo.md",
+        "id": "pages/foo.md",
         "kind": "existing",
         "others": [
-          "pages/foo.md"
+          "pages/sub/Foo.md"
         ]
       }
     },
@@ -101,7 +101,7 @@
   "owner": {
     "Foo": {
       "journal": null,
-      "page": "pages/sub/Foo.md"
+      "page": "pages/foo.md"
     },
     "Notes": {
       "journal": null,
@@ -109,7 +109,7 @@
     },
     "foo": {
       "journal": null,
-      "page": "pages/sub/Foo.md"
+      "page": "pages/foo.md"
     }
   },
   "pages": [

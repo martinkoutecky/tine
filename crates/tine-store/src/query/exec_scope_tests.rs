@@ -81,15 +81,15 @@ fn page_constraints_preserve_or_not_refs_duplicates_and_page_rows() {
     for (source, rows) in [
         (
             "@block and (page.name = 'Chosen' or page.name = 'Other')",
-            5,
+            4,
         ),
         (
             "@block and (page.name = 'Chosen' or content like '%unrelated%')",
-            34,
+            33,
         ),
         ("@block and not page.name = 'Chosen'", 31),
-        ("@block and [[Other]]", 2),
-        ("@page and name = 'Chosen'", 2),
+        ("@block and [[Other]]", 1),
+        ("@page and name = 'Chosen'", 1),
         ("@block and page.name = 'Absent'", 0),
     ] {
         let (query, view) = parse_query_text(source, QueryDialect::Tql, JournalDate::today());

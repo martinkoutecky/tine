@@ -9,6 +9,12 @@ it("the Guide explains unique context, ambiguous quotes, flat replies, thread co
   for (const text of ["each day's page owning its margin column", "split panes also use their own available width", "Comment and reply editors hide every `tine.*` property on all platforms", "original property bytes stay in the file"]) expect(tips).toContain(text);
 });
 
+it("the Guide explains sibling author runs and their independent visibility command (GH #892, #893, #896)", () => {
+  const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  for (const fact of ["centred in the bullet-to-text gap", "chip only on the first block", "Hover or focus an individual mark", "**Show/Hide author marks**", "no default key", "shown by default", "Names stay available when the lines are hidden", "child outlines, embeds and comment threads break runs"])
+    expect(tips).toContain(fact);
+});
+
 it("the Guide explains that body structure skips whole annotation threads (GH #891, #110)", () => {
   const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
   for (const fact of [

@@ -91,7 +91,7 @@ fn a_moved_block_keeps_its_exact_owner_across_warm_launch() {
         .whole_graph_reconciled()
         .unwrap()
         .graph
-        .block_owner_page(id);
+        .block_owner_page(id, true);
     // External move: the destination arrives before the source removal.
     fs::write(
         root.path().join("pages/B.md"),
@@ -116,13 +116,13 @@ fn a_moved_block_keeps_its_exact_owner_across_warm_launch() {
     assert_eq!(parse_passes(&loaded), 0);
     assert_eq!(
         view.graph
-            .block_owner_page(id)
+            .block_owner_page(id, true)
             .map(|(_, (entry, _))| entry.name.as_str()),
         Some("B")
     );
     assert_eq!(view.graph.block_index_full_builds(), 0);
     assert_eq!(
-        view.blocks(&[id.to_owned()]).unwrap()[0]
+        view.blocks(&[id.to_owned()], true).unwrap()[0]
             .as_ref()
             .unwrap()
             .page,
@@ -602,7 +602,7 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
 fn warm(store: &Store) {
     let view = store.whole_graph_reconciled().unwrap();
     let graph = &view.graph;
-    graph.block_owner_page("x");
+    graph.block_owner_page("x", true);
     graph.referenced_page_names();
     graph.page_aliases_with_owners();
     graph.alias_owner_paths("bee");
@@ -1246,13 +1246,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (26, GOLDEN),
+        (27, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "5857b431fa31be0a4d99b598bf2123b6f094e26a3df7cbd96334a05e0fed27c2";
+const GOLDEN: &str = "76a87b3aaec0df7bebc6cf94883cb3a939f64db5ef66cb58d09e870eb31153f8";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no
@@ -1922,7 +1922,7 @@ fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
     assert_eq!(view.graph.block_index_full_builds(), 0);
     assert!(view
         .graph
-        .block_owner_page("11111111-2222-4333-8444-555555555555")
+        .block_owner_page("11111111-2222-4333-8444-555555555555", true)
         .is_none());
     let held: Vec<(String, String)> = view.graph.with_pages(|pages| {
         pages
@@ -1949,7 +1949,7 @@ fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
     });
     let ids: Vec<String> = held.iter().map(|(id, _)| id.clone()).collect();
     let pages: Vec<Option<String>> = view
-        .blocks(&ids)
+        .blocks(&ids, true)
         .unwrap()
         .into_iter()
         .map(|group| group.map(|group| group.page))

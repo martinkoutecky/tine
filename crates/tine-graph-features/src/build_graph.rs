@@ -105,7 +105,7 @@ fn build_and_answer<T>(
         let graph = private
             .whole_graph()
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
-        let mut corpus = graph.corpus(None);
+        let mut corpus = graph.corpus(None, true);
         let wanted: BTreeSet<_> = pages.iter().map(|p| p.id.as_str()).collect();
         let got: BTreeSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();
         if wanted != got || corpus.pages.len() != pages.len() {

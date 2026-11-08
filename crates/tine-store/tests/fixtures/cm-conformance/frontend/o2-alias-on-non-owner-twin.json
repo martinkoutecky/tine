@@ -24,14 +24,19 @@
     [
       [
         "pages/a.md",
-        1
+        0
       ],
       [
         "pages/Notes.md",
         0
       ]
     ],
-    []
+    [
+      [
+        "zed",
+        1
+      ]
+    ]
   ],
   "inventory": [
     {
@@ -62,17 +67,10 @@
       "day": null,
       "is_journal": false,
       "key": "zed",
-      "link": {
-        "kind": "page",
-        "name": "a"
-      },
       "name": "zed",
-      "namespace_excluded": true,
       "target": {
-        "kind": "alias",
-        "owners": [
-          "pages/b.md"
-        ]
+        "id": "pages/zed.md",
+        "kind": "absent"
       }
     }
   ],
@@ -113,7 +111,7 @@
       ],
       "page": [
         "page",
-        "a"
+        "zed"
       ]
     }
   },
@@ -128,7 +126,7 @@
     },
     "zed": {
       "journal": null,
-      "page": "pages/b.md"
+      "page": null
     }
   },
   "pages": [
@@ -175,7 +173,7 @@
     "zed": {
       "backend": [
         "page",
-        "a"
+        "zed"
       ],
       "day": null,
       "model": [
