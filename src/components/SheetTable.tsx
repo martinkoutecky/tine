@@ -90,7 +90,8 @@ const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
 /** Render children or query rows as a table. A query display controller owns
  * saved columns, sorts and aggregates; without it headers keep their local arrangement.
  * Resizing reads one owner's widths and writes one property through document
- * on commit; row and field work scales with the supplied table, never a graph. */
+ * on commit; supplied host properties also render a detached query's View.
+ * Row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
   ownerId: string;
   rowSource: "children" | "query";
@@ -99,6 +100,7 @@ export function SheetTable(props: {
   addRowLabel?: string;
   schemaPage?: string;
   queryDisplay?: QueryDisplayControl;
+  hostProperties?: readonly [string, string][];
   onDefaultColumns?: (columns: string[]) => void;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
@@ -121,10 +123,12 @@ export function SheetTable(props: {
   let suppressFieldHeaderClick = false;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
-  const config = createMemo(() => {
+  const hostProperties = createMemo(() => {
+    if (props.hostProperties) return props.hostProperties;
     const owner = docNode(props.ownerId);
-    return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
+    return owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : [];
   });
+  const config = createMemo(() => sheetConfig(hostProperties()));
   // A pre-split bare column list on a QUERY block is the column selection, not a
   // declared schema: reading it as one marked every column stray and let the next
   // schema write replace the list (master P5A). It reads as an absent schema.
@@ -143,7 +147,7 @@ export function SheetTable(props: {
   });
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
     const home = schemaHome();
-    return home ? parseFields(home.value) : [];
+    return home ? parseFields(home.value) : config().fields;
   });
   const schemaFieldSet = createMemo(() => new Set<FieldId>(schemaFields().map((s) => s.field)));
   const fieldTypes = createMemo(() => {
@@ -155,10 +159,7 @@ export function SheetTable(props: {
     if (!props.schemaPage) return new Map();
     return formulasOf(readPageProperties(props.schemaPage));
   });
-  const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = docNode(props.ownerId);
-    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
-  });
+  const blockFormulas = createMemo(() => formulasOf(hostProperties()));
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
   const formulaHomes = createMemo(() => {
     const out = new Map<string, FormulaHome>();
@@ -205,7 +206,7 @@ export function SheetTable(props: {
     const draft = editingProp();
     if (draft) return draft.fields;
     const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
-    const explicit = props.rowSource === "query" && blockProperty(props.ownerId, "tine.columns") !== null;
+    const explicit = props.rowSource === "query" && hostProperties().some(([key]) => key.toLowerCase() === "tine.columns");
     return selected?.length || explicit ? (selected ?? []).map(queryColumnFieldId) : defaultFields();
   });
   const formulaHintFields = createMemo(() => {
@@ -222,7 +223,7 @@ export function SheetTable(props: {
   const formulaEntries = () => [...formulas().entries()];
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
-  const tableWidths = createTableColumnResize(props.ownerId, props.schemaPage);
+  const tableWidths = createTableColumnResize(props.ownerId, props.schemaPage, () => props.hostProperties);
   const columnIndex = createMemo(() => new Map(columns().map((column, index) => [column, index] as const)));
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
   const actionColumn = () => hasActionColumn() ? "96px" : "";
@@ -254,7 +255,7 @@ export function SheetTable(props: {
     ownerId: () => props.ownerId,
     hasAggregates,
     overlay: sheetOverlay,
-    hovering: sheetHovering,
+    hovering: () => (!props.queryDisplay || !!props.queryDisplay.apply) && sheetHovering(),
   });
 
   const captureStableColumns = () => {
@@ -397,7 +398,7 @@ export function SheetTable(props: {
   const schemaWriteAllowed = () => {
     const home = schemaHome() ?? createSchemaHome();
     if (!home) return false;
-    if (home.kind === "block") return !blockPageReadOnly(home.id);
+    if (home.kind === "block") return blockWritable(home.id);
     return !(pageByName(home.name)?.readOnly ?? false);
   };
   const writeSchemaFields = (next: readonly FieldSpec[]) => {
@@ -421,7 +422,7 @@ export function SheetTable(props: {
   };
   const formulaWriteAllowed = (home: FormulaHome | null) => {
     if (!home) return false;
-    if (home.kind === "block") return !blockPageReadOnly(home.id);
+    if (home.kind === "block") return blockWritable(home.id);
     return !(pageByName(home.name)?.readOnly ?? false);
   };
   const removeFormula = (field: FieldId) => {
@@ -462,7 +463,7 @@ export function SheetTable(props: {
     writeSchemaFields(specs);
   };
   const canDragFieldHeader = (field: FieldId) =>
-    props.queryDisplay ? queryColumnName(field) !== null && !blockPageReadOnly(props.ownerId)
+    props.queryDisplay ? queryColumnName(field) !== null && !!props.queryDisplay.apply && blockWritable(props.ownerId)
       : field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
   const canDropFieldHeader = (field: FieldId, dragged: FieldId) => {
     if (field === dragged) return false;
@@ -476,7 +477,7 @@ export function SheetTable(props: {
   const reorderFieldHeader = (field: FieldId, drop: FieldHeaderDrop) => {
     if (props.queryDisplay) {
       const columns = reorderedQueryColumns(fields(), field, drop.field, drop.before);
-      if (columns) props.queryDisplay.apply({ ...props.queryDisplay.view, columns });
+      if (columns) props.queryDisplay.apply?.({ ...props.queryDisplay.view, columns });
       else pushToast(msg("sheet-sheet-table-this-order-cannot-be-saved-while-a-computed-column-is"), "info");
       return;
     }

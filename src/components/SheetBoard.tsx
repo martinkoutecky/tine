@@ -88,6 +88,7 @@ export function SheetBoard(props: {
   groupBy?: string | null;
   groups?: readonly RefGroup[];
   schemaPage?: string;
+  hostProperties?: readonly [string, string][];
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
@@ -127,10 +128,12 @@ export function SheetBoard(props: {
   });
   const [addingTag, setAddingTag] = createSignal(false);
   const [tagInputInvalid, setTagInputInvalid] = createSignal(false);
-  const config = createMemo(() => {
+  const hostProperties = createMemo(() => {
+    if (props.hostProperties) return props.hostProperties;
     const owner = docNode(props.ownerId);
-    return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
+    return owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : [];
   });
+  const config = createMemo(() => sheetConfig(hostProperties()));
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
     const own = config().fields;
     if (own.length > 0) return own;
@@ -140,10 +143,7 @@ export function SheetBoard(props: {
     if (!props.schemaPage) return new Map();
     return formulasOf(readPageProperties(props.schemaPage));
   });
-  const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = docNode(props.ownerId);
-    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
-  });
+  const blockFormulas = createMemo(() => formulasOf(hostProperties()));
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
 
   const allRows = createMemo<RowRecord[]>(() => sheetSourceRows(props.rowSource, props.ownerId, props.groups));

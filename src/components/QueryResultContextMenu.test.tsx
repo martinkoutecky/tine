@@ -72,7 +72,10 @@ function clickMenu(label: string): void {
 describe("query results (GH #726)", () => {
   beforeEach(() => {
     const parsed: ParsedQuery = { query: { anchor: "block", filter: { kind: "and", items: [] }, source: { kind: "builder" } }, view: {} };
-    vi.spyOn(backend(), "parseQuery").mockResolvedValue(parsed);
+    // The engine resolves presentation from the supplied host properties.
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (_text, _dialect, properties) => ({
+      ...parsed, view: { view: properties?.find(([key]) => key === "tine.view")?.[1] as ParsedQuery["view"]["view"] },
+    }));
     vi.spyOn(backend(), "printQuery").mockResolvedValue("@block");
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
     vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult([{ page: "Src", kind: "page", blocks: [
