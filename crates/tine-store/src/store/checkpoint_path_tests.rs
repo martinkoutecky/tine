@@ -108,20 +108,24 @@ fn a_checkpoint_path_without_a_stamp_cannot_outlive_an_external_move() {
     // A disposable checkpoint can carry a page whose watcher baseline has
     // already forgotten the old location. Missing coverage must force recovery.
     let key = config_key(&tine_core::config::Config::default());
-    let mut loaded = load(&cp, root.path(), &key, &|| None).unwrap();
+    let mut loaded = load(&cp, &stored_root(root.path()), &key, &|| None).unwrap();
     let missing = stored_path(root.path(), "pages/A.md");
     loaded.body.stamps.retain(|(path, _)| *path != missing);
     let body = loaded.body;
     let body = Body {
         graph: body
             .graph
-            .map_pages(|pages| PagesOut(pages.into_pages(root.path()))),
+            .map_pages(|pages| PagesOut(pages.into_pages(&stored_root(root.path())))),
         claimants: body.claimants,
         name_by_path: body.name_by_path,
         stamps: body.stamps,
         racy: body.racy,
     };
-    fs::write(&cp, encode(root.path(), key, &body).unwrap().0).unwrap();
+    fs::write(
+        &cp,
+        encode(&stored_root(root.path()), key, &body).unwrap().0,
+    )
+    .unwrap();
     fs::create_dir_all(root.path().join("pages/sub")).unwrap();
     fs::rename(&missing, root.path().join("pages/sub/A.md")).unwrap();
     let store = open_cp(root.path(), &cp);
@@ -156,14 +160,16 @@ fn a_stale_checkpoint_claimant_or_name_map_recovers_without_touching_the_real_fi
         let cp = root.path().join("launch.bin");
         write_checkpoint(root.path(), &cp);
         let key = config_key(&tine_core::config::Config::default());
-        let old = load(&cp, root.path(), &key, &|| None).unwrap();
+        let old = load(&cp, &stored_root(root.path()), &key, &|| None).unwrap();
         let ghost = old.body.claimants.get(&(false, "a".into())).unwrap()[0].clone();
         fs::create_dir_all(root.path().join("pages/sub")).unwrap();
         let real = root.path().join("pages/sub/A.md");
         fs::rename(root.path().join("pages/A.md"), &real).unwrap();
         let bytes = fs::read(&real).unwrap();
         write_checkpoint(root.path(), &cp);
-        let mut body = load(&cp, root.path(), &key, &|| None).unwrap().body;
+        let mut body = load(&cp, &stored_root(root.path()), &key, &|| None)
+            .unwrap()
+            .body;
         // Older checkpoints could retain a claimant after its removal left
         // the baseline. It need not have a corresponding parsed page row.
         if site == "claimant" {
@@ -180,13 +186,17 @@ fn a_stale_checkpoint_claimant_or_name_map_recovers_without_touching_the_real_fi
         let body = Body {
             graph: body
                 .graph
-                .map_pages(|pages| PagesOut(pages.into_pages(root.path()))),
+                .map_pages(|pages| PagesOut(pages.into_pages(&stored_root(root.path())))),
             claimants: body.claimants,
             name_by_path: body.name_by_path,
             stamps: body.stamps,
             racy: body.racy,
         };
-        fs::write(&cp, encode(root.path(), key, &body).unwrap().0).unwrap();
+        fs::write(
+            &cp,
+            encode(&stored_root(root.path()), key, &body).unwrap().0,
+        )
+        .unwrap();
         let store = open_cp(root.path(), &cp);
         let view = store.whole_graph_reconciled().unwrap();
         assert_eq!(load_outcome(&store), "decode", "{site}");
@@ -232,4 +242,10 @@ fn a_sync_style_move_while_running_retires_the_old_path() {
         matches!(store.whole_graph().unwrap().resolve("A", false), Resolved::Existing { id, others } if id.as_str() == "pages/sub/A.md" && others.is_empty())
     );
     store.close();
+}
+
+/// The root as a checkpoint header records it: `Store::open` canonicalizes it
+/// (on Windows a `\\?\` path), so `load`/`encode` must be given the same form.
+fn stored_root(root: &Path) -> PathBuf {
+    fs::canonicalize(root).unwrap()
 }
