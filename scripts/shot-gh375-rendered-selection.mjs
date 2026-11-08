@@ -71,6 +71,30 @@ try {
     await sleep(300);
     console.log(nav ? "[nav]" : "[no nav]", JSON.stringify(await state("tapped Bold")));
     await page.screenshot({ path: `${OUT}/${nav ? "nav" : "nonav"}-bold.png` });
+    // GH #891: the same read-mode selection toolbar also offers Comment.
+    // Native selection is synthetic; tap dispatch and coarse-pointer layout
+    // use Chromium's touch context. This does not certify iOS/Android menus.
+    await page.locator('[data-rendered-selection-toolbar] [data-selection-action="comment"]').tap();
+    await page.waitForFunction(() => {
+      const id = window.__tine.editingId();
+      return id && window.__tine.raw(id)?.includes("tine.quote:: selectable");
+    });
+    await sleep(300);
+    const focused = await page.evaluate(() => {
+      const ta = document.querySelector(".comment-card textarea.block-editor");
+      return !!window.__tine.editingId() && ta === document.activeElement;
+    });
+    if (!focused) throw new Error("read-mode Comment did not retain focus in the new comment");
+    await page.keyboard.insertText("Touch reply");
+    await page.waitForFunction(() => window.__tine.raw(window.__tine.editingId())?.includes("Touch reply"));
+    const comment = await page.evaluate(() => ({
+      parent: window.__tine.raw("b3"),
+      raw: window.__tine.raw(window.__tine.editingId()),
+      card: !!document.querySelector(".comment-card textarea.block-editor"),
+    }));
+    if (comment.parent !== "delta **selectable** words in block 3" || !comment.card) throw new Error("read-mode Comment failed: " + JSON.stringify(comment));
+    console.log(nav ? "[nav]" : "[no nav]", "PASS: touch read-mode Comment", JSON.stringify(comment));
+    await page.screenshot({ path: `${OUT}/${nav ? "nav" : "nonav"}-comment.png` });
     await ctx.close();
   }
 } finally {

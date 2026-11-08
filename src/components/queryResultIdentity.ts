@@ -97,8 +97,9 @@ export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
   const source = resolveResultRow(row);
   const page = pageByName(row.page);
   const binding = captureBinding();
+  const instance = pageInstanceGeneration(row.page);
   return () => source && bindingCurrent(binding) && resultsActionable()
-    && pageByName(row.page) === page && node(source.id) === source ? source : null;
+    && pageByName(row.page) === page && node(source.id) === source && pageInstanceGeneration(row.page) === instance ? source : null;
 }
 
 /** A query result surface's deferred-control target: `resultWriteTarget` for a
@@ -129,9 +130,10 @@ export function resultWriteTarget(row: ResultRow): () => string | null {
   const binding = captureBinding();
   const sourceAtOpen = !opening.dto ? resolveResultRow(opening) : null;
   const pageAtOpen = !opening.dto ? pageByName(opening.page) : null;
+  const instance = pageInstanceGeneration(opening.page);
   return () => {
     let source = bindingCurrent(binding) ? resolveResultRow(opening) : null;
-    if (!opening.dto && (source !== sourceAtOpen || pageByName(opening.page) !== pageAtOpen)) source = null;
+    if (!opening.dto && (source !== sourceAtOpen || pageByName(opening.page) !== pageAtOpen || pageInstanceGeneration(opening.page) !== instance)) source = null;
     if (!source) noticeChangedResults(1);
     return source?.id ?? null;
   };

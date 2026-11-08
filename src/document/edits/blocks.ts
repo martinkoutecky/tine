@@ -18,12 +18,13 @@ import { isEditorEmpty, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visib
 import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
 import { batch } from "solid-js";
 import { isBlockMoving, setBlockMoving } from "./moves";
-import { depthOf, existingSubtreeFits, OutlineScope, prevVisible, nextVisible } from "../tree";
+import { depthOf, existingSubtreeFits, OutlineScope } from "../tree";
 import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
 import { parserReady, removalRefs, soleBlockMacro } from "../../render/parse";
 import { queryMacroExtent } from "../../editor/queryMacro";
+import { bodyNeighbor } from "../bodyNavigation";
 
 let referenceEditSeq = 0;
 /** Capture the edit's targets before mutation, then publish against its existing
@@ -297,7 +298,7 @@ export function mergeWithPrev(
   // merging into a rendered neighbour could weld unrelated subtrees that merely
   // sit adjacent in the RESULT list. Fall back to page order.
   if (scope?.navOnly) scope = null;
-  const prev = prevVisible(id, scope);
+  const prev = bodyNeighbor(id, -1, scope);
   if (prev === null) return false;
   return absorbInto(prev, id, editingSurface);
 }
@@ -313,7 +314,7 @@ export function mergeWithNext(
   if (!blockWritable(id)) return false;
   // See mergeWithPrev: navOnly display lists are never a merge topology.
   if (scope?.navOnly) scope = null;
-  const next = nextVisible(id, scope);
+  const next = bodyNeighbor(id, 1, scope);
   if (next === null) return false;
   return absorbInto(id, next, editingSurface);
 }

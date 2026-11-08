@@ -2,14 +2,16 @@
 // scripts/test-release-pipeline.mjs Apple block, c6b99809d). TestFlight is a
 // manual, build-only-by-default lane; this pins its fail-closed shape, the
 // tracked Apple inputs, and prepare-ios-project.mjs against a fixture.
-// og addition: the identity switch (docs/app-identity.md) must select the
-// stable identity before the lane can sign anything.
+// GH #890: Beta and stable keep separate app and storage identities.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IDENTITIES } from "./lib/app-identity.mjs";
+import { pathToFileURL } from "node:url";
+import { IDENTITIES, SHIP, readSwitch, deriveIdentityFiles, iosIdentity } from "./lib/app-identity.mjs";
+import { selectIosDistribution } from "./ios-distribution-inputs.mjs";
+import { assertOpaquePng } from "./lib/opaque-png.mjs";
 
 const read = (file) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
 const iosTestFlightWorkflow = read(".github/workflows/ios-testflight.yml");
@@ -18,7 +20,7 @@ const iosConfig = JSON.parse(read("src-tauri/tauri.ios.conf.json"));
 const iosInfoPlist = read("src-tauri/Info.ios.plist");
 const iosEntitlements = read("src-tauri/Tine.ios.entitlements");
 const iosPrivacyManifest = read("src-tauri/PrivacyInfo.xcprivacy");
-const iosIconFixture = fs.readFileSync(path.join(process.cwd(), "src-tauri/icons/ios/AppIcon-512@2x.png"));
+const currentIos = iosIdentity();
 const aboutTab = read("src/components/AboutTab.tsx");
 
 function yamlNamedStep(lines, name) {
@@ -35,28 +37,44 @@ function yamlNamedStep(lines, name) {
   return lines.slice(start, end);
 }
 
-// The TestFlight record, provisioning profile and iCloud container belong to
-// the release identity; the workflow's identity guard must name that same id.
-const workflowIdentity = /s\.identities\.release\.identifier !== '([^']+)'/.exec(iosTestFlightWorkflow)?.[1];
-assert.equal(workflowIdentity, IDENTITIES.release.identifier,
-  "ios-testflight.yml must guard the release identity from src-tauri/app-identity.json");
+// Exercise the selector that the workflow actually calls, including a branch
+// build-only run. An identity or tag mismatch must fail before signing.
+for (const [ship, identity] of Object.entries(IDENTITIES)) {
+  const sw = { ...readSwitch(), ship };
+  const version = ship === "experiment" ? "0.9.0-beta.8" : "0.9.0";
+  const config = { version, identifier: identity.identifier, productName: identity.productName };
+  const selected = selectIosDistribution(sw, config, `refs/tags/v${version}`, "321");
+  const expectedIos = iosIdentity(identity);
+  assert.equal(selected.ship, ship);
+  assert.equal(selected.env.IOS_APP_IDENTIFIER, identity.identifier);
+  assert.equal(selected.env.IOS_DISPLAY_NAME, identity.ios.displayName);
+  assert.equal(selected.env.IOS_APP_GROUP, expectedIos.appGroup);
+  assert.equal(selected.env.IOS_ICLOUD_CONTAINER, expectedIos.iCloudContainer);
+  assert.equal(selected.env.IOS_EXTENSION_IDENTIFIER, expectedIos.shareExtensionIdentifier);
+  assert.equal(selected.env.IOS_ICON_DIRECTORY, `${identity.iconDirectory}/ios`);
+  assert.equal(selected.env.IOS_APP_STORE_APPLE_ID, ship === "experiment" ? "6832052325" : "6804403687");
+  assert.equal(selected.profileSecret, ship === "experiment" ? "IOS_BETA_MOBILE_PROVISION" : "IOS_MOBILE_PROVISION");
+  assert.equal(selected.extensionProfileSecret, ship === "experiment" ? "IOS_BETA_SHARE_EXTENSION_MOBILE_PROVISION" : "IOS_SHARE_EXTENSION_MOBILE_PROVISION");
+  assert.equal(selected.env.IOS_MARKETING_VERSION, "0.9.0");
+  assert.equal(selected.env.IOS_BUILD_VERSION, "0.9.0.321");
+  assert.deepEqual(selectIosDistribution(sw, config, "refs/heads/release/0.9", "321"), selected);
+  assert.throws(() => selectIosDistribution({ ...sw, ship: ship === "release" ? "experiment" : "release" }, config, "", "321"), /identity disagree/);
+  assert.throws(() => selectIosDistribution(sw, { ...config, identifier: "wrong.id" }, "", "321"), /identity disagree/);
+  assert.throws(() => selectIosDistribution(sw, config, "refs/tags/v0.8.4", "321"), /tag must match/);
+  assert.throws(() => selectIosDistribution(sw, config, "", "0"), /positive Actions run number/);
+}
+assert.doesNotMatch(iosTestFlightWorkflow, /beta_as_release|set-app-identity\.mjs release/,
+  "a Beta build must never replace the stable app via an identity fallback");
 assert.match(
   iosTestFlightWorkflow,
-  /name: Require the stable app identity[\s\S]*?app-identity\.json[\s\S]*?s\.ship !== 'release'[\s\S]*?process\.exit\(1\)[\s\S]*?name: Require iOS distribution secrets/,
-  "the iOS lane must refuse a Beta-identity checkout before it touches signing material"
+  /name: Select iOS distribution identity[\s\S]*?id: identity[\s\S]*?node scripts\/ios-distribution-inputs\.mjs[\s\S]*?name: Require iOS distribution secrets/,
+  "the tested identity selector must run before signing material is read"
 );
-
-// D-20261018-I1 option A: a Beta checkout reaches TestFlight only through the
-// explicit beta_as_release input (default false), which refuses anything but an
-// X.Y.Z-beta.N Beta tree, flips it to the release identity and strips the
-// prerelease suffix, all before the stable-identity guard above runs.
-assert.match(iosTestFlightWorkflow, /beta_as_release:[\s\S]*?default: false[\s\S]*?type: boolean/,
-  "beta_as_release must be an explicit opt-in boolean, off by default");
-assert.match(
-  iosTestFlightWorkflow,
-  /name: Beta as stable identity \(option A\)\s+if: \$\{\{ inputs\.beta_as_release \}\}[\s\S]*?s\.ship !== 'experiment'[\s\S]*?-beta[\s\S]*?process\.exit\(1\)[\s\S]*?set-app-identity\.mjs release[\s\S]*?name: Require the stable app identity/,
-  "the Beta-as-stable step must be gated, refuse non-Beta trees, and run before the identity guard"
-);
+for (const step of ["Require iOS distribution secrets", "Install iOS signing materials"]) {
+  const text = yamlNamedStep(iosTestFlightWorkflow.split(/\r?\n/), step).join("\n");
+  assert.ok(text.includes("IOS_MOBILE_PROVISION: ${{ secrets[steps.identity.outputs.profile_secret] }}"));
+  assert.ok(text.includes("IOS_SHARE_EXTENSION_MOBILE_PROVISION: ${{ secrets[steps.identity.outputs.extension_profile_secret] }}"));
+}
 
 assert.doesNotMatch(iosTestFlightWorkflow, /\n\s+push:/, "TestFlight workflow must never run on push");
 assert.match(iosTestFlightWorkflow, /workflow_dispatch:[\s\S]*?default: build-only[\s\S]*?- validate[\s\S]*?- upload/);
@@ -90,7 +108,7 @@ assert.doesNotMatch(
 );
 assert.match(
   iosTestFlightWorkflow,
-  /name: Verify signed IPA contract[\s\S]*?expect_plist[\s\S]*?CFBundleIdentifier[\s\S]*?page\.tine\.Tine[\s\S]*?CFBundleDisplayName[\s\S]*?TineOutline[\s\S]*?root privacy manifest[\s\S]*?embedded provisioning profile[\s\S]*?com\.apple\.developer\.icloud-container-identifiers[\s\S]*?codesign --verify --deep --strict[\s\S]*?CloudDocuments/,
+  /name: Verify signed IPA contract[\s\S]*?expect_plist[\s\S]*?CFBundleIdentifier "\$IOS_APP_IDENTIFIER"[\s\S]*?CFBundleDisplayName "\$IOS_DISPLAY_NAME"[\s\S]*?root privacy manifest[\s\S]*?embedded provisioning profile[\s\S]*?com\.apple\.developer\.icloud-container-identifiers[\s\S]*?codesign --verify --deep --strict[\s\S]*?CloudDocuments/,
   "the signed IPA is not checked against Tine's identity, privacy, provisioning, and signature contract"
 );
 // Native integrations (ADR 0073): the Share Extension's own profile is a
@@ -103,19 +121,20 @@ assert.match(
 );
 assert.match(
   iosTestFlightWorkflow,
-  /name: Install iOS signing materials[\s\S]*?application-groups[\s\S]*?group\.page\.tine\.Tine[\s\S]*?page\.tine\.Tine\.ShareExtension[\s\S]*?IOS_SHARE_EXTENSION_PROFILE_UUID=/,
+  /name: Install iOS signing materials[\s\S]*?application-groups[\s\S]*?\$IOS_APP_GROUP[\s\S]*?\$IOS_EXTENSION_IDENTIFIER[\s\S]*?IOS_SHARE_EXTENSION_PROFILE_UUID=/,
   "both profiles must be checked for the App Group and the extension profile exported to prepare-ios-project",
 );
 assert.match(
   iosTestFlightWorkflow,
-  /name: Verify signed IPA contract[\s\S]*?PlugIns\/TineShareExtension\.appex[\s\S]*?page\.tine\.Tine\.ShareExtension[\s\S]*?CFBundleVersion[\s\S]*?extension App Group[\s\S]*?UIApplicationShortcutItems/,
+  /name: Verify signed IPA contract[\s\S]*?PlugIns\/TineShareExtension\.appex[\s\S]*?\$IOS_EXTENSION_IDENTIFIER[\s\S]*?CFBundleVersion[\s\S]*?extension App Group[\s\S]*?UIApplicationShortcutItems/,
   "the signed IPA must embed the Share Extension with its identity, versions and App Group",
 );
 assert.match(iosTestFlightWorkflow, /name: Validate IPA with App Store Connect\n\s+if: inputs\.action != 'build-only'/);
 assert.match(iosTestFlightWorkflow, /name: Upload IPA to TestFlight\n\s+if: inputs\.action == 'upload'/);
+assert.match(iosTestFlightWorkflow, /--upload-package "\$TINE_IPA"[\s\S]*?--apple-id "\$IOS_APP_STORE_APPLE_ID"[\s\S]*?--bundle-id "\$IOS_APP_IDENTIFIER"/);
 assert.match(
   iosTestFlightWorkflow,
-  /AppIcon60x60@2x\.png[\s\S]*?pngcrush -q -revert-iphone-optimizations[\s\S]*?verify-ios-app-icon\.mjs[\s\S]*?src-tauri\/icons\/ios\/AppIcon-60x60@2x\.png/,
+  /AppIcon60x60@2x\.png[\s\S]*?pngcrush -q -revert-iphone-optimizations[\s\S]*?verify-ios-app-icon\.mjs[\s\S]*?src-tauri\/\$IOS_ICON_DIRECTORY\/AppIcon-60x60@2x\.png/,
   "the signed TestFlight IPA is not checked against Tine's tracked primary icon"
 );
 assert.match(
@@ -145,6 +164,11 @@ assert.throws(
     ),
   "the signed IPA icon verifier must reject different artwork"
 );
+assert.throws(() => execFileSync(process.execPath, [
+  "scripts/verify-ios-app-icon.mjs",
+  "src-tauri/icons-beta/ios/AppIcon-60x60@2x.png",
+  "src-tauri/icons/ios/AppIcon-60x60@2x.png",
+], { stdio: "pipe" }), "the Beta IPA icon verifier must reject the stable artwork at the same size");
 assert.match(
   iosTestFlightWorkflow,
   /name: Remove Apple signing material\n\s+if: always\(\)[\s\S]*?security delete-keychain[\s\S]*?\.appstoreconnect\/private_keys/,
@@ -165,27 +189,32 @@ assert.equal(iosConfig.bundle.iOS.developmentTeam, "RQ5V4LK7N2");
 assert.equal(iosConfig.bundle.iOS.minimumSystemVersion, "15.4");
 assert.equal(JSON.parse(fs.readFileSync(path.join(process.cwd(), "src-tauri/tauri.conf.json"), "utf8")).bundle.iOS.minimumSystemVersion, "15.4");
 assert.equal(iosConfig.bundle.resources, undefined, "the privacy manifest must not be nested under Tauri's assets folder");
-assert.match(iosInfoPlist, /<key>CFBundleDisplayName<\/key>\s*<string>TineOutline<\/string>/);
+assert.ok(iosInfoPlist.includes(`<string>${currentIos.displayName}</string>`));
 assert.match(iosInfoPlist, /<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/);
-assert.match(iosInfoPlist, /<key>NSUbiquitousContainers<\/key>[\s\S]*?iCloud\.page\.tine\.Tine[\s\S]*?NSUbiquitousContainerIsDocumentScopePublic[\s\S]*?<true\/>[\s\S]*?NSUbiquitousContainerName[\s\S]*?TineOutline/);
+assert.ok(iosInfoPlist.includes(`<key>${currentIos.iCloudContainer}</key>`));
+assert.match(iosInfoPlist, /<key>NSUbiquitousContainers<\/key>[\s\S]*?NSUbiquitousContainerIsDocumentScopePublic[\s\S]*?<true\/>[\s\S]*?NSUbiquitousContainerName/);
 for (const entitlement of [
   "com.apple.developer.icloud-container-identifiers",
   "com.apple.developer.icloud-services",
   "CloudDocuments",
   "com.apple.developer.ubiquity-container-identifiers",
-  `iCloud.${IDENTITIES.release.identifier}`,
+  currentIos.iCloudContainer,
   "com.apple.security.application-groups",
-  `group.${IDENTITIES.release.identifier}`,
+  currentIos.appGroup,
 ]) {
   assert.ok(iosEntitlements.includes(entitlement), `iOS entitlements are missing ${entitlement}`);
 }
 
-const iosPrepareFixture = fs.mkdtempSync(path.join(os.tmpdir(), "tine-ios-prepare-"));
+function testIosPreparation(ship, identity) {
+  const ios = iosIdentity(identity);
+  const derived = deriveIdentityFiles(process.cwd(), ship);
+  const fixtureEntitlements = derived["src-tauri/Tine.ios.entitlements"];
+  const iosPrepareFixture = fs.mkdtempSync(path.join(os.tmpdir(), "tine-ios-prepare-"));
 try {
   const fixtureTauri = path.join(iosPrepareFixture, "src-tauri");
   const fixtureApple = path.join(fixtureTauri, "gen", "apple");
   const fixtureTarget = path.join(fixtureApple, "tine_iOS");
-  const fixtureTrackedIcons = path.join(fixtureTauri, "icons", "ios");
+  const fixtureTrackedIcons = path.join(fixtureTauri, ios.iconDirectory);
   const fixtureGeneratedIcons = path.join(
     fixtureApple,
     "Assets.xcassets",
@@ -194,13 +223,22 @@ try {
   fs.mkdirSync(fixtureTarget, { recursive: true });
   fs.mkdirSync(fixtureTrackedIcons, { recursive: true });
   fs.mkdirSync(fixtureGeneratedIcons, { recursive: true });
-  fs.writeFileSync(path.join(fixtureTauri, "Tine.ios.entitlements"), iosEntitlements);
+  fs.writeFileSync(path.join(fixtureTauri, "app-identity.json"), derived["src-tauri/app-identity.json"]);
+  fs.writeFileSync(path.join(fixtureTauri, "Tine.ios.entitlements"), fixtureEntitlements);
   fs.writeFileSync(path.join(fixtureTauri, "PrivacyInfo.xcprivacy"), iosPrivacyManifest);
-  fs.writeFileSync(path.join(fixtureTrackedIcons, "AppIcon-512@2x.png"), iosIconFixture);
+  const trackedIconRoot = path.join(process.cwd(), "src-tauri", ios.iconDirectory);
+  const stableIconNames = fs.readdirSync("src-tauri/icons/ios").filter((file) => file.endsWith(".png")).sort();
+  const iconNames = fs.readdirSync(trackedIconRoot).filter((file) => file.endsWith(".png")).sort();
+  assert.deepEqual(iconNames, stableIconNames, `${ship}: both identities need the complete iOS icon set`);
+  for (const filename of iconNames) {
+    const icon = path.join(trackedIconRoot, filename);
+    assertOpaquePng(icon, `${ship} ${filename}`);
+    fs.copyFileSync(icon, path.join(fixtureTrackedIcons, filename));
+  }
   fs.writeFileSync(path.join(fixtureGeneratedIcons, "AppIcon-512@2x.png"), "tauri-icon");
   fs.writeFileSync(
     path.join(fixtureGeneratedIcons, "Contents.json"),
-    JSON.stringify({ images: [{ filename: "AppIcon-512@2x.png" }] })
+    JSON.stringify({ images: iconNames.map((filename) => ({ filename })) })
   );
   fs.writeFileSync(
     path.join(fixtureApple, "project.yml"),
@@ -249,15 +287,15 @@ try {
   assert.match(preparedProject, /PROVISIONING_PROFILE_SPECIFIER: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"/);
   const exportOptions = fs.readFileSync(path.join(fixtureApple, "ExportOptions.plist"), "utf8");
   assert.match(exportOptions, /<key>signingStyle<\/key>\s*<string>manual<\/string>/);
-  assert.match(exportOptions, /<key>page\.tine\.Tine<\/key>\s*<string>AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE<\/string>/);
+  assert.ok(exportOptions.includes(`<key>${ios.identifier}</key>\n    <string>AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE</string>`));
   // Native integrations (ADR 0073): app-target Swift, the embedded Share
   // Extension with its own bundle id, versions and profile.
-  assert.match(exportOptions, /<key>page\.tine\.Tine\.ShareExtension<\/key>\s*<string>11111111-2222-3333-4444-555555555555<\/string>/);
+  assert.ok(exportOptions.includes(`<key>${ios.shareExtensionIdentifier}</key>\n    <string>11111111-2222-3333-4444-555555555555</string>`));
   assert.match(preparedProject, /- path: \.\.\/\.\.\/ios-app\/App\n\s+- path: \.\.\/\.\.\/ios-app\/Shared/);
   assert.match(preparedProject, /dependencies:\n\s+- target: TineShareExtension\n\s+embed: true\n\s+- sdk: AppIntents\.framework\n\s+weak: true/);
   const extensionTarget = preparedProject.split("\n  TineShareExtension:\n")[1] ?? "";
   assert.match(extensionTarget, /type: app-extension/);
-  assert.match(extensionTarget, /PRODUCT_BUNDLE_IDENTIFIER: page\.tine\.Tine\.ShareExtension/);
+  assert.ok(extensionTarget.includes(`PRODUCT_BUNDLE_IDENTIFIER: ${ios.shareExtensionIdentifier}\n`));
   assert.match(extensionTarget, /MARKETING_VERSION: "0\.7\.1"[\s\S]*?CURRENT_PROJECT_VERSION: "0\.7\.1"/);
   assert.match(extensionTarget, /CODE_SIGN_ENTITLEMENTS: \.\.\/\.\.\/ios-app\/ShareExtension\/TineShareExtension\.entitlements/);
   assert.match(extensionTarget, /PROVISIONING_PROFILE_SPECIFIER: "11111111-2222-3333-4444-555555555555"/);
@@ -273,22 +311,62 @@ try {
     "src-tauri/ios-app/Shared/ShareInbox.swift",
     "src-tauri/ios-app/App/TineAppIntents.swift",
   ]) assert.ok(fs.existsSync(path.join(process.cwd(), tracked)), `missing ${tracked}`);
-  assert.match(read("src-tauri/ios-app/ShareExtension/TineShareExtension.entitlements"), /group\.page\.tine\.Tine/);
+  assert.ok(derived["src-tauri/ios-app/ShareExtension/TineShareExtension.entitlements"].includes(ios.appGroup));
   assert.equal(
     fs.readFileSync(path.join(fixtureTarget, "tine_iOS.entitlements"), "utf8"),
-    iosEntitlements,
+    fixtureEntitlements,
   );
   assert.equal(
     fs.readFileSync(path.join(fixtureApple, "PrivacyInfo.xcprivacy"), "utf8"),
     iosPrivacyManifest,
   );
-  assert.deepEqual(
-    fs.readFileSync(path.join(fixtureGeneratedIcons, "AppIcon-512@2x.png")),
-    iosIconFixture,
-    "iOS project preparation must replace Tauri's generated AppIcon with Tine's tracked icon"
-  );
+  for (const filename of iconNames) {
+    assert.deepEqual(
+      fs.readFileSync(path.join(fixtureGeneratedIcons, filename)),
+      fs.readFileSync(path.join(trackedIconRoot, filename)),
+      `${ship}: iOS project preparation must install the selected identity's ${filename}`,
+    );
+  }
 } finally {
   fs.rmSync(iosPrepareFixture, { recursive: true, force: true });
+}
+}
+for (const [ship, identity] of Object.entries(IDENTITIES)) testIosPreparation(ship, identity);
+
+// Administration must address the same app after upload. Synthetic credentials
+// and an in-process fetch stub ensure these probes never contact Apple.
+const adminModule = pathToFileURL(path.resolve("scripts/app-store-connect-testflight.mjs")).href;
+for (const [ship, identity] of Object.entries(IDENTITIES)) {
+  for (const wrongId of [false, true]) {
+    const probe = `
+      import assert from "node:assert/strict";
+      import { generateKeyPairSync } from "node:crypto";
+      const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+      process.env.APPLE_API_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+      process.env.APPLE_API_KEY = "SYNTHETIC";
+      process.env.APPLE_API_ISSUER = "synthetic-issuer";
+      let calls = 0;
+      globalThis.fetch = async (url, options) => {
+        const parsed = new URL(url);
+        assert.equal(options.method, "GET");
+        if (++calls === 1) {
+          assert.equal(parsed.pathname, "/v1/apps");
+          assert.equal(parsed.searchParams.get("filter[bundleId]"), ${JSON.stringify(identity.identifier)});
+          return new Response(JSON.stringify({ data: [{ id: ${JSON.stringify(wrongId ? "wrong-app" : identity.ios.appStoreAppleId)}, attributes: {} }] }));
+        }
+        assert.equal(parsed.pathname, "/v1/builds");
+        assert.equal(parsed.searchParams.get("filter[app]"), ${JSON.stringify(identity.ios.appStoreAppleId)});
+        throw new Error("selected-app-verified");
+      };
+      await import(${JSON.stringify(adminModule)});
+    `;
+    assert.throws(() => execFileSync(process.execPath, ["--input-type=module", "-e", probe], {
+      env: { ...process.env, APP_BUNDLE_ID: ship === SHIP ? "" : identity.identifier },
+      stdio: "pipe",
+    }), (error) => error.stderr.toString().includes(wrongId
+      ? "App Store Connect app ID disagrees with app-identity.json"
+      : "selected-app-verified"), `${ship}: administration must use the selected bundle/app ID`);
+  }
 }
 
 for (const declaration of [

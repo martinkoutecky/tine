@@ -10,8 +10,10 @@ import { commentsFirst, nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
+import { facetsOf } from "../render/facets";
+export { commentEditorHide } from "../editor/commentProperties";
 
-interface CommentNode { parent: string | null; children: readonly string[] }
+interface CommentNode { raw: string; parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];
 
 /** Plain functions over the block's facets: an ordinary block pays two property
@@ -26,8 +28,7 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     return written !== null && isOwnAuthor(written) ? null : written;
   };
   const showsAuthor = () => author() !== null || commentSelector() !== null || inThread();
-  // Slice 2b: a comment and its replies draw no bullet or fold arrow; the author
-  // chip is their handle (drag, block menu).
+  // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => commentSelector() !== null || inThread();
   const commentClasses = () => {
     const by = author();
@@ -56,14 +57,20 @@ export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: 
   const place = useContext(MarginContext);
   const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
   // GH #845: with the margin hidden no surface draws a thread (not even inline).
-  const outlineChildren = () => (main() || commentMarginHidden() ? node().children.filter((id) => !isCommentId(id, fmt())) : commentsFirst(node().children));
+  const outlineChildren = () => {
+    const n = node();
+    if (main() || commentMarginHidden()) return n.children.filter(id => !isCommentId(id, fmt()));
+    // Replies retain file pre-order, even when a hand-nested reply has a quote.
+    if (inCommentThread(n.parent, fmt()) || (n.parent !== null && quoteSelectorOf(facetsOf(n.raw, fmt()).properties) !== null)) return n.children;
+    return commentsFirst(n.children);
+  };
   const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt())) : []);
   return { outlineChildren, marginComments };
 }
 
-/** With comments drawn in the margin, the main column's arrow keys step over
- * threads, and a thread's ends lead back to the commented block (up) or the
- * block after it (down). */
+/** Body navigation skips annotations through the shared tree API. A margin
+ * thread additionally returns to its commented block (up) or the next body
+ * block (down); inline thread navigation keeps its existing outline order. */
 export function marginNavigation(id: string, scope: OutlineScope | null, surfaceKey: string, fmt: () => "md" | "org") {
   const place = useContext(MarginContext);
   const nav = () => place && (place.thread !== null || (place.api.active() && !inlineSurface(surfaceKey)))

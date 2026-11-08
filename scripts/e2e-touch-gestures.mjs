@@ -16,7 +16,7 @@
 // pointerType "touch" (the recognizer is pointer-based, not touch-event
 // based), dispatched here as synthetic PointerEvents through the page's real
 // hit test and layout; the result is read from config.edn on disk.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -36,6 +36,7 @@ const FAVORITES = ["Fav Alpha", "Fav Beta", "Fav Gamma"];
 const ARTIFACT = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(TMP, "artifacts"));
 const DRIVER_BASE = Number(process.env.E2E_DRIVER_PORT || 4592);
 const NATIVE_BASE = Number(process.env.E2E_NATIVE_PORT || 4593);
+const MOTION_ONLY = process.env.E2E_DRAWER_MOTION_ONLY === "1";
 const PARENT = "swipe-parent-501";
 const NESTED = "swipe-nested-501";
 const CHILD = "swipe-child-501";
@@ -53,7 +54,9 @@ const PAGE_TEXT = [
 ].join("\n");
 
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
+for (const dir of ["data", "config", "cache", "state", "reduced-config/gtk-3.0"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
+fs.mkdirSync(path.join(TMP, "home"), { recursive: true });
+fs.writeFileSync(path.join(TMP, "xdg", "reduced-config", "gtk-3.0", "settings.ini"), "[Settings]\ngtk-enable-animations=false\n");
 fs.mkdirSync(ARTIFACT, { recursive: true });
 fs.writeFileSync(CONFIG, `{:favorites [${FAVORITES.map((name) => JSON.stringify(name)).join(" ")}]}\n`);
 for (const name of FAVORITES) fs.writeFileSync(path.join(GRAPH, "pages", `${name}.md`), `- ${name} body\n`);
@@ -62,20 +65,22 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- Touch gesture home\n");
 
-const proof = { scenario: "gh-501-492-native-touch-gestures", app: APP, startedAt: new Date().toISOString(), touchEvents: null, steps: [] };
+const proof = { scenario: "gh-501-492-native-touch-gestures", app: APP, testedCommit: spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim(), sourceDelta: "og-mobile-sidebar-slide worktree diff", startedAt: new Date().toISOString(), touchEvents: null, motion: [], steps: [] };
 
 function assert(condition, message, detail) {
   if (!condition) throw new Error(`${message}${detail === undefined ? "" : `: ${JSON.stringify(detail)}`}`);
 }
 const note = (step) => { proof.steps.push(step); console.log(`ok  ${step}`); };
 
-function baseEnv(platform) {
+function baseEnv(platform, reduced) {
   return {
     ...process.env,
     TINE_GRAPH: GRAPH,
+    HOME: path.join(TMP, "home"),
     XDG_DATA_HOME: path.join(TMP, "xdg", "data"),
-    XDG_CONFIG_HOME: path.join(TMP, "xdg", "config"),
+    XDG_CONFIG_HOME: path.join(TMP, "xdg", reduced ? "reduced-config" : "config"),
     XDG_CACHE_HOME: path.join(TMP, "xdg", "cache"),
+    XDG_STATE_HOME: path.join(TMP, "xdg", "state"),
     WEBKIT_DISABLE_DMABUF_RENDERER: "1",
     WEBKIT_DISABLE_COMPOSITING_MODE: "1",
     LIBGL_ALWAYS_SOFTWARE: "1",
@@ -85,7 +90,7 @@ function baseEnv(platform) {
   };
 }
 
-async function withApp(index, platform, fn) {
+async function withApp(index, platform, fn, reduced = false) {
   const driverPort = DRIVER_BASE + index * 2;
   const nativePort = NATIVE_BASE + index * 2;
   const log = fs.openSync(path.join(ARTIFACT, `driver-${index}-${platform}.log`), "w");
@@ -93,7 +98,7 @@ async function withApp(index, platform, fn) {
     "--port", String(driverPort),
     "--native-port", String(nativePort),
     "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
-  ], { env: baseEnv(platform), detached: true, stdio: ["ignore", log, log] });
+  ], { env: baseEnv(platform, reduced), detached: true, stdio: ["ignore", log, log] });
   let browser;
   try {
     await sleep(2500);
@@ -106,6 +111,11 @@ async function withApp(index, platform, fn) {
     await browser.$(".main-content").waitForExist({ timeout: 20_000 });
     await fn(browser);
     await sleep(300);
+  } catch (error) {
+    const screenshot = path.join(ARTIFACT, `failure-${index}-${platform}.png`);
+    try { await browser?.saveScreenshot(screenshot); } catch {}
+    fs.writeFileSync(path.join(ARTIFACT, `failure-${index}-${platform}.json`), JSON.stringify({ testedCommit: proof.testedCommit, journey: `touch gestures / ${platform} / reduced=${reduced}`, expected: "gesture and drawer motion assertions pass", observed: String(error), screenshot, classification: "ambiguous; inspect assertion and driver log" }, null, 2));
+    throw error;
   } finally {
     try { await browser?.deleteSession(); } catch {}
     try { process.kill(-driver.pid, "SIGKILL"); } catch {}
@@ -173,6 +183,12 @@ async function expectNoDrawerFor(browser, ms, what) {
 
 async function waitDrawer(browser, side) {
   await browser.waitUntil(async () => (await activeDrawer(browser)) === side, { timeout: 8_000, timeoutMsg: `${side} drawer did not open` });
+  // Geometry-based hold/drag journeys need the row at its resting position.
+  // Visibility state intentionally changes before the slide has completed.
+  await browser.waitUntil(() => browser.execute((side) => {
+    const panel = document.querySelector(`[data-mobile-drawer-panel="${side}"]`);
+    return !!panel && panel.getAnimations().length === 0 && (getComputedStyle(panel).transform === "none" || new DOMMatrixReadOnly(getComputedStyle(panel).transform).m41 === 0);
+  }, side), { timeout: 4_000, timeoutMsg: `${side} drawer did not settle before measuring rows` });
 }
 async function waitNoDrawer(browser) {
   await browser.waitUntil(async () => (await activeDrawer(browser)) === null, { timeout: 8_000, timeoutMsg: "drawer did not close" });
@@ -225,7 +241,7 @@ async function fingerMove(browser, from, to, steps = 6) {
 }
 
 // ---- iOS: edge swipe (drawer pull + Back) and block swipes ------------------
-await withApp(0, "ios", async (browser) => {
+if (!MOTION_ONLY) await withApp(0, "ios", async (browser) => {
   const vp = await browser.execute(() => ({ w: innerWidth, h: innerHeight, mode: document.documentElement.getAttribute("data-touch-gestures") }));
   assert(vp.w < 640 && vp.mode === "ios", "journey did not start as a phone-width iOS-gesture window", vp);
   const Y = Math.round(vp.h / 2);
@@ -332,7 +348,7 @@ await withApp(0, "ios", async (browser) => {
 });
 
 // ---- Android: the OS owns Back, so the same edge swipe is only the drawer ----
-await withApp(1, "android", async (browser) => {
+if (!MOTION_ONLY) await withApp(1, "android", async (browser) => {
   const vp = await browser.execute(() => ({ h: innerHeight, mode: document.documentElement.getAttribute("data-touch-gestures") }));
   assert(vp.mode === "android", "journey did not start with Android gestures", vp);
   const Y = Math.round(vp.h / 2);
@@ -383,6 +399,91 @@ await withApp(1, "android", async (browser) => {
   assert(JSON.stringify(savedFavorites()) === JSON.stringify(lowered(want)), "a tap changed the favorites order", savedFavorites());
   note("a tap on a Favorites row opens the favorite and reorders nothing");
 });
+
+// GH #501: actual WebKit compositor samples, on a routed page, for both edges.
+// OG timing/easing is covered cheaply; this journey proves a visible position
+// between endpoints, a fading scrim, immediate isolation and eventual disposal.
+const drawerToggle = (side) => side === "left" ? ".navigation-actions button:first-child" : '[data-topbar-overflow-action="right-sidebar"]';
+async function sampleDrawerMotion(browser, side, closing) {
+  if (side === "right" && !closing) await browser.$("[data-topbar-overflow-trigger]").click();
+  return browser.executeAsync((side, closing, toggle, done) => {
+    const selector = `[data-mobile-drawer-panel="${side}"]`;
+    const before = document.querySelector(selector);
+    document.querySelector(closing ? "[data-mobile-drawer-scrim]" : toggle).click();
+    const panel = document.querySelector(selector) || before;
+    const immediate = { active: document.querySelector(".app-container").dataset.activeDrawer, inert: panel?.inert, hidden: panel?.getAttribute("aria-hidden") };
+    setTimeout(() => {
+      const scrim = document.querySelector("[data-mobile-drawer-scrim]");
+      const transform = panel ? getComputedStyle(panel).transform : "none";
+      const x = transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m41;
+      // Pause for a mid-slide screenshot; resume immediately after capture.
+      for (const el of [panel, scrim]) for (const a of el?.getAnimations() || []) a.pause();
+      done({ side, closing, immediate, x, width: panel?.offsetWidth, opacity: scrim ? Number(getComputedStyle(scrim).opacity) : null, transform });
+    }, 70);
+  }, side, closing, drawerToggle(side));
+}
+async function drawerMotionJourney(browser, platform) {
+  await closeStartupDrawer(browser);
+  await openPageByName(browser, "Swipe target");
+  for (const side of ["left", "right"]) {
+    for (const closing of [false, true]) {
+      const sample = await sampleDrawerMotion(browser, side, closing);
+      proof.motion.push({ platform, ...sample });
+      assert(Math.abs(sample.x) > 0 && Math.abs(sample.x) < sample.width, "drawer did not pass through a mid-slide position", sample);
+      assert(sample.opacity > 0 && sample.opacity < 1, "scrim did not fade between endpoints", sample);
+      if (closing) assert(sample.immediate.active === "" && sample.immediate.inert && sample.immediate.hidden === "true", "closing drawer remained interactive", sample);
+      await browser.saveScreenshot(path.join(ARTIFACT, `${platform}-${side}-${closing ? "out" : "in"}-mid.png`));
+      await browser.execute(() => {
+        for (const el of document.querySelectorAll("[data-mobile-drawer-panel], [data-mobile-drawer-scrim]")) for (const a of el.getAnimations()) a.play();
+      });
+      await browser.waitUntil(() => browser.execute((side, closing) => {
+        const panel = document.querySelector(`[data-mobile-drawer-panel="${side}"]`);
+        return closing ? !panel : !!panel && panel.getAnimations().length === 0;
+      }, side, closing), { timeout: 4_000, timeoutMsg: `${side} drawer motion did not settle` });
+      await browser.saveScreenshot(path.join(ARTIFACT, `${platform}-${side}-${closing ? "closed" : "open"}.png`));
+    }
+  }
+  // Preload a favorite, return to the routed source, then tap that real page
+  // link. The source route must leave while the outgoing drawer is still
+  // present; loading the destination's content is independently asynchronous.
+  await openPageByName(browser, "Fav Alpha");
+  await openPageByName(browser, "Swipe target");
+  await browser.$(drawerToggle("left")).click();
+  await waitDrawer(browser, "left");
+  const navigation = await browser.executeAsync((done) => {
+    [...document.querySelectorAll("#sidebar-favorites-list .nav-page")].find(row => row.textContent.includes("Fav Alpha")).click();
+    queueMicrotask(() => {
+      const panel = document.querySelector('[data-mobile-drawer-panel="left"]');
+      done({ title: document.querySelector("h1.page-title")?.textContent.trim(), closing: panel?.dataset.drawerMotion, animations: panel?.getAnimations().length, active: document.querySelector(".app-container").dataset.activeDrawer });
+    });
+  });
+  proof.motion.push({ platform, navigation });
+  assert(navigation.title !== "Swipe target" && navigation.closing === "closing" && navigation.animations > 0 && navigation.active === "", "page navigation waited for drawer motion", navigation);
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Fav Alpha", { timeout: 8_000, timeoutMsg: "favorite navigation did not reach its destination" });
+  note(`${platform}: both phone drawers slide in/out, scrim fades, departing content is inert and unmounts`);
+  note(`${platform}: tapping a favorite navigates while the drawer is still sliding out`);
+}
+await withApp(2, "ios", browser => drawerMotionJourney(browser, "ios"));
+await withApp(3, "android", browser => drawerMotionJourney(browser, "android"));
+await withApp(4, "ios", async (browser) => {
+  await closeStartupDrawer(browser);
+  await openPageByName(browser, "Swipe target");
+  assert(await browser.execute(() => matchMedia("(prefers-reduced-motion: reduce)").matches), "GTK Reduce Motion fixture did not reach WebKit");
+  for (const side of ["left", "right"]) {
+    if (side === "right") await browser.$("[data-topbar-overflow-trigger]").click();
+    const sample = await browser.execute((side, toggle) => {
+      document.querySelector(toggle).click();
+      const panel = document.querySelector(`[data-mobile-drawer-panel="${side}"]`);
+      const scrim = document.querySelector("[data-mobile-drawer-scrim]");
+      const opened = { exists: !!panel, animations: panel?.getAnimations().length, transform: panel && getComputedStyle(panel).transform, opacity: scrim && getComputedStyle(scrim).opacity, scrimAnimations: scrim?.getAnimations().length };
+      document.querySelector(side === "left" ? ".mobile-drawer-close" : ".rs-close").click();
+      return { side, opened, closed: !document.querySelector(`[data-mobile-drawer-panel="${side}"]`) && !document.querySelector("[data-mobile-drawer-scrim]") };
+    }, side, drawerToggle(side));
+    proof.motion.push({ reduced: true, ...sample });
+    assert(sample.opened.exists && sample.opened.animations === 0 && sample.opened.scrimAnimations === 0 && sample.opened.transform === "none" && sample.opened.opacity === "1" && sample.closed, "Reduce Motion did not make drawer and shade instant", sample);
+  }
+  note("system Reduce Motion: both drawers and scrim open/close instantly in WebKit");
+}, true);
 
 proof.finishedAt = new Date().toISOString();
 proof.result = "pass";

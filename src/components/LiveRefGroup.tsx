@@ -33,7 +33,7 @@ import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission"
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
-import { splitPagePreamble } from "../editor/properties";
+import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { resultsTicketActionable } from "../queryResultsEpoch";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
@@ -82,6 +82,9 @@ interface LiveRefGroupProps {
   path?: string;
   blocks: BlockDto[];
   embedId?: string;
+  /** A page transclusion renders the loaded page's current roots, rather than
+   * retaining a reference result's membership list across editor sessions. */
+  wholePage?: boolean;
   /** The block whose `{{embed}}` macro renders this group (embed surface), or whose query
    *  these are the results of (query surface: GH #792, so one-level fold commands reach them). */
   hostBlockId?: string;
@@ -113,7 +116,7 @@ interface LiveRefGroupProps {
 // offscreen group (I-25). Reference owners supply heightKey; queries also retain
 // their outer shell's height. The bounded, graph-scoped cache checks pane width.
 
-interface LocalCollapseRow { v: boolean; epoch: number; bulk?: boolean }
+interface LocalCollapseRow { v: boolean; bulk?: boolean }
 interface RefOccurrence {
   surface: string;
   initialCollapsed: Map<string, boolean>;
@@ -302,6 +305,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const liveNode = (id: string) => {
     const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;
+    if (props.surface === "embed" && props.wholePage) {
+      // These keys come from this exact loaded outline, not a result DTO whose
+      // positional locator can now denote a different block after an edit.
+      const source = docNode(id);
+      return source?.page === props.page ? source : undefined;
+    }
     const dto = dtoById(id);
     if (!dto) {
       // Ancestors, descendants and a materialized page header already carry
@@ -448,7 +457,18 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     });
   };
   const grouping = createMemo(() => {
-    const ids = props.blocks.map(liveIdOf);
+    let ids: readonly string[] = props.blocks.map(liveIdOf);
+    const page = props.surface === "embed" && props.wholePage ? sourcePage() : undefined;
+    if (props.surface === "embed" && props.wholePage && ready() && page
+      && page.kind === props.kind && (!props.path || page.id === props.path)) {
+      // GH #868: membership is only the fallback copy. Retaining its roots
+      // while Block renders live children duplicates reparented roots and
+      // omits newly outdented ones. The whole transclusion shares one topology.
+      const first = docNode(page.roots[0] ?? "");
+      const header = page.format === "md" && first && first.children.length === 0
+        && (first.originatedFromPageHeader || (editingId() !== first.id && rendersAsPageHeader(first.raw, false)));
+      ids = header ? page.roots.slice(1) : page.roots;
+    }
     if (!props.showBreadcrumb) return { ids, starts: new Set<string>(ids) };
     const groups = new Map<string, string[]>();
     for (const id of ids) {
@@ -529,11 +549,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const surface = props.occurrence.surface;
   const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = props.occurrence.initialCollapsed;
-  // Local fold rows. The embedded ROOT has a durable occurrence-owned override on
-  // its macro host (GH #360); nested rows remain local presentation state whose
-  // `epoch` remembers the source collapse generation at fold time, so a later
-  // source write reclaims authority. Ref/query surfaces keep their pre-existing
-  // local-copy semantics and ignore `epoch`.
+  // Only ref/query results own local disclosure here. Writable inner embed folds
+  // belong to the source; a block embed's root keeps its host override (GH #360).
   const [localCollapsed, setLocalCollapsed] = props.occurrence.localCollapsed;
   const isEmbed = () => props.surface === "embed";
   const embedRootOverride = (id: string): boolean | null => {
@@ -583,21 +600,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     initialCollapsed.set(id, initial);
     return initial;
   };
-  // D-20261030-EMB: inside a block embed, folds below its root are the
-  // source's own `collapsed::`, shared everywhere (OG). Page embeds keep 0.8's
-  // local folds below their page's blocks.
-  const sourceFolds = () => isEmbed() && !!props.embedId;
   const collapseSurface: CollapseSurfaceApi = {
     collapsed: (id, stored) => {
       if (isEmbed()) {
         const override = embedRootOverride(id);
         if (override !== null) return override;
-        if (sourceFolds()) return stored;
-        // Nested local folds govern only while the source hasn't written
-        // another collapse since. The root never enters this map: its explicit
-        // true/false host property survives remount and reload.
-        const local = localCollapsed()[id];
-        return local && local.epoch === collapseEpochOf(id) ? local.v : stored;
+        return stored;
       }
       const local = localCollapsed();
       // Bulk actions saved the source. Follow it live, including Undo, while
@@ -610,12 +618,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
         setBlockProperty(props.hostBlockId, "collapsed", String(!current));
         return;
       }
-      if (sourceFolds()) { setCollapsed(id, !current); return; }
-      setLocalCollapsed((state) => ({ ...state, [id]: { v: !current, epoch: collapseEpochOf(id) } }));
+      if (isEmbed()) { setCollapsed(id, !current); return; }
+      setLocalCollapsed((state) => ({ ...state, [id]: { v: !current } }));
     },
-    setMany: (ids, collapsed) => sourceFolds() ? setCollapsedBlocks(ids, collapsed) : setLocalCollapsed((state) => {
+    setMany: (ids, collapsed) => isEmbed() ? setCollapsedBlocks(ids, collapsed) : setLocalCollapsed((state) => {
       const next = { ...state };
-      for (const id of ids) next[id] = { v: collapsed, epoch: collapseEpochOf(id) };
+      for (const id of ids) next[id] = { v: collapsed };
       return next;
     }),
   };
@@ -637,7 +645,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       setLocalCollapsed(state => {
         const next = { ...state };
         for (const id of ids) if (request.epochs.get(id) === collapseEpochOf(id)) {
-          next[id] = { v: request.collapsed, epoch: collapseEpochOf(id), bulk: true };
+          next[id] = { v: request.collapsed, bulk: true };
         }
         return next;
       });
@@ -715,7 +723,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
             into the host page; the other rows stay surface-local. */}
         <EmbedNavExitContext.Provider value={
           props.surface === "embed" && props.hostBlockId
-            ? { hostBlockId: props.hostBlockId, firstRoot: () => props.blocks[0]?.id, rowHost: (id) => {
+            ? { hostBlockId: props.hostBlockId, firstRoot: () => groupedIds()[0], rowHost: (id) => {
               // D-20261030-EMB: a whole-block host's one bullet is its root row.
               const host = props.hostBlockId!;
               return id === props.embedId && isBlockEmbedMacro(detectMacro(docNode(host)?.raw ?? "", formatForBlock(host)))
@@ -793,6 +801,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                           ? <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
                               readOnly pageBody onOpenBlock={props.onOpenBlock} />
                           : <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
+                              pageBody={props.surface === "embed"} localFolds={props.surface === "embed"}
                               readOnly={!d().page_property && !liveNode(id)}
                               queryResult={props.surface === "query"}
                               onEditPreamble={d().page_preamble ? () => { void editPreamble(d()); } : undefined}

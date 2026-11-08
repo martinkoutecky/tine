@@ -360,14 +360,14 @@ impl DocBlock {
             // heading level, properties, scheduled/deadline) AND the visible text —
             // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree
             // about a block's grammar.
-            // ONE lsdoc parse yields BOTH the block AST (facets/visible) AND the refs
-            // (`block_refs`/`block_priority` used to parse the same block a 2nd time —
-            // audit P1). `proj.refs` is a cheap walk over the already-built blocks.
+            // ONE lsdoc parse yields AST, facets and refs; region ownership also
+            // recovers an author swallowed by a final quote (GH #895).
             let proj = crate::render::parse_projection(&self.raw, self.is_org);
-            let (marker, priority, heading_level, properties) = header_facets(&proj.blocks);
+            let (marker, priority, heading_level, mut properties) = header_facets(&proj.blocks);
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
             let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
+            crate::block_regions::extend_author_facet(&mut properties, &regions);
             let visible = regions
                 .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
                 .expect("parsed regions");

@@ -868,6 +868,7 @@ mod picker_legs;
 use picker_legs::{words_value, FragmentsMatcher, WordsMatcher};
 #[path = "query_plan/pages.rs"]
 mod pages;
+mod subscription;
 use blocks::{execute_blocks, text_predicate_relevance};
 #[cfg(test)]
 use pages::best_page_match;

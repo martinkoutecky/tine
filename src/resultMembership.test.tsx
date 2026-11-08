@@ -116,3 +116,31 @@ it("D-10: a suppressed (collapsed) guarded read is not rerun by structural resul
   beginResultsChange()(); await turn();
   expect(load).toHaveBeenCalledTimes(3);
 });
+
+it("GH #907: a precise reader reuses an unrelated epoch but never renews a coalesced stale answer's action ticket", async () => {
+  const { beginResultsChange, resultTicket, resultsTicketCurrent } = await import("./queryResultsEpoch");
+  const [revision, setRevision] = createSignal(0);
+  const [current, setCurrent] = createSignal(true);
+  const load = vi.fn(async () => ({ rows: [{ id: "task", raw: "TODO original" }] }));
+  let answer!: ReturnType<typeof createMembershipResource<string, Awaited<ReturnType<typeof load>>>>[0];
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    [answer] = createMembershipResource(() => "Target", () => "Target", load,
+      () => false, () => true, true, revision, { current });
+    return <div>{answer()?.rows[0].raw}</div>;
+  }, root));
+  await turn();
+  const original = answer()!;
+  expect(resultsTicketCurrent(resultTicket(original.rows[0]))).toBe(true);
+  beginResultsChange()(); await turn();
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(answer()).toBe(original);
+  expect(resultsTicketCurrent(resultTicket(original.rows[0]))).toBe(true);
+  setCurrent(false);
+  beginResultsChange()(); await turn();
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(resultsTicketCurrent(resultTicket(original.rows[0]))).toBe(false);
+  setCurrent(true); setRevision(1); await turn();
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(resultsTicketCurrent(resultTicket(answer()!.rows[0]))).toBe(true);
+});

@@ -31,7 +31,7 @@ pub fn is_linkable_property_separator(ch: char) -> bool {
 }
 
 use crate::page_filename as reference_filename;
-pub use crate::swallowed_rows::strip_swallowed_rows;
+pub use crate::swallowed_rows::{extend_author_facet, strip_swallowed_rows};
 
 /// Interpret an already accepted link target. Evidence uses File labels;
 /// filename candidates use decoded page filenames, preserving the existing

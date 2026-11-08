@@ -49,6 +49,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 250] = [
     "diagnostic_report",
     "diagnostic_session_active",
     "diagnostic_timing_event",
+    "diagnostic_workspace_open",
     "dismiss_defender_hint",
     "duplicate_journal_diff",
     "edit_asset_external",
