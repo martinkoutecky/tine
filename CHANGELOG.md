@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 
 ## [0.9.0-beta.9] - 2026-11-08
