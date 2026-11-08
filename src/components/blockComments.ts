@@ -13,6 +13,8 @@ import { commentMarginHidden } from "../commentMarginPref";
 import { facetsOf } from "../render/facets";
 import { commentGroups } from "../commentGroups";
 import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
+import { threadResolved } from "../commentResolution";
+import { useResolvedComments } from "./CommentResolutionScope";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
@@ -47,6 +49,7 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     const by = author();
     const classes: Record<string, boolean> = {
       "comment-card": commentSelector() !== null && !inThread(),
+      "comment-resolved": commentSelector() !== null && !inThread() && threadResolved(node().id),
       "comment-in-thread": bulletless(),
       authored: by !== null,
       "author-run-continued": !bulletless() && continued(),
@@ -70,10 +73,11 @@ const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || s
  * margin hidden (GH #845) every surface leaves the comments out. */
 export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: () => "md" | "org") {
   const place = useContext(MarginContext);
+  const showResolved = useResolvedComments();
   const main = () => !!place && place.thread === null && place.api.active() && !inlineSurface(surfaceKey);
   const groups = createMemo(() => {
     if (main() || commentMarginHidden() || threadRootOf(node().id, fmt()) !== null) return null;
-    const all = commentGroups(node().id, fmt());
+    const all = commentGroups(node().id, fmt(), showResolved());
     return all.length ? { first: new Map(all.map(ids => [ids[0], ids])), hidden: new Set(all.flatMap(ids => ids.slice(1))) } : null;
   });
   // GH #845: with the margin hidden no surface draws a thread (not even inline).
@@ -82,9 +86,9 @@ export function marginOutline(node: () => CommentNode, surfaceKey: string, fmt: 
     if (main() || commentMarginHidden()) return n.children.filter(id => !isCommentId(id, fmt()));
     // Replies retain file pre-order, even when a hand-nested reply has a quote.
     if (inCommentThread(n.parent, fmt()) || (n.parent !== null && quoteSelectorOf(facetsOf(n.raw, fmt()).properties) !== null)) return n.children;
-    return commentsFirst(n.children).filter(id => !groups()?.hidden.has(id));
+    return commentsFirst(n.children).filter(id => (!isCommentId(id, fmt()) || showResolved() || !threadResolved(id)) && !groups()?.hidden.has(id));
   };
-  const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt())) : []);
+  const marginComments = () => (main() ? node().children.filter((id) => isCommentId(id, fmt()) && (showResolved() || !threadResolved(id))) : []);
   const inlineGroup = (id: string) => groups()?.first.get(id);
   return { outlineChildren, marginComments, inlineGroup };
 }

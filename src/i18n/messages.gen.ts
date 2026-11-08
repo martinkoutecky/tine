@@ -316,8 +316,11 @@ export interface MessageArgs {
   "comment-quote-ambiguous": {};
   "comment-quote-changed": {};
   "comment-remove-author": {};
+  "comment-reopen": {};
   "comment-reply": {};
   "comment-reply-placeholder": {};
+  "comment-resolve": {};
+  "comment-resolved-count": { "count": string | number };
   "comment-select-first": {};
   "comment-send": {};
   "comment-show": {};

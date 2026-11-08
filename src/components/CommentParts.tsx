@@ -7,13 +7,13 @@
 import { createEffect, createMemo, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
 import { MarginContext } from "./marginContext";
 import { DialogActions } from "./DialogActions";
-import { t } from "../i18n";
-import { anchorQuote, type QuoteSelector } from "../comments";
+import { t, activeLocale } from "../i18n";
+import { anchorQuote, commentDateOf, type QuoteSelector } from "../comments";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
 import { blockWritable, formatForBlock, node as docNode } from "../document";
 import { threadRootOf } from "../document";
 import { registerReplyDraft } from "../commentMargin";
-import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
+import { commentFromReplyDraft, deleteComment, submitReply, setThreadResolved } from "../commentActions";
 import { runWithCommentName } from "../commentNamePrompt";
 import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
@@ -23,6 +23,8 @@ import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } fro
 import type { Format } from "../render/ast";
 import { consumeReplyFocus, replyFocusRequest } from "../commentReplyFocus";
 import { commentDraftState } from "../commentDraftState";
+import { threadResolved } from "../commentResolution";
+import { facetsOf } from "../render/facets";
 
 /** Whether the block under `parentId` belongs to a comment's thread: some
  * ancestor (from `parentId` up) is a comment. O(depth) facet lookups. */
@@ -66,8 +68,12 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
 /** Every response starts with the same author handle and top-right actions;
  * quotes are context above this row and the body always starts below it. */
 export function CommentHeader(props: { id: string; author: string | null }): JSX.Element {
+  const date = () => commentDateOf(facetsOf(docNode(props.id)?.raw ?? "", formatForBlock(props.id)).properties);
   return <div class="comment-header">
     <AuthorChip author={props.author} handleOf={props.id} />
+    <Show when={date()}>{date => <time class="comment-date" dateTime={date()} title={new Intl.DateTimeFormat(activeLocale(), { dateStyle: "long", timeStyle: "short" }).format(new Date(date()))}>
+      {new Intl.DateTimeFormat(activeLocale(), { dateStyle: "short", timeStyle: "short" }).format(new Date(date()))}
+    </time>}</Show>
     <CommentActions id={props.id} />
   </div>;
 }
@@ -118,6 +124,11 @@ function tintClasses(author: string | null): Record<string, boolean> {
 export function CommentActions(props: { id: string }): JSX.Element {
   return <Show when={blockWritable(props.id)}>
     <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+      <Show when={threadRootOf(props.id) === props.id}>
+        <button type="button" class="comment-resolve" onMouseDown={e => e.preventDefault()} onClick={e => {
+          e.stopPropagation(); setThreadResolved(props.id, !threadResolved(props.id));
+        }}>{threadResolved(props.id) ? t("comment-reopen") : t("comment-resolve")}</button>
+      </Show>
       <button type="button" class="comment-delete" title={t("comment-delete")} aria-label={t("comment-delete")} onClick={(e) => {
         e.stopPropagation();
         deleteComment(props.id);
@@ -131,7 +142,7 @@ export function CommentActions(props: { id: string }): JSX.Element {
 export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
   const { draft, setDraft, expanded, setExpanded } = commentDraftState(props.id, props.surface);
   // Hiding the margin would unmount this textarea and its unsent text.
-  onCleanup(registerReplyDraft(() => draft()));
+  onCleanup(registerReplyDraft(() => draft(), props.id));
   let input!: HTMLTextAreaElement;
   onMount(() => createEffect(() => {
     const held = replyFocusRequest();
@@ -205,6 +216,7 @@ export function MarginMarker(props: { parentId: string; comments: readonly strin
 
 function MarkerButton(props: { parentId: string; comments: readonly string[] }): JSX.Element {
   const placement = useContext(MarginContext)!;
+  const open = () => props.comments.filter(id => !threadResolved(id));
   let el!: HTMLButtonElement;
   onMount(() => {
     const row = el.closest<HTMLElement>(".block-main");
@@ -225,11 +237,12 @@ function MarkerButton(props: { parentId: string; comments: readonly string[] }):
     for (const id of props.comments) void docNode(id)?.raw;
     placement.api.schedule();
   });
-  const label = () => t("comment-margin-count", { count: props.comments.length });
+  const label = () => t("comment-margin-count", { count: open().length });
   return (
     <button
       type="button"
       class="margin-marker"
+      hidden={open().length === 0}
       classList={{ active: props.comments.includes(placement.api.activeComment() ?? "") }}
       ref={el}
       title={label()}
@@ -237,10 +250,10 @@ function MarkerButton(props: { parentId: string; comments: readonly string[] }):
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation();
-        placement.api.setActiveComment(props.comments[0] ?? null);
+        placement.api.setActiveComment(open()[0] ?? null);
       }}
     >
-      {props.comments.length}
+      {open().length}
     </button>
   );
 }

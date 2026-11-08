@@ -10,7 +10,7 @@ import { backend } from "./backend";
 import { commentRaw, replyRaw } from "./comments";
 import { createComment, submitReply } from "./commentActions";
 import { AUTHOR_TINTS, authorTint, commentAuthorName, isOwnAuthor, normalizeAuthorName, resetCommentAuthorNameForTests, initCommentIdentity } from "./commentIdentity";
-import { blockRegions, initParser } from "./render/parse";
+import { blockRegions, initParser, editBlock } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
 import { pageByName, resetStore, undo } from "./document";
@@ -90,21 +90,21 @@ describe("what is written", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     resetCommentAuthorNameForTests("Ada");
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.\ntine.author:: Ada");
+    expect(editBlock(doc.byId[comment].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.\ntine.author:: Ada");
     const reply = submitReply(comment, "Response")!;
-    expect(doc.byId[reply].raw).toBe("Response\ntine.author:: Ada");
+    expect(editBlock(doc.byId[reply].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("Response\ntine.author:: Ada");
     undo();
     expect(doc.byId[comment].children).toHaveLength(0);
     undo();
     expect(doc.byId["p"].children).toHaveLength(0);
   });
 
-  it("without a name nothing changes: no tine.author:: on the comment or the reply", () => {
+  it("without a name neither the comment nor the reply carries tine.author::", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
+    expect(editBlock(doc.byId[comment].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
     const reply = submitReply(comment, "Response")!;
-    expect(doc.byId[reply].raw).toBe("Response");
+    expect(editBlock(doc.byId[reply].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("Response");
   });
 });
 

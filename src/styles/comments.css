@@ -219,7 +219,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.comment-header > .comment-actions { flex: 0 0 24px; }
+.comment-header > .comment-actions { flex: 0 0 auto; }
+.comment-date { color: var(--text-muted); font-size: 10px; margin-inline-start: auto; }
+.comment-header { flex-wrap: wrap; gap: 4px; }
+.comment-resolved-toggle {
+  color: var(--text-muted); background: transparent; border: 1px solid var(--border-color);
+  border-radius: 5px; padding: 4px 8px; margin-block: 8px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.comment-card.comment-resolved { background: var(--bg-secondary); color: var(--text-muted); }
+.comment-card.comment-resolved .block-main,
+.comment-card.comment-resolved .comment-in-thread > .block-main { background: transparent; color: var(--text-muted); }
+.comment-card.comment-resolved .author-chip { color: var(--text-muted); background: var(--bg-tertiary); }
 .comment-in-thread > .block-children-container > .block-children > .ls-block {
   margin-top: 8px;
 }

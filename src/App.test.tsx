@@ -405,6 +405,9 @@ describe("watcher page inventory invalidation", () => {
 });
 
 describe("identifier migration notice", () => {
+  // Startup includes a dynamic native import and a full App mount. Observe its
+  // outcome within the suite's hang budget, not waitFor's 1 s idle-host default.
+  const startupWait = { timeout: 10_000 };
   it("does not show a late migration toast after App unmounts", async () => {
     setToasts([]);
     let finish!: (value: boolean) => void;
@@ -413,12 +416,13 @@ describe("identifier migration notice", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <App />, host);
-    await vi.waitFor(() => expect(take).toHaveBeenCalledWith("take_identifier_migration_notice"));
-    dispose();
-    finish(true);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(false);
-    setToasts([]);
+    try {
+      await vi.waitFor(() => expect(take).toHaveBeenCalledWith("take_identifier_migration_notice"), startupWait);
+      dispose();
+      finish(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(false);
+    } finally { dispose(); setToasts([]); }
   });
   it("shows the native one-shot notice stickily once, then stays silent on remount", async () => {
     setToasts([]);
@@ -428,13 +432,13 @@ describe("identifier migration notice", () => {
     document.body.append(host);
     let dispose = render(() => <App />, host);
     try {
-      await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(true));
+      await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(true), startupWait);
       const shown = toasts().filter((toast) => toast.message.includes("moved your settings and backups"));
       expect(shown).toHaveLength(1);
       expect(shown[0].sticky).toBe(true);
       dispose();
       dispose = render(() => <App />, host);
-      await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2), startupWait);
       expect(toasts().filter((toast) => toast.message.includes("moved your settings and backups"))).toHaveLength(1);
     } finally { dispose(); setToasts([]); }
   });

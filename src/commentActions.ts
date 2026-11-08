@@ -5,17 +5,17 @@
 // undo step: no new write path.
 
 import { batch } from "solid-js";
-import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, withUndoUnit } from "./document";
+import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, setBlockProperty, withUndoUnit } from "./document";
 import { editingId, endEdit, startEditing } from "./editorController";
 import { focusedEditorCommandBridge } from "./editorCommandBridge";
 import { graphScopedSignal, refuseStaleWrite } from "./binding";
-import { anchorQuote, commentRaw, replyRaw, normalizeQuoteText, normalizeWithMap, occurrences, quoteSelectorFor, quoteSelectorOf } from "./comments";
+import { anchorQuote, commentRaw, replyRaw, normalizeQuoteText, normalizeWithMap, occurrences, quoteSelectorFor, quoteSelectorOf, stampCommentDate, COMMENT_RESOLVED_KEY } from "./comments";
 import { facetsOf } from "./render/facets";
 import { splitProps, BUILTIN_HIDE } from "./editor/properties";
 import { pushToast } from "./toasts";
 import { msg, t } from "./i18n";
 import { commentsWritten } from "./margin";
-import { revealCommentMargin } from "./commentMargin";
+import { revealCommentMargin, hasPendingReplyDraft } from "./commentMargin";
 import { commentAuthorName } from "./commentIdentity";
 import { runWithCommentName } from "./commentNamePrompt";
 import { selectionOf } from "./windowRealm";
@@ -23,6 +23,19 @@ import { threadRootOf } from "./margin";
 import { deleteBlock } from "./document";
 import { commentGroups, passageKey } from "./commentGroups";
 import { focusCommentReply } from "./commentReplyFocus";
+import { threadResolved } from "./commentResolution";
+
+/** Resolution belongs to the outermost root and the ordinary property door. */
+export function setThreadResolved(commentId: string, resolved: boolean): void {
+  const root = threadRootOf(commentId);
+  if (!root || !blockWritable(root) || threadResolved(root) === resolved) return;
+  if (resolved && hasPendingReplyDraft([root])) { pushToast(msg("comment-margin-draft-pending"), "warn"); return; }
+  endEdit("page-navigation");
+  if (editingId() !== null) return;
+  batch(() => withUndoUnit("comment:resolve", [docNode(root)!.page], () => {
+    setBlockProperty(root, COMMENT_RESOLVED_KEY, resolved ? "true" : null);
+  }));
+}
 
 /** Append a comment on [start, end) of `editorText` (the parent editor's
  * text) under `parentId` and return its id, or null when the parent cannot be
@@ -32,7 +45,8 @@ export function createComment(parentId: string, editorText: string, start: numbe
   const parent = docNode(parentId);
   if (!parent || !blockWritable(parentId)) return null;
   const raw = commentRaw(quoteSelectorFor(editorText, start, end, parent.raw, formatForBlock(parentId)), formatForBlock(parentId), commentAuthorName());
-  const destination = docNode(threadRootOf(parentId, formatForBlock(parentId)) ?? parentId)!;
+  const root = threadRootOf(parentId, formatForBlock(parentId));
+  const destination = docNode(root ?? parentId)!;
   let id: string | null = null;
   // Publish structure and quote metadata together. Inline ordering deliberately
   // reads text untracked on structural changes; exposing the empty child first
@@ -40,7 +54,10 @@ export function createComment(parentId: string, editorText: string, start: numbe
   batch(() => {
     withUndoUnit("comment:create", [parent.page], () => {
       id = insertEmptyChildBlock(destination.id, destination.children.length);
-      if (id) setRaw(id, raw, { timetracking: false });
+      if (id) {
+        setRaw(id, stampCommentDate(raw, formatForBlock(parentId)), { timetracking: false });
+        if (root && threadResolved(root)) setBlockProperty(root, COMMENT_RESOLVED_KEY, null);
+      }
     });
     if (id) {
       // GH #845: a comment is never written into a hidden margin.
@@ -58,7 +75,7 @@ export function commentAndEdit(parentId: string, editorText: string, start: numb
     if (parent && blockWritable(parentId) && threadRootOf(parentId) === null) {
       const format = formatForBlock(parentId);
       const key = passageKey(parent.raw, quoteSelectorFor(editorText, start, end, parent.raw, format), format);
-      const group = key === null ? undefined : commentGroups(parentId, format).find(ids => {
+      const group = key === null ? undefined : commentGroups(parentId, format, true).find(ids => {
         const selector = quoteSelectorOf(facetsOf(docNode(ids[0])!.raw, format).properties)!;
         return passageKey(parent.raw, selector, format) === key;
       });
@@ -109,7 +126,7 @@ export function appendThreadForPassage(commentId: string, surface: string | null
     if (docNode(parent.id) !== parent || parent.raw !== parentRaw || docNode(commentId) !== comment || comment.raw !== sourceRaw) return pushToast(msg("comment-block-changed"), "warn");
     withUndoUnit("comment:create", [parent.page], () => {
       id = insertEmptyChildBlock(parent.id, parent.children.length);
-      if (id) setRaw(id, commentRaw(freshSelector, format, commentAuthorName()), { timetracking: false });
+      if (id) setRaw(id, stampCommentDate(commentRaw(freshSelector, format, commentAuthorName()), format), { timetracking: false });
     });
     if (id) { revealCommentMargin(); commentsWritten(); startEditing(id, 0, null, surface); }
   }));
@@ -124,14 +141,15 @@ export function submitReply(commentId: string, text: string): string | null {
     || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
   const root = docNode(threadRootOf(commentId, formatForBlock(commentId))!)!;
   let id: string | null = null;
-  withUndoUnit("comment:reply", [comment.page], () => {
+  batch(() => withUndoUnit("comment:reply", [comment.page], () => {
     id = insertEmptyChildBlock(root.id, root.children.length);
     if (id) {
       const author = commentAuthorName();
       const metadata = author ? replyRaw(formatForBlock(commentId), author) : "";
-      setRaw(id, text + metadata, { timetracking: false });
+      setRaw(id, text + stampCommentDate(metadata || "\n", formatForBlock(commentId)), { timetracking: false });
+      if (threadResolved(root.id)) setBlockProperty(root.id, COMMENT_RESOLVED_KEY, null);
     }
-  });
+  }));
   return id;
 }
 

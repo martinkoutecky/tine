@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
+it("the Guide teaches resolve, reveal, reply-to-reopen and immutable comment dates", () => {
+  const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  for (const fact of ["**Resolve**", "**N resolved**", "**Reopen**", "Replying to a resolved thread reopens it", "tine.resolved:: true", "tine.date:: 2026-11-07T13:37Z", "Editing never updates it", "messages keep file order", "Ordinary blocks get no stored date"])
+    expect(tips).toContain(fact);
+});
+
 it("the Guide explains unique context, ambiguous quotes, flat replies, thread counts and touch read-mode Comment (GH #891, #110)", () => {
   const tips = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
   expect(tips).toContain("with `tine.quote-prefix::` and `tine.quote-suffix::`, a few words on either side");

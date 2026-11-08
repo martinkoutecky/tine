@@ -63,6 +63,7 @@ import { captureReadingViewport } from "./readingViewportAnchor";
 import { revealCommentMarginFor } from "../commentMargin";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { CommentResolutionScope } from "./CommentResolutionScope";
 import { JournalFeedDays } from "./JournalFeedDays";
 import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
 import { createPageSeen } from "../seen/pageSeen";
@@ -1297,11 +1298,10 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       </Show>
       <ExternalChangeBar name={props.page.name} />
       <SeenHeader seen={seen} pageName={props.page.name} />
-      {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <FailureBoundary region="The conflict panel">
         <PageConflictPanel name={props.page.name} path={props.page.id} />
       </FailureBoundary>
-      <MarginContext.Provider value={margin.placement}>
+      <CommentResolutionScope roots={props.page.roots} format={props.page.format}><MarginContext.Provider value={margin.placement}>
       <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={preambleContent()}>
           {(content) => (
@@ -1323,7 +1323,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
         <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
       </div>
       </MarginContext.Provider>
-      <margin.Column />
+      <margin.Column /></CommentResolutionScope>
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>

@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
-import { blockRegions, initParser } from "../render/parse";
+import { blockRegions, initParser, editBlock } from "../render/parse";
 import { node as docNode, resetStore, setRaw, undo } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { pageByName } from "../document/model";
@@ -242,7 +242,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       draft.setSelectionRange(5, 13);
       expect(ctrlR(draft).defaultPrevented).toBe(true);
       const reply = docNode(docNode("c")!.children[0])!;
-      expect(reply.raw).toBe("This deserves thought");
+      expect(editBlock(reply.raw, format, { kind: "property", key: "tine.date", value: null })).toBe("This deserves thought");
       const child = docNode(docNode("c")!.children[1])!;
       expect(reply.children).toEqual([]);
       expect(child.parent).toBe("c");
@@ -285,7 +285,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(children).toHaveLength(2);
       expect(children[0]).toBe("old");
       const comment = children[1];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
       expect(docNode("p")!.raw).toBe("An agent wrote a phrase worth disputing here.");
       expect(editingId()).toBe(comment);
       await Promise.resolve();
@@ -306,7 +306,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       ta.select(second, second + 7);
       ctrlR(ta);
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: the cat\ntine.quote-prefix:: the cat sat; then\ntine.quote-suffix:: ran");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: the cat\ntine.quote-prefix:: the cat sat; then\ntine.quote-suffix:: ran");
     } finally {
       dispose();
     }
@@ -336,7 +336,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       const event = ctrlR(ta);
       expect(event.defaultPrevented).toBe(true);
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: ");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: ");
       expect(editingId()).toBe(comment);
     } finally {
       dispose();
@@ -354,7 +354,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       endEdit("page-navigation"); // opening the palette blurs the editor
       commentOnPaletteSelection();
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for\ntine.quote-suffix:: ");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for\ntine.quote-suffix:: ");
     } finally {
       dispose();
     }

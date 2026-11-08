@@ -23,6 +23,9 @@ import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
 import { commentGroups } from "../commentGroups";
 import { CommentGroup } from "./CommentGroup";
+import { useResolvedComments } from "./CommentResolutionScope";
+import { threadResolved } from "../commentResolution";
+import { resolvedCommentAnchorTop } from "./resolvedCommentAnchor";
 
 export interface MarginSurface {
   /** Comments are drawn in the margin (the outline carries `margin-active`). */
@@ -135,6 +138,8 @@ export function createMarginSurface(opts: {
       if (mark) {
         anchor = mark.getBoundingClientRect().top;
         offsets.set(id, anchor - rowTop);
+      } else if (threadResolved(id) && !t.row.classList.contains("editing")) {
+        anchor = resolvedCommentAnchorTop(id, t.parentId, t.row) ?? rowTop;
       } else if (t.row.classList.contains("editing")) {
         // Any editor (the textarea, or the CodeMirror editor, which has none)
         // drops the marks: keep the thread where its passage last was, clamped
@@ -270,7 +275,8 @@ export function createMarginSurface(opts: {
       api.schedule();
     });
     function RowGroups(props: { parentId: string; row: HTMLElement }): JSX.Element {
-      const groups = createMemo(() => new Map(commentGroups(props.parentId, opts.page()?.format ?? "md").map(ids => [ids[0], ids])));
+      const showResolved = useResolvedComments();
+      const groups = createMemo(() => new Map(commentGroups(props.parentId, opts.page()?.format ?? "md", showResolved()).map(ids => [ids[0], ids])));
       return <For each={[...groups().keys()]}>{id => <ThreadView id={id} ids={groups().get(id)!} parentId={props.parentId} row={props.row} />}</For>;
     }
     return (

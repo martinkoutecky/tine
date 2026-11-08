@@ -1,4 +1,4 @@
-// D-20261107-MC3 §§5,7: native routed-page proof in both editor engines.
+// D-20261107-MC3 §§4,5,7,9: native routed-page proof in both editor engines.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -46,6 +46,9 @@ const seed = `- Words to discuss today.
 - Body Enter sentinel
 `;
 for (const mode of ["textarea", "cm6"]) fs.writeFileSync(path.join(graph, `pages/Comments ${mode}.md`), mode === "cm6" ? seed.replaceAll("01000000", "02000000") : seed);
+for (const count of [1, 60]) for (const format of ["md", "org"]) fs.writeFileSync(path.join(graph, `pages/Cost ${count} ${format}.${format}`),
+  (format === "md" ? "- Measure passage\n  Another visible line.\n  - Cost thread\n    tine.quote:: visible\n" : "* Measure passage\nAnother visible line.\n** Cost thread\n:PROPERTIES:\n:tine.quote: visible\n:END:\n")
+  + Array.from({ length: count - 1 }, (_, i) => `${format === "md" ? "-" : "*"} Cost filler ${i + 1}\n`).join(""));
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
@@ -117,6 +120,103 @@ async function menuToggle(label, scaled = false) {
     await keys("Enter");
   } else await action.click();
 }
+async function resolutionJourney(file, mode) {
+  const original = fs.readFileSync(file, "utf8");
+  const resolved = original.replaceAll("    tine.quote:: discuss\n", "    tine.quote:: discuss\n    tine.resolved:: true\n");
+  stage = `${mode}: resolve entire grouped threads`;
+  assert.equal(await browser.execute(() => document.querySelectorAll(".comment-date").length), 0, "Legacy comments have no fabricated date");
+  for (const id of [ids.one, ids.two]) {
+    await browser.$(`${row(id)} > .comment-header .comment-resolve`).click();
+    await browser.$(row(id)).waitForExist({ reverse: true });
+  }
+  const closed = await waitForFileText(file, text => (text.match(/tine.resolved:: true/g) || []).length === 2);
+  assert.equal(closed, resolved, "Resolve must change only the root's one property line in the exact saved Markdown");
+  assert.equal(await browser.execute(() => document.querySelectorAll(".comment-quote-anchor").length), 0, "Resolved passages retain no highlight");
+  const reveal = await browser.$(".main-content .comment-resolved-toggle");
+  assert.equal(await reveal.getText(), "2 resolved"); await reveal.click();
+  await browser.$(`${row(ids.two)}.comment-resolved`).waitForExist();
+  assert.equal(await browser.$(`${row(ids.one)} > .comment-header .comment-resolve`).getText(), "Reopen");
+  assert.equal(await browser.execute(() => document.querySelectorAll(".comment-quote-anchor").length), 0, "Revealing must not restore highlights");
+  await shot(`${mode}-05-resolved-revealed`);
+  stage = `${mode}: reply reopens a revealed thread`;
+  await browser.$(row(ids.two)).moveTo();
+  const draft = await browser.$(`${row(ids.two)} > .comment-composer textarea`);
+  await draft.click(); await browser.keys("Reopen by reply");
+  await browser.$(`${row(ids.two)} > .comment-composer .comment-reply`).click();
+  const replied = await waitForFileText(file, text => text.includes("Reopen by reply") && (text.match(/tine.resolved:: true/g) || []).length === 1);
+  const date = replied.match(/tine.date:: (\d{4}-\d\d-\d\dT\d\d:\d\dZ)/)?.[1];
+  assert.ok(date, "The new reply must carry a UTC minute creation date");
+  const expectedReply = original.replace("    tine.quote:: discuss\n", "    tine.quote:: discuss\n    tine.resolved:: true\n")
+    .replace(`    id:: ${ids.two}\n    tine.quote:: discuss\n`, `    id:: ${ids.two}\n    tine.quote:: discuss\n    - Reopen by reply\n      tine.author:: Ada Test\n      tine.date:: ${date}\n`);
+  assert.equal(replied, expectedReply, "Reply must reopen only its own root and save the exact new message and metadata");
+  assert.equal(await reveal.getText(), "1 resolved");
+  assert.equal(await browser.$(`${row(ids.two)} > .comment-header .comment-resolve`).getText(), "Resolve");
+  await browser.$(`${row(ids.two)} time[datetime="${date}"]`).waitForExist();
+  stage = `${mode}: explicit Reopen`;
+  await browser.$(`${row(ids.one)} > .comment-header .comment-resolve`).click();
+  await reveal.waitForExist({ reverse: true });
+  await waitForFileText(file, text => !text.includes("tine.resolved"));
+  await shot(`${mode}-06-reopened-with-date`);
+  proof.outcomes.push({ mode, resolve: true, reveal: true, reopenByReply: true, explicitReopen: true, exactSavedMarkdown: true, replyDate: date });
+}
+async function measureUnitCosts() {
+  proof.unitCosts = [];
+  const hashes = () => new Map(fs.readdirSync(graph, { recursive: true }).flatMap(name => {
+    const file = path.join(graph, name);
+    return fs.statSync(file).isFile() ? [[name, crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex")]] : [];
+  }));
+  const changes = before => {
+    const after = hashes();
+    return { changed: [...after.keys()].filter(name => before.get(name) !== after.get(name)), added: [...after.keys()].filter(name => !before.has(name)) };
+  };
+  await browser.setWindowSize(1700, 1000);
+  for (const count of [1, 60]) for (const format of ["md", "org"]) {
+    stage = `unit cost: ${count} ${format} body blocks`;
+    const file = path.join(graph, `pages/Cost ${count} ${format}.${format}`);
+    const before = fs.readFileSync(file, "utf8");
+    await openPageByName(browser, `Cost ${count} ${format}`);
+    const beforeResolve = hashes();
+    const action = await browser.$(".main-content .comment-resolve"); await action.waitForDisplayed(); await action.click();
+    const resolved = await waitForFileText(file, text => text.includes("tine.resolved"));
+    const resolveFiles = changes(beforeResolve);
+    assert.deepEqual(resolveFiles, { changed: [path.relative(graph, file)], added: [] });
+    assert.equal(resolved, format === "md" ? before.replace("    tine.quote:: visible\n", "    tine.quote:: visible\n    tine.resolved:: true\n")
+      : before.replace(":tine.quote: visible\n", ":tine.quote: visible\n:tine.resolved: true\n"));
+    await browser.$(".main-content .comment-resolved-toggle").click();
+    await browser.$(".main-content .comment-card.comment-resolved").waitForExist();
+    await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+    const placement = await browser.execute(() => {
+      const thread = document.querySelector(".main-content .margin-thread"), content = document.querySelector(".main-content .page-blocks .block-content");
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      for (let node; (node = walker.nextNode());) {
+        const at = node.textContent.indexOf("visible");
+        if (at < 0) continue;
+        const range = document.createRange(); range.setStart(node, at); range.setEnd(node, at + 7);
+        const passage = range.getBoundingClientRect();
+        return { card: thread.getBoundingClientRect().top, passage: passage.top, lineHeight: parseFloat(getComputedStyle(content).lineHeight), marks: content.querySelectorAll(".comment-quote-anchor").length };
+      }
+      return null;
+    });
+    (proof.unitCostPlacements ??= []).push({ count, format, ...placement });
+    assert.ok(placement && Math.abs(placement.card - placement.passage) <= placement.lineHeight, "Revealed resolved card must remain at its later-line passage");
+    assert.equal(placement.marks, 0);
+    await shot(`cost-${count}-${format}-resolved-placement`);
+    const draft = await browser.$(".main-content .comment-reply-draft"); await draft.waitForExist();
+    await browser.execute(() => document.querySelector(".main-content .comment-reply-draft").focus());
+    const beforeReply = hashes();
+    await browser.keys("Cost reply"); await keys("Control", "Enter");
+    const replied = await waitForFileText(file, text => text.includes("Cost reply") && !text.includes("tine.resolved"));
+    const replyFiles = changes(beforeReply);
+    assert.deepEqual(replyFiles, { changed: [path.relative(graph, file)], added: [] });
+    const dateLine = replied.match(format === "md" ? /^ *tine.date:: \d{4}-\d\d-\d\dT\d\d:\d\dZ\n/m : /^:tine.date: \d{4}-\d\d-\d\dT\d\d:\d\dZ\n/m)?.[0];
+    assert.ok(dateLine);
+    proof.unitCosts.push({ format, bodyBlocks: count, existingThreadRoots: 1, beforeFileBytes: Buffer.byteLength(before),
+      resolvedFileBytes: Buffer.byteLength(resolved), resolveDeltaBytes: Buffer.byteLength(resolved) - Buffer.byteLength(before),
+      replyFileBytes: Buffer.byteLength(replied), creationDateBytes: Buffer.byteLength(dateLine),
+      affectedGraphFiles: resolveFiles.changed.length, addedGraphFiles: resolveFiles.added.length,
+      replyAffectedGraphFiles: replyFiles.changed.length, replyAddedGraphFiles: replyFiles.added.length, addedTransportBytes: 0 });
+  }
+}
 try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: app } } });
@@ -150,6 +250,7 @@ try {
     assert.deepEqual(initial, { quotes: 1, roots: 2, composers: 2, below: "2 below" });
     assert.equal(fs.readFileSync(file, "utf8"), mode === "cm6" ? seed.replaceAll("01000000", "02000000") : seed, "Reading groups must preserve file bytes");
     await shot(`${mode}-01-group-and-below`);
+    await resolutionJourney(file, mode);
     stage = `${mode}: editing Enter stays in comment`;
     await browser.$(`${row(ids.one)} > .block-main .block-content`).click();
     await browser.$(editorSelector).waitForDisplayed(); await keys("Control", "End");
@@ -196,6 +297,7 @@ try {
     const afterNewThread = await waitForFileText(file, text => text.includes("Explicit thread"));
     const newRoot = afterNewThread.slice(afterNewThread.indexOf("Explicit thread"), afterNewThread.indexOf("Collapsible parent"));
     assert.ok(newRoot.includes("tine.quote-prefix::") && newRoot.includes("tine.quote-suffix::"), "New roots must write context even when the old root omitted it");
+    assert.match(newRoot, /tine.date:: \d{4}-\d\d-\d\dT\d\d:\d\dZ/, "New comments carry a creation date");
     assert.equal((fs.readFileSync(file, "utf8").match(/^\s*tine.quote:: discuss$/gm) || []).length, 3);
     await shot(`${mode}-02-explicit-thread`);
     stage = `${mode}: subtree expand`;
@@ -247,13 +349,14 @@ try {
     await waitForFileText(file, text => text.includes("\n- New body block"));
     proof.outcomes.push({ mode, groupedQuote: true, multilineEditor: true, multilineReply: true, explicitNewThread: true, freshCommentShortcut: true, subtreeExpand: true, narrowMenu: true, phoneCssWidth, bodyEnter: true });
   }
+  await measureUnitCosts();
   fixture.verify(); fs.writeFileSync(path.join(out, "receipt.json"), JSON.stringify({ outcome: "PASS", ...proof }, null, 2)); console.log(`PASS ${out}`);
 } catch (error) {
   if (process.env.MC010_FOCUS_PROBE === "1") {
     try { proof.focusProbes.push(await browser.execute(() => ({ events: window.__mcFocusTrace, active: document.activeElement?.outerHTML?.slice(0, 400) }))); } catch { /* retain original failure */ }
   }
   try { await shot("failure"); } catch { /* retain the original failure if capture fails */ }
-  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, expected: "Multiline comments; separate grouped threads; subtree expand; page-menu visibility; unchanged body Enter", observed: error.stack,
+  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, expected: "Whole-thread Resolve/reveal/Reopen and reply-to-reopen; exact Markdown and immutable dates; revealed closed cards beside later-line passages without highlights; multiline comments, groups, subtree expand and visibility", observed: error.stack,
     classification: error.code === "ERR_ASSERTION" ? "product" : "ambiguous harness/infrastructure" }, null, 2)); throw error;
 } finally {
   try { await browser?.deleteSession(); } catch { /* session may have failed during startup */ }

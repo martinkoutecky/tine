@@ -4,17 +4,19 @@ import { node, threadRootOf } from "./document";
 import type { Format } from "./types";
 import { facetsOf } from "./render/facets";
 import { orderedCommentIds } from "./margin";
+import { threadResolved } from "./commentResolution";
 
 export function passageKey(raw: string, selector: QuoteSelector, format: Format): string | null {
   const anchor = anchorQuote(raw, selector, format);
   return anchor.kind === "range" ? `${anchor.start}:${anchor.end}` : anchor.kind === "whole" ? "whole" : null;
 }
 
-export function commentGroups(parentId: string, format: Format): string[][] {
+export function commentGroups(parentId: string, format: Format, showResolved = false): string[][] {
   const parent = node(parentId);
   if (!parent) return [];
   const groups = new Map<string, string[]>();
   for (const id of orderedCommentIds(parentId, format)) {
+    if (!showResolved && threadResolved(id)) continue;
     const selector = quoteSelectorOf(facetsOf(node(id)!.raw, format).properties)!;
     // Ambiguous and stale selectors have no resolved range: keep them separate.
     const key = passageKey(parent.raw, selector, format) ?? `unresolved:${id}`;
@@ -33,7 +35,7 @@ export function descendantOpenThreads(parentId: string, format: Format): number 
     if (!n) return;
     const root = threadRootOf(id, format);
     if (root !== null) {
-      if (root === id && !facetsOf(n.raw, format).properties.some(([key, value]) => key.toLowerCase() === "tine.resolved" && value.trim().toLowerCase() === "true")) count++;
+      if (root === id && !threadResolved(id)) count++;
       return;
     }
     for (const child of n.children) visit(child);
