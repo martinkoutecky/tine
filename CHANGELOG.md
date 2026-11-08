@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.9] - 2026-11-08
+
 ### Fixed
 
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
@@ -33,7 +35,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
-- The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged.
+- The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged (internal: UI-COMMENT-NAME-WORDING).
 - Comment threads read at one level in file order, including hand-nested replies; new replies attach directly to the thread root. Existing nesting stays unchanged on disk. Comment badges count threads, and the visibility command and setting are named Show/Hide comments (GH #110, GH #891).
 
 ## [0.9.0-beta.8] - 2026-11-06

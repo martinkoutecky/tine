@@ -1,0 +1,877 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.9",
+  "baseTag": "v0.9.0-beta.8",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH911-OPEN-PAGE-FLASH"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH911-OPEN-PAGE-FLASH. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Page.externalIdentity.test.tsx",
+          "src/components/Block.carryReloadBlur.test.tsx",
+          "src/components/QueryResultsEpoch.retain.test.tsx",
+          "src/components/PageProps.followup14q5.test.tsx",
+          "scripts/e2e-page-write-flash.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH868-PAGE-EMBED-SOURCE-FOLDS",
+        "UI-GH868-EMBED-OUTLINE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH868-PAGE-EMBED-SOURCE-FOLDS, UI-GH868-EMBED-OUTLINE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.embedFolds.test.tsx",
+          "src/components/Block.pageEmbedOccurrence.test.tsx",
+          "scripts/e2e-gh868-embed-outline.mjs",
+          "src/components/LiveRefGroup.embedOutline.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Conflict review no longer suggests removing a block that both versions still contain when one device moved it and the other edited a neighbour; applying the suggestions, or choosing either whole version of its parent, lost that block (GH #901).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH901-CONCORD-MOVE-LOSS-AND-SECTION-DUPLICATES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH901-CONCORD-MOVE-LOSS-AND-SECTION-DUPLICATES. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_moved_block_is_never_suggested_away_on_both_sides",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_real_deletion_is_still_suggested",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_both_on_a_parent_whose_text_differs_still_keeps_both_sections",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_block_both_sides_still_have_survives_the_opening_choices",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_moved_block_keeps_its_id_under_the_opening_choices",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_block_both_sides_have_survives_either_whole_side_on_its_parent",
+          "src/components/ConflictResolution.test.tsx",
+          "src/components/DiffRows.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Apply all suggested** no longer resets your choices on rows Tine has no suggestion for; **Keep both everywhere** shows the active choice on blocks only one side has; a review that knows the common version no longer says none is known (GH #901).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH901-CONCORD-MOVE-LOSS-AND-SECTION-DUPLICATES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH901-CONCORD-MOVE-LOSS-AND-SECTION-DUPLICATES. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_moved_block_is_never_suggested_away_on_both_sides",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_real_deletion_is_still_suggested",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_both_on_a_parent_whose_text_differs_still_keeps_both_sections",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_block_both_sides_still_have_survives_the_opening_choices",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_moved_block_keeps_its_id_under_the_opening_choices",
+          "crates/tine-core/src/sync_diff_tests.rs::gh901_a_block_both_sides_have_survives_either_whole_side_on_its_parent",
+          "src/components/ConflictResolution.test.tsx",
+          "src/components/DiffRows.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Journal days and split panes use the same width rule for margin comments as single pages; comment and reply editors hide every `tine.*` property on all platforms while preserving its bytes on save (GH #891).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH891-JOURNAL-MARGIN",
+        "UI-GH891-TOUCH-COMMENT-METADATA",
+        "UI-GH891-COMMENT-BODY-MERGE",
+        "UI-GH891-COMMENT-THREAD-COUNT",
+        "UI-GH110-FLAT-THREADS",
+        "UI-GH891-COMMENT-BODY-DRAG",
+        "UI-GH891-COMMENT-BODY-NAV",
+        "UI-GH891-MARGIN-ORDER",
+        "UI-GH891-COMMENT-BODY-ENTER",
+        "UI-GH891-COMMENT-BODY-INDENT",
+        "UI-GH891-COMMENT-BODY-PASTE",
+        "UI-GH891-READ-MODE-COMMENT",
+        "UI-GH891-QUOTE-ANCHOR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH891-JOURNAL-MARGIN, UI-GH891-TOUCH-COMMENT-METADATA, UI-GH891-COMMENT-BODY-MERGE, UI-GH891-COMMENT-THREAD-COUNT, UI-GH110-FLAT-THREADS, UI-GH891-COMMENT-BODY-DRAG, UI-GH891-COMMENT-BODY-NAV, UI-GH891-MARGIN-ORDER, UI-GH891-COMMENT-BODY-ENTER, UI-GH891-COMMENT-BODY-INDENT, UI-GH891-COMMENT-BODY-PASTE, UI-GH891-READ-MODE-COMMENT, UI-GH891-QUOTE-ANCHOR. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Page.marginRoutes.test.tsx",
+          "src/components/MarginColumn.test.tsx",
+          "scripts/e2e-margin-comment.mjs",
+          "src/components/Block.commentEditing.test.tsx",
+          "src/document/commentStructure.test.ts",
+          "src/components/Block.commentStructure.test.tsx",
+          "scripts/e2e-margin-column.mjs",
+          "src/keybindings.marginToggle.test.tsx",
+          "src/components/Block.marginComment.test.tsx",
+          "src/components/Block.commentBulletless.test.tsx",
+          "src/margin.test.ts",
+          "src/components/RenderedSelectionToolbar.test.tsx",
+          "scripts/shot-gh375-rendered-selection.mjs",
+          "src/comments.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Editing an authored block keeps its author mark visible while hiding and preserving `tine.author::`; the chip menu offers Remove author. Author metadata no longer appears inside blockquotes (GH #894, GH #895).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH894-AUTHOR-EDITOR",
+        "UI-GH895-QUOTE-AUTHOR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH894-AUTHOR-EDITOR, UI-GH895-QUOTE-AUTHOR. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.authorEditing.test.tsx",
+          "crates/tine-core/tests/author_editing.rs",
+          "scripts/e2e-margin-comment.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Margin comments anchor repeated passages using enough context to identify the selected occurrence, including the last word of a block. Tied matches are shown as ambiguous; missing quotes remain visible. Wide margin cards follow passage order and keep the focused thread beside its passage (GH #891).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH891-MARGIN-ORDER",
+        "UI-GH891-QUOTE-ANCHOR",
+        "UI-GH891-JOURNAL-MARGIN",
+        "UI-GH891-COMMENT-BODY-NAV",
+        "UI-GH891-COMMENT-THREAD-COUNT",
+        "UI-GH891-READ-MODE-COMMENT",
+        "UI-GH110-FLAT-THREADS",
+        "UI-GH891-COMMENT-BODY-DRAG",
+        "UI-GH891-COMMENT-BODY-MERGE",
+        "UI-GH891-COMMENT-BODY-ENTER",
+        "UI-GH891-COMMENT-BODY-INDENT",
+        "UI-GH891-COMMENT-BODY-PASTE",
+        "UI-GH891-TOUCH-COMMENT-METADATA"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH891-MARGIN-ORDER, UI-GH891-QUOTE-ANCHOR, UI-GH891-JOURNAL-MARGIN, UI-GH891-COMMENT-BODY-NAV, UI-GH891-COMMENT-THREAD-COUNT, UI-GH891-READ-MODE-COMMENT, UI-GH110-FLAT-THREADS, UI-GH891-COMMENT-BODY-DRAG, UI-GH891-COMMENT-BODY-MERGE, UI-GH891-COMMENT-BODY-ENTER, UI-GH891-COMMENT-BODY-INDENT, UI-GH891-COMMENT-BODY-PASTE, UI-GH891-TOUCH-COMMENT-METADATA. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/MarginColumn.test.tsx",
+          "src/margin.test.ts",
+          "scripts/e2e-margin-column.mjs",
+          "src/comments.test.ts",
+          "src/components/Block.marginComment.test.tsx",
+          "src/components/Page.marginRoutes.test.tsx",
+          "scripts/e2e-margin-comment.mjs",
+          "src/document/commentStructure.test.ts",
+          "src/components/Block.commentStructure.test.tsx",
+          "src/keybindings.marginToggle.test.tsx",
+          "src/components/RenderedSelectionToolbar.test.tsx",
+          "scripts/shot-gh375-rendered-selection.mjs",
+          "src/components/Block.commentBulletless.test.tsx",
+          "src/components/Block.commentEditing.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On touch screens, Comment is available when selecting rendered text, before entering edit mode (GH #891).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH891-READ-MODE-COMMENT",
+        "UI-GH891-TOUCH-COMMENT-METADATA",
+        "UI-GH891-COMMENT-BODY-DRAG",
+        "UI-GH891-COMMENT-BODY-INDENT",
+        "UI-GH891-COMMENT-BODY-MERGE",
+        "UI-GH891-COMMENT-BODY-PASTE",
+        "UI-GH891-COMMENT-THREAD-COUNT",
+        "UI-GH891-COMMENT-BODY-ENTER",
+        "UI-GH891-COMMENT-BODY-NAV",
+        "UI-GH891-JOURNAL-MARGIN",
+        "UI-GH891-QUOTE-ANCHOR",
+        "UI-GH110-FLAT-THREADS",
+        "UI-GH891-MARGIN-ORDER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH891-READ-MODE-COMMENT, UI-GH891-TOUCH-COMMENT-METADATA, UI-GH891-COMMENT-BODY-DRAG, UI-GH891-COMMENT-BODY-INDENT, UI-GH891-COMMENT-BODY-MERGE, UI-GH891-COMMENT-BODY-PASTE, UI-GH891-COMMENT-THREAD-COUNT, UI-GH891-COMMENT-BODY-ENTER, UI-GH891-COMMENT-BODY-NAV, UI-GH891-JOURNAL-MARGIN, UI-GH891-QUOTE-ANCHOR, UI-GH110-FLAT-THREADS, UI-GH891-MARGIN-ORDER. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/RenderedSelectionToolbar.test.tsx",
+          "scripts/shot-gh375-rendered-selection.mjs",
+          "scripts/e2e-margin-column.mjs",
+          "src/components/Block.commentEditing.test.tsx",
+          "scripts/e2e-margin-comment.mjs",
+          "src/document/commentStructure.test.ts",
+          "src/components/Block.commentStructure.test.tsx",
+          "src/components/Block.commentBulletless.test.tsx",
+          "src/components/MarginColumn.test.tsx",
+          "src/keybindings.marginToggle.test.tsx",
+          "src/margin.test.ts",
+          "src/components/Page.marginRoutes.test.tsx",
+          "src/comments.test.ts",
+          "src/components/Block.marginComment.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Body editing skips whole margin-comment threads: Backspace, Delete, Enter, arrows, indentation, drag and paste preserve comments and their replies (GH #891, GH #110).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH891-COMMENT-BODY-DRAG",
+        "UI-GH891-COMMENT-BODY-MERGE",
+        "UI-GH891-COMMENT-BODY-NAV",
+        "UI-GH891-COMMENT-THREAD-COUNT",
+        "UI-GH110-COMMENT-IDENTITY",
+        "UI-GH891-COMMENT-BODY-INDENT",
+        "UI-GH891-COMMENT-BODY-PASTE",
+        "UI-GH110-COMMENT-CREATION-JUMP",
+        "UI-GH891-COMMENT-BODY-ENTER",
+        "UI-GH891-JOURNAL-MARGIN",
+        "UI-GH891-MARGIN-ORDER",
+        "UI-MARGIN-INLINE-UNDER-BLOCK",
+        "UI-GH891-TOUCH-COMMENT-METADATA",
+        "REG-GH110-FORMFEED-LAYOUT",
+        "REG-GH110-MIXED-EOL-RETAINED",
+        "UI-GH110-FLAT-THREADS",
+        "UI-GH891-QUOTE-ANCHOR",
+        "UI-GH891-READ-MODE-COMMENT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH891-COMMENT-BODY-DRAG, UI-GH891-COMMENT-BODY-MERGE, UI-GH891-COMMENT-BODY-NAV, UI-GH891-COMMENT-THREAD-COUNT, UI-GH110-COMMENT-IDENTITY, UI-GH891-COMMENT-BODY-INDENT, UI-GH891-COMMENT-BODY-PASTE, UI-GH110-COMMENT-CREATION-JUMP, UI-GH891-COMMENT-BODY-ENTER, UI-GH891-JOURNAL-MARGIN, UI-GH891-MARGIN-ORDER, UI-MARGIN-INLINE-UNDER-BLOCK, UI-GH891-TOUCH-COMMENT-METADATA, REG-GH110-FORMFEED-LAYOUT, REG-GH110-MIXED-EOL-RETAINED, UI-GH110-FLAT-THREADS, UI-GH891-QUOTE-ANCHOR, UI-GH891-READ-MODE-COMMENT. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/document/commentStructure.test.ts",
+          "src/components/Block.commentStructure.test.tsx",
+          "src/components/Block.commentBulletless.test.tsx",
+          "scripts/e2e-margin-column.mjs",
+          "src/margin.test.ts",
+          "src/components/MarginColumn.test.tsx",
+          "src/keybindings.marginToggle.test.tsx",
+          "src/components/Block.marginComment.test.tsx",
+          "scripts/shot-margin-create.mjs",
+          "src/components/Page.marginRoutes.test.tsx",
+          "scripts/e2e-margin-comment.mjs",
+          "scripts/shot-margin-position.mjs",
+          "src/components/Block.commentEditing.test.tsx",
+          "crates/tine-store/tests/save_layout_retention.rs::form_feed_layout_keeps_its_bytes",
+          "crates/tine-store/src/model/md_fidelity_corpus_tests.rs::md_fidelity_corpus",
+          "crates/tine-store/tests/save_layout_retention.rs::a_mixed_ending_page_keeps_each_untouched_terminator",
+          "src/comments.test.ts",
+          "src/components/RenderedSelectionToolbar.test.tsx",
+          "scripts/shot-gh375-rendered-selection.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "iOS Betas install as the separate amber Tine Beta app, with their own settings, graph folders and share inbox, alongside the App Store app (GH #890).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH890-IOS-BETA-SEPARATE-APP",
+        "REG-OG-IOS-TESTFLIGHT-IDENTITY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH890-IOS-BETA-SEPARATE-APP, REG-OG-IOS-TESTFLIGHT-IDENTITY. Fail-before: At f391144ef, the new appIdentity.guard.test.ts assertion fails, proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/test-ios-distribution.mjs",
+          "src/appIdentity.guard.test.ts",
+          "crates/tine-core/src/guide.rs::ios_guide_says_where_graphs_live_and_that_plugins_stay_off"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A sync copy identical to its page no longer sticks as a conflict that says there is nothing to decide: identical copies go to Tine's trash on their own, including the second of two identical copies after the first is resolved, and a copy that only looks identical offers Discard copy (GH #875).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH875-IDENTICAL-SYNC-COPY",
+        "UI-GH875-IDENTICAL-LIVE-CONFLICT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH875-IDENTICAL-SYNC-COPY, UI-GH875-IDENTICAL-LIVE-CONFLICT. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-graph-features/tests/f8_concord.rs",
+          "src/components/ConflictResolution.test.tsx",
+          "scripts/e2e-beta-sync-copy-875.mjs",
+          "crates/tine-store/src/page_host/driver_tests.rs",
+          "crates/tine-store/src/page_host/mutation_tests.rs",
+          "src/components/ConflictBar.test.tsx",
+          "scripts/e2e-beta-conflict-875.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Renaming a page keeps its file in its current subfolder, including Org files and namespace children (GH #904).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH904-RENAME-SUBFOLDER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH904-RENAME-SUBFOLDER. Fail-before: proven on f391144ef. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-graph-features/tests/page_rename_subfolder.rs",
+          "scripts/e2e-beta-page-paths.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "An externally moved page no longer stays hidden behind a stale path: late page-index updates drop absent files, and an incomplete launch checkpoint rebuilds from disk (GH #905).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH905-MOVED-PAGE-CHECKPOINT",
+        "REG-GH905-MISSING-PATH-PUBLICATION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH905-MOVED-PAGE-CHECKPOINT, REG-GH905-MISSING-PATH-PUBLICATION. Fail-before: proven, proven on f391144ef with an incomplete-baseline synthetic checkpoint. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/src/store/checkpoint_path_tests.rs",
+          "scripts/e2e-beta-page-paths.mjs",
+          "crates/tine-store/src/page_host/binding_path_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page embeds keep the source outline's order after structural edits, and preserve folded branches while the source page is loading (GH #868).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH868-EMBED-OUTLINE",
+        "UI-GH868-PAGE-EMBED-SOURCE-FOLDS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH868-EMBED-OUTLINE, UI-GH868-PAGE-EMBED-SOURCE-FOLDS. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.embedOutline.test.tsx",
+          "scripts/e2e-gh868-embed-outline.mjs",
+          "src/components/LiveRefGroup.embedFolds.test.tsx",
+          "src/components/Block.pageEmbedOccurrence.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On Android, opening the keyboard leaves about three body lines below the caret so children of short blocks stay visible, while keeping the edited line below pinned parents (GH #783).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH783-KEYBOARD-CHILDREN",
+        "UI-GH783-KEYBOARD-SETTLE",
+        "UI-GH783-ANDROID-TALL-BLOCK-CARET-OFF-TOP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH783-KEYBOARD-CHILDREN, UI-GH783-KEYBOARD-SETTLE, UI-GH783-ANDROID-TALL-BLOCK-CARET-OFF-TOP. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/editor/caretReveal.test.ts",
+          "src/components/MobileKeyboardToolbar.caretAfterResize.test.tsx",
+          "src/components/MobileKeyboardToolbar.test.tsx",
+          "src/components/MobileKeyboardToolbar.tallEditor.test.tsx",
+          "scripts/check-mobile-caret-settle.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Deleting or merging a horizontal-rule bullet no longer lets its retiring editor replace the page with an error (GH #906).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH906-DELETE-RENDERED-BLOCK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH906-DELETE-RENDERED-BLOCK. Fail-before: reconstructed. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.deleteRendered.test.tsx",
+          "src/components/Block.renderFailure.test.tsx",
+          "scripts/e2e-gh906-delete-rendered.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Search tabs keep their result rows and scroll position usable while the graph is being written through the CLI; unrelated edits skip the search refresh and matching edits update without replacing unchanged rows (GH #907).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH907-SEARCH-WRITE-CHURN"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH907-SEARCH-WRITE-CHURN. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/QueryWorkspace.churn.test.tsx",
+          "src/document/externalFreshness.test.ts",
+          "src/querySubscription.test.tsx",
+          "src/resultMembership.test.tsx",
+          "crates/tine-store/tests/change_summary.rs",
+          "scripts/e2e-search-write-churn.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A journal title or other physical page route refused during a temporary sync gap now retries automatically when its file returns, without requiring a graph switch (GH #863).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH863-PINNED-ROUTE-RECOVERY",
+        "UI-GH863-JOURNAL-PHYSICAL-OPEN"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH863-PINNED-ROUTE-RECOVERY, UI-GH863-JOURNAL-PHYSICAL-OPEN. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-beta-win-863-809.mjs",
+          "src/components/Page.pathRecovery.test.tsx",
+          "src/components/Page.virtualJournalTarget.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "`tine` commands run from the folder that contains a graph (for example your home folder, with the graph in `~/logseq`) no longer treat that folder as the graph, which listed Logseq backup copies as pages and journals as plain pages; they now look for the graph's `logseq/config.edn` (GH #908).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH908-CLI-BACKUP-HITS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH908-CLI-BACKUP-HITS. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/owner/owner_tests/page_tests.rs::cli_graph_discovery_needs_logseq_config_not_a_bare_logseq_folder",
+          "src-tauri/src/owner/owner_tests/page_tests.rs::cli_reads_ignore_logseq_backups_cold_and_from_checkpoint"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A wide table in a nested block no longer has the outline guide lines of its parent blocks drawn through its header and rows on narrow windows, split panes and the sidebar (GH #909).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH909-TABLE-COVERS-OUTLINE-GUIDES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH909-TABLE-COVERS-OUTLINE-GUIDES. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/shot-table-bleed.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "The first-comment name question asks “How should your comments be signed?” without mentioning git or GitHub; when it appears and how the name is saved are unchanged (internal: UI-COMMENT-NAME-WORDING).",
+      "userVisible": true,
+      "regressions": [
+        "UI-COMMENT-NAME-WORDING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-COMMENT-NAME-WORDING. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/commentNamePrompt.test.tsx",
+          "scripts/e2e-margin-comment.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Comment threads read at one level in file order, including hand-nested replies; new replies attach directly to the thread root. Existing nesting stays unchanged on disk. Comment badges count threads, and the visibility command and setting are named Show/Hide comments (GH #110, GH #891).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH891-COMMENT-THREAD-COUNT",
+        "UI-GH110-FLAT-THREADS",
+        "UI-GH110-COMMENT-IDENTITY",
+        "UI-GH891-MARGIN-ORDER",
+        "UI-GH110-COMMENT-CREATION-JUMP",
+        "UI-MARGIN-INLINE-UNDER-BLOCK",
+        "UI-GH891-COMMENT-BODY-DRAG",
+        "UI-GH891-COMMENT-BODY-MERGE",
+        "UI-GH891-COMMENT-BODY-NAV",
+        "UI-GH891-JOURNAL-MARGIN",
+        "UI-GH891-COMMENT-BODY-INDENT",
+        "UI-GH891-COMMENT-BODY-PASTE",
+        "UI-GH891-QUOTE-ANCHOR",
+        "UI-GH891-READ-MODE-COMMENT",
+        "UI-GH891-TOUCH-COMMENT-METADATA",
+        "UI-GH891-COMMENT-BODY-ENTER",
+        "REG-GH110-FORMFEED-LAYOUT",
+        "REG-GH110-MIXED-EOL-RETAINED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH891-COMMENT-THREAD-COUNT, UI-GH110-FLAT-THREADS, UI-GH110-COMMENT-IDENTITY, UI-GH891-MARGIN-ORDER, UI-GH110-COMMENT-CREATION-JUMP, UI-MARGIN-INLINE-UNDER-BLOCK, UI-GH891-COMMENT-BODY-DRAG, UI-GH891-COMMENT-BODY-MERGE, UI-GH891-COMMENT-BODY-NAV, UI-GH891-JOURNAL-MARGIN, UI-GH891-COMMENT-BODY-INDENT, UI-GH891-COMMENT-BODY-PASTE, UI-GH891-QUOTE-ANCHOR, UI-GH891-READ-MODE-COMMENT, UI-GH891-TOUCH-COMMENT-METADATA, UI-GH891-COMMENT-BODY-ENTER, REG-GH110-FORMFEED-LAYOUT, REG-GH110-MIXED-EOL-RETAINED. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/MarginColumn.test.tsx",
+          "src/keybindings.marginToggle.test.tsx",
+          "scripts/e2e-margin-column.mjs",
+          "src/components/Block.marginComment.test.tsx",
+          "scripts/shot-margin-create.mjs",
+          "src/margin.test.ts",
+          "scripts/shot-margin-position.mjs",
+          "src/document/commentStructure.test.ts",
+          "src/components/Block.commentStructure.test.tsx",
+          "src/components/Block.commentBulletless.test.tsx",
+          "src/components/Page.marginRoutes.test.tsx",
+          "scripts/e2e-margin-comment.mjs",
+          "src/comments.test.ts",
+          "src/components/RenderedSelectionToolbar.test.tsx",
+          "scripts/shot-gh375-rendered-selection.mjs",
+          "src/components/Block.commentEditing.test.tsx",
+          "crates/tine-store/tests/save_layout_retention.rs::form_feed_layout_keeps_its_bytes",
+          "crates/tine-store/src/model/md_fidelity_corpus_tests.rs::md_fidelity_corpus",
+          "crates/tine-store/tests/save_layout_retention.rs::a_mixed_ending_page_keeps_each_untouched_terminator"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}
