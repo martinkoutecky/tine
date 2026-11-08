@@ -1,3 +1,5 @@
+@import "./math.css";
+
 * {
   box-sizing: border-box;
 }
@@ -4763,12 +4765,6 @@ mark {
 .macro-blocks {
   display: block;
   margin: 2px 0;
-}
-
-.math-display {
-  display: block;
-  margin: 6px 0;
-  text-align: center;
 }
 
 .inline-image {
