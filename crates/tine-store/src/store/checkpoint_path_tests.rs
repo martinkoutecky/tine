@@ -84,7 +84,7 @@ fn an_external_move_while_closed_retires_every_old_path() {
     );
     assert_eq!(
         view.graph
-            .block_owner_page(block)
+            .block_owner_page(block, true)
             .unwrap()
             .1
              .0
