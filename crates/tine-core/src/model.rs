@@ -836,7 +836,7 @@ pub struct GraphMeta {
     /// graph configuration's `Workflow`, not an independent edit setting.
     pub preferred_workflow: String,
     /// Configured keyboard shortcuts.
-    pub shortcuts: std::collections::HashMap<String, String>,
+    pub shortcuts: std::collections::HashMap<String, crate::config::ShortcutBinding>,
     /// First day of week in Logseq numbering (0=Monday … 6=Sunday); the
     /// frontend converts it to the date picker's JavaScript weekday index.
     pub start_of_week: u32,

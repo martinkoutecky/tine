@@ -2,6 +2,24 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-page-write-flash.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A large open page retains its outline, unchanged blocks, scroll and focused editor selection during real CLI writes to other pages, hidden blocks and a visible block; the visible change arrives live. E2E_PANES=1 checks main, split pane and sidebar together; revealing the hidden block proves its edit arrived.","blocking":false,"authority":"GH #911; UI-GH911-OPEN-PAGE-FLASH"}],
+      "acceptableVariations": ["Page size, layout, watcher and CLI latency may vary. The optional approved corpus is copied to a scratch graph before use."],
+      "nonRequirements": ["No exact pixels, fixed timing budget, macOS certification or manager release acceptance."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-multiple-hotkeys.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Settings adds a second key while keeping the default. Each opens search before and after reloading the app; both alternatives from an OG config.edn vector also open help. Note and config bytes stay unchanged.", "blocking": false, "authority": "GH #878; OG shortcut vectors" }],
+      "acceptableVariations": ["Shortcut control markup, keycap styling, timing and window geometry may vary while both alternatives run and persist."],
+      "nonRequirements": ["No exact pixels, private graph, macOS/Windows certification or release burn-in; unit and component tests cover parsing, matching, conflicts, removing, replacing and resetting."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-code-edit-toolbar.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"In both block editors, on a routed page and the journal, Copy code is available on desktop hover while editing and on touch while the caret is in code; it copies the current body and preserves the caret, then hides when the caret leaves.","blocking":false,"authority":"GH #879 items 2–3; UI-GH879-CODE-EDIT-TOOLBAR"}],
+      "acceptableVariations": ["Code card geometry, syntax highlighting, icon styling and copy notification timing may vary."],
+      "nonRequirements": ["No new Source/Delete or language buttons; no real Android keyboard, native clipboard or other platform certification. Uses the built app with its synthetic browser graph."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-editor-native.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Choosing CM6 or textarea in Settings supports native typing, Enter/Tab/Shift+Tab/Backspace merge, Up/Down between blocks, Shift+arrow and double-click text selection, plain-text and multiple-block copy/cut/paste through the native clipboard, undo/redo, page/block autocomplete acceptance, task cycling and Escape exit on a routed page.", "blocking": false },
@@ -23,6 +41,25 @@
       "contracts": [{"class":"core-operation","userOutcome":"Typing a user property value into Ctrl+K shows highlighted property evidence; Enter reveals the owning block or page header in Markdown and Org, without changing graph files.","blocking":false,"authority":"GH #870; D-20261105-SP"}],
       "acceptableVariations": ["Snippet wrapping, highlight geometry, result timing and page layout may vary."],
       "nonRequirements": ["No pixels, no hidden-key boundary enumeration (Rust tests cover it), no platform other than Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-beta-page-paths.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A page moved into a subfolder while Tine is closed opens its real content after a checkpoint restart with a stale sidebar session; GUI saves, CLI reads and tine://block links agree on the real file. Live sync-style moves and a manually repaired flattened rename also recover; CLI rename retains the folder.","blocking":false,"authority":"GH #904; GH #905; docs/storage-contract.md; REG-GH904-RENAME-SUBFOLDER; REG-GH905-MOVED-PAGE-CHECKPOINT"}],
+      "acceptableVariations": ["Watcher, save and checkpoint latency; navigation and notice layout."],
+      "nonRequirements": ["Exact pixels; automatic retargeting of an explicitly pinned missing sidebar file; reporter attachments, real Syncthing or macOS/Windows runtime certification. Malformed checkpoint coverage is tested at the store layer."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-gh868-embed-outline.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed host page, expand a page embed, open a nested task's references, enter and leave the preceding TODO, then edit embedded siblings: the source outline retains its order, depth, folded branches and editable rows. E2E_FOLDS=1 opens the source alongside the embed, folds descendants through the indent guide, checks source collapsed:: bytes and both views, then adds a visible sibling with Enter and retains it through indent/outdent. Embedded and source bullet arrows synchronize in both directions.","blocking":false,"authority":"GH #868 comments 4–6; UI-GH868-EMBED-OUTLINE; UI-GH868-PAGE-EMBED-SOURCE-FOLDS"}],
+      "acceptableVariations": ["Theme, spacing, window size, reference panel placement and rendering latency may vary."],
+      "nonRequirements": ["No exact pixel coordinates, reporter attachments, macOS certification or final release acceptance."],
+      "variants": ["EMBED_KIND=page|block", "E2E_SURFACE=main|sidebar|split|references", "E2E_FOLDS=1 checks source-backed folds and insertion; E2E_SOURCE_VIEW=sidebar|split opens the source alongside a main-pane host; main opens the source beside a sidebar host", "E2E_STRUCTURAL=1 additionally proves reparenting and Undo", "E2E_CORPUS supplies a read-only corpus that is copied before use; CSS, window size, reference placement and click timing are configurable"],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-gh906-delete-rendered.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Deleting or merging a horizontal-rule bullet through textarea keys, block selection, the context menu or cut preserves its routed page or journal and surviving siblings; the intended outline change is saved to disk.","blocking":false,"authority":"GH #906; UI-GH906-DELETE-RENDERED-BLOCK"}],
+      "acceptableVariations": ["Theme, layout, save latency and editor presentation may vary while surviving blocks remain visible and saved outline text is correct."],
+      "nonRequirements": ["No private graph, reporter screenshot, macOS runtime certification or release acceptance; boundary combinations are covered by render tests."],
       "stability":"burn-in"
     },
     "scripts/e2e-pdf-area-ref.mjs": {
@@ -47,6 +84,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"An external write during page editing preserves differing unsaved text and shows a conflict. A later identical sync delivery, or editing the draft back to the disk bytes, retires the banner and review automatically. Org, a journal in the feed, and the same page in main, split pane and sidebar retain their text through retirement.","blocking":false,"authority":"GH #875; UI-GH875-IDENTICAL-LIVE-CONFLICT"}],
       "acceptableVariations": ["Save latency, watcher delivery and page geometry may vary."],
       "nonRequirements": ["No private graph, diagnostics download, exact pixels or macOS/device certification."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-beta-sync-copy-875.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Two sync copies byte-identical to their page are discarded into Tine's trash without a review. Keep Sync copy on a differing copy writes it into the page and discards both it and its identical twin. A copy differing only by its missing final newline reads as nothing to decide and is never discarded automatically; its Discard copy button removes it and the review.","blocking":false,"authority":"GH #875; UI-GH875-IDENTICAL-SYNC-COPY"}],
+      "acceptableVariations": ["Watcher delivery timing and page geometry may vary."],
+      "nonRequirements": ["No private graph, real Syncthing, exact pixels or macOS certification."],
       "stability":"burn-in"
     },
     "scripts/e2e-beta-win-863-809.mjs": {
@@ -77,6 +120,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"A Persian task reads right to left rendered and in the editor; a horizontal arrow in its leading Latin run stays in the task and Up from the first row reaches the previous block. Note layout mirrors bullets without changing note bytes. A Persian interface relaunch keeps submenus on screen and resize grips on their physical edges.","blocking":false,"authority":"GH #823"}],
       "acceptableVariations": ["Exact geometry, settings navigation, font choice and timing may vary."],
       "nonRequirements": ["No pixel assertions, no enumeration of scripts or block kinds (scripts/shot-rtl-notes.mjs and component tests hold those), no CM6 run, no platform other than Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-workspace-flight-hang.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After a test-only native UI-thread block during Ctrl+K result > Open in new window, a background flush retains open stages and native liveness stalls. Force-kill and relaunch on the same scratch profile exposes them in the diagnostics report's previous unclean session.","blocking":false,"authority":"GH #809; ADR 0058 workspace-window stages"}],
+      "acceptableVariations": ["Window geometry, event interleaving and background flush scheduling may vary. The journey waits for persisted milestones rather than exact latency."],
+      "nonRequirements": ["No private graph, shipped hang hook, Windows multi-monitor reproduction, root-cause proof or release acceptance. Requires the Linux unit-test executable with custom-protocol assets."],
       "stability":"burn-in"
     },
     "scripts/e2e-beta-editor-862-865.mjs": {
@@ -388,7 +437,7 @@
     "scripts/e2e-embed-look.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"One block embedded on two pages shows one bullet, at the host's place. Folding its root on page A saves collapsed:: on A's host only and page B stays open; after an app restart A is still folded and B open. Folding a block below the root saves the source's collapsed:: and shows on page B, page A and the source page. Tab and Shift+Tab on the edited root move the host on its page; Move block up/down on the edited root swaps page A's host with its sibling and back while page B and the source stay byte-identical; and the bullet's Delete block removes only the host; Undo restores it (D-20261030-EMB, #417, #748).","blocking":true}],
       "acceptableVariations":["Bullet styling, menu placement, the restored tab after restart and save latency may vary while the saved bytes and the visible folds agree."],
-      "nonRequirements":["Exact pixels, page-embed folds (unchanged), drag-and-drop (component tests cover the drag owner), or native certification outside Linux WebKitGTK."],
+      "nonRequirements":["Exact pixels, page-embed folds (covered by the GH #868 journey), drag-and-drop (component tests cover the drag owner), or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-gh726-embeds.mjs": {
@@ -494,7 +543,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-embed-find.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; nested keyboard folds affect the occurrence and preserve both embedded source files; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; keyboard folds inside an embed save the nested macro host's source fold while preserving the deeper embedded page; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -935,14 +984,20 @@
       "stability": "burn-in"
     },
     "scripts/e2e-margin-comment.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "In a graph under git where no name is set, the first comment asks for a name once (the dialog says the name is a Tine setting on this device used in all graphs, and nothing is written until it is answered); the name given there is saved to the device settings, shown in Settings > Editor > Your name, and later comments do not ask again. On a routed named page in a window too narrow for the margin column, with that name set, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying tine.quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked. Comment is the rightmost speech-bubble toolbar icon with its shortcut. The thread has an expanding local reply draft; Escape and Cancel on an empty draft leave both page bytes and mtime unchanged, Enter submits an ordinary child, and Delete shares the first content line with the quote or reply text and author, without overlap or an empty action row.", "blocking": true }],
-      "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
+      "setup": "Synthetic named page and two journal files; every launch uses scratch HOME/XDG. TINE_E2E_TOUCH_GESTURES=ios enables the existing touch recognizers without changing reported platform. Injected touchstart/touchend are followed by explicit compatibility mouse events because WebDriver does not synthesize them.",
+      "contracts": [{ "class": "core-operation", "userOutcome": "In a graph under git where no name is set, the first comment asks How should your comments be signed? once without mentioning git or GitHub (the dialog says the name is a Tine setting on this device used in all graphs, and nothing is written until it is answered); the name given there is saved to the device settings, shown in Settings > Editor > Your name, and later comments do not ask again. On a routed named page in a window too narrow for the margin column, with that name set, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying tine.quote:: with the selected words and tine.author:: with that name, Enter in it adds a reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked. Comment is the rightmost speech-bubble toolbar icon with its shortcut. The thread has an expanding local reply draft; Escape and Cancel on an empty draft leave both page bytes and mtime unchanged, Enter submits an ordinary child, and Delete shares the first content line with the quote or reply text and author, without overlap or an empty action row.", "blocking": true }, { "class": "stateful-ux", "userOutcome": "An ordinary authored block hides tine.author while editing without shifting the following row, keeps its mark and chip visible, and retains exact property bytes on save. Its chip menu removes attribution while keeping a pending draft; undo restores the author. A legacy unquoted author row after a blockquote never renders as quote text, remains marked, and survives an edit and reload with the author bytes intact.", "blocking": true, "authority": "GH #894, #895; margin-comments/DESIGN.md section 10" }, {"class":"stateful-ux","userOutcome":"The wide journal feed gives each day's page its own margin column beside its prose; a long thread leaves room for the next day's text and threads. Narrowing shows the existing inline cards and widening restores the margin. Synthetic iOS taps on a root and reply edit only words, hide every tine.* property, preserve exact author and custom property bytes on save, and retain both edits after reload.","blocking":true,"authority":"GH #891 comment 1; margin-comments/DESIGN.md sections 6 and 10"}],
+      "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file.", "Journal column widths and spacing may vary while every day owns its threads beside its prose and long threads leave room for the next day."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
     },
     "scripts/e2e-margin-column.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps tine.quote::) under the unchanged commented block. Pressing t then m hides every comment thread (column, markers, marked words, cards) without changing the page file, the hidden state survives a reload, and t then m shows the threads again.", "blocking": true }],
-      "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width, card styling and the exact pixel offset of the thread beside its passage (within 2 px of the passage's top)."],
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps tine.quote::) under the unchanged commented block. Pressing t then m hides every comment thread (column, markers, marked words, cards) without changing the page file, the hidden state survives a reload, and t then m shows the threads again.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "The last repeated laborum anchors at the end; ambiguous and missing quotes remain visible. Wide threads follow passage order with stable ties; messages read flat in file pre-order without rewriting existing nesting. Badges count roots only, focus pins the card to its passage without overlapping neighbors, and Ctrl+R in a deep reply persists a direct child of the root.", "blocking": true, "authority": "GH #891 / #110; margin-comments/DESIGN.md sections 2, 3, 6 and 7 (2026-11-07)" },
+        {"class": "core-operation", "userOutcome": "On a routed page with inline comments, Delete at body end merges the next ordinary child without changing its thread; Enter on a parent whose only children are comments creates a body sibling; dragging a comment's author chip or dropping a body block in a thread does nothing, while an ordinary body drag still persists.", "blocking": false, "authority": "GH #891, GH #110; margin-comments DESIGN §1"}
+      ],
+      "setup": "The additional Margin Thread Order routed page uses only synthetic text and hand-nested replies. Every app launch uses a scratch HOME and XDG directories.",
+      "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width and card styling may vary; anchor alignment allows 2 px rounding.", "Saved indentation characters may vary while parent-child relationships and untouched nesting are preserved."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved bullets, only their nesting.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
     },
@@ -1282,6 +1337,12 @@
       "acceptableVariations": ["Scrollbar thickness, palette, overlay behavior, and platform rendering may evolve."],
       "nonRequirements": ["Exact scrollbar palette/RGB, thumb dimensions, CSS selector, or DOM structure."],
       "stability": "stable"
+    },
+    "scripts/e2e-search-write-churn.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A scrollable Search tab keeps unchanged rows mounted during unrelated and matching-page CLI writes, updates new membership while preserving the result under the pointer, and opens a lower result during ongoing writes.","blocking":false,"authority":"GH #907; UI-GH907-SEARCH-WRITE-CHURN"}],
+      "acceptableVariations": ["Search ranking, rendering and publication latency, exact row geometry and total refresh counts may vary."],
+      "nonRequirements": ["No private graph, exact pixels, macOS or Windows certification, performance benchmark or release burn-in."],
+      "stability":"burn-in"
     },
     "scripts/e2e-search-parity.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching and default accent folding, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results; search folding does not broaden exact page identity.", "blocking": true }],

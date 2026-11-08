@@ -569,12 +569,18 @@ pub(super) fn plan_rename(
             ));
         }
         let ext = Format::from_path(id.as_str().as_ref()).ext();
-        let rel = format!(
+        let basename = format!(
             "{}.{}",
             tine_core::model::encode_page_name(&new_name, config.file_name_format),
             ext
         );
-        let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
+        // OG compute-new-file-path changes only the leaf. Each namespace
+        // child keeps its own parent too; a merge keeps its survivor above.
+        let rel = match id.as_str().rsplit_once('/') {
+            Some((parent, _)) => format!("{parent}/{basename}"),
+            None => basename,
+        };
+        let to = store.file_id(Area::Graph, &rel).map_err(store_error)?;
         if !destinations.insert(to.as_str().to_owned())
             || !identities.insert(refs::normalize(&new_name))
         {

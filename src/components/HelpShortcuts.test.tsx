@@ -16,7 +16,7 @@ describe("shortcuts pane data", () => {
   it("shows both Settings defaults together in one shortcut row", () => {
     const host = document.createElement("div");
     const dispose = render(() => <ShortcutsSettingsPane shortcuts={rows()} search="Open settings" recording={null}
-      onRecord={() => {}} onReset={() => {}} onUnbind={() => {}} />, host);
+      onRecord={() => {}} onRemove={() => {}} onReset={() => {}} onUnbind={() => {}} />, host);
     try {
       const matches = [...host.querySelectorAll(".help-shortcut-row")].filter((row) => row.textContent?.includes("ui/open-settings"));
       expect(matches).toHaveLength(1);

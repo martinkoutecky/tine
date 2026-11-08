@@ -2,11 +2,12 @@ import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
-  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection, nextVisible,
+  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
+  bodyNeighbor, threadRootOf,
 } from "../document";
 import { captureEditIntent, editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
 import { navigateJournalDown } from "./journalNavigation";
@@ -246,9 +247,9 @@ export function cm6Structure(ctx: StructureContext) {
       && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return false;
     if (plain && e.key === "Escape") { selectBlock(position().id, position().scope); return true; }
     if (plain && s.empty && e.key === "Backspace") {
-      if (ctx.code() && raw === "" && !node(ctx.id).children.length) {
+      if (ctx.code() && raw === "" && !node(ctx.id).children.length && threadRootOf(ctx.id) === null) {
         const n = node(ctx.id);
-        const adjacent = [prevVisible(ctx.id, structuralScope), nextVisible(ctx.id, structuralScope)].find(id => id && node(id)?.page === n.page);
+        const adjacent = [bodyNeighbor(ctx.id, -1, structuralScope), bodyNeighbor(ctx.id, 1, structuralScope)].find(id => id && node(id)?.page === n.page);
         if (adjacent) { deleteBlock(ctx.id); startEditing(adjacent, 0, null, editSurface()); }
         else setRaw(ctx.id, "", { timetracking: false });
         return true;
@@ -265,22 +266,22 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
-      if (ctx.code() || ctx.calc()) return true;
+      if (ctx.code() || ctx.calc() || threadRootOf(ctx.id) !== null) return true;
       if (calcSource(raw) !== null) return false;
       if (removeOwnNumberedList(ctx.id)) {
         v.dispatch({ selection: { anchor: 0 } });
         return true;
       }
       if (mergeWithPrev(ctx.id, structuralScope, editSurface())) return true;
-      const n = node(ctx.id), next = nextVisible(ctx.id, structuralScope);
+      const n = node(ctx.id), next = bodyNeighbor(ctx.id, 1, structuralScope);
       if (isEditorEmpty(n.raw, BUILTIN_HIDE, ctx.format) && !n.children.length && next && node(next)?.page === n.page) {
         deleteBlock(ctx.id); startEditing(next, 0, null, editSurface()); return true;
       }
     }
     if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
-      if (ctx.code() || ctx.calc()) return true;
+      if (ctx.code() || ctx.calc() || threadRootOf(ctx.id) !== null) return true;
       if (calcSource(raw) !== null) return false;
-      const next = nextVisible(ctx.id, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
+      const next = bodyNeighbor(ctx.id, 1, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
       if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {
         if (ctx.current()) v.dispatch({ selection: { anchor: s.head } });
         return true;

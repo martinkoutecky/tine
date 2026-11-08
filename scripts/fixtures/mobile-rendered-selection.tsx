@@ -14,6 +14,7 @@ import "../../src/styles/topbar.css";
 import "../../src/styles/touchGestures.css";
 import "../../src/styles/ls-shim.css";
 import "../../src/styles/help.css";
+import "../../src/styles/comments.css";
 
 // A mobile-shaped page for scripts/shot-gh375-rendered-selection.mjs: the real
 // Block renderer, the real keyboard dock and rendered-selection toolbar, the help

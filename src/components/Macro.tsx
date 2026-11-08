@@ -584,6 +584,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const startedInSheet = sheetOpen();
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
+    // GH #911: an edit built on the reading of older block text (an external
+    // change still reparsing) would write that older query back.
+    if (!sameJson(parsed.latest?.request, parseRequest())) return refuseChanged();
     const rawAtStart = docNode(blockId).raw;
     const previousDisplay = displayEdit ? new Map(displayPropertyPatch(displayView())) : null;
     const previousGroup = displayEdit ? reading()?.view.group_by : undefined;

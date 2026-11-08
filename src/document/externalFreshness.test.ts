@@ -7,6 +7,10 @@ import { backend, type GraphChange } from "../backend";
 import { applyGraphChange, applyGraphChangesBulk, ensurePageLoaded, flushPage, installExternalChangeUiHandler, isConflicted, loadFeed, pageByName, resetStore, setRaw } from "./index";
 import { doc } from "./model";
 import { dataRev } from "../dataRevision";
+import { bumpDataRev } from "../graphSession";
+import { changed as changedKey } from "../changeKeys";
+import { applyGraphAnswers } from "../graphAnswers";
+import type { GraphAnswersChange } from "../backend";
 import { setToasts, toasts } from "../toasts";
 import { applyHeldExternalChange, dismissHeldExternalChange, heldExternalChangeFor, setConflictPolicyAlwaysAsk } from "../conflictPolicy";
 import type { BlockDto, PageDto } from "../types";
@@ -98,6 +102,40 @@ describe("a shown page no host holds", () => {
     expect(await readsFor(0)).toBe(1);
     expect(await readsFor(5)).toBe(6);
   });
+});
+
+it.each(["publication-first", "reload-first"])("GH #907: %s CLI notifications do not turn duplicate precise evidence into full search invalidation", async (order) => {
+  const answers = (rev: string): GraphAnswersChange => ({ rev, inventoryChanged: false, blockRefCounts: {},
+    summary: { rev, full: false, pages: ["elsewhere"], blocks: [], linksTo: [], queryTo: [], props: {}, inventoryChanged: false } });
+  applyGraphAnswers(answers("1")); bumpDataRev(true);
+  const before = changedKey("query:search-tab");
+  const publication = { changes: [], answers: answers("2") };
+  const reload = { ...changed("Elsewhere"), answers: answers("2") };
+  if (order === "publication-first") {
+    await applyGraphChangesBulk(publication); bumpDataRev(true);
+    await applyGraphChange(reload);
+  } else {
+    await applyGraphChange(reload);
+    await applyGraphChangesBulk(publication);
+  }
+  expect(changedKey("query:search-tab")).toBe(before);
+  // Legacy/missing evidence must still take the conservative fallback.
+  await applyGraphChange(changed("Elsewhere"));
+  expect(changedKey("query:search-tab")).not.toBe(before);
+});
+
+it("GH #907: the CLI reload releases still-staged relevant evidence so a continuous stream cannot postpone live answers", async () => {
+  const answers = (rev: string): GraphAnswersChange => ({ rev, inventoryChanged: false, blockRefCounts: {},
+    summary: { rev, full: false, pages: ["elsewhere"], blocks: [], linksTo: [], queryTo: ["search-tab"], props: {}, inventoryChanged: false } });
+  applyGraphAnswers(answers("1")); bumpDataRev(true);
+  const before = changedKey("query:search-tab");
+  await applyGraphChangesBulk({ changes: [], answers: answers("2") });
+  expect(changedKey("query:search-tab")).toBe(before);
+  await applyGraphChange({ ...changed("Elsewhere"), answers: answers("2") });
+  expect(changedKey("query:search-tab")).not.toBe(before);
+  const released = changedKey("query:search-tab");
+  await applyGraphChange({ ...changed("Elsewhere"), answers: answers("2") });
+  expect(changedKey("query:search-tab")).toBe(released);
 });
 
 describe("always ask", () => {
