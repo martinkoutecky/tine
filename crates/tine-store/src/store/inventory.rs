@@ -239,7 +239,8 @@ pub(crate) struct InventoryDelta {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InventoryScope<'a> {
     /// Active parsed file owners whose identity starts with this prefix.
-    /// One row per identity, targeting the active file; no alias resolution.
+    /// One row per identity, targeting the active file; no alias resolution,
+    /// `link` or `parent` (callers read names only).
     ActiveFilesUnder(&'a str),
     /// The file-claimed name of this page in this view, if present.
     File(&'a PageId),
@@ -371,6 +372,7 @@ impl WholeGraph {
                                 day: entry.date_key.map(Day),
                                 link: None,
                                 namespace_parent: false,
+                                parent: None,
                                 empty_alias: false,
                             })
                         })
