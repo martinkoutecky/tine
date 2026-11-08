@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Context-menu rows use a consistent font size and family, including the page menu's **Copy as** submenu (GH #916).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 
 ## [0.9.0-beta.9] - 2026-11-08

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-context-menu-font.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Every visible page and block context-menu row, including hovered Copy as and view submenu rows, uses the same font size and interface font family on a routed page in desktop and narrow touch-stylesheet layouts.","blocking":false,"authority":"GH #916; UI-GH916-CONTEXT-MENU-FONT"}],
+      "acceptableVariations": ["Font face, common size, menu geometry and theme may vary; equality across rows and inheritance of the interface family are material."],
+      "nonRequirements": ["No exact pixels, menu structure or behavior changes, real touch gestures, macOS/Windows/iOS/Android runtime certification or release acceptance."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-page-write-flash.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A large open page retains its outline, unchanged blocks, scroll and focused editor selection during real CLI writes to other pages, hidden blocks and a visible block; the visible change arrives live. E2E_PANES=1 checks main, split pane and sidebar together; revealing the hidden block proves its edit arrived.","blocking":false,"authority":"GH #911; UI-GH911-OPEN-PAGE-FLASH"}],
       "acceptableVariations": ["Page size, layout, watcher and CLI latency may vary. The optional approved corpus is copied to a scratch graph before use."],
