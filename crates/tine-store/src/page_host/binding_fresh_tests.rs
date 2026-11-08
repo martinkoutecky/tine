@@ -1163,7 +1163,7 @@ fn a_journal_claimant_is_promoted_after_arrival_removal_and_held_reload() {
         let live = Live::watching(
             &[
                 ("pages/a.md", "- a\n"),
-                ("journals/2026-10-02.md", "- fallback [[a]]\n"),
+                ("journals/2026_10_02.md", "- fallback [[a]]\n"),
                 ("logseq/config.edn", "{}\n"),
             ],
             watch,
@@ -1172,10 +1172,15 @@ fn a_journal_claimant_is_promoted_after_arrival_removal_and_held_reload() {
             store
                 .whole_graph()
                 .unwrap()
-                .explicit_referrers(&["a".to_owned()])
+                .corpus(None, true)
+                .pages
+                .into_iter()
+                .filter(|page| page.kind == tine_core::model::PageKind::Journal)
+                .map(|page| page.id)
+                .collect::<Vec<_>>()
         };
-        let fallback = PageId::from("journals/2026-10-02.md");
-        let preferred = PageId::from("journals/2026_10_02.md");
+        let fallback = PageId::from("journals/2026_10_02.md");
+        let preferred = PageId::from("journals/2026-10-02.md");
         assert_eq!(referrers(&live.store), [fallback.clone()]);
         fs::write(live.root.join(preferred.as_str()), "- preferred [[a]]\n").unwrap();
         assert!(live
@@ -1262,27 +1267,22 @@ fn a_twin_claimed_name_keeps_its_icon_across_a_config_reload() {
 }
 
 #[test]
-fn a_twin_icon_uses_filename_precedence_and_preserves_an_absent_icon() {
+fn a_twin_icon_uses_path_precedence_and_preserves_an_absent_icon() {
     for icon in ["", "icon:: 🚀\n"] {
         let temp = tempfile::tempdir().unwrap();
         fs::create_dir(temp.path().join("pages")).unwrap();
-        // The title-only claimant sorts earlier and has a Markdown extension;
-        // the matching filename still wins, even without an icon of its own.
+        // The earlier title-only claimant wins, including its absent icon.
         fs::write(
             temp.path().join("pages/AAA.md"),
-            "title:: Delta\nicon:: 📚\n\n- other\n",
+            format!("title:: Delta\n{icon}\n- winner\n"),
         )
         .unwrap();
-        fs::write(
-            temp.path().join("pages/Delta.org"),
-            format!("{}* winner\n", icon.replace("icon::", "#+icon:")),
-        )
-        .unwrap();
+        fs::write(temp.path().join("pages/Delta.org"), "#+icon: 📚\n* other\n").unwrap();
         let store = Store::open(temp.path(), Default::default()).unwrap().0;
         let view = store.whole_graph().unwrap();
         assert!(
             matches!(view.resolve("Delta", false), crate::Resolved::Existing { id, others }
-            if id.as_str() == "pages/Delta.org" && others.len() == 1)
+            if id.as_str() == "pages/AAA.md" && others.len() == 1)
         );
         let icons = view.page_icons(&["Delta".to_owned()]);
         assert_eq!(

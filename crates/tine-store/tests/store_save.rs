@@ -348,7 +348,7 @@ fn own_write_before_initial_load_is_in_first_snapshot() {
     fs::remove_file(fixture.0.join(".tine-test-pause-load")).unwrap();
     let first = store.whole_graph().unwrap();
     assert!(first
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .iter()
         .any(|page| page.id == id.as_str()));
@@ -778,7 +778,7 @@ fn own_journal_creation_updates_day_and_published_answers() {
     writer
         .save(crate::EditKind::ReplacePage, &id, SaveBase::CreateNew, &doc)
         .unwrap();
-    assert_eq!(store.journal_id(crate::Day(20260925)), id);
+    assert_eq!(store.journal_id(crate::Day(20260925), false), id);
     let view = store.whole_graph().unwrap();
     assert!(matches!(
         view.resolve("Sep 25th, 2026", true),

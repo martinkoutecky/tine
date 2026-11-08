@@ -92,7 +92,7 @@ fn save_text(store: &std::sync::Arc<Store>, read: &PageRead, text: &str) {
 fn assert_holds(store: &Store, root: &Path, name: &str, text: &str) {
     let view = store.whole_graph().unwrap();
     assert!(
-        view.corpus(None)
+        view.corpus(None, false)
             .pages
             .iter()
             .any(|page| page.name == name && page.document.roots[0].raw().contains(text)),

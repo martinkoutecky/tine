@@ -443,19 +443,66 @@ fn classify(input: &Value, model: &Value, mut diff: Diff) -> Diff {
         && diff.keys.iter().any(|key| {
             files.iter().any(|f| {
                 name(f) == *key
+                    && model["activeFiles"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&f["path"])
                     && f["text"]
                         .as_str()
                         .unwrap()
                         .lines()
                         .all(|line| line.trim().is_empty() || matches!(line.trim(), "-" | "*"))
-            }) && edges
-                .iter()
-                .any(|(a, b)| b == key && a != key && diff.keys.contains(a))
+            }) && files.iter().any(|f| {
+                model["activeFiles"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&f["path"])
+                    && name(f) != *key
+                    && diff.keys.contains(&name(f))
+                    && strings(&f["aliases"])
+                        .iter()
+                        .any(|alias| page_key(alias) == *key)
+            })
         });
-    let gap = if losing_block || !diff.keys.is_disjoint(&twin_keys) {
+    // Active ordinary date files retain their own spelling (KD/P2). Their
+    // link relation can still expand the same day's journal spellings (G11),
+    // even when an unrelated losing twin shares the source's key.
+    let real_date_link = diff.class == "links"
+        && files.iter().any(|f| {
+            f["dir"] == "pages"
+                && model["activeFiles"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&f["path"])
+                && input["canonicalDates"].as_object().is_some_and(|dates| {
+                    dates.iter().any(|(literal, canonical)| {
+                        name(f) == page_key(literal)
+                            && canonical
+                                .as_str()
+                                .is_some_and(|key| diff.keys.contains(key))
+                            && files.iter().any(|source| {
+                                model["activeFiles"]
+                                    .as_array()
+                                    .unwrap()
+                                    .contains(&source["path"])
+                                    && diff.keys.contains(&name(source))
+                                    && source["blocks"].as_array().unwrap().iter().any(|block| {
+                                        block["occ"].as_array().unwrap().iter().any(|occ| {
+                                            page_key(occ[1].as_str().unwrap()) == page_key(literal)
+                                        })
+                                    })
+                            })
+                    })
+                })
+        });
+    let gap = if losing_block {
         "G1/B1"
     } else if empty_redirect {
         "G2/B2"
+    } else if real_date_link {
+        "G11/B2a"
+    } else if !diff.keys.is_disjoint(&twin_keys) {
+        "G1/B1"
     } else if !diff.keys.is_disjoint(&date_keys) {
         "G11/B2a"
     } else {

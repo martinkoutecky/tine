@@ -1289,7 +1289,11 @@ pub(crate) async fn resolve_block(
     state: GraphContext<'_>,
 ) -> Result<Option<RefGroup>, String> {
     off_ui_graph_read(&state, move |view| {
-        Ok(view.blocks(&[uuid]).map_err(query_error)?.pop().flatten())
+        Ok(view
+            .blocks(&[uuid], true)
+            .map_err(query_error)?
+            .pop()
+            .flatten())
     })
     .await
 }
@@ -1299,7 +1303,10 @@ pub(crate) async fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
-    off_ui_graph_read(&state, move |view| view.blocks(&uuids).map_err(query_error)).await
+    off_ui_graph_read(&state, move |view| {
+        view.blocks(&uuids, true).map_err(query_error)
+    })
+    .await
 }
 
 /// Explicit, bounded subtree resolution for hover previews. Ordinary

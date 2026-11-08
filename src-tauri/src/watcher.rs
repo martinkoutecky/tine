@@ -95,7 +95,7 @@ pub(crate) async fn set_watch_mode(
 /// Spotlight's page updates include edits made by this window.
 fn spotlight_events(change: &Change) -> crate::spotlight::Changed {
     if change.origin == Origin::Own {
-        // Own publications intentionally have no Change::page entries. The
+        // Own publications intentionally have no Change::pages entries. The
         // existing answer envelope carries affected old/new name keys, including
         // removals and title changes; Spotlight resolves them on its worker.
         let answers = serde_json::to_value(change).expect("Change answer serialization");
@@ -121,21 +121,22 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
     }
     let mut events = Vec::new();
     let mut conflicts_dirty = false;
-    for (id, kind, _) in &change.files {
+    for (id, _, _) in &change.files {
         if id.as_str().starts_with("assets/") {
             continue; // the asset lane (`asset_event_payload`), never a page
         }
         if tine_core::model::path_is_sync_conflict(Path::new(id.as_str())) {
             conflicts_dirty = true;
-        } else if let Some((page_kind, name)) = change.page(id) {
-            events.push(GraphChange {
-                path: id.as_str().to_owned(),
-                name: name.to_owned(),
-                kind: page_kind,
-                created: matches!(kind, ChangeKind::Created),
-                removed: matches!(kind, ChangeKind::Removed),
-            });
         }
+    }
+    for (id, kind, page_kind, name) in change.pages() {
+        events.push(GraphChange {
+            path: id.as_str().to_owned(),
+            name: name.to_owned(),
+            kind: page_kind,
+            created: matches!(kind, ChangeKind::Created),
+            removed: matches!(kind, ChangeKind::Removed),
+        });
     }
     (events, conflicts_dirty)
 }
@@ -455,7 +456,7 @@ fn publication_event_payloads(
     // A name-only inventory change carries its entries, so the window patches
     // its name maps instead of refetching the inventory (cost-model audit
     // 2026-11-02, row 1). Absent: the window refetches as before.
-    if let Some(delta) = change.inventory_delta() {
+    if let Some(delta) = change.inventory_delta().1 {
         answers["inventoryDelta"] =
             serde_json::to_value(crate::commands::discovery::inventory_delta_wire(delta))
                 .expect("inventory delta serialization");
@@ -833,15 +834,22 @@ mod tests {
 
     /// Scan-refresh an external edit and return the window events it yields.
     fn events_after(slot: &GraphSlot, edit: impl FnOnce()) -> Vec<GraphChange> {
+        changes_after(slot, edit)
+            .iter()
+            .flat_map(|change| window_events(change).0)
+            .collect()
+    }
+
+    fn changes_after(slot: &GraphSlot, edit: impl FnOnce()) -> Vec<Change> {
         slot.store.whole_graph().unwrap();
         let subscription = slot.store.subscribe();
         edit();
         slot.store.refresh(tine_store::Depth::Stamps).unwrap();
-        let mut events = Vec::new();
+        let mut changes = Vec::new();
         while let Some(change) = subscription.try_recv().unwrap() {
-            events.extend(window_events(&change).0);
+            changes.push(change);
         }
-        events
+        changes
     }
 
     fn atomic_write(root: &Path, rel: &str, text: &str) {
@@ -921,6 +929,150 @@ mod tests {
         );
         drop(slot);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn graph_changes_follow_active_claimant_transitions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("pages")).unwrap();
+        std::fs::create_dir(root.join("journals")).unwrap();
+        atomic_write(root, "pages/A.md", "title:: Shared\n- first\n");
+        atomic_write(root, "pages/Z.md", "title:: Shared\n- losing\n");
+        atomic_write(root, "journals/2026_07_10.md", "- journal\n");
+        let store = tine_store::Store::open(
+            root,
+            tine_store::OpenOptions {
+                watch: WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        let slot = GraphSlot::new(store, root.to_path_buf());
+        let modified = |path: &str, name: &str, kind| GraphChange {
+            path: path.into(),
+            name: name.into(),
+            kind,
+            created: false,
+            removed: false,
+        };
+        let changes = changes_after(&slot, || {
+            atomic_write(
+                root,
+                "pages/Z.md",
+                "title:: Shared\nalias:: Hidden\n- losing edited [[HiddenTarget]]\n",
+            )
+        });
+        assert!(!changes.is_empty(), "physical evidence is still published");
+        for change in &changes {
+            assert!(window_events(change).0.is_empty());
+            assert!(spotlight_events(change).is_empty());
+            assert!(change
+                .files
+                .iter()
+                .any(|(id, _, _)| id.as_str() == "pages/Z.md"));
+            assert_eq!(change.inventory_delta(), (false, None));
+            let wire = serde_json::to_value(change).unwrap();
+            assert_eq!(wire["summary"]["pages"], serde_json::json!([]));
+            assert_eq!(wire["summary"]["full"], false);
+            assert_eq!(wire["blockRefCounts"], serde_json::json!({}));
+        }
+        // A loser retitle can add/remove another active page while the
+        // Shared opening remains unchanged.
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/Z.md",
+                "title:: Detached\n- detached\n"
+            )),
+            vec![modified("pages/Z.md", "Detached", PageKind::Page)]
+        );
+        let removed = GraphChange {
+            removed: true,
+            ..modified("pages/Z.md", "Detached", PageKind::Page)
+        };
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/Z.md",
+                "title:: Shared\n- losing again\n"
+            )),
+            vec![removed]
+        );
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/A.md",
+                "title:: Elsewhere\n- moved\n"
+            )),
+            vec![
+                modified("pages/A.md", "Elsewhere", PageKind::Page),
+                modified("pages/Z.md", "Shared", PageKind::Page),
+            ]
+        );
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/A.md",
+                "title:: Shared\n- returned\n"
+            )),
+            vec![modified("pages/A.md", "Shared", PageKind::Page)]
+        );
+        assert_eq!(
+            events_after(&slot, || std::fs::remove_file(root.join("pages/A.md"))
+                .unwrap()),
+            vec![modified("pages/Z.md", "Shared", PageKind::Page)]
+        );
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/A.md",
+                "title:: Shared\n- recreated\n"
+            )),
+            vec![GraphChange {
+                created: true,
+                ..modified("pages/A.md", "Shared", PageKind::Page)
+            }]
+        );
+        // Claim transitions also promote/demote an unchanged journal across
+        // kinds without calling its retained physical file a removal.
+        events_after(&slot, || {
+            atomic_write(
+                root,
+                "pages/A.md",
+                "title:: Jul 10th, 2026\n- ordinary date\n",
+            )
+        });
+        assert!(events_after(&slot, || atomic_write(
+            root,
+            "journals/2026_07_10.md",
+            "- inactive journal edit\n"
+        ))
+        .is_empty());
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/A.md",
+                "title:: Elsewhere\n- away\n"
+            )),
+            vec![
+                modified("pages/A.md", "Elsewhere", PageKind::Page),
+                modified(
+                    "journals/2026_07_10.md",
+                    "Jul 10th, 2026",
+                    PageKind::Journal
+                ),
+            ]
+        );
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "pages/A.md",
+                "title:: Jul 10th, 2026\n- ordinary date again\n"
+            )),
+            vec![modified("pages/A.md", "Jul 10th, 2026", PageKind::Page)]
+        );
     }
 
     #[test]

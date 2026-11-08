@@ -13,13 +13,6 @@
         ],
         "name": "A",
         "pages": []
-      },
-      {
-        "aliases": [
-          "2026-10-26"
-        ],
-        "name": "a",
-        "pages": []
       }
     ],
     "inventory": [
@@ -47,22 +40,7 @@
         "target": {
           "id": "pages/A.md",
           "kind": "existing",
-          "others": [
-            "pages/b.md"
-          ]
-        }
-      },
-      {
-        "day": null,
-        "is_journal": false,
-        "key": "a",
-        "name": "a",
-        "target": {
-          "id": "pages/A.md",
-          "kind": "existing",
-          "others": [
-            "pages/b.md"
-          ]
+          "others": []
         }
       },
       {
@@ -99,12 +77,6 @@
       "kind": "page",
       "name": "Notes",
       "path": "pages/Notes.md"
-    },
-    {
-      "date_key": null,
-      "kind": "page",
-      "name": "a",
-      "path": "pages/b.md"
     }
   ],
   "exported_at": "",
@@ -131,16 +103,6 @@
       "pre_block": null,
       "read_only": true,
       "title": "Notes"
-    },
-    {
-      "blocks": [],
-      "format": "md",
-      "kind": "page",
-      "name": "a",
-      "path": "pages/b.md",
-      "pre_block": null,
-      "read_only": true,
-      "title": "a"
     }
   ],
   "queries": [],

@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use tine_graph_features::assets::{self, TrashOutcome};
 use tine_store::{ChangeKind, OpenOptions, Store, Subscription, WatchMode};
 
-const KEEPER: &str = "journals/2026_10_02.md";
-const STRAY: &str = "journals/2026-10-02.md";
+const KEEPER: &str = "journals/2026-10-02.md";
+const STRAY: &str = "journals/2026_10_02.md";
 
 fn cold(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
     let files: Vec<_> = files
@@ -47,7 +47,10 @@ fn case(label: &str, keeper: &str, stray: &str) {
         (STRAY, stray),
         ("assets/photo.png", "png-bytes"),
     ]);
-    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 1);
+    assert_eq!(
+        store.whole_graph().unwrap().corpus(None, false).pages.len(),
+        2
+    );
     let listed: Vec<String> = assets::orphan_assets(&store)
         .unwrap()
         .into_iter()
@@ -67,7 +70,10 @@ fn case(label: &str, keeper: &str, stray: &str) {
         "{label}: trash_asset authorized trashing an asset the stray references: {outcome:?}"
     );
     assert!(still_there, "{label}: referenced asset was moved to trash");
-    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 1);
+    assert_eq!(
+        store.whole_graph().unwrap().corpus(None, false).pages.len(),
+        2
+    );
 }
 
 /// Control: the reference in the presentation (keeper) file is counted.
@@ -137,7 +143,7 @@ fn l8_03_watcher_arrival_protects_the_asset_and_removal_releases_it() {
     let before: Vec<_> = store
         .whole_graph()
         .unwrap()
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .into_iter()
         .map(|page| page.id)
@@ -152,13 +158,16 @@ fn l8_03_watcher_arrival_protects_the_asset_and_removal_releases_it() {
     let after: Vec<_> = store
         .whole_graph()
         .unwrap()
-        .corpus(None)
+        .corpus(None, false)
         .pages
         .into_iter()
         .map(|page| page.id)
         .collect();
     assert_eq!(after, before);
-    assert_eq!(store.journal_id(tine_store::Day(20261002)).as_str(), KEEPER);
+    assert_eq!(
+        store.journal_id(tine_store::Day(20261002), false).as_str(),
+        KEEPER
+    );
     assert_eq!(
         fs::read_to_string(root.path().join(KEEPER)).unwrap(),
         "- the day\n"
@@ -253,7 +262,10 @@ fn l8_03_trash_rechecks_stray_after_a_watcher_publication() {
         TrashOutcome::Referenced
     );
     assert!(root.path().join("assets/photo.png").exists());
-    assert_eq!(store.whole_graph().unwrap().corpus(None).pages.len(), 1);
+    assert_eq!(
+        store.whole_graph().unwrap().corpus(None, false).pages.len(),
+        2
+    );
 }
 
 #[test]

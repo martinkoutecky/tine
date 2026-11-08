@@ -82,6 +82,11 @@ impl ReadSnapshot {
                 .get(path)
                 .and_then(|&i| self.pages.get(i))
                 .filter(|(e, _)| e.rel_path_str() == path);
+            // A physical losing twin has no semantic document on either
+            // side. Its edit must not force full query invalidation.
+            if before.is_none() && after.is_none() {
+                continue;
+            }
             let (Some((_, previous)), Some((entry, current))) = (before, after) else {
                 return None;
             };

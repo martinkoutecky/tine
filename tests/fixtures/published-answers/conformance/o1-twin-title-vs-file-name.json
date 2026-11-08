@@ -20,24 +20,9 @@
         "key": "zed",
         "name": "ZED",
         "target": {
-          "id": "pages/zed.md",
+          "id": "pages/a.md",
           "kind": "existing",
-          "others": [
-            "pages/a.md"
-          ]
-        }
-      },
-      {
-        "day": null,
-        "is_journal": false,
-        "key": "zed",
-        "name": "zed",
-        "target": {
-          "id": "pages/zed.md",
-          "kind": "existing",
-          "others": [
-            "pages/a.md"
-          ]
+          "others": []
         }
       }
     ],
@@ -63,12 +48,6 @@
       "kind": "page",
       "name": "ZED",
       "path": "pages/a.md"
-    },
-    {
-      "date_key": null,
-      "kind": "page",
-      "name": "zed",
-      "path": "pages/zed.md"
     }
   ],
   "exported_at": "",
@@ -95,16 +74,6 @@
       "pre_block": null,
       "read_only": true,
       "title": "ZED"
-    },
-    {
-      "blocks": [],
-      "format": "md",
-      "kind": "page",
-      "name": "zed",
-      "path": "pages/zed.md",
-      "pre_block": null,
-      "read_only": true,
-      "title": "zed"
     }
   ],
   "queries": [],

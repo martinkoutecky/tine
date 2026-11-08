@@ -255,11 +255,11 @@ fn journal_identity_stays_available_after_close_without_disk() {
     store.close();
     std::fs::remove_dir_all(fixture.root().join("journals")).unwrap();
     assert_eq!(
-        store.journal_id(crate::Day(20260925)).as_str(),
+        store.journal_id(crate::Day(20260925), false).as_str(),
         "journals/2026_09_25.md"
     );
     assert_eq!(
-        store.journal_id(crate::Day(20260926)).as_str(),
+        store.journal_id(crate::Day(20260926), false).as_str(),
         "journals/2026_09_26.md"
     );
 }

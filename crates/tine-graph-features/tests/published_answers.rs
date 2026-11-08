@@ -241,13 +241,13 @@ const PRIVATE_A: &[(&str, &str)] = &[
     ("pages/PRIVATE-HOST.md", "- PRIVATE-HOST host\n"),
 ];
 
-/// Private pages of graph B: a second claimant of an exported name, an alias
+/// Private pages of graph B: a later-path claimant of an exported name, an alias
 /// declaration bridging two exported pages' groups, and a declarer of the
 /// exported empty file's name. Each would change a live answer of the whole
 /// graph; none may change the published one.
 const PRIVATE_B: &[(&str, &str)] = &[
     (
-        "pages/Other.md",
+        "pages/Z-Other.md",
         "title:: Topic\npublic:: false\n\n- PRIVATE-CLAIMANT\n",
     ),
     (

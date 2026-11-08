@@ -220,9 +220,9 @@ impl Graph {
         read: &Arc<ReadSnapshot>,
     ) -> Result<GraphState<PagesOut>, NotCaptured> {
         let (failures, disk_revs, vcs_anchored) =
-            self.checkpoint_rows(&read.pages, read.cache_generation)?;
+            self.checkpoint_rows(&read.physical_pages, read.cache_generation)?;
         Ok(GraphState {
-            pages: PagesOut(Arc::clone(&read.pages)),
+            pages: PagesOut(Arc::clone(&read.physical_pages)),
             cache_generation: read.cache_generation,
             observed_mtimes: Arc::clone(&read.observed_mtimes),
             failures,
@@ -259,6 +259,7 @@ impl Graph {
         };
         let state = state.map_pages(|pages| PagesOut(pages.into_pages(root)));
         let pages = state.pages.0;
+        let physical_pages = Arc::clone(&pages);
         let mut list = state.list;
         list.rows = list
             .rows
@@ -270,16 +271,23 @@ impl Graph {
             })
             .collect();
         let list = Arc::new(EntryList::from_parts(list));
+        // Rebind local paths omitted by PageEntry's wire representation.
+        let real_page_names = Arc::new(crate::query::RealPageNames::capture(
+            None,
+            &physical_pages,
+            &[],
+        ));
+        let (pages, _) = active_pages::capture(&physical_pages, &real_page_names, None, &[]);
         let mut reference = state.reference_candidate_index;
         reference.positions = Arc::clone(&pages.positions);
         let derived = state.derived;
-        let block_index = derived.block_index.into_index(&pages)?;
+        let block_index = derived.block_index.into_index(&physical_pages)?;
         let query_index = crate::query::index::QueryIndexSlot::from_checkpoint(
             derived.query_index,
             &pages.positions,
         );
         self.install_checkpoint_rows(
-            &pages,
+            &physical_pages,
             &state.observed_mtimes,
             state.failures,
             (state.disk_revs, state.vcs_anchored),
@@ -300,9 +308,12 @@ impl Graph {
             })
             .map(Arc::new);
         let mut read = ReadSnapshot {
+            physical_pages,
             pages,
+            semantic_changed_paths: Vec::new(),
             config,
             list: Arc::clone(&list),
+            active_list: std::sync::OnceLock::new(),
             observed_mtimes: state.observed_mtimes,
             explicit_index: state.explicit_index,
             reference_candidate_index: RwLock::new(reference),
@@ -313,7 +324,7 @@ impl Graph {
             asset_refs: std::sync::OnceLock::new(),
             referenced_name_table: std::sync::OnceLock::new(),
             day_support: std::sync::OnceLock::new(),
-            real_page_names: state.real_page_names,
+            real_page_names,
             alias_relation: cell(alias_relation),
             link_graph: std::sync::OnceLock::new(),
             referenced_names: cell(derived.referenced_names),
@@ -364,7 +375,7 @@ pub(crate) struct DerivedState {
 impl DerivedState {
     fn of(read: &ReadSnapshot) -> DerivedState {
         DerivedState {
-            block_index: BlockIndexState::Out(Arc::clone(&read.pages)),
+            block_index: BlockIndexState::Out(Arc::clone(&read.physical_pages)),
             referenced_name_index: read.referenced_name_index.get().cloned(),
             aliases: read
                 .alias_relation
