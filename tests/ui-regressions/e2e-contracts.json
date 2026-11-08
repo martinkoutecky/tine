@@ -390,6 +390,12 @@
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"
     },
+    "scripts/e2e-palette-pointer.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Clicking a command, page, block or create-page row acts once in the focused split pane, closes the palette and keeps the main pane's page; Enter still runs the highlighted command.", "blocking": true }],
+      "acceptableVariations": ["Row ranking, geometry, focus decoration and save latency may vary."],
+      "nonRequirements": ["Exact event sequences or DOM nesting; touch and pen hardware; certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-journal-template-cold.mjs": {
       "contracts": [
         {"class":"exact-safety-interoperability","userOutcome":"On a cold launch of the realistic 10k graph with a configured daily template and no file for today, the template's rows fill today exactly once with its variables resolved, and today's file is written once through the guarded save; a launch with a launch checkpoint does the same.","blocking":true,"authority":"BqbeQ"},

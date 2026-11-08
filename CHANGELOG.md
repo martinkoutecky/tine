@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Clicking or tapping a command palette or Search row keeps the focused split pane and runs the chosen row; slash and page-reference suggestions also keep their editor's pane focused (internal: UI-PALETTE-POINTER-ACTIVATION, UI-EDITOR-COMPLETION-POINTER-PANE).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
 - Open pages stay visible during CLI writes, retaining unchanged blocks, scroll position and the editor selection when an external edit updates the page (GH #911).
 - Folding blocks inside a page embed saves the source fold state, keeping other views in step and newly inserted blocks visible (GH #868).
