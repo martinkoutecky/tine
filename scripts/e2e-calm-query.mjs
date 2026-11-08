@@ -319,13 +319,42 @@ await session(1, async browser => {
   const selectedLocator = await browser.$(surface).getAttribute("data-inpage-find-surface");
   const planningPath = `${graph}/pages/Planning.md`;
   fs.writeFileSync(planningPath, "- Unselected insertion\n" + fs.readFileSync(planningPath, "utf8"));
-  await browser.waitUntil(() => browser.execute(previous => {
-    const row = document.querySelector(".query-workspace [data-inpage-find-surface]");
-    return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
-  }, selectedLocator), { timeout: 20_000 });
+  const openMovedResult = async () => {
+    const locator = await browser.$(surface).getAttribute("data-inpage-find-surface");
+    await browser.saveScreenshot(`${out}/search-after-insertion.png`);
+    await browser.$(surface).click();
+    await browser.waitUntil(() => browser.execute(() =>
+      document.querySelector(".main-content .zoom-breadcrumb .crumb-page")?.textContent.trim() === "Planning"
+        && !!document.querySelector(".main-content .zoomed-block")), { timeout: 20_000 });
+    const opened = await browser.$(".main-content .zoomed-block").getText();
+    fs.writeFileSync(`${out}/moved-result-navigation.json`, JSON.stringify({ testedCommit, selectedLocator, locator, opened }, null, 2));
+    execFileSync("import", ["-window", "root", `${out}/opened-moved-result.png`], { env });
+    assert.ok(opened.includes("Upcoming journey task"), `moved result opened ${opened}`);
+  };
+  try {
+    await browser.waitUntil(() => browser.execute(previous => {
+      const row = document.querySelector(".query-workspace [data-inpage-find-surface]");
+      return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
+    }, selectedLocator), { timeout: 20_000 });
+  } catch (error) {
+    // Preserve the original locator oracle while proving what the stale row
+    // actually opens through the ordinary user path.
+    await openMovedResult();
+    throw error;
+  }
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
-  await browser.waitUntil(() => browser.execute(() => document.body.innerText.includes("1 results changed since the query ran; run it again")), { timeout: 20_000 });
+  try {
+    await browser.waitUntil(() => browser.execute(() => document.body.innerText.includes("1 results changed since the query ran; run it again")), { timeout: 20_000 });
+  } catch (error) {
+    await browser.saveScreenshot(`${out}/frozen-copy-failure.png`);
+    fs.writeFileSync(`${out}/frozen-copy-failure.txt`, await browser.$(".export-preview").getValue());
+    await browser.execute(() => [...document.querySelectorAll(".dialog-actions button")].find(button => button.textContent === "Close")?.click());
+    await openMovedResult();
+    throw error;
+  }
   assert.equal(await browser.$(".export-preview").isExisting(), false);
+  await browser.saveScreenshot(`${out}/frozen-copy-refused.png`);
+  await openMovedResult();
   phase = "All pages backend counts and sort";
   if (!await browser.$(".nav-all-pages-open").isExisting()) {
     await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find(header => header.textContent?.includes("ALL PAGES"))?.click());

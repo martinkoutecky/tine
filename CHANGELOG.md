@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
+
 ## [0.9.0-beta.9] - 2026-11-08
 
 ### Fixed
