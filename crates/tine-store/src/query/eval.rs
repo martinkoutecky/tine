@@ -317,9 +317,8 @@ pub(crate) struct EvalCtx<'a> {
     /// computed before any row; empty unless the plan reads links).
     pub(crate) links: &'a super::link_graph::LinkAnswers,
     /// This row's link-table node when the caller already knows it (every
-    /// row evaluated while building a link answer, and the only way to reach
-    /// a page without a file, which has no key in the table's page index).
-    /// `None`: look the node up by `page_key`.
+    /// row evaluated while building a link answer).
+    /// `None`: look the node up by `(is_journal, page_key)`.
     pub(crate) link_node: Option<u32>,
     pub(crate) cache: &'a EvalCache,
     /// What each reference operand of the plan names (its alias class and
@@ -575,14 +574,20 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                 }
                 _ => false,
             },
-            Leaf::Near { .. } => ctx.links.near(leaf, ctx.link_node, &ctx.page_key),
+            Leaf::Near { .. } => ctx
+                .links
+                .near(leaf, ctx.link_node, &ctx.page_key, ctx.is_journal),
             Leaf::Rel { rel, quant, pred } => match rel {
                 Rel::Props => eval_props(*quant, pred, ctx.page_props, ctx),
                 Rel::Blocks => eval_page_blocks(*quant, pred, ctx),
-                Rel::Links | Rel::LinkedBy => {
-                    ctx.links
-                        .related(leaf, *rel, *quant, ctx.link_node, &ctx.page_key)
-                }
+                Rel::Links | Rel::LinkedBy => ctx.links.related(
+                    leaf,
+                    *rel,
+                    *quant,
+                    ctx.link_node,
+                    &ctx.page_key,
+                    ctx.is_journal,
+                ),
                 // A `page` hop from a page row is the row itself (og.rs
                 // `rebase_to_page`; the TQL printer collapses it the same way).
                 // The builder's page conditions carry it at `@page` (GH #619 c6).
@@ -1147,7 +1152,11 @@ fn eval_page_name(op: CmpOp, value: &Value, page_name: &str, ctx: &EvalCtx) -> b
     let key = refs::page_key(page_name);
     let text = value.as_text();
     let names = |text: &str| {
-        key == refs::page_key(text)
+        let requested = refs::page_key(text);
+        if ctx.ref_classes.ordinary_claim(&requested) {
+            return !ctx.is_journal && key == requested;
+        }
+        key == requested
             || (ctx.is_journal
                 && ctx.journal.is_some()
                 && ctx.cache.reference_day(text, ctx.config) == ctx.journal)

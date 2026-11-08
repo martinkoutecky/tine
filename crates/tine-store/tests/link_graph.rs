@@ -51,6 +51,43 @@ fn set(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| page_key(name)).collect()
 }
 
+#[test]
+fn a_virtual_day_with_an_ordinary_canonical_title_has_its_own_links() {
+    let _guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "logseq/config.edn",
+        "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
+    );
+    write(dir.path(), "pages/2026_10_23.md", "- [[2026-10-23]]\n");
+    write(dir.path(), "pages/Notes.md", "- [[2026-10-23]]\n");
+    let (_store, graph) = open(dir.path());
+    assert_eq!(
+        pages(&graph, "@page and any(links, journal = true)"),
+        set(&["Notes", "2026_10_23"])
+    );
+    assert_eq!(
+        pages(
+            &graph,
+            "@page and journal = true and any(linked_by, name = '2026_10_23')"
+        ),
+        set(&["2026_10_23"])
+    );
+    assert!(pages(
+        &graph,
+        "@page and journal = false and name = '2026_10_23' and any(linked_by, true)"
+    )
+    .is_empty());
+    assert_eq!(
+        pages(
+            &graph,
+            "@page and journal = true and near(name = 'Notes', 1, 'out')"
+        ),
+        set(&["2026_10_23"])
+    );
+}
+
 /// The page keys of `target`'s Linked References panel (unfiltered).
 fn panel(graph: &WholeGraph, target: &str) -> BTreeSet<String> {
     graph

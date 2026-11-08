@@ -74,23 +74,6 @@
     {
       "day": null,
       "is_journal": false,
-      "key": "24-10-2026",
-      "link": {
-        "kind": "page",
-        "name": "Plan"
-      },
-      "name": "24-10-2026",
-      "namespace_excluded": true,
-      "target": {
-        "kind": "alias",
-        "owners": [
-          "pages/Plan.md"
-        ]
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
       "key": "notes",
       "name": "Notes",
       "target": {
@@ -121,6 +104,23 @@
       }
     },
     {
+      "day": 20261024,
+      "is_journal": true,
+      "key": "oct 24th, 2026",
+      "link": {
+        "kind": "page",
+        "name": "Plan"
+      },
+      "name": "Oct 24th, 2026",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Plan.md"
+        ]
+      }
+    },
+    {
       "day": null,
       "is_journal": false,
       "key": "plan",
@@ -135,10 +135,10 @@
   "journalFileFormat": "dd-MM-yyyy",
   "journalTitleFormat": null,
   "keyOf": {
-    "24-10-2026": "oct 24th, 2026",
     "Notes": "notes",
     "Oct 22nd, 2026": "oct 22nd, 2026",
     "Oct 23rd, 2026": "oct 23rd, 2026",
+    "Oct 24th, 2026": "oct 24th, 2026",
     "Plan": "plan"
   },
   "namespaceNodes": [],
@@ -176,8 +176,8 @@
     },
     "24-10-2026": {
       "journal": [
-        "journal",
-        "oct 24th, 2026"
+        "page",
+        "plan"
       ],
       "page": [
         "page",
@@ -222,6 +222,16 @@
       "page": [
         "page",
         "oct 23rd, 2026"
+      ]
+    },
+    "Oct 24th, 2026": {
+      "journal": [
+        "page",
+        "plan"
+      ],
+      "page": [
+        "page",
+        "plan"
       ]
     },
     "Oct 25th, 2026": {
@@ -259,7 +269,7 @@
       "page": null
     },
     "24-10-2026": {
-      "journal": null,
+      "journal": "pages/Plan.md",
       "page": "pages/Plan.md"
     },
     "25-10-2026": {
@@ -277,6 +287,10 @@
     "Oct 23rd, 2026": {
       "journal": null,
       "page": null
+    },
+    "Oct 24th, 2026": {
+      "journal": "pages/Plan.md",
+      "page": "pages/Plan.md"
     },
     "Oct 25th, 2026": {
       "journal": null,

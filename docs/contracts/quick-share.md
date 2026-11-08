@@ -137,6 +137,11 @@ build graph (closure, below). The same field is written by the static export
   day's journal entity in published All Pages; this compatibility lasts
   until `answers` v2. Rows stay sorted by key and name. A multi-page share
   adds its synthetic home page as an `existing` row with id `""`.
+  Date-shaped aliases retain v1's ordinary lookup-row shape; their stored
+  `link` carries the declarer's actual kind. New publications record
+  real-file-first opening, while old `empty_alias` redirects remain readable
+  exactly as stored. Live typed namespace `parent` metadata is omitted from
+  frozen v1, along with the newer namespace flags.
 - `resolve`: `WholeGraph::resolve(name, kind)` for a listed name asked as the
   kind its row does not answer (a date spelling asked as a journal, a journal
   title asked as a page), only where the answer is a file or an alias.

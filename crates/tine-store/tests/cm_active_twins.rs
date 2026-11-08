@@ -291,7 +291,7 @@ fn r13_checkpoint_rebuild_and_unit_cost() {
         eprintln!("Unit cost: {blocks} blocks; source bytes={}; checkpoint before={before:?}; after={after:?}; checkpoint files=1; added graph/transport records=0", text.len());
         store.close();
         let mut bytes = std::fs::read(&cp).unwrap();
-        bytes[8..12].copy_from_slice(&26u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&27u32.to_le_bytes());
         std::fs::write(&cp, bytes).unwrap();
         let store = open();
         assert_eq!(rows(&store, "[[Target]]").len(), blocks);

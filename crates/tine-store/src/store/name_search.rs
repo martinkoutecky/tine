@@ -22,7 +22,7 @@ impl WholeGraph {
                         .any(|entry| entry.kind == PageKind::Page)
                         || self
                             .graph
-                            .alias_owner_paths(&tine_core::refs::page_key(spelling))
+                            .alias_owner_paths(&tine_core::refs::page_key(spelling), None)
                             .is_some_and(|owners| {
                                 owners
                                     .iter()

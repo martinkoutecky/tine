@@ -55,7 +55,8 @@ pub(crate) struct VirtualNode {
 /// [`VirtualNode`]s.
 #[derive(Debug, Default)]
 pub(crate) struct LinkGraph {
-    by_key: HashMap<String, u32>,
+    /// One typed index, partitioned by kind to retain borrowed-key lookups.
+    by_key: [HashMap<String, u32>; 2],
     physical: usize,
     virtuals: Vec<VirtualNode>,
     out: Vec<Vec<u32>>,
@@ -116,13 +117,14 @@ impl LinkGraph {
                     return false;
                 }
                 let key = refs::page_key(&entry.name);
-                if table.by_key.contains_key(&key) {
+                let kind = usize::from(entry.kind == tine_core::model::PageKind::Journal);
+                if table.by_key[kind].contains_key(&key) {
                     continue;
                 }
                 let node = node_keys.len() as u32;
                 let (_, names, self_page) = resolve(&entry.name);
                 register(node, &names, &mut by_name, &mut by_property_key);
-                table.by_key.insert(key.clone(), node);
+                table.by_key[kind].insert(key.clone(), node);
                 node_keys.push(key);
                 self_keys.push(refs::page_key(&self_page));
             }
@@ -131,7 +133,9 @@ impl LinkGraph {
                 if cancelled() {
                     return false;
                 }
-                let source = table.by_key[&refs::page_key(&entry.name)];
+                let source = table.by_key
+                    [usize::from(entry.kind == tine_core::model::PageKind::Journal)]
+                    [&refs::page_key(&entry.name)];
                 if favorites
                     .as_deref()
                     .is_some_and(|favorites| refs::page_key(&entry.name) == favorites)
@@ -238,8 +242,7 @@ impl LinkGraph {
             self_keys.push(refs::page_key(&self_page));
             // A page-anchored query row of a reference-only page finds its
             // node by key, as a file row does (D-20261102-CM4 CM-REFONLY).
-            table
-                .by_key
+            table.by_key[usize::from(format.parse(&canonical).is_some())]
                 .entry(refs::page_key(&canonical))
                 .or_insert(node);
             table.virtuals.push(VirtualNode {
@@ -340,8 +343,14 @@ impl LinkGraph {
             lists.capacity() * std::mem::size_of::<Vec<u32>>()
                 + lists.iter().map(|list| list.capacity() * 4).sum::<usize>()
         };
-        let keys = self.by_key.capacity() * (std::mem::size_of::<(String, u32)>() + 1)
-            + self.by_key.keys().map(String::capacity).sum::<usize>();
+        let keys = self
+            .by_key
+            .iter()
+            .map(|keys| {
+                keys.capacity() * (std::mem::size_of::<(String, u32)>() + 1)
+                    + keys.keys().map(String::capacity).sum::<usize>()
+            })
+            .sum::<usize>();
         let virtuals = self.virtuals.capacity() * std::mem::size_of::<VirtualNode>()
             + self
                 .virtuals
@@ -353,8 +362,8 @@ impl LinkGraph {
 
     /// The node of the page whose key is `page_key`: a physical page, else a
     /// reference-only page's virtual node.
-    pub(crate) fn node(&self, page_key: &str) -> Option<u32> {
-        self.by_key.get(page_key).copied()
+    pub(crate) fn node(&self, page_key: &str, journal: bool) -> Option<u32> {
+        self.by_key[usize::from(journal)].get(page_key).copied()
     }
 
     /// The physical nodes' count; virtual node `i` is node `physical + i`.
@@ -461,9 +470,15 @@ impl LinkAnswers {
 
     /// `near` for the page row that is link-table node `node` when known,
     /// else the physical page whose key is `page_key`.
-    pub(crate) fn near(&self, leaf: &Leaf, node: Option<u32>, page_key: &str) -> bool {
+    pub(crate) fn near(
+        &self,
+        leaf: &Leaf,
+        node: Option<u32>,
+        page_key: &str,
+        journal: bool,
+    ) -> bool {
         self.set(leaf).is_some_and(|(table, ball)| {
-            node.or_else(|| table.node(page_key))
+            node.or_else(|| table.node(page_key, journal))
                 .is_some_and(|node| ball[node as usize])
         })
     }
@@ -479,13 +494,14 @@ impl LinkAnswers {
         quant: Quant,
         node: Option<u32>,
         page_key: &str,
+        journal: bool,
     ) -> bool {
         let elements: &[u32];
         let set: &[bool];
         match self.set(leaf) {
             Some((table, bits)) => {
                 set = bits;
-                elements = match node.or_else(|| table.node(page_key)) {
+                elements = match node.or_else(|| table.node(page_key, journal)) {
                     Some(node) if rel == Rel::Links => table.links(node),
                     Some(node) => table.linked_by(node),
                     None => &[],
@@ -571,7 +587,7 @@ mod cancellation_tests {
         let (_dir, graph) = chain();
         let table = graph.link_graph(&|| false).unwrap();
         let mut seeds = vec![false; table.node_count()];
-        seeds[table.node("p0").unwrap() as usize] = true;
+        seeds[table.node("p0", false).unwrap() as usize] = true;
         let whole = table
             .ball(&seeds, CHAIN as u32, NearDir::Out, &|| false)
             .unwrap();

@@ -31,7 +31,21 @@
       }
     ],
     "Notes": [],
-    "Owner": [],
+    "Owner": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[22.10.2026]] [[Oct 22nd, 2026]] [[2026-10-22]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
     "ordinary": [
       {
         "blocks": [
@@ -53,7 +67,7 @@
     [
       [
         "pages/Owner.md",
-        0
+        1
       ],
       [
         "pages/Notes.md",
@@ -77,8 +91,8 @@
   ],
   "inventory": [
     {
-      "day": null,
-      "is_journal": false,
+      "day": 20261022,
+      "is_journal": true,
       "key": "2026_22_10",
       "link": {
         "kind": "page",
@@ -109,6 +123,10 @@
       "is_journal": false,
       "key": "23.10.2026/child",
       "name": "23.10.2026/child",
+      "parent": {
+        "kind": "journal",
+        "name": "2026_23_10"
+      },
       "target": {
         "id": "pages/23%2E10%2E2026%2Fchild.md",
         "kind": "absent"
@@ -191,18 +209,18 @@
   "open": {
     "2026-10-22": {
       "journal": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "page": [
         "page",
-        "2026_22_10"
+        "owner"
       ]
     },
     "2026_22_10": {
       "journal": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "page": [
         "page",
@@ -221,12 +239,12 @@
     },
     "22.10.2026": {
       "journal": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "page": [
         "page",
-        "2026_22_10"
+        "owner"
       ]
     },
     "23.10.2026": {
@@ -261,12 +279,12 @@
     },
     "Oct 22nd, 2026": {
       "journal": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "page": [
         "page",
-        "2026_22_10"
+        "owner"
       ]
     },
     "Ordinary": {
@@ -292,11 +310,11 @@
   },
   "owner": {
     "2026-10-22": {
-      "journal": null,
-      "page": null
+      "journal": "pages/Owner.md",
+      "page": "pages/Owner.md"
     },
     "2026_22_10": {
-      "journal": null,
+      "journal": "pages/Owner.md",
       "page": "pages/Owner.md"
     },
     "2026_23_10": {
@@ -304,8 +322,8 @@
       "page": null
     },
     "22.10.2026": {
-      "journal": null,
-      "page": null
+      "journal": "pages/Owner.md",
+      "page": "pages/Owner.md"
     },
     "23.10.2026": {
       "journal": null,
@@ -320,8 +338,8 @@
       "page": "pages/Notes.md"
     },
     "Oct 22nd, 2026": {
-      "journal": null,
-      "page": null
+      "journal": "pages/Owner.md",
+      "page": "pages/Owner.md"
     },
     "Ordinary": {
       "journal": null,
@@ -377,8 +395,8 @@
   "spellings": {
     "2026-10-22": {
       "backend": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "day": [
         2026,
@@ -407,8 +425,8 @@
     },
     "22.10.2026": {
       "backend": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "day": [
         2026,
@@ -459,8 +477,8 @@
     },
     "Oct 22nd, 2026": {
       "backend": [
-        "journal",
-        "2026_22_10"
+        "page",
+        "owner"
       ],
       "day": [
         2026,
