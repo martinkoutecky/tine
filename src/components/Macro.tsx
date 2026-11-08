@@ -31,6 +31,7 @@ import { QueryBuilder, createQueryRegistryAccess, type BuilderSession } from "./
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
+import { queryListOptions } from "../editor/queryListOptions";
 import { columnKey, compareCells, defaultHostColumns, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
 import { queryMacroExtent, queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
@@ -256,6 +257,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const optionValues = createMemo(() => readEdnOptions(opts()));
   const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
+  // OG query.cljs/custom-query-inner defaults the ancestor trail on. The
+  // shared render option can later serve the separately decided simple view.
+  const listOptions = createMemo(() => isAdvanced()
+    ? { ...queryListOptions(form()), ...queryListOptions(opts()) } : {});
   const bothKinds = (): boolean =>
     hostProperties().some(([key, value]) => key.toLowerCase() === RESULT_KINDS_PROPERTY && value.trim().toLowerCase() === PAGES_AND_BLOCKS);
   const setBothKinds = (on: boolean) => {
@@ -855,6 +860,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       : `${group.kind}\0${group.page}\0${group.path ?? ""}`;
   const groupedQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, false), group] as const)));
   const flatQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, true), group] as const)));
+  // Both the ordinary answer and the Blocks section of a two-family answer
+  // use the same presentation options (GH #881).
+  const listResults = () => (
+    <Show when={globalSort() || listOptions().groupByPage === false} fallback={
+      <QueryGroups groups={groupedQueryByKey} showBreadcrumb={listOptions().breadcrumb} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
+    }>
+      {/* OG ungrouped lists have no page heading. Tine keeps its existing
+          sorted page crumbs when breadcrumbs are enabled (GH #881). */}
+      <QueryGroups groups={flatQueryByKey} flat showBreadcrumb={listOptions().breadcrumb} showPage={listOptions().groupByPage === false || listOptions().breadcrumb === false ? false : undefined} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
+    </Show>
+  );
   // The legacy table's columns and initial sort come from the HOST block's own
   // properties, like OG's query_table.cljs (audit #9); a header click then
   // overrides them for this view, as OG's click does (it also persists the
@@ -1176,11 +1192,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                           // family has on its own; the sheet footer's statistics belong to the
                           // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
-                            <Switch fallback={
-                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />}>
-                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
-                              </Show>
-                            }>
+                            <Switch fallback={listResults()}>
                               <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
                                 <SheetContainer>
                                   <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
@@ -1299,17 +1311,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   <Show when={groups().length > 0} fallback={empty()}>
                     <Show
                       when={legacyTable()}
-                      fallback={
-                        <Show
-                          when={globalSort()}
-                          fallback={
-                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
-                          }
-                        >
-                          {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
-                        </Show>
-                      }
+                      fallback={listResults()}
                     >
                       <QueryLegacyTable cols={cols()} rows={sorted()} sortBy={sortBy} arrow={arrow} />
                     </Show>
