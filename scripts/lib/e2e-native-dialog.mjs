@@ -1,6 +1,6 @@
 // Answer Tine's native yes/no confirmation (`backend().confirm`, the GTK
-// message dialog of tauri-plugin-dialog) the way a user does: with the
-// keyboard, on the dialog window itself. WebDriver cannot see a native dialog,
+// message dialog of tauri-plugin-dialog) on the dialog window itself.
+// WebDriver cannot see a native dialog,
 // so journeys that must pass through a confirmation (rename-merge, journal
 // filename renames) use this one helper instead of stubbing `confirm`.
 //
@@ -32,8 +32,8 @@ export function nativeDialogWindows(env = process.env) {
     });
 }
 
-/** Wait for a native confirmation and answer it. `answer`: "yes" accepts
- *  (Return on the default/affirmative button, then Alt+Y as a fallback),
+/** Wait for a native confirmation and answer it. `answer`: "yes" clicks
+ *  the affirmative action in the native GTK dialog,
  *  "no" dismisses with Escape, which GTK reports as a refusal. Resolves once
  *  the dialog is gone; throws naming what it saw otherwise. */
 export async function answerNativeDialog(answer, { env = process.env, timeoutMs = 10_000 } = {}) {
@@ -45,14 +45,21 @@ export async function answerNativeDialog(answer, { env = process.env, timeoutMs 
   }
   if (!id) throw new Error("no native confirmation dialog appeared");
   const title = run(XDOTOOL, ["getwindowname", id], env);
-  const keys = answer === "yes" ? ["alt+y", "Return"] : ["Escape"];
-  for (const key of keys) {
-    if (!nativeDialogWindows(env).includes(id)) break;
-    run(XDOTOOL, ["windowfocus", "--sync", id], env);
-    run(XDOTOOL, ["key", "--clearmodifiers", key], env);
-    const gone = Date.now() + 2_000;
-    while (Date.now() < gone && nativeDialogWindows(env).includes(id)) await sleep(100);
+  run(XDOTOOL, ["windowfocus", "--sync", id], env);
+  if (answer === "yes") {
+    // ConfirmOptions requires custom action/cancel labels. plugin-dialog ask
+    // uses OkCancelCustom; rfd 0.16 GTK adds OK then Cancel to the bottom row.
+    // Return has no guaranteed affirmative/default response for these buttons.
+    const geometry = Object.fromEntries(run(XDOTOOL, ["getwindowgeometry", "--shell", id], env)
+      .split("\n").map(line => line.split("=")));
+    const width = Number(geometry.WIDTH), height = Number(geometry.HEIGHT);
+    if (!(width > 0 && height > 32)) throw new Error(`native dialog ${JSON.stringify(title)} has no action area`);
+    run(XDOTOOL, ["mousemove", "--window", id, String(Math.round(width / 4)), String(height - 16)], env);
+    run(XDOTOOL, ["click", "--clearmodifiers", "1"], env);
+  } else {
+    run(XDOTOOL, ["key", "--clearmodifiers", "Escape"], env);
   }
+  while (Date.now() < deadline && nativeDialogWindows(env).includes(id)) await sleep(100);
   if (nativeDialogWindows(env).includes(id)) {
     throw new Error(`native dialog ${JSON.stringify(title)} did not close after answering ${answer}`);
   }
