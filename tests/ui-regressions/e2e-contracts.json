@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-math-print.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Grouped inline and display equations retain all atoms on A5 paper, with no interactive scrollport clipping.","blocking":false,"authority":"GH #915 sibling investigation; UI-GH915-MATH-NARROW-PAPER"}],
+      "acceptableVariations": ["Pagination, typography and fitting strategy may vary; all equation content must survive."],
+      "nonRequirements": ["No native print-dialog certification or new paper-fitting policy in the screen-math lane."],
+      "stability":"quarantined",
+      "quarantineReason":"A5 loses two oxygen atoms with the original unconstrained math CSS as well as the candidate. Screen-only containment prevents additional scrollport clipping, but fitting grouped math to small physical paper needs a product decision. The assertion remains intact."
+    },
+    "scripts/e2e-math-overflow.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Inline and display equations have reachable starts and ends within narrow routed main, split, sidebar, embed, query, hover preview and phone-width panes; ordinary KaTeX breaks and short inline baselines survive. With Android gestures enabled, ancestors permit native horizontal panning of overflowing formulas.","blocking":false,"authority":"GH #915; UI-GH915-MATH-REACHABLE"}],
+      "acceptableVariations": ["Formula-local scrolling or line breaks, scrollbar appearance, fonts and pane geometry may vary."],
+      "nonRequirements": ["No TeX rewriting, exact pixels, print pagination, Windows/macOS/iOS/Android device certification or release acceptance. Formula-local scrolling deliberately goes beyond OG's unconstrained KaTeX."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-page-write-flash.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A large open page retains its outline, unchanged blocks, scroll and focused editor selection during real CLI writes to other pages, hidden blocks and a visible block; the visible change arrives live. E2E_PANES=1 checks main, split pane and sidebar together; revealing the hidden block proves its edit arrived.","blocking":false,"authority":"GH #911; UI-GH911-OPEN-PAGE-FLASH"}],
       "acceptableVariations": ["Page size, layout, watcher and CLI latency may vary. The optional approved corpus is copied to a scratch graph before use."],

@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes (GH #453).
 - Clicking or tapping a command palette or Search row keeps the focused split pane and runs the chosen row; slash and page-reference suggestions also keep their editor's pane focused (internal: UI-PALETTE-POINTER-ACTIVATION, UI-EDITOR-COMPLETION-POINTER-PANE).

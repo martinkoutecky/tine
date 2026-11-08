@@ -56,6 +56,7 @@ async function openTine(bottom: boolean) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const dispose = render(() => <App />, host);
+  await vi.dynamicImportSettled();
   // After mount: App's startup preference load would overwrite an earlier seed.
   await vi.waitFor(() => expect(host.querySelector(".journal-title")).not.toBeNull());
   resetMobileNavigationAtBottomForTests(bottom);
