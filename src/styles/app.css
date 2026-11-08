@@ -3125,7 +3125,8 @@ html[data-system-insets="native-viewport"] {
 .ctx-item {
   padding: 6px 12px;
   border-radius: 5px;
-  font-size: 13px;
+  font: inherit;
+  font-size: 14px;
   cursor: pointer;
   color: var(--text-primary);
 }
@@ -3157,7 +3158,6 @@ html[data-system-insets="native-viewport"] {
   border: 0;
   background: transparent;
   text-align: start;
-  font: inherit;
 }
 
 .ctx-page-item:focus-visible {
