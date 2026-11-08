@@ -41,6 +41,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A wide table in a nested block no longer has the outline guide lines of its parent blocks drawn through its header and rows on narrow windows, split panes and the sidebar (GH #909).
 - CLI page-property shape refusals explain the cause and point to `tine prop set --page` (GH #839).
 - Code blocks keep their Copy code control available while editing: hover the corner on desktop, or keep the caret in the code on touch screens, in both editors (GH #879).
+- Wide Markdown and Org tables use free pane space, then wrap cell text to fit; long URLs wrap and unbreakable content scrolls inside the table (GH #802).
 - Editing tables and outlines, browsing journals, selecting blocks or cells, folding references and marking pages seen avoids repeated work in unrelated views and idle queries (GH #886).
 - Scrolling Linked References avoids repeated work in unrelated grids, icons, reference badges and caches as source pages load and leave view (GH #886).
 - Long Linked and Unlinked References sections stay responsive while scrolling: groups far from view are set aside and redrawn when you come back, keeping their folds, edits and selection, and memory no longer grows with every group you scroll past (GH #886).
@@ -111,6 +112,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
 - Commands can have several hotkeys in Settings → Keyboard shortcuts: keep the default and add alternatives, remove individual bindings, and see conflicts. OG `config.edn` shortcut vectors use every binding (GH #878).
+- Remappable **Quit Tine** command, with **Ctrl+Q** on Linux and Windows, saving pending edits before closing every graph window (GH #805).
+- Drag the frameless desktop window from empty space in the left sidebar header; workspace controls stay clickable (GH #815).
 - **Settings → Editor → Auto-embed pasted video links** can be turned off to keep YouTube, Vimeo, Loom and Bilibili URLs as plain links in both editors, including Quick Capture. Automatic embedding stays on by default; no video titles are fetched on paste (#861).
 - **Toggle embed breadcrumbs** in the command palette switches the saved Block embed breadcrumbs setting. Assign a shortcut under Settings → Keyboard shortcuts; it has no default key (GH #860).
 - The prompt before opening another app's link offers **Always open <scheme> links** (#503). The choice applies to that exact scheme on this device, across graphs. **Settings → Editor → Remembered app links** lets you forget each choice and ask again.

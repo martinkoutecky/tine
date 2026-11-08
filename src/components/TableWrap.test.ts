@@ -9,9 +9,10 @@ const source = (file: string) => process.env.QBG_TEST_BASE
   : readFileSync(new URL(file, import.meta.url), "utf8");
 
 describe("table layout onboarding", () => {
-  it("explains when tables bleed and when they scroll", () => {
+  it("explains expansion before wrapping and local overflow (GH #802)", () => {
     const guide = source("../../crates/tine-core/src/templates/sheets.md");
-    expect(guide).toContain("scroll horizontally only when wider than the pane");
+    expect(guide).toContain("then wrap cell text to fit the pane");
+    expect(guide).toContain("Only content that cannot wrap");
     expect(guide).toContain("tables inside a sheet cell stay within that cell");
     expect(guide).toContain("A table in a query box or a sidebar item never leaves its box");
   });

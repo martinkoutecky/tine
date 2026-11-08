@@ -2,11 +2,13 @@ import { onCleanup, onMount, type JSX } from "solid-js";
 import { listen, newResizeObserver, requestFrame } from "../windowRealm";
 import "./tableWrap.css";
 
-/** A table cell whose plain text is longer than this wraps (`md-cell-long`,
- * tableWrap.css); shorter cells (numbers, short labels, verdicts) never do.
- * One rule for Markdown/Org tables; query tables wrap in their box instead. */
+/** Retain the long-cell marker for presentation consumers. Prose may also break
+ * words, but only when whole words cannot fit the pane (md-table-tight);
+ * numbers/unbroken tokens stay whole. GH #802: sizing follows available space,
+ * not a character threshold. */
 export const LONG_CELL_CHARS = 40;
-export const longCellClass = (text: string): string | undefined => (text.length > LONG_CELL_CHARS ? "md-cell-long" : undefined);
+export const longCellClass = (text: string): string | undefined =>
+  [text.length > LONG_CELL_CHARS ? "md-cell-long" : "", /\s/.test(text.trim()) ? "md-cell-prose" : ""].filter(Boolean).join(" ") || undefined;
 
 /** Given measured geometry, return the viewport width and leftward offset:
  * preserve fitting content; center wider content on the text column within
@@ -27,9 +29,26 @@ export function tableBleedGeometry(normalLeft: number, normalWidth: number, natu
 export function TableWrap(props: { children: JSX.Element }): JSX.Element {
   let el!: HTMLDivElement;
   onMount(() => {
+    // A table can mount before its block is attached to the page (a Linked
+    // References copy in the sidebar, GH #802): no pane is found yet, so set up
+    // when the wrap is first laid out, never once-and-give-up.
+    if (el.isConnected) { onCleanup(setup()); return; }
+    let dispose: (() => void) | undefined;
+    const waiter = newResizeObserver(el, () => {
+      if (!el.isConnected || dispose) return;
+      waiter?.disconnect();
+      dispose = setup();
+    });
+    waiter?.observe(el);
+    onCleanup(() => { waiter?.disconnect(); dispose?.(); });
+  });
+  const setup = (): (() => void) => {
     const parent = el.parentElement;
     const pane = el.closest<HTMLElement>(".main-content, .rs-item-body, .right-sidebar-body");
-    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) return;
+    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) {
+      el.classList.remove("md-table-tight");
+      return () => {};
+    }
     const surface = el.firstElementChild as HTMLElement;
     const column = el.closest<HTMLElement>(".main-content-inner") ?? parent;
     let frame: (() => void) | undefined;
@@ -39,13 +58,25 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
       const normalLeft = p.left + (parseFloat(parentStyle.paddingLeft) || 0);
       const normalWidth = parent.clientWidth - (parseFloat(parentStyle.paddingLeft) || 0) - (parseFloat(parentStyle.paddingRight) || 0);
       el.style.setProperty("--table-column-width", `${normalWidth}px`);
-      const { width, shift } = tableBleedGeometry(normalLeft, normalWidth, surface.scrollWidth, m.left, pane.clientWidth, (c.left + c.right) / 2);
+      // Measure intrinsic content before constraining the table to its viewport.
+      // Otherwise a previously wrapped table reports its constrained width and
+      // never grows back into newly available pane space after a resize.
+      const maxWidth = surface.style.maxWidth;
+      surface.style.maxWidth = "none";
+      const naturalWidth = surface.scrollWidth;
+      surface.style.maxWidth = maxWidth;
+      const { width, shift } = tableBleedGeometry(normalLeft, normalWidth, naturalWidth, m.left, pane.clientWidth, (c.left + c.right) / 2);
       el.style.setProperty("--table-bleed-width", `${width}px`);
       // CSS anchors a block at inline-start. Geometry above is physical: an
       // RTL viewport starts at normalRight, so its right margin must also
       // account for the new width, not just negate the leftward shift.
       const inlineShift = parentStyle.direction === "rtl" ? width - normalWidth - shift : shift;
       el.style.setProperty("--table-bleed-shift", `${inlineShift}px`);
+      // GH #802: split words only when whole words cannot fit the viewport
+      // (tableWrap.css, md-table-tight). Decide with the class off each time,
+      // so a wider pane returns to whole words.
+      el.classList.remove("md-table-tight");
+      if (surface.scrollWidth > el.clientWidth + 1) el.classList.add("md-table-tight");
       // GH #909: a table wider than its column covers the ancestors' outline
       // guides it overlaps, on either side.
       el.toggleAttribute("data-bleed", width > normalWidth + 0.5);
@@ -55,7 +86,10 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
     for (const node of [parent, pane, column, surface]) observer?.observe(node);
     const stopResize = listen(el, "resize", schedule);
     schedule();
-    onCleanup(() => { observer?.disconnect(); frame?.(); stopResize(); });
-  });
-  return <div ref={el} class="md-table-wrap">{props.children}</div>;
+    return () => { observer?.disconnect(); frame?.(); stopResize(); };
+  };
+  // Reading copies can be inserted between layout frames (Linked References
+  // in the sidebar). Fit prose immediately, before the observer/first frame
+  // supplies pane geometry; measure() restores whole words whenever they fit.
+  return <div ref={el} class="md-table-wrap md-table-tight">{props.children}</div>;
 }

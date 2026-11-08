@@ -44,6 +44,7 @@ exports[`L7s4-03 native read dispatch > requires review for every new synchronou
   "quick_share_copy_link",
   "quick_share_discard",
   "read_plugin_entry",
+  "request_app_quit",
   "startup_graph_path",
   "stream_asset_path",
   "take_data_home_fallback_notice",

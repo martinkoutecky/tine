@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-table-wrap.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Reading a routed Markdown page, journal, embed and sidebar in either editor keeps wide prose, many columns and URLs inside the pane with wrapping; unbreakable content scrolls inside its table and reading preserves file bytes.","blocking":false,"authority":"GH #802; D-20261107-R11"}],
+      "acceptableVariations": ["Column allocation, wrapping positions, table markup and spacing may vary while readable content fits the pane."],
+      "nonRequirements": ["Wrap setting, user column widths, release burn-in, Windows/macOS/mobile device certification. A narrow desktop WebKit window is not a mobile device."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-page-write-flash.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A large open page retains its outline, unchanged blocks, scroll and focused editor selection during real CLI writes to other pages, hidden blocks and a visible block; the visible change arrives live. E2E_PANES=1 checks main, split pane and sidebar together; revealing the hidden block proves its edit arrived.","blocking":false,"authority":"GH #911; UI-GH911-OPEN-PAGE-FLASH"}],
       "acceptableVariations": ["Page size, layout, watcher and CLI latency may vary. The optional approved corpus is copied to a scratch graph before use."],
@@ -108,6 +114,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"With the CodeMirror experiment switched on in Settings and the app quit and relaunched, the first block edit on a routed page and in the right sidebar mounts the CodeMirror editor, and a Quick Capture opened by the global-shortcut handoff shows the CodeMirror editor with the caret in it, with no off/on in Settings. The app is killed with SIGKILL before the relaunch, as after a crash. With a second window on another graph open, switching CodeMirror off in either window changes the next edit in the other window with no restart, and switching it back on does the same. A block opened while this window is still reading the stored choice (a slow reply) waits for it and gets the stored editor, not the default.","blocking":false,"authority":"Martin report 2026-11-02 (development build)"}],
       "acceptableVariations": ["Timing, window geometry and the exact CodeMirror markup may vary while the editor kind and the caret location agree."],
       "nonRequirements": ["No typing or saving in the editors, no platform other than Linux WebKitGTK, no burn-in."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-og-window-805-815.mjs": {
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"Ctrl+Q with an active unsaved edit persists it, closes every graph window and releases the owner locks. The frameless desktop sidebar header has the same drag marker as the title bar, while its workspace switcher and menu remain clickable.","blocking":false,"authority":"GH #805; GH #815"}],
+      "acceptableVariations": ["Menu layout, save latency, window geometry and driver replies during process exit may vary."],
+      "nonRequirements": ["No physical window movement or maximize assertion without an Xvfb window manager; the header delegates both gestures to the existing Tauri title-bar handler. No Windows or macOS runtime certification, private graph, or release burn-in."],
       "stability":"burn-in"
     },
     "scripts/e2e-set-depth.mjs": {

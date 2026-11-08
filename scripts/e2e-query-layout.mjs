@@ -17,7 +17,7 @@ import { openPageByName, currentPageTitle } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const out = path.join(root, "artifacts/query-layout");
+const out = process.env.LAYOUT_OUT || path.join(root, "artifacts/query-layout");
 fs.mkdirSync(out, { recursive: true });
 const run = fs.mkdtempSync(path.join(out, "run-"));
 const graph = path.join(run, "graph");
@@ -224,7 +224,7 @@ try {
     // but a visible always-open summary table above the columns is the defect.
     assert(!r.tableVisible, "no visible group-summary table above the board columns");
   });
-  await check("F2 markdown tables: long text wraps, numbers stay whole, overflow shows a scrollbar strip", async () => {
+  await check("F2 markdown tables: prose fits the pane, numbers stay whole, overflow shows a scrollbar strip", async () => {
     const r = await browser.execute(() => {
       const tables = [...document.querySelectorAll(".main-content .md-table-wrap > table.md-table:not(.query-page-table):not(.query-summary-table)")];
       return tables.map((t) => {
@@ -245,7 +245,9 @@ try {
     measured.mdTables = r;
     assert(r.length >= 2, `found the two markdown tables (${r.length})`);
     const [prose, wide] = r;
-    assert(prose.longHeight > prose.lineHeight * 1.5, `long prose cell wraps (height ${prose.longHeight})`);
+    // GH #802: prose expands into free pane space before wrapping. At a wide
+    // window this fixture can fit on one line; narrow wrapping has its own journey.
+    assert(prose.wrapper.sw <= prose.wrapper.cw + TOL, "prose fits its viewport without horizontal scrolling");
     assert(prose.numHeight < prose.lineHeight * 2.2, `number cell does not wrap (height ${prose.numHeight})`);
     assert(prose.wrapRight <= prose.paneRight + TOL, "wrapped table stays inside the pane");
     assert(wide.wrapRight <= wide.paneRight + TOL, "wide table stays inside the pane");

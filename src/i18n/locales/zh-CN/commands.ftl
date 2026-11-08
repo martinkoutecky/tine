@@ -1,4 +1,6 @@
 command-go-search = 搜索 / 快速切换
+command-app-quit = 退出 Tine
+commands-couldn-t-request-quit = 无法请求退出。请尝试关闭窗口。
 
 navigation-sidebar-title = 切换侧边栏（t l）
 

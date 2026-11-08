@@ -33,8 +33,8 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 /** @type {Readonly<Record<string, Surface>>} */
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
-  // GH #860 / roadmap AG (2026-11-03): one explicitly approved, unbound breadcrumb toggle.
-  "commands.registry": { env: "desktop", budget: 148, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
+  // GH #805 (0.10 lane brief): Quit Tine must be remappable in Shortcuts.
+  "commands.registry": { env: "desktop", budget: 149, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 27, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
   "commands.palette": { env: "desktop", budget: 90, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },

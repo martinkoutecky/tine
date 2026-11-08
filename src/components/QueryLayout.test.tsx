@@ -1,5 +1,5 @@
 // D-20261028-UILP: query tables stay inside their box, long Markdown cells wrap and
-// short ones do not, the board heading keeps its count apart from the label, page
+// prose cells can fit narrow panes, the board heading keeps its count apart from the label, page
 // links in cards and tables are links, the group breakdown folds. Geometry itself
 // (jsdom has no layout) is asserted by scripts/e2e-query-layout.mjs.
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -55,7 +55,7 @@ describe("TableWrap viewport", () => {
 });
 
 describe("Markdown table cells", () => {
-  it("marks only long text as wrappable, never a number or a short label", () => {
+  it("retains long-cell metadata without marking numbers or unbroken short labels", () => {
     expect(longCellClass("16.7")).toBeUndefined();
     expect(longCellClass("x".repeat(LONG_CELL_CHARS))).toBeUndefined();
     expect(longCellClass("x".repeat(LONG_CELL_CHARS + 1))).toBe("md-cell-long");

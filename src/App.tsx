@@ -1187,7 +1187,7 @@ export function App(): JSX.Element {
           }}
         >
           <div class="left-sidebar-scroll">
-            <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
+            <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar data-tauri-drag-region={!osDrawsWindowControls() && !mobileDrawerMode() ? "" : undefined}>
               <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
             </div>
             <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>

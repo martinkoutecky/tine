@@ -127,6 +127,7 @@ export interface MessageArgs {
   "carry-result": { "count": number };
   "code-display-could-not-load-code-wrapping": { "error": string | number };
   "code-display-could-not-remember-code-wrapping": { "error": string | number };
+  "command-app-quit": {};
   "command-appearance-edit-custom-css": {};
   "command-appearance-edit-global-css": {};
   "command-appearance-open-custom-css-default-app": {};
@@ -279,6 +280,7 @@ export interface MessageArgs {
   "commands-closes-search-settings-first-outside-overlays": {};
   "commands-couldn-t-copy-selection-clipboard-write-failed": {};
   "commands-couldn-t-cut-selection-clipboard-write-failed": {};
+  "commands-couldn-t-request-quit": {};
   "commands-double-click-enter-or-f2-edits-the-selected": {};
   "commands-esc-leaves-a-sheet-typing-replaces-the": {};
   "commands-from-the-first-or-last-visual-row": {};
