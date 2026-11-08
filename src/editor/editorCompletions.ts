@@ -2,7 +2,7 @@ import { createEffect, createSignal, on, onCleanup, untrack } from "solid-js";
 import { backend } from "../backend";
 import { propertyCompletionSession } from "./propertyCompletionSession";
 import { acceptBlockRefPick, blockPickItems } from "./blockRefPick";
-import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, propertyValueKeyAfterBoundary, type Trigger } from "./autocomplete";
+import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
 import { node, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
@@ -29,6 +29,7 @@ import type { editorAssets } from "./editorAssets";
 import { msg, t as translate } from "../i18n";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
+import { coalescedRead } from "../coalescedRead";
 
 /** The buffer, selection and projected-region transitions belong to the editor.
  * All suggestion sessions and acceptance decisions belong to this core. */
@@ -74,9 +75,9 @@ export function editorCompletions(props: CompletionAdapter) {
   const [acItems, setAcItems] = createSignal<AcItem[]>([]);
   const [acBlockState, setAcBlockState] = createSignal<"pending" | "error" | "ready" | null>(null);
   const [acIndex, setAcIndex] = createSignal(0);
-  const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
   const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
   const propertyCompletion = propertyCompletionSession();
+  const pageReads = coalescedRead<import("../owned").Owned<PageEntry[]>>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pluginInvocation = 0;
   let completionOriginalRaw: string | null = null;
@@ -91,7 +92,8 @@ export function editorCompletions(props: CompletionAdapter) {
   };
   const closeAc = () => {
     clearTimeout(timer); releaseCompletionLease(); completionOriginalRaw = null;
-    setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0); setPropertyValueKey(null);
+    latestOwner(autocompleteScope, "suggestions"); pageReads.cancel();
+    setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0);
     propertyCompletion.end();
     props.closed();
   };
@@ -101,7 +103,7 @@ export function editorCompletions(props: CompletionAdapter) {
     && (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
   const detectEditorTrigger = () => {
     if (props.suppressTriggers()) return null;
-    const trigger = detectTrigger(text(), caret(), propertyValueKey(), props.format());
+    const trigger = detectTrigger(text(), caret(), props.format());
     if (trigger) return trigger;
     // The explicit scaffold picker also accepts an empty query on its opener.
     const open = ac();
@@ -161,7 +163,7 @@ export function editorCompletions(props: CompletionAdapter) {
     if (t.kind === "property-value") {
       setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
       void propertyCompletion.load(t.property!).then((loaded) => {
-        if (loaded && sameAcTrigger(ac(), t)) setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
+        if (loaded && requestOwner()) setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
       });
       return;
     }
@@ -265,13 +267,14 @@ export function editorCompletions(props: CompletionAdapter) {
     const lease = completionLease;
     // Closing can overtake a blocking native query. Release again after its
     // reply (including failure) so it cannot retain obsolete baseline keys.
-    let result: import("../owned").Owned<import("../types").PageEntry[]>;
+    let result: import("../owned").Owned<PageEntry[]> | undefined;
     try {
-      result = await readOwned(requestOwner, props.quickSwitch ? props.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
+      result = await pageReads.run(requestOwner, () => readOwned(requestOwner,
+        props.quickSwitch ? props.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled())));
     } finally {
       if (lease && lease !== completionLease) releaseLease(lease);
     }
-    if (result.kind === "stale") return;
+    if (!result || result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
         ? { label: name, insert: pageInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }
@@ -306,12 +309,11 @@ export function editorCompletions(props: CompletionAdapter) {
       const key = propertyKeyFold(item.propertyName);
       const result = applyCompletion(text(), t.start, t.end, `${key}:: `);
       apply(result.raw, result.caret);
-      setPropertyValueKey(key);
       const valueTrigger: Trigger = { kind: "property-value", query: "", start: result.caret, end: result.caret, property: key };
       setAc(valueTrigger);
       setAcIndex(0); setAcItems(propertyValueItems(key, ""));
       void propertyCompletion.load(key).then((loaded) => {
-        if (loaded && sameAcTrigger(ac(), valueTrigger)) setAcItems(propertyValueItems(key, ""));
+        if (loaded && current() && sameAcTrigger(ac(), valueTrigger)) setAcItems(propertyValueItems(key, ""));
       });
       return;
     }
@@ -338,7 +340,7 @@ export function editorCompletions(props: CompletionAdapter) {
           || text() !== before || node(props.id).raw !== snapshot.block.raw) return false;
         const s = props.selection();
         return s[0] === selection[0] && s[1] === selection[1]
-          && sameAcTrigger(detectTrigger(text(), caret(), propertyValueKey(), props.format()), t);
+          && sameAcTrigger(detectTrigger(text(), caret(), props.format()), t);
       };
       closeAc();
       void pluginManager.invokeSlashCommand(plugin.pluginId, plugin.contributionId, snapshot).then(effects => {
@@ -439,12 +441,23 @@ export function editorCompletions(props: CompletionAdapter) {
     if (next.kind === "block" || !previous || previous.kind !== next.kind || previous.start !== next.start
       || ((next.kind === "page" || next.kind === "tag") && !next.query.trim())) setAcItems([]);
     clearTimeout(timer);
-    timer = setTimeout(() => { void updateAutocomplete().catch(error => dbg(`autocomplete: ${String(error)}`)); }, 90);
+    const update = () => { void updateAutocomplete().catch(error => dbg(`autocomplete: ${String(error)}`)); };
+    if (next.kind === "page" || next.kind === "tag") update();
+    else timer = setTimeout(update, 90);
   };
   const selectionChanged = () => {
+    if (!current() || props.composing()) return;
     const open = ac();
-    if (!open || !["page", "tag", "block"].includes(open.kind)) return;
     const here = detectEditorTrigger();
+    // Moving the caret never opens value suggestions (OG opens them only from
+    // input): an arrow key or Enter on a property line must keep moving the
+    // caret or splitting the block. An open value list follows the caret.
+    if (open?.kind === "property-value") {
+      if (props.selection()[0] !== props.selection()[1] || here?.kind !== "property-value") closeAc();
+      else if (!sameAcTrigger(open, here)) refresh();
+      return;
+    }
+    if (!open || !["page", "tag", "block"].includes(open.kind)) return;
     if (!here || here.kind !== open.kind || here.start !== open.start) closeAc();
   };
   createEffect(on(pinyinMatchingEnabled, () => {
@@ -465,12 +478,11 @@ export function editorCompletions(props: CompletionAdapter) {
     })));
     if (write) apply(raw, position);
   };
-  const noteInput = (inserted: string) => {
-    const key = propertyValueKeyAfterBoundary(text(), caret(), inserted);
-    if (key) setPropertyValueKey(key);
-  };
-  onCleanup(() => { pluginInvocation++; clearTimeout(timer); releaseCompletionLease(); propertyCompletion.end(); });
+  onCleanup(() => {
+    pluginInvocation++; clearTimeout(timer); latestOwner(autocompleteScope, "suggestions"); pageReads.cancel();
+    releaseCompletionLease(); propertyCompletion.end();
+  });
   return { ac, acItems, acBlockState, acIndex, setAcIndex, acVisible, closeAc, selectAc,
-    updateAutocomplete, refresh, selectionChanged, noteInput, openLanguagePicker,
-    pause: () => clearTimeout(timer) };
+    updateAutocomplete, refresh, selectionChanged, openLanguagePicker,
+    pause: () => { clearTimeout(timer); latestOwner(autocompleteScope, "suggestions"); pageReads.cancel(); } };
 }

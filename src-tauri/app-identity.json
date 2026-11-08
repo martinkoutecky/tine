@@ -6,14 +6,26 @@
       "productName": "Tine",
       "androidApplicationId": "page.tine.app",
       "deployName": "tine",
-      "iconDirectory": "icons"
+      "iconDirectory": "icons",
+      "ios": {
+        "displayName": "TineOutline",
+        "appStoreAppleId": "6804403687",
+        "provisioningProfileSecret": "IOS_MOBILE_PROVISION",
+        "shareExtensionProvisioningProfileSecret": "IOS_SHARE_EXTENSION_MOBILE_PROVISION"
+      }
     },
     "experiment": {
       "identifier": "page.tine.TineBeta",
       "productName": "Tine Beta",
       "androidApplicationId": "page.tine.beta",
       "deployName": "tine-og",
-      "iconDirectory": "icons-beta"
+      "iconDirectory": "icons-beta",
+      "ios": {
+        "displayName": "Tine Beta",
+        "appStoreAppleId": "6832052325",
+        "provisioningProfileSecret": "IOS_BETA_MOBILE_PROVISION",
+        "shareExtensionProvisioningProfileSecret": "IOS_BETA_SHARE_EXTENSION_MOBILE_PROVISION"
+      }
     }
   }
 }

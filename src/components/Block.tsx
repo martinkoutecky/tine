@@ -27,7 +27,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -97,6 +97,7 @@ import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
 import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
+import { editorNodeBinding } from "../editor/nodeBinding";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
@@ -119,19 +120,21 @@ import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenu
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, type RowHost } from "./block/embedRowHost";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { bodyNeighbor, threadRootOf } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
-import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
+import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -179,9 +182,9 @@ export interface CollapseSurfaceApi {
 }
 // Deliberate Tine divergence from OG Logseq: a block embed's root follows the
 // source until its macro host records an explicit occurrence-owned collapse
-// override; folds below it are the source's (D-20261030-EMB). Reference/query
-// surfaces and page embeds keep local presentation state. Keep the surface
-// contract explicit when changing collapse parity.
+// override; all inner page/block embed folds are the source's (D-20261030-EMB,
+// GH #868). Reference/query results and read-only sources keep presentation
+// folds. Keep the surface contract explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 /** Render and edit one document block through the document door. Work scales
@@ -278,7 +281,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
-  const stickyParent = () => stickyParents() && !bulletless() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // Thread rows have no bullet pins; the spacer would pull the body over its quote.
+  // Thread rows have no bullet pins; the spacer would pull the body over its quote.
+  // A page-embed host pins its own bullet while its embedded page scrolls (GH #898).
+  const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
   let mainEl: HTMLDivElement | undefined;
 
   return (
@@ -302,7 +307,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
-      <Show when={stickyParent()}><StickyAncestor id={props.id} raw={node().raw} /></Show>
+      <Show when={stickyParent() ? macro()?.kind ?? "outline" : false} keyed><StickyAncestor id={props.id} raw={macro()?.kind === "embed" ? macro()!.inner.slice("embed ".length) : node().raw} /></Show>
       <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
       <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>
       <div
@@ -338,7 +343,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         }}
       >
         <Show when={!blockEmbedHost() && !bulletless()}>
-        <div class="block-controls">
+        <div class="block-controls" data-sticky-row={macro()?.kind === "embed" ? "" : undefined}>
           <span
             class="collapse-toggle"
             classList={{ "has-children": hasFoldableBody() }}
@@ -396,7 +401,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           }}
         >
           <Show
-            when={editing()}
+            when={editing() ? node() : undefined} keyed
             fallback={
               <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0}>
                 {() => <Rendered
@@ -413,7 +418,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                         author there, then place the optional count beside it
                         so referenced blocks keep the same author position (#883). */}
                     <Show when={showsAuthor() && !bulletless()}>
-                      <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
+                      <AuthorChip author={author()} menuOf={props.id} />
                     </Show>
                     <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
                   </>}
@@ -421,7 +426,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               </QuoteHighlightProvider>
             }
           >
-            <Editor id={props.id} propertySession={propertySession} />
+            <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
           </Show>
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
@@ -434,7 +439,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
       </Show>
 
-      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+      <Show when={(bulletless() || props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
           <Match when={sheet().view === "grid"}>
             <SheetContainer>
@@ -550,17 +555,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   });
   const autocompleteLayerId = `block-completion-${createUniqueId()}`;
   const selectionOverflowLayerId = `block-selection-overflow-${createUniqueId()}`;
-  const node = () => docNode(props.id);
-  // The node this editor instance was built to show. A page replacement (an
-  // external change, the host's answer to an Open) purges the page's nodes and
-  // builds new ones, often under the same ids (runtime ids are structural), and
-  // remounts the outline; `upsertPage` carries the editor to the new copy.
-  // Chromium-family webviews then fire `blur` on this instance's removed,
-  // focused textarea. Such an instance is stale: its text is the pre-reload
-  // block, so writing it would silently revert the external change, and
-  // ending the edit would close the carried editor (UI-CARRY-RELOAD-STALE-BLUR).
-  const shownNode = node();
-  const replacedUnderEditor = () => !editorMounted && (!node() || node() !== shownNode);
+  const { node, shownNode, live: liveNode, current: editorNodeCurrent, writable: editorNodeWritable } = editorNodeBinding(() => props.id, () => editorMounted);
+  const replacedUnderEditor = () => !editorNodeWritable();
   const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
@@ -572,9 +568,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       && page.roots[0] === props.id
       && (node().originatedFromPageHeader || (!page.preBlock && propertyDraft));
   };
-  // Parsed editor facts travel with the committed buffer; hidden bytes survive.
+  const commentHide = commentEditorHide(node(), propertySession.facets(node().raw, pageFmt()).properties, pageFmt(), docNode);
   const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
-  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : BUILTIN_HIDE);
+  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : commentHide);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents
@@ -610,7 +606,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   let rawBeforeLastCommit = node().raw;
   const markerBaseline = editorMarkerBaseline(node().raw, pageFmt());
-  const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode, () => ref.value);
+  const commitRecovery = editorCommitRecovery(() => ref, editorNodeCurrent, () => ref.value);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return;
@@ -665,7 +661,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
 
   const completion = editorCompletions({
     id: props.id, format: pageFmt,
-    current: () => editorMounted && !!node() && !!ref?.isConnected,
+    current: () => editorMounted && !!liveNode() && !!ref?.isConnected,
     composing: () => compositionActive,
     // Census D9: retain the shipped textarea's code-body completion policy.
     suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell,
@@ -809,7 +805,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   let selectionOverflowRef: HTMLDivElement | undefined;
   const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
-    if (!editorMounted || !ref.isConnected || !node()) return;
+    if (!editorMounted || !ref.isConnected || !liveNode()) return;
     codeView.syncSelection(ref);
     const selected = ref.selectionStart !== ref.selectionEnd;
     setHasSel(selected);
@@ -916,6 +912,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     queueMicrotask(() => {
       syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
+      refreshAutocompleteAfterInput();
     });
   };
 
@@ -1147,7 +1144,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           ref.setSelectionRange(r.caret, r.caret);
         }
       }
-      completion.noteInput(ch);
       // Only a whole visible block `1. ` becomes own numbered-list state.
       // Projected code/calc bodies are literal; their hidden wrappers must survive.
       // OG: src/main/frontend/handler/editor.cljs:1888-1892 (6e7afa8eb).
@@ -1434,46 +1430,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   onCleanup(unregisterFocusedEditor);
   let sheetCanceling = false;
 
-  const sheetFaceGridId = (id: string): string | null => {
-    if (blockIsGridView(id)) return id;
-    return (docNode(id)?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
-  };
   const sheetVisibleLength = (id: string): number =>
     splitProps(docNode(id)?.raw ?? "", SHEET_CELL_HIDE).visible.length;
-  const deepestLastSheetOutline = (id: string): string => {
-    let cur = id;
-    for (;;) {
-      if (sheetFaceGridId(cur)) return cur;
-      const children = docNode(cur)?.children ?? [];
-      if (!children.length) return cur;
-      cur = children[children.length - 1];
-    }
-  };
-  const nextSheetOutline = (id: string, hostId: string): string | null => {
-    if (!sheetFaceGridId(id)) {
-      const firstChild = docNode(id)?.children[0];
-      if (firstChild) return firstChild;
-    }
-    let cur = id;
-    while (cur !== hostId) {
-      const parent = docNode(cur)?.parent ?? null;
-      if (!parent) return null;
-      const siblings = docNode(parent)?.children ?? [];
-      const idx = siblings.indexOf(cur);
-      if (idx >= 0 && idx + 1 < siblings.length) return siblings[idx + 1];
-      cur = parent;
-    }
-    return null;
-  };
-  const prevSheetOutline = (id: string, hostId: string): string | "host" | null => {
-    const parent = docNode(id)?.parent ?? null;
-    if (!parent) return null;
-    const siblings = docNode(parent)?.children ?? [];
-    const idx = siblings.indexOf(id);
-    if (idx > 0) return deepestLastSheetOutline(siblings[idx - 1]);
-    if (parent === hostId) return "host";
-    return parent;
-  };
 
   const handleSheetCellKey = (e: KeyboardEvent, start: number, end: number, raw: string): boolean => {
     if (!sheetCell) return false;
@@ -1505,9 +1463,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       commit(raw);
       const hostId = cellBlockId(sheetCell);
       if (hostId && props.id !== hostId) {
-        const prev = prevSheetOutline(props.id, hostId);
-        if (prev === "host") commitAndStartSheetEdit(hostId, sheetVisibleLength(hostId));
-        else if (prev) commitAndStartSheetEdit(prev, sheetVisibleLength(prev));
+        const prev = sheetOutlineNeighbor(props.id, hostId, -1);
+        if (prev) commitAndStartSheetEdit(prev, sheetVisibleLength(prev));
         else moveCellAfterEdit(sheetCell, "up");
         return;
       }
@@ -1524,9 +1481,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       else {
         const hostId = cellBlockId(sheetCell);
         const next = hostId
-          ? props.id === hostId
-            ? docNode(hostId)?.children[0] ?? null
-            : nextSheetOutline(props.id, hostId)
+          ? sheetOutlineNeighbor(props.id, hostId, 1)
           : null;
         if (next) commitAndStartSheetEdit(next, 0);
         else moveCellAfterEdit(sheetCell, "down");
@@ -1601,9 +1556,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const end = ref.selectionEnd;
     const raw = ref.value;
     // Empty code payloads can leave their wrapper through the existing delete door.
-    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0) {
+    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0 && threadRootOf(props.id) === null) {
       e.preventDefault();
-      const adjacent = [prevVisible(props.id, structuralScope), nextVisible(props.id, structuralScope)].find(id => id && docNode(id)?.page === node().page);
+      const adjacent = [bodyNeighbor(props.id, -1, structuralScope), bodyNeighbor(props.id, 1, structuralScope)].find(id => id && docNode(id)?.page === node().page);
       if (adjacent) {
         deleteBlock(props.id);
         startEditing(adjacent, 0, null, editSurface());
@@ -1870,7 +1825,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         // Never merge a highlight, calc, or body-only code block away (their
         // structure must stay; a merge would smuggle raw wrapper bytes into the
         // previous block's text).
-        if (isAnnot() || isCalc() || codeShown()) return;
+        if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
         // Own-numbered state is a block property, never an in-block `1.` marker.
         // At offset zero OG removes only that property and preserves the text
         // (`src/main/frontend/handler/editor.cljs:2752-2764`, 6e7afa8eb).
@@ -1886,7 +1841,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           return;
         }
         const n = docNode(props.id);
-        const next = nextVisible(props.id, structuralScope);
+        const next = bodyNeighbor(props.id, 1, structuralScope);
         if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
@@ -1894,12 +1849,10 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         }
       }
     } else if (e.key === "Delete" && end === start && start === raw.length) {
-      // GH #213: forward-delete merges with the NEXT block — the mirror of
-      // Backspace's merge with the previous one. Never merge a highlight, calc,
-      // or body-only code block itself (same rule as Backspace), and never
-      // absorb an annotation/calc block's raw text into this one.
-      if (isAnnot() || isCalc() || codeShown()) return;
-      const next = nextVisible(props.id, structuralScope);
+      // Delete merges with the next body block (GH #213, #891); annotations,
+      // calc and code wrappers keep their structure, as on Backspace.
+      if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
+      const next = bodyNeighbor(props.id, 1, structuralScope);
       if (next) {
         const nextRaw = docNode(next)?.raw ?? "";
         if (isAnnotationBlock(nextRaw, pageFmt()) || calcSource(nextRaw) !== null) return;
@@ -1948,7 +1901,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         // og has no embed-scoped outline (master GH #341), so the source page's
         // predecessor of the embed root is not "none": the root itself is the test.
         const exitingEmbed = embedNavExit !== null && (!prev || embedNavExit.firstRoot() === props.id);
-        if (exitingEmbed) prev = prevVisible(embedNavExit!.hostBlockId);
+        if (exitingEmbed) prev = bodyNeighbor(embedNavExit!.hostBlockId, -1);
         // A canonical page header is not normally an outline node. Materialize
         // its transient ordinary-editor representation only when the primary
         // page/pane caret crosses the first-body boundary; reference, embed and
@@ -2276,6 +2229,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
+        <Show when={codeShown() ?? codeBodyProjection(editorValue(), pageFmt())}>
+          {code => <CopyButton text={code().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
+        </Show>
         <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
       </Show>
       <Show when={isCalc()}>

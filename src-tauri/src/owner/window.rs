@@ -10,7 +10,7 @@
 //! held by the host, so it gets no page mail) reloads it. Unset under `tine
 //! serve`, which has no window.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::time::Duration;
@@ -20,6 +20,131 @@ use tauri::Emitter;
 use tine_core::model::PageKind;
 
 use crate::watcher::GraphChange;
+use tine_store::GraphRev;
+
+type PageDelivery = (Vec<GraphChange>, Option<serde_json::Value>);
+
+/// Join reload metadata to the existing ordered publication feed, whichever
+/// arrives first. Coalesce by path and bound a stalled dispatcher's backlog.
+/// Overflow uses the existing conservative notification; it never drops a reload.
+#[derive(Default)]
+struct ReloadPublications {
+    latest: Option<(GraphRev, serde_json::Value)>,
+    pending: BTreeMap<String, (GraphRev, GraphChange)>,
+}
+
+impl ReloadPublications {
+    fn reload(
+        &mut self,
+        pages: Vec<GraphChange>,
+        revision: Option<GraphRev>,
+    ) -> Option<PageDelivery> {
+        let Some(revision) = revision else {
+            return Some((pages, None));
+        };
+        if let Some((published, answers)) = &self.latest {
+            if *published >= revision {
+                return Some((pages, Some(answers.clone())));
+            }
+        }
+        if pages.len() + self.pending.len() > 32 {
+            let mut all: Vec<_> = std::mem::take(&mut self.pending)
+                .into_values()
+                .map(|(_, page)| page)
+                .collect();
+            all.extend(pages);
+            return Some((all, None));
+        }
+        for page in pages {
+            self.pending.insert(page.path.clone(), (revision, page));
+        }
+        None
+    }
+
+    fn published(
+        &mut self,
+        revision: GraphRev,
+        answers: serde_json::Value,
+    ) -> Option<PageDelivery> {
+        self.latest = Some((revision, answers.clone()));
+        let mut ready = Vec::new();
+        self.pending.retain(|_, (expected, page)| {
+            if *expected <= revision {
+                ready.push(page.clone());
+                false
+            } else {
+                true
+            }
+        });
+        (!ready.is_empty()).then_some((ready, Some(answers)))
+    }
+}
+
+#[cfg(test)]
+mod reload_publication_tests {
+    use super::*;
+
+    fn rev(n: u64) -> GraphRev {
+        n.to_string().try_into().unwrap()
+    }
+    fn page(n: usize) -> GraphChange {
+        GraphChange {
+            path: format!("pages/Writer {n}.md"),
+            name: format!("Writer {n}"),
+            kind: PageKind::Page,
+            created: false,
+            removed: false,
+        }
+    }
+
+    #[test]
+    fn cli_reload_and_publication_join_in_either_arrival_order() {
+        let answers = json!({"rev":"1","summary":{"full":false,"queryTo":[]}});
+        let mut state = ReloadPublications::default();
+        assert!(state.reload(vec![page(0)], Some(rev(1))).is_none());
+        assert_eq!(
+            state.published(rev(1), answers.clone()),
+            Some((vec![page(0)], Some(answers.clone())))
+        );
+        assert_eq!(
+            state.reload(vec![page(0)], Some(rev(1))),
+            Some((vec![page(0)], Some(answers)))
+        );
+        assert!(state.pending.is_empty());
+    }
+
+    #[test]
+    fn a_later_publication_carries_queued_reload_without_reusing_older_evidence() {
+        let mut state = ReloadPublications::default();
+        assert!(state.published(rev(1), json!({"rev":"1"})).is_none());
+        assert!(state.reload(vec![page(0)], Some(rev(2))).is_none());
+        assert!(state.published(rev(1), json!({"rev":"1"})).is_none());
+        let latest = json!({"rev":"3","summary":{"full":true}});
+        assert_eq!(
+            state.published(rev(3), latest.clone()),
+            Some((vec![page(0)], Some(latest)))
+        );
+    }
+
+    #[test]
+    fn a_stalled_dispatcher_coalesces_paths_and_has_a_bounded_fallback() {
+        let mut state = ReloadPublications::default();
+        for i in 1..100 {
+            assert!(state.reload(vec![page(0)], Some(rev(i))).is_none());
+        }
+        assert_eq!(state.pending.len(), 1);
+        let (pages, answers) = state
+            .reload((1..33).map(page).collect(), Some(rev(100)))
+            .unwrap();
+        assert_eq!(pages.len(), 33);
+        assert!(answers.is_none());
+        assert!(state.pending.is_empty());
+        assert_eq!(
+            state.reload(vec![page(0)], None),
+            Some((vec![page(0)], None))
+        );
+    }
+}
 
 /// How long a write waits for the window to save the typed text. The barrier
 /// sends the input and waits for its publication (one guarded save); a
@@ -45,15 +170,24 @@ pub(crate) struct WindowLink {
     app: tauri::AppHandle,
     label: String,
     binding_generation: u64,
+    store: std::sync::Weak<tine_store::Store>,
+    publications: Mutex<ReloadPublications>,
     waiting: Mutex<HashMap<u64, mpsc::SyncSender<bool>>>,
 }
 
 impl WindowLink {
-    pub(crate) fn new(app: tauri::AppHandle, label: String, binding_generation: u64) -> Self {
+    pub(crate) fn new(
+        app: tauri::AppHandle,
+        label: String,
+        binding_generation: u64,
+        store: std::sync::Weak<tine_store::Store>,
+    ) -> Self {
         Self {
             app,
             label,
             binding_generation,
+            store,
+            publications: Mutex::new(ReloadPublications::default()),
             waiting: Mutex::new(HashMap::new()),
         }
     }
@@ -104,8 +238,34 @@ impl WindowLink {
     /// outside edits (`watcher::page_event_payloads`: one `graph-changed` per
     /// page, one `graph-changed-bulk` for a checkout-sized batch).
     pub(crate) fn pages_changed(&self, pages: Vec<GraphChange>) {
+        // Owner writes already acquired a whole-graph view before planning.
+        // Sampling its published revision is O(1), with no file read or scan.
+        let revision = self
+            .store
+            .upgrade()
+            .and_then(|store| store.whole_graph().ok().map(|view| view.rev()));
+        let delivery = self.publications.lock().unwrap().reload(pages, revision);
+        if let Some(delivery) = delivery {
+            self.deliver_pages(delivery);
+        }
+    }
+
+    /// Called by the existing watcher dispatch owner, with its already
+    /// serialized evidence. No extra Store surface, subscription or thread.
+    pub(crate) fn published(&self, revision: GraphRev, answers: serde_json::Value) {
+        let delivery = self
+            .publications
+            .lock()
+            .unwrap()
+            .published(revision, answers);
+        if let Some(delivery) = delivery {
+            self.deliver_pages(delivery);
+        }
+    }
+
+    fn deliver_pages(&self, (pages, answers): PageDelivery) {
         for (event, payload) in
-            crate::watcher::page_event_payloads(pages, self.binding_generation, None)
+            crate::watcher::page_event_payloads(pages, self.binding_generation, answers)
         {
             let _ = self.app.emit_to(self.label.as_str(), event, payload);
         }

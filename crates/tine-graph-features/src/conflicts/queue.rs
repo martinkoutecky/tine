@@ -375,6 +375,29 @@ impl ConflictQueue {
         Ok(derived.as_ref().unwrap().published())
     }
 
+    /// The queued sync copies with no decidable row, as (copy, page) paths:
+    /// the candidates [`super::trash_identical_sync_copies`] byte-compares.
+    /// From memory, O(queue); empty before the first [`Self::inventory`].
+    pub fn undecided_copies(&self) -> Vec<(String, String)> {
+        let derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(Derived { inventory, .. }) = derived.as_ref() else {
+            return Vec::new();
+        };
+        let side = |object: &ConflictObject, role| {
+            object
+                .sides
+                .iter()
+                .find(|s| s.role == role)
+                .and_then(|s| s.path.clone())
+        };
+        inventory
+            .queue
+            .iter()
+            .filter(|o| o.source == ConflictSource::SyncCopy && o.block_conflicts == Some(0))
+            .filter_map(|o| Some((side(o, SideRole::Theirs)?, side(o, SideRole::Mine)?)))
+            .collect()
+    }
+
     /// Re-derive what one published store change can affect. An external
     /// change (watcher, scan) re-derives every changed file, so a marker or
     /// copy written while the graph is open enters the queue on its next

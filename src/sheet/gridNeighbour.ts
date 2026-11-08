@@ -18,7 +18,7 @@
 // Cells are positional (grid -> row children -> cell children), as the grid adapter's
 // `blockIdAt` reads them. Every grid nested in a grid renders on its outer grid's surface,
 // so a move keeps the surface it started on.
-import { blockIsGridView, blockIsOpaqueSheetView, nextVisible, node } from "../document";
+import { blockIsGridView, blockIsOpaqueSheetView, nextVisible, node, threadRootOf } from "../document";
 import type { SheetCellCtx } from "./context";
 
 export type GridMove = "left" | "right" | "up" | "down" | "tab-forward" | "tab-back";
@@ -39,6 +39,10 @@ interface Pos {
 }
 
 const children = (id: string): readonly string[] => node(id)?.children ?? [];
+// Grid rows/cells are positional; only the outline inside a cell is body text.
+// A thread source retains in-thread navigation, as the ordinary tree walk does.
+const outlineChildren = (id: string, body: boolean): readonly string[] => body
+  ? children(id).filter(child => threadRootOf(child) === null) : children(id);
 const parentOf = (id: string): string | null => node(id)?.parent ?? null;
 
 function cellCtx(gridId: string, row: number, col: number, surfaceId?: string): SheetCellCtx {
@@ -113,17 +117,17 @@ function verticalCell(cell: SheetCellCtx, step: 1 | -1): SheetCellCtx | null {
 }
 
 /** The last position inside `id`'s content (its own text, sub-grid or child outline). */
-function lastPos(id: string, cell: SheetCellCtx, column: "reading" | "first"): Pos {
+function lastPos(id: string, cell: SheetCellCtx, column: "reading" | "first", body: boolean): Pos {
   if (node(id)?.collapsed) return { blockId: id, cell };
   if (blockIsGridView(id)) {
     const inner = edgeCell(id, "last", column, cell.surfaceId);
     const innerBlock = inner && cellBlock(inner);
-    if (inner && innerBlock) return lastPos(innerBlock, inner, column);
+    if (inner && innerBlock) return lastPos(innerBlock, inner, column, body);
     return { blockId: id, cell };
   }
   if (blockIsOpaqueSheetView(id)) return { blockId: id, cell };
-  const kids = children(id);
-  return kids.length ? lastPos(kids[kids.length - 1], cell, column) : { blockId: id, cell };
+  const kids = outlineChildren(id, body);
+  return kids.length ? lastPos(kids[kids.length - 1], cell, column, body) : { blockId: id, cell };
 }
 
 /** The first position inside `id`'s content after its own text, if any. */
@@ -135,18 +139,19 @@ function firstInside(id: string, cell: SheetCellCtx): Pos | null {
     return inner && innerBlock ? { blockId: innerBlock, cell: inner } : null;
   }
   if (blockIsOpaqueSheetView(id)) return null;
-  const first = children(id)[0];
+  const first = outlineChildren(id, threadRootOf(id) === null)[0];
   return first ? { blockId: first, cell } : null;
 }
 
 /** After `id`'s whole subtree, staying in reading order (`vertical`: the cell below, not the next cell). */
 function afterSubtree(id: string, cell: SheetCellCtx, vertical: boolean): Pos | null {
   const host = cellBlock(cell);
+  const body = threadRootOf(id) === null;
   let cur = id;
   while (cur !== host) {
     const parent = parentOf(cur);
     if (!parent) return null;
-    const siblings = children(parent), at = siblings.indexOf(cur);
+    const siblings = outlineChildren(parent, body), at = siblings.indexOf(cur);
     if (at >= 0 && at + 1 < siblings.length) return { blockId: siblings[at + 1], cell };
     cur = parent;
   }
@@ -170,16 +175,17 @@ function afterGrid(cell: SheetCellCtx, vertical: boolean): Pos | null {
 /** Before `id` in reading order (`vertical`: from a cell's own text, the cell above). */
 function before(id: string, cell: SheetCellCtx, vertical: boolean): Pos | null {
   const host = cellBlock(cell);
+  const body = threadRootOf(id) === null;
   if (id !== host) {
     const parent = parentOf(id);
     if (!parent) return null;
-    const siblings = children(parent), at = siblings.indexOf(id);
-    if (at > 0) return lastPos(siblings[at - 1], cell, vertical ? "first" : "reading");
+    const siblings = outlineChildren(parent, body), at = siblings.indexOf(id);
+    if (at > 0) return lastPos(siblings[at - 1], cell, vertical ? "first" : "reading", body);
     return { blockId: parent, cell };
   }
   const prevCell = vertical ? verticalCell(cell, -1) : siblingCell(cell, -1);
   const prevBlock = prevCell && cellBlock(prevCell);
-  if (prevCell && prevBlock) return lastPos(prevBlock, prevCell, vertical ? "first" : "reading");
+  if (prevCell && prevBlock) return lastPos(prevBlock, prevCell, vertical ? "first" : "reading", body);
   // Leaving a grid past its start: the grid host's own text, in the host's context.
   const outer = containingGridCell(cell.gridId, cell.surfaceId);
   if (outer === undefined) return null;
@@ -222,6 +228,6 @@ export function gridEntry(gridId: string, from: "above" | "below", col = 0, surf
   const block = cell && cellBlock(cell);
   if (!cell || !block) return null;
   if (from === "above") return { blockId: block, cell, caret: { col, edge: "first" } };
-  const last = lastPos(block, cell, "first");
+  const last = lastPos(block, cell, "first", threadRootOf(gridId) === null);
   return { blockId: last.blockId, cell: last.cell, caret: { col, edge: "last" } };
 }

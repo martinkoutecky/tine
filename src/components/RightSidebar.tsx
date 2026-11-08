@@ -140,8 +140,8 @@ export function RightSidebar(): JSX.Element {
     buttons[next]?.focus();
   };
   return (
-    <Show when={rightSidebarOpen()}>
       <MobileDrawerPanel
+        open={rightSidebarOpen()}
         side="right"
         label={t("right-sidebar-reference-sidebar")}
         class="right-sidebar"
@@ -226,7 +226,6 @@ export function RightSidebar(): JSX.Element {
           </Show>
         </div>
       </MobileDrawerPanel>
-    </Show>
   );
 }
 

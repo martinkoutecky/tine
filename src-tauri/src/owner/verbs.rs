@@ -226,7 +226,10 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             super::write::edit_block(slot, args)
         }),
         "block.prop" => in_run(slot, args, "tine prop", || {
-            super::write::prop_block(slot, args)
+            super::properties::prop_block(slot, args)
+        }),
+        "page.prop" => in_run(slot, args, "tine prop --page", || {
+            super::properties::prop_page(slot, args)
         }),
         "block.move" => in_run(slot, args, "tine move", || {
             super::write::move_block(slot, args)

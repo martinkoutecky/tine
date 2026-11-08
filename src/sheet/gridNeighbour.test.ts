@@ -94,6 +94,38 @@ function walk(start: string, move: GridMove): string[] {
 }
 
 describe("gridNeighbour (GH #874 reading order)", () => {
+  it.each(["right", "down"] as const)("body %s skips whole threads in a cell outline", move => {
+    setDoc("byId", "comment", n("comment", "Remark\ntine.quote:: B", "b", ["reply"]));
+    setDoc("byId", "reply", n("reply", "Reply", "comment"));
+    setDoc("byId", "b", "children", ["comment", "b1", "b2"]);
+    expect(gridNeighbour("b", outer(0, 1), move)?.blockId).toBe("b1");
+    expect(gridNeighbour("comment", outer(0, 1), move)?.blockId).toBe("reply");
+    setDoc("byId", "b", "children", ["b1", "comment", "b2"]);
+    expect(gridNeighbour("b1a", outer(0, 1), move)?.blockId).toBe("b2");
+  });
+  it.each(["left", "up"] as const)("body %s skips a preceding thread and a body's trailing thread", move => {
+    setDoc("byId", "comment", n("comment", "Remark\ntine.quote:: B", "b", ["reply"]));
+    setDoc("byId", "reply", n("reply", "Reply", "comment"));
+    setDoc("byId", "b", "children", ["b1", "comment", "b2"]);
+    expect(gridNeighbour("b2", outer(0, 1), move)?.blockId).toBe("b1a");
+    setDoc("byId", "b", "children", ["b1", "b2", "comment"]);
+    expect(gridNeighbour(move === "left" ? "c" : "d", outer(1, move === "left" ? 0 : 1), move)?.blockId).toBe("b2");
+  });
+  it("entering a grid from below skips a trailing annotation", () => {
+    setDoc("byId", "comment", n("comment", "Remark\ntine.quote:: E", "e", ["reply"]));
+    setDoc("byId", "reply", n("reply", "Reply", "comment"));
+    setDoc("byId", "e", "children", ["e1", "comment"]);
+    expect(gridEntry("grid", "below", 1, S)?.blockId).toBe("e1");
+  });
+  it("retains child navigation across cells when the grid itself belongs to a thread", () => {
+    setDoc("byId", "owner", n("owner", "Owner", null, ["thread"]));
+    setDoc("byId", "thread", n("thread", "Remark\ntine.quote:: Owner", "owner", ["grid"]));
+    setDoc("byId", "grid", "parent", "thread");
+    setDoc("pages", 0, "roots", ["owner", "after"]);
+    expect(gridNeighbour("c", outer(1, 0), "left")?.blockId).toBe("b2");
+    expect(gridNeighbour("d", outer(1, 1), "up")?.blockId).toBe("b2");
+    expect(gridEntry("grid", "below", 0, S)?.blockId).toBe("e1");
+  });
   it("walks only visible descendants of a collapsed nested block", () => {
     setDoc("byId", "b1", "collapsed", true);
     expect(gridNeighbour("b1", outer(0, 1), "down")?.blockId).toBe("b2");

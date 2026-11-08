@@ -36,7 +36,7 @@ pub fn comment_quote<'a>(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HidePolicy {
-    /// An ordinary block editor: LOGBOOK, [`BUILTIN_HIDDEN`], and comment metadata on comments.
+    /// An ordinary block editor: LOGBOOK, [`BUILTIN_HIDDEN`], author, and comment context on comments.
     Builtin,
     /// A sheet cell: the built-ins plus every `tine.*` key.
     SheetCell,
@@ -85,6 +85,7 @@ impl HidePolicy {
         let lower = property_key_norm(key);
         let builtin = || {
             BUILTIN_HIDDEN.contains(&lower.as_str())
+                || lower == AUTHOR
                 || (COMMENT_HIDDEN.contains(&property_key_norm(key).as_str()) && comment)
         };
         let structural = || {
@@ -1275,7 +1276,7 @@ mod tests {
                 for key in COMMENT_HIDDEN {
                     assert_eq!(
                         hide.hides(key, &regions),
-                        comment_or_cell,
+                        key == AUTHOR || comment_or_cell,
                         "{raw:?}: {key}"
                     );
                     assert_eq!(
@@ -1287,11 +1288,11 @@ mod tests {
                                 .filter(|p| p.primary)
                                 .map(|p| (p.key.as_str(), p.value.as_str()))
                         ),
-                        comment_or_cell,
+                        key == AUTHOR || comment_or_cell,
                     );
                 }
-                assert_eq!(t.hidden.contains("author"), comment_or_cell);
-                assert_eq!(t.visible.contains("author"), !comment_or_cell);
+                assert!(t.hidden.contains("author"));
+                assert!(!t.visible.contains("author"));
                 for key in BUILTIN_HIDDEN {
                     assert!(hide.hides(key, &regions));
                 }

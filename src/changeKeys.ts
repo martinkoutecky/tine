@@ -22,6 +22,12 @@ const invalidators = new Set<(affected: ReadonlySet<string> | null) => void>();
 export const changeKeyHasConsumers = (key: string) => keys.hasConsumers(key);
 export const onChangeKeyReleased = (callback: (keys: readonly string[]) => void) => keys.onRelease(callback);
 export const onChangeKeyAcquired = (callback: (key: string) => void) => keys.onAcquire(callback);
+/** Adoption checks must also see evidence staged behind the publication gate:
+ * a relevant change is already stale before its coalesced revision releases. */
+export function changeKeyPending(key: string): boolean {
+  ensureEpoch();
+  return staged && (pendingFull || pending.has(key));
+}
 export const onChangeKeysFlushed = (callback: (affected: ReadonlySet<string> | null) => void) => { invalidators.add(callback); };
 let epoch = -1;
 let pending = new Set<string>();

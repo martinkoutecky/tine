@@ -215,7 +215,7 @@ Tine 是由一位维护者独立维护的项目，采用一种不同寻常的贡
 
 **计划中 / 评估中：**图谱视图。
 
-**移动端：**自 0.4.0 起，Tine 已提供**原生 Android 构建**（Tauri v2）——可通过你自行选择的同步方式，在手机上打开和编辑真实的 Logseq 图谱，并与 Logseq 移动端配合使用。iOS 版本正在规划中。
+**移动端：**自 0.4.0 起，Tine 已提供**原生 Android 构建**（Tauri v2）——可通过你自行选择的同步方式，在手机上打开和编辑真实的 Logseq 图谱，并与 Logseq 移动端配合使用。iOS 版（iPhone 与 iPad）已上架 [App Store](https://apps.apple.com/us/app/tineoutline/id6804403687)。
 
 **新增——权限受限的插件（0.6）：**Tine 现在提供实验性的原生插件 API，支持受限的 WebAssembly 扩展和不含代码的令牌主题。软件包默认禁用，必须声明明确权限，并通过宿主提供的命令、装饰、设置和写入保护运行；插件无法直接获得 DOM、文件系统或网络访问权限。这并不兼容 Logseq 或 Obsidian 的插件 API。参见[用户概览](https://tine.page/plugins.html)和[开发者指南](docs/plugins/README.md)。
 

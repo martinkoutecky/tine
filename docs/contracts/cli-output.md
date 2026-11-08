@@ -43,10 +43,10 @@ also accepted. Sheets retain the documented CLI plain-outline rendering.
 Column *presence*: `always` (present, never null), `nullable` (always present, may be
 `null`), `optional` (omitted when it does not apply).
 
-Request lines other than `block.edit`, `block.add`, and `block.prop` are limited
+Request lines other than `block.edit`, `block.add`, `block.prop`, and `page.prop` are limited
 to 1 MiB, including ignored fields. Oversized requests answer `frame-too-large`,
 `admitted: false`, and close the connection before dispatch, even for status.
-Those three block-text verbs retain the `8 × MAX_PARSE_BYTES + 1 MiB` envelope.
+Those four text verbs retain the `8 × MAX_PARSE_BYTES + 1 MiB` envelope.
 Because JSON permits `verb` after `args`, framing initially uses the larger
 envelope for every request; the non-text limit is checked after decoding.
 This does not reduce the framing allocation bound.
@@ -247,7 +247,7 @@ Not a read verb: `tine serve --stop`, and the app's handover. Its success payloa
 `{"schema":"tine.cli/1","kind":"yield","yielded":true}`, sent while the owner still holds the
 lock. It is produced by `serve.rs` and exercised by the handover tests, not by `output_tests`.
 
-### Writes: `block.add` / `block.edit` / `block.prop` / `block.move`
+### Writes: `block.add` / `block.edit` / `block.prop` / `page.prop` / `block.move`
 
 `tine add`, `tine edit`, `tine prop set|remove`, `tine move`. Every write goes through the graph's owner and
 the page host's guarded save, the path the app's own edits use: the owner first saves any text typed in a window
@@ -283,9 +283,25 @@ or is killed while its write stands in line does not cancel it: the write can la
   page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
+  When creating a page, a properties-only leading pre-block, or qualifying first Markdown
+  properties-only bullet, becomes the page header. It receives no implicit `tine.author`;
+  outline blocks still do. Existing pages keep add's outline-insertion behavior.
+- **`page.prop`**: `tine prop set --page PAGE KEY VALUE` / `tine prop remove --page PAGE KEY`,
+  or `--journal` / `--journal=DATE` instead of `--page`. Exactly one page/journal target is
+  required; the page must already exist. Wire args: `page` or `journal`, `key`, `value`
+  (null removes), optional `rev`, `run`, `author` as for block writes. Uses the app's page-property
+  editor: replace the first case-insensitive match in place, remove duplicates, prepend new keys,
+  preserve other properties and preamble prose. Markdown writes `key:: value`; Org writes
+  `#+key: value` for a new key and preserves existing drawer/directive placement.
+  Blank values remove, as in the app. Tags, alias and title use the existing page identity rules.
+  No implicit author property is added (including with `--author`, which still names run commits).
+  Reply kind `written`, with `blocks: []` and `more: 0`: a header has no outline handle.
 - **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
-  built-ins including SRS keys, graph-configured hidden keys, and visible ones such as `status::`, `src::`,
-  `tine.author::`) is kept byte-exact; children are kept too. Removing a property takes `tine prop remove`. This is an
+  built-ins including SRS keys, graph-configured hidden keys, editor-hidden `tine.author::`, and visible ones such as
+  `status::`, `src::`) is kept byte-exact; children are kept too. The app also retains editor-hidden `tine.author::`
+  byte-exact when editing ordinary blocks; its author chip stays visible and offers **Remove author** in its menu.
+  OG reads `tine.author::` as an ordinary property; its file syntax is unchanged.
+  Removing a property from the CLI takes `tine prop remove`. This is an
   intentional difference from typing in the app, whose editor buffer owns visible properties, and from OG, which
   has no command line (#840, D-20261101-CLIE). A block whose parse failed is refused (`refused:kernel`): the
   in-scope threat is malformed input, where properties cannot be told from text.
@@ -544,7 +560,7 @@ One block per line, indented two spaces per level:
 ```
 # a
 id pages/a.md rev d24f22bfce0d5568
-1~xy4j47 [tine.author:: claude] one
+1~diekug [tine.author:: claude] one
          id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
   1.1~3as2k7 under one
 2~hl6h22 TODO two
@@ -705,6 +721,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `no-host` | no page host could be started for the write |
 | `read-only` | the page is read-only in Tine (a Guide page, or a page that cannot round-trip) |
 | `does-not-round-trip` | the new text would not read back as written (an unclosed fence, a line that becomes a new block) |
+| `page-properties` | malformed agent input would turn an outline write into page properties, changing page metadata; use `tine prop set --page PAGE KEY VALUE` on an existing page |
 | `store` | the store refused the save plan |
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |

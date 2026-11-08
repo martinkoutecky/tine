@@ -17,6 +17,9 @@ use tine_graph_features::publish_query::{
 };
 use tine_store::Store;
 
+mod prop;
+use prop::PropAction;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "tine",
@@ -242,30 +245,6 @@ enum RunAction {
         author: Option<String>,
         #[command(flatten)]
         read: ReadArgs,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum PropAction {
-    /// Set KEY to VALUE on the block.
-    Set {
-        #[arg(value_name = "BLOCK")]
-        handle: String,
-        #[arg(value_name = "KEY")]
-        key: String,
-        #[arg(value_name = "VALUE", allow_hyphen_values = true)]
-        value: String,
-        #[command(flatten)]
-        write: WriteArgs,
-    },
-    /// Remove KEY from the block.
-    Remove {
-        #[arg(value_name = "BLOCK")]
-        handle: String,
-        #[arg(value_name = "KEY")]
-        key: String,
-        #[command(flatten)]
-        write: WriteArgs,
     },
 }
 
@@ -860,24 +839,7 @@ fn read_command(command: Command) -> i32 {
             let args = write.args(json!({ "handle": handle, "to": to, "at": at }));
             write_verb(write.read.target(), "block.move", args)
         }
-        Command::Prop {
-            action:
-                PropAction::Set {
-                    handle,
-                    key,
-                    value,
-                    write,
-                },
-        } => {
-            let args = write.args(json!({ "handle": handle, "key": key, "value": value }));
-            write_verb(write.read.target(), "block.prop", args)
-        }
-        Command::Prop {
-            action: PropAction::Remove { handle, key, write },
-        } => {
-            let args = write.args(json!({ "handle": handle, "key": key, "value": null }));
-            write_verb(write.read.target(), "block.prop", args)
-        }
+        Command::Prop { action } => action.dispatch_property(),
         Command::Run { action } => match action {
             RunAction::Begin { read } => write_verb(read.target(), "run.begin", json!({})),
             RunAction::Show { run, read } => {

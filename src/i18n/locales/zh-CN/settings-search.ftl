@@ -52,7 +52,7 @@ settings-search-document-mode = 文档模式
 
 settings-search-hide-bullets-prose = 隐藏 项目符号 正文
 
-settings-search-comment-margin = 评论边栏
+settings-search-comment-margin = 显示/隐藏评论
 
 settings-search-comment-threads-hide-show = 评论 评论串 隐藏 显示
 

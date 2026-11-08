@@ -668,6 +668,20 @@ pub(super) fn write_page_from_bytes(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
+    write_page_from_source(slot, page, kind, rev, create, |doc, page, bytes, _| {
+        compute(doc, page, bytes)
+    })
+}
+
+/// Like `write_page_from_bytes`, exposing atomic creation status to imports.
+pub(super) fn write_page_from_source(
+    slot: &GraphSlot,
+    page: &PageId,
+    kind: EditKind,
+    rev: Option<&str>,
+    create: bool,
+    mut compute: impl FnMut(&PageDto, &PageId, &[u8], bool) -> Result<Planned, ErrorBody>,
+) -> Result<Value, ErrorBody> {
     let _turn = page_turn(slot, page)?;
     if RUN.with(|r| r.borrow().is_some()) {
         super::git_run::check_page(slot, page)?;
@@ -755,7 +769,7 @@ pub(super) fn write_page_from_bytes(
                 ));
             }
         }
-        let planned = compute(&current.doc, &read.page, &bytes)?;
+        let planned = compute(&current.doc, &read.page, &bytes, absent)?;
         let mut tx = slot.store.page_plan(Some(kind));
         tx.save_page(
             &[kind],
@@ -798,6 +812,22 @@ pub(super) fn write_page_from_bytes(
             || planned.doc.pre_block.as_deref().map(str::trim_end)
                 != reparsed.doc.pre_block.as_deref().map(str::trim_end)
         {
+            if !is_org(&planned.doc)
+                && planned.doc.pre_block.as_deref().unwrap_or("").is_empty()
+                && planned.doc.blocks.first().is_some_and(|b| {
+                    b.children.is_empty()
+                        && tine_core::page_header::is_page_header_candidate(
+                            b.raw.trim_end_matches(['\n', '\r']),
+                        )
+                })
+                && reparsed.doc.pre_block.is_some()
+            {
+                return Err(refused(
+                    "page-properties",
+                    Some(&read.page),
+                    crate::i18n_shell::shell_text("en", "shell-cli-page-properties-refusal"),
+                ));
+            }
             return Err(refused(
                 "does-not-round-trip",
                 Some(&read.page),
@@ -918,17 +948,6 @@ struct MoveArgs {
     to: String,
     /// `under` (last child), `after` or `before`.
     at: String,
-    #[serde(default)]
-    rev: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct PropArgs {
-    handle: String,
-    key: String,
-    /// `None` removes the property.
-    #[serde(default)]
-    value: Option<String>,
     #[serde(default)]
     rev: Option<String>,
 }
@@ -1063,44 +1082,6 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                     )
                     .map_err(|e| kernel_refused(page, e))?,
                 };
-            Ok(Planned {
-                doc: next,
-                changed: vec![path],
-            })
-        },
-    )
-}
-
-/// `block.prop`: set or remove one property through `block_regions::edit`,
-/// the window's `setBlockProperty`.
-pub(crate) fn prop_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
-    let PropArgs {
-        handle: text,
-        key,
-        value,
-        rev,
-    } = super::verbs::parse(args)?;
-    let handle = parse_handle(&text)?;
-    let page = handle_page(slot, &handle)?;
-    write_page(
-        slot,
-        &page,
-        EditKind::SaveBlock,
-        rev.as_deref(),
-        |doc, page| {
-            let path = resolve_on(doc, page, &handle, &text, rev.is_some())?;
-            let org = is_org(doc);
-            let mut next = doc.clone();
-            let block = block_at_mut(&mut next.blocks, &path).expect("resolved path");
-            block.raw = tine_core::block_regions::edit(
-                &block.raw,
-                org,
-                tine_core::block_regions::Edit::Property {
-                    key: key.clone(),
-                    value: value.clone(),
-                },
-            )
-            .map_err(|e| kernel_refused(page, e))?;
             Ok(Planned {
                 doc: next,
                 changed: vec![path],

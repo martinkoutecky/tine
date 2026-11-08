@@ -1384,3 +1384,150 @@ fn precomputed_anchors_are_exactly_anchor_eq() {
         }
     }
 }
+
+/// The resolver's opening decisions (`seedSuggestedOrNoLoss` in DiffRows.tsx):
+/// the suggestion where there is one, else the no-loss choice for the kind.
+fn opening_decisions(rows: &[DiffRow], out: &mut HashMap<String, String>) {
+    for r in rows {
+        let no_loss = match r.kind {
+            RowKind::Added => "mine",
+            RowKind::Removed => "theirs",
+            _ => "both",
+        };
+        if r.kind != RowKind::Unchanged {
+            out.insert(
+                r.id.clone(),
+                r.suggestion.clone().unwrap_or_else(|| no_loss.to_owned()),
+            );
+        }
+        opening_decisions(&r.children, out);
+    }
+}
+
+fn all_raws(blocks: &[DocBlock]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut pending: Vec<&DocBlock> = blocks.iter().rev().collect();
+    while let Some(b) = pending.pop() {
+        out.push(b.raw.lines().next().unwrap_or("").to_string());
+        pending.extend(b.children.iter().rev());
+    }
+    out
+}
+
+#[test]
+fn gh901_a_moved_block_is_never_suggested_away_on_both_sides() {
+    // Mine moved the task above Alpha; theirs edited it. Neither side deleted
+    // Alpha, but the sibling alignment splits it into a copy-only row before the
+    // task and a winner-only row after it. Each used to be classified "unchanged
+    // from base, gone on the other side" and suggested away: Alpha was lost.
+    let id = "  id:: 11111111-1111-4111-8111-111111111111";
+    let base = parse(&format!(
+        "- Anchor alpha\n- Prepare a detailed weekly report\n{id}\n- Anchor omega\n"
+    ));
+    let mine = parse(&format!(
+        "- Prepare a detailed weekly report\n{id}\n- Anchor alpha\n- Anchor omega\n"
+    ));
+    let theirs = parse(&format!(
+        "- Anchor alpha\n- Prepare a detailed monthly report\n{id}\n- Anchor omega\n"
+    ));
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    let lines = all_raws(&merged);
+    assert!(lines.iter().any(|l| l == "Anchor alpha"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "Anchor omega"), "{lines:?}");
+    assert!(
+        lines.iter().any(|l| l.contains("weekly")) && lines.iter().any(|l| l.contains("monthly")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn gh901_a_real_deletion_is_still_suggested() {
+    let base = parse("- Anchor alpha\n- Delete me please now\n- Anchor omega\n");
+    let mine = parse("- Anchor alpha\n- Anchor omega\n");
+    let theirs = base.clone();
+    let d = diff3_docs(&base, &mine, &theirs);
+    let rows = table(&d.rows);
+    assert!(
+        rows.iter()
+            .any(|(k, _, s)| *k == RowKind::Removed && s.as_deref() == Some("mine")),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn gh901_both_on_a_parent_whose_text_differs_still_keeps_both_sections() {
+    let mine = parse("- Projects for this week\n  - one\n");
+    let theirs = parse("- Projects for this wek\n  - two\n");
+    let d = diff_docs(&mine, &theirs);
+    let mut dec = HashMap::new();
+    dec.insert(d.rows[0].id.clone(), "both".to_owned());
+    let merged = merge_blocks(&mine.roots, &theirs.roots, &dec).unwrap();
+    assert_eq!(merged.len(), 2, "{:?}", all_raws(&merged));
+}
+
+#[test]
+fn gh901_a_block_both_sides_still_have_survives_the_opening_choices() {
+    // Review fixture: mine's "Beta task" pairs with theirs' "Delta task" as
+    // Modified, so mine's own Delta is an Added row suggested away. Both on
+    // the equal-body parent must not compose that into a loss of Delta.
+    let base = parse("- Inbox\n  - Delta task\n");
+    let mine = parse("- Inbox\n  - Beta task\n  - Alpha task\n  - Delta task\n");
+    let theirs = parse("- Inbox\n  - Delta task\n  - Alpha task\n");
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    let raws = all_raws(&merged);
+    assert!(raws.iter().any(|r| r == "Delta task"), "{raws:?}");
+    assert!(raws.iter().any(|r| r == "Beta task"), "{raws:?}");
+}
+
+#[test]
+fn gh901_a_moved_block_keeps_its_id_under_the_opening_choices() {
+    let id = "11111111-1111-4111-8111-111111111111";
+    let base = parse(&format!(
+        "- Projects\n  - Task to move\n    id:: {id}\n  - Stable anchor\n  - Omega anchor\n"
+    ));
+    let mine = parse(&format!("- Projects\n  - Task to move\n    id:: {id}\n  - Stable anchor\n  - Omega anchor\n- Local capture\n"));
+    let theirs = parse(&format!(
+        "- Projects\n  - Stable anchor\n  - Omega anchor\n  - Task to move\n    id:: {id}\n"
+    ));
+    let d = diff3_docs(&base, &mine, &theirs);
+    let mut dec = HashMap::new();
+    opening_decisions(&d.rows, &mut dec);
+    let merged = merge_blocks3(Some(&base.roots), &mine.roots, &theirs.roots, None, &dec).unwrap();
+    fn has_id(blocks: &[DocBlock], id: &str) -> bool {
+        blocks
+            .iter()
+            .any(|b| b.raw.contains(id) || has_id(&b.children, id))
+    }
+    assert!(has_id(&merged, id), "{:?}", all_raws(&merged));
+}
+
+#[test]
+fn gh901_a_block_both_sides_have_survives_either_whole_side_on_its_parent() {
+    // Review fixture again: the opening suggestion dropped mine's Delta because
+    // the alignment paired theirs' Delta with mine's Beta. Choosing Mine or
+    // Theirs on the parent then lost Delta, though both sides kept it.
+    let base = parse("- Inbox\n  - Delta task\n");
+    let mine = parse("- Inbox\n  - Beta task\n  - Alpha task\n  - Delta task\n");
+    let theirs = parse("- Inbox\n  - Delta task\n  - Alpha task\n");
+    for (a, b) in [(&mine, &theirs), (&theirs, &mine)] {
+        let d = diff3_docs(&base, a, b);
+        for parent in ["mine", "theirs", "both"] {
+            let mut dec = HashMap::new();
+            opening_decisions(&d.rows, &mut dec);
+            dec.insert(d.rows[0].id.clone(), parent.to_string());
+            let merged = merge_blocks3(Some(&base.roots), &a.roots, &b.roots, None, &dec).unwrap();
+            let raws = all_raws(&merged);
+            assert!(
+                raws.iter().any(|r| r == "Delta task"),
+                "{parent}: {raws:?} {:?}",
+                d.rows
+            );
+        }
+    }
+}

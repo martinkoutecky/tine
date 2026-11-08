@@ -8,12 +8,12 @@ import WebKit
 
 /// The App Group the app and its Share Extension share (ADR 0073). It must
 /// match `src-tauri/Tine.ios.entitlements` and the extension's entitlements.
-let tineAppGroup = "group.page.tine.Tine"
+let tineAppGroup = "group.page.tine.TineBeta"
 /// Darwin notification a producer posts after publishing an inbox item.
 /// Must match `ios-app/Shared/ShareInbox.swift`.
-let tineInboxChangedNotification = "page.tine.Tine.share-inbox-changed"
+let tineInboxChangedNotification = "page.tine.TineBeta.share-inbox-changed"
 /// Core Spotlight domain of Tine's page items.
-let tineSpotlightDomain = "page.tine.Tine.pages"
+let tineSpotlightDomain = "page.tine.TineBeta.pages"
 
 /// Hand a `tine://` route to the app's existing URL handler, exactly as if
 /// iOS had opened the URL: tao's `application:openURL:options:` emits

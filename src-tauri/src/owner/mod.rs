@@ -29,6 +29,7 @@ pub(crate) mod lease;
 pub(crate) mod lock;
 pub(crate) mod namespace;
 mod pages;
+mod properties;
 pub(crate) mod seen;
 #[cfg(desktop)]
 pub(crate) mod serve;

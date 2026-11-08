@@ -3,6 +3,8 @@ use super::*;
 use std::time::{Duration, SystemTime};
 #[path = "checkpoint_golden_paths.rs"]
 mod golden_paths;
+#[path = "checkpoint_path_tests.rs"]
+mod path_tests;
 
 fn set_mtime(path: &Path, when: SystemTime) {
     fs::File::options()

@@ -1,5 +1,126 @@
 use super::*;
 
+/// GH #908: all CLI read verbs share the app's graph-text scope, including
+/// the indexes and memoized answers restored from a headless checkpoint.
+#[test]
+fn cli_reads_ignore_logseq_backups_cold_and_from_checkpoint() {
+    use tine_store::{CheckpointWrite, OpenOptions, WatchMode};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("graph");
+    let app_data = dir.path().join("app");
+    let checkpoint = app_data.join("launch.bin");
+    std::fs::create_dir_all(&app_data).unwrap();
+    let old = std::time::SystemTime::now() - Duration::from_secs(3600);
+    let write = |relative: &str, text: &str| {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    };
+    write("logseq/config.edn", "{:file/name-format :triple-lowbar}\n");
+    write("pages/anchor.md", &format!("- anchor\n  id:: {UUID}\n"));
+    let body = format!("- #travel foo [[anchor]] (({UUID}))\n");
+    write("journals/2026_01_15.md", &body);
+    let excluded = [
+        "logseq/bak/journals/2024_07_07/2026-11-07T18_06_21.481Z.android.md",
+        "logseq/version-files/journals/versioned.md",
+        "logseq/.recycle/recycled.md",
+        "logseq/.tine-trash/pages/trashed.md",
+        ".recycle/recycled-at-root.md",
+        "pages/.tine-trash/nested-trash.md",
+    ];
+    let mut backup_ids = Vec::new();
+    for (index, path) in excluded.iter().enumerate() {
+        let id = format!("aaaaaaaa-0000-4000-8000-{index:012}");
+        write(
+            path,
+            &format!("title:: backup-only/{index}\n\n{body}  id:: {id}\n"),
+        );
+        backup_ids.push(id);
+    }
+
+    for warm in [false, true] {
+        let store = Arc::new(
+            Store::open(
+                &root,
+                OpenOptions {
+                    watch: WatchMode::Poll,
+                    launch_checkpoint: Some(checkpoint.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0,
+        );
+        store.whole_graph_reconciled().unwrap();
+        if warm {
+            assert_eq!(
+                store.diagnostics()["checkpoint"]["load"]["outcome"],
+                "loaded",
+                "the second pass must actually restore the checkpoint"
+            );
+        }
+        let slot = GraphSlot::new(store.clone(), root.canonicalize().unwrap());
+        *slot.host.write().unwrap() =
+            PageHostSlot::Running(PageHost::start_for_tests(&store, &app_data).unwrap());
+        let journal = verb(&slot, "journal", json!({"date":"2026-01-15"})).unwrap();
+        assert_eq!(journal["id"], "journals/2026_01_15.md");
+        let journal_name = journal["page"]["name"].as_str().unwrap();
+        let live = verb(&slot, "page.show", json!({"name":journal_name})).unwrap();
+        assert_eq!(live["id"], journal["id"]);
+        assert!(verb(&slot, "block.show", json!({"uuid":UUID})).is_ok());
+        for (index, id) in backup_ids.iter().enumerate() {
+            assert_eq!(
+                error_code(verb(&slot, "block.show", json!({"uuid":id}))).0,
+                "not-found"
+            );
+            assert_eq!(
+                error_code(verb(
+                    &slot,
+                    "page.show",
+                    json!({"name":format!("backup-only/{index}")})
+                ))
+                .0,
+                "not-found"
+            );
+        }
+        let pages = verb(&slot, "pages", Value::Null).unwrap();
+        assert_eq!(pages["pages"].as_array().unwrap().len(), 2, "{pages}");
+        let namespace = verb(&slot, "pages", json!({"namespace":"backup-only"})).unwrap();
+        assert!(namespace["pages"].as_array().unwrap().is_empty());
+        for (name, args) in [
+            ("query", json!({"text":"[[travel]]"})),
+            ("refs", json!({"target":"anchor"})),
+            ("refs", json!({"target":UUID,"block":true})),
+        ] {
+            let answer = verb(&slot, name, args).unwrap();
+            let groups = answer["groups"].as_array().unwrap();
+            assert_eq!(groups.len(), 1, "{name}: {answer}");
+            assert_eq!(groups[0]["page"], journal_name);
+            let mut text = String::new();
+            super::super::terminal::render(&answer, &mut text);
+            assert!(text.contains("#travel foo"), "{name}: {text}");
+            assert!(!text.contains("backup-only"), "{name}: {text}");
+        }
+        let search = verb(&slot, "search", json!({"text":"foo"})).unwrap();
+        assert_eq!(search["hits"].as_array().unwrap().len(), 1, "{search}");
+        let absent = verb(&slot, "search", json!({"text":"backup-only"})).unwrap();
+        assert!(absent["hits"].as_array().unwrap().is_empty(), "{absent}");
+        assert!(matches!(
+            store.write_checkpoint_now(),
+            Some(CheckpointWrite::Written { .. })
+        ));
+        drop(slot);
+        store.close();
+    }
+}
+
 #[test]
 fn journal_reads_the_active_cross_kind_opening_file() {
     let graph = Graph::new();
@@ -465,4 +586,32 @@ fn a_cli_write_to_a_name_two_files_claim_refuses_naming_both() {
         );
         assert_eq!(files(&graph, &twins), before);
     }
+}
+
+/// GH #908: run from the folder above a graph (`~` with the graph at
+/// `~/logseq`), discovery must not take that folder for the graph: its
+/// `logseq/` child is the graph itself, not graph metadata.
+#[test]
+fn cli_graph_discovery_needs_logseq_config_not_a_bare_logseq_folder() {
+    use crate::owner::terminal::graph_around;
+    let home = tempfile::tempdir().unwrap();
+    let graph = home.path().join("logseq");
+    std::fs::create_dir_all(graph.join("logseq/bak/journals/2024_07_07")).unwrap();
+    std::fs::create_dir_all(graph.join("journals")).unwrap();
+    std::fs::create_dir_all(graph.join("pages/deep")).unwrap();
+    std::fs::write(graph.join("logseq/config.edn"), "{}\n").unwrap();
+    assert_eq!(
+        graph_around(home.path()),
+        None,
+        "the folder above the graph is not a graph"
+    );
+    assert_eq!(graph_around(&graph).as_deref(), Some(graph.as_path()));
+    assert_eq!(
+        graph_around(&graph.join("pages/deep")).as_deref(),
+        Some(graph.as_path())
+    );
+    assert_eq!(
+        graph_around(&graph.join("logseq/bak")).as_deref(),
+        Some(graph.as_path())
+    );
 }

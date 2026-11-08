@@ -91,6 +91,15 @@ export function QueryPageResults(props: {
     }
     return groups;
   });
+  const boardKeys = createMemo(() => {
+    const occurrences = new Map<string, number>();
+    return boardGroups().map(([value]) => {
+      const occurrence = occurrences.get(value) ?? 0;
+      occurrences.set(value, occurrence + 1);
+      return JSON.stringify([value, occurrence]);
+    });
+  });
+  const boardByKey = createMemo(() => new Map(boardKeys().map((key, index) => [key, boardGroups()[index]])));
   return <Switch>
     <Match when={props.presentation === "table"}>
       <div class="query-results-table-wrap"><table class="query-results-table">
@@ -105,12 +114,14 @@ export function QueryPageResults(props: {
     </Match>
     <Match when={props.presentation === "board"}>
       <div class="query-results-board" aria-label={t("query-page-results-page-results-grouped")}>
-        <For each={boardGroups()}>{([value, hits]) => <section class="query-board-column" aria-label={value || t("query-page-results-no-value")}>
-          <h4>{value || t("query-page-results-no-value")}<span class="query-board-count">{hits.length}</span></h4>
-          <div role="list" aria-label={t("query-page-results-page-results")}><For each={hits}>{(hit) =>
+        <For each={boardKeys()}>{(key) => {
+          const group = () => boardByKey().get(key)!;
+          return <section class="query-board-column" aria-label={group()[0] || t("query-page-results-no-value")}>
+          <h4>{group()[0] || t("query-page-results-no-value")}<span class="query-board-count">{group()[1].length}</span></h4>
+          <div role="list" aria-label={t("query-page-results-page-results")}><For each={group()[1]}>{(hit) =>
             <div role="listitem" class="query-board-card" data-page-key={pageHitKey(hit)}>{link(hit)}</div>
           }</For></div>
-        </section>}</For>
+        </section>; }}</For>
       </div>
     </Match>
     <Match when={props.presentation === "list"}>
