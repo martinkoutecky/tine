@@ -99,6 +99,54 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("GH #901: resolver choices do what they show", () => {
+  it("Apply all suggested leaves a manual choice on a row Tine suggests nothing for", async () => {
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff(threeWayRows), three_way: true });
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Keep This device").click();
+    button(host, "Apply all suggested").click();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync.mock.calls[0][2]).toEqual({ "0": "theirs", "1": "mine" });
+    dispose();
+  });
+
+  it("Keep both everywhere shows an active choice on one-sided rows", async () => {
+    const rows: DiffRow[] = [
+      { id: "0", kind: "added", mine: view("only on this device"), theirs: null, children: [] },
+      { id: "1", kind: "removed", mine: null, theirs: view("only in the copy"), children: [] },
+      { ...threeWayRows[1], id: "2" },
+    ];
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff(rows));
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Keep This device").click();
+    button(host, "Keep both everywhere").click();
+    await settle();
+    const active = [...host.querySelectorAll(".sync-merge-seg.active")].map((b) => b.getAttribute("data-decision"));
+    expect(active).toEqual(["mine", "theirs", "both"]);
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync.mock.calls[0][2]).toEqual({ "0": "mine", "1": "theirs", "2": "both" });
+    dispose();
+  });
+
+  it("a three-way review with nothing to suggest does not claim no common version is known", async () => {
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([threeWayRows[1]]), three_way: true });
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    expect(host.textContent).not.toContain("no common version is known");
+    expect(host.textContent).toContain("0 of 1 pre-selected");
+    dispose();
+  });
+});
+
 describe("in-page conflict resolution", () => {
   it.each(["mine", "theirs", "both"] as const)("whole-side %s includes the page properties", async (choice) => {
     vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([threeWayRows[1]]), mine_pre: "status:: local", theirs_pre: "status:: remote", pre_differs: true });
@@ -112,6 +160,24 @@ describe("in-page conflict resolution", () => {
     button(host, "Apply resolution").click();
     await settle();
     expect(sync.mock.calls[0][6]).toBe(choice === "both" ? "union" : choice);
+    dispose();
+  });
+
+  // GH #875: an identical copy used to say "nothing to decide" with no way to
+  // act from the page; it now offers Discard copy, which trashes the copy.
+  it("discards an identical sync copy from the page", async () => {
+    setConflictInventory(inventoryWith({ ...copyConflict, block_conflicts: 0 }));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([{ id: "0", kind: "unchanged", mine: view("same"), theirs: view("same"), children: [] }]), blocks_identical: true });
+    const trash = vi.spyOn(backend(), "trashSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount({ ...copyConflict, block_conflicts: 0 });
+    await settle();
+    expect(host.textContent).toContain("nothing to decide");
+    button(host, "Discard copy").click();
+    await settle();
+    expect(trash).toHaveBeenCalledWith(copyConflict.sides[1].path, "delete-page");
+    expect(conflictQueue()).toEqual([]);
+    expect(toasts().some((t) => t.message.includes("Discarded"))).toBe(true);
     dispose();
   });
 

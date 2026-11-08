@@ -31,14 +31,15 @@ import { deleteBlock } from "./document";
 export function createComment(parentId: string, editorText: string, start: number, end: number): string | null {
   const parent = docNode(parentId);
   if (!parent || !blockWritable(parentId)) return null;
-  const raw = commentRaw(quoteSelectorFor(editorText, start, end, parent.raw), formatForBlock(parentId), commentAuthorName());
+  const raw = commentRaw(quoteSelectorFor(editorText, start, end, parent.raw, formatForBlock(parentId)), formatForBlock(parentId), commentAuthorName());
+  const destination = docNode(threadRootOf(parentId, formatForBlock(parentId)) ?? parentId)!;
   let id: string | null = null;
   // Publish structure and quote metadata together. Inline ordering deliberately
   // reads text untracked on structural changes; exposing the empty child first
   // made it mount after the subtree and sent the caret there (GH #110).
   batch(() => {
     withUndoUnit("comment:create", [parent.page], () => {
-      id = insertEmptyChildBlock(parentId, parent.children.length);
+      id = insertEmptyChildBlock(destination.id, destination.children.length);
       if (id) setRaw(id, raw, { timetracking: false });
     });
     if (id) {
@@ -82,9 +83,10 @@ function canReplyTo(commentId: string): boolean {
 export function replyAndEdit(commentId: string, surface: string | null = null): string | null {
   const comment = docNode(commentId);
   if (!comment || !canReplyTo(commentId)) return null;
+  const root = docNode(threadRootOf(commentId, formatForBlock(commentId))!)!;
   let id: string | null = null;
   withUndoUnit("comment:reply", [comment.page], () => {
-    id = insertEmptyChildBlock(commentId, comment.children.length);
+    id = insertEmptyChildBlock(root.id, root.children.length);
     const author = commentAuthorName();
     if (id && author) setRaw(id, replyRaw(formatForBlock(commentId), author), { timetracking: false });
   });
@@ -98,9 +100,10 @@ export function submitReply(commentId: string, text: string): string | null {
   const comment = docNode(commentId);
   if (!text.trim() || !comment || !blockWritable(commentId)
     || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
+  const root = docNode(threadRootOf(commentId, formatForBlock(commentId))!)!;
   let id: string | null = null;
   withUndoUnit("comment:reply", [comment.page], () => {
-    id = insertEmptyChildBlock(commentId, comment.children.length);
+    id = insertEmptyChildBlock(root.id, root.children.length);
     if (id) {
       const author = commentAuthorName();
       const metadata = author ? replyRaw(formatForBlock(commentId), author) : "";

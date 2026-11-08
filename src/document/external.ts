@@ -1,6 +1,8 @@
 import { msg } from "../i18n";
 import { applyGraphAnswers } from "../graphAnswers";
 import { beginResultsChange } from "../queryResultsEpoch";
+import { changeSummary } from "../changeSummary";
+import { changeKeyPending } from "../changeKeys";
 import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
 import { captureBinding, bindingCurrent } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
@@ -52,8 +54,12 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
   // when this page is outside the bounded frontend working set.
   const finish = beginResultsChange();
   try {
+    const previous = changeSummary();
     applyGraphAnswers(c.answers);
-    bumpDataRev(!!c.answers?.summary);
+    // A CLI reload and the publication feed can carry the same evidence in
+    // either order. Its second delivery must not turn an already released
+    // precise key into the missing-summary full-refresh fallback (GH #907).
+    if (!c.answers?.summary || previous !== changeSummary() || changeKeyPending("publication")) bumpDataRev(!!c.answers?.summary);
     if (c.created || c.removed) bumpPageInventoryRev();
     await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
   }
@@ -68,13 +74,15 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
 export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }): Promise<void> {
   const binding = captureBinding();
   if (bulk.binding_generation !== undefined && bulk.binding_generation !== binding.backendGeneration) return;
+  const previous = changeSummary();
   applyGraphAnswers(bulk.answers);
   const changes = bulk.changes;
   if (!changes.length) return;
   const finish = beginResultsChange();
   try {
   for (const change of changes) applyGraphAnswers(change.answers);
-  bumpDataRev(!!bulk.answers?.summary || changes.some(change => !!change.answers?.summary));
+  const hasSummary = !!bulk.answers?.summary || changes.some(change => !!change.answers?.summary);
+  if (!hasSummary || previous !== changeSummary() || changeKeyPending("publication")) bumpDataRev(hasSummary);
   if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
   const ui = captureExternalChangeUi?.();
   let restart = false, conflicts = 0;

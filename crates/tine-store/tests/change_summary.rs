@@ -188,6 +188,96 @@ fn strings(value: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+#[test]
+fn search_subscription_skips_unrelated_writes_and_tracks_both_families() {
+    use tine_core::query::ir::FriendlyPageMatchScope;
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(60);
+    for (id, source, scope) in [
+        ("text", "needle", FriendlyPageMatchScope::Names),
+        ("content", "needle", FriendlyPageMatchScope::Content),
+        ("name", "/^A$/", FriendlyPageMatchScope::Names),
+        ("regex", "/needle [0-9]+/", FriendlyPageMatchScope::Both),
+    ] {
+        let registration = store
+            .register_query_subscription(
+                id.into(),
+                Some(crate::QuerySubscription::Search {
+                    source: source.into(),
+                    page_match_scope: scope,
+                    transliteration: true,
+                }),
+                None,
+            )
+            .unwrap();
+        assert_eq!(registration.mode, "narrow");
+    }
+    for i in 0..8 {
+        let wire = edit(&store, "pages/B.md", |doc| {
+            doc.blocks[0].raw = format!("unrelated writing {i}\nid:: {PERSISTED}");
+        });
+        let keys = strings(&wire["summary"]["queryTo"]);
+        for key in ["text", "content", "name", "regex"] {
+            assert!(!keys.contains(key), "unrelated writing refreshed {key}");
+        }
+    }
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "needle 12".into()
+    });
+    let keys = strings(&wire["summary"]["queryTo"]);
+    for key in ["text", "content", "name", "regex"] {
+        assert!(keys.contains(key), "addition missed {key}");
+    }
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "removed search match".into()
+    });
+    let keys = strings(&wire["summary"]["queryTo"]);
+    for key in ["text", "content", "name", "regex"] {
+        assert!(keys.contains(key), "removal missed {key}");
+    }
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.pre_block = Some("owner:: changed".into())
+    });
+    let keys = strings(&wire["summary"]["queryTo"]);
+    assert!(
+        keys.contains("name"),
+        "a matching page's display properties changed"
+    );
+    assert!(!keys.contains("text"));
+    assert!(!keys.contains("content"));
+}
+
+#[test]
+fn search_subscription_tracks_virtual_names_from_properties_including_new_pinyin_keys() {
+    use tine_core::query::ir::FriendlyPageMatchScope;
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(1);
+    for source in ["hiddenneedle", "beijing"] {
+        store
+            .register_query_subscription(
+                source.into(),
+                Some(crate::QuerySubscription::Search {
+                    source: source.into(),
+                    page_match_scope: FriendlyPageMatchScope::Names,
+                    transliteration: true,
+                }),
+                None,
+            )
+            .unwrap();
+    }
+    let wire = edit(&store, "pages/B.md", |doc| {
+        doc.pre_block = Some("tags:: [[hiddenneedle]], [[北京]]".into());
+    });
+    assert_eq!(wire["summary"]["full"], false);
+    let keys = strings(&wire["summary"]["queryTo"]);
+    assert!(keys.contains("hiddenneedle"));
+    assert!(keys.contains("beijing"));
+    let wire = edit(&store, "pages/B.md", |doc| doc.pre_block = None);
+    let keys = strings(&wire["summary"]["queryTo"]);
+    assert!(keys.contains("hiddenneedle"));
+    assert!(keys.contains("beijing"));
+}
+
 fn block_ids(blocks: &[BlockDto], ids: &mut BTreeSet<String>) {
     for block in blocks {
         ids.insert(block.id.clone());

@@ -77,6 +77,9 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
       // so a wider pane returns to whole words.
       el.classList.remove("md-table-tight");
       if (surface.scrollWidth > el.clientWidth + 1) el.classList.add("md-table-tight");
+      // GH #909: a table wider than its column covers the ancestors' outline
+      // guides it overlaps, on either side.
+      el.toggleAttribute("data-bleed", width > normalWidth + 0.5);
     };
     const schedule = () => { if (!frame) frame = requestFrame(el, () => { frame = undefined; measure(); }); };
     const observer = newResizeObserver(el, schedule);

@@ -1101,12 +1101,13 @@ mod rename_guide_tests {
             "**quoted text changed**",
             "**Reply…**",
             "`tine.author:: <your name>`",
-            "the first comment or reply you write without a name asks for one once",
+            "the first comment or reply you write without a name asks **How should your comments be signed?** once",
             "**Ctrl/Cmd+Z** restores them together",
-            "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
+            "The journal feed uses the same width rule, with each day's page owning its margin column; split panes also use their own available width",
+            "On a narrow pane, in the sidebar or in an embed, comments stay in the outline as cards",
             "zooming into a commented bullet also shows them there",
-            "press **t** then **m**, run **Toggle comment margin** from the command palette",
-            "switch off **Comment margin** in Settings > Appearance",
+            "press **t** then **m**, run **Show/Hide comments** from the command palette",
+            "switch off **Show/Hide comments** in Settings > Appearance",
             "the comments stay in your file and nothing is deleted",
             "opening a link or search result that leads to one, shows them again",
         ] {
@@ -1320,7 +1321,27 @@ mod rename_guide_tests {
         // The iOS picker opens only the app's own On My iPhone / iCloud Drive
         // folders (src/graph.ts switchGraph) and Settings hides Plugins on iOS.
         let mobile = include_str!("templates/platforms-and-mobile.md");
+        let identities: serde_json::Value =
+            serde_json::from_str(include_str!("../../../src-tauri/app-identity.json")).unwrap();
+        let beta = identities["identities"]["experiment"]["productName"]
+            .as_str()
+            .unwrap();
         for outcome in [
+            format!("separate **{beta}** app"),
+            format!("**On My iPhone → {beta}** and **iCloud Drive → {beta}**"),
+        ] {
+            assert!(
+                mobile.contains(&outcome),
+                "missing iOS Guide outcome: {outcome}"
+            );
+        }
+        for outcome in [
+            "[App Store](https://apps.apple.com/us/app/tineoutline/id6804403687) as **TineOutline**",
+            "**amber icon**",
+            "installs alongside the stable **TineOutline**",
+            "starts on Welcome with fresh settings and no remembered graph",
+            "cannot see the stable app's settings or iCloud folder",
+            "copy and the original are independent",
             "**On My iPhone → TineOutline** or **iCloud Drive → TineOutline**",
             "refuses folders from other Files providers",
             "a remembered graph reopens after an app update",

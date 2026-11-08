@@ -126,7 +126,7 @@ try {
   await openPageByName(browser, PAGE);
   await editText(PHRASE);
   await shot("00-ordinary-author-editor");
-  check(await browser.execute(() => document.querySelector("textarea.block-editor").value.includes("tine.author:: claude")), "An ordinary block's author property is missing from the editor");
+  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("tine.author:: claude")), "An ordinary block's author property is visible in the editor");
   await select(PHRASE);
   await shot("01-selection-toolbar");
   const toolbar = await browser.$('[data-selection-action="comment"]').isExisting();

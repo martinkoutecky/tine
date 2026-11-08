@@ -30,6 +30,7 @@ icon:: 🗺️
   - Settings opens as a small dialog. The button beside its search box makes it fill the window, which is easier to read through; Tine remembers which size you left it at and opens it that way next time.
   - The **?** button at the bottom right (or press **Shift+?**) opens Help: this Guide, the shortcut reference, the features documentation, the bug-report and release-notes links, and the Welcome screen.
 - ## On a phone
+  - The sidebars slide in and out from their edges, with a fading shade over the page. Your system's **Reduce Motion** setting makes both instant; choosing a page navigates immediately.
   - Below a 640 px window width, either sidebar opens as an overlay on top of the current route instead of shrinking it — tap the shaded outside edge, press Esc, or use Android Back to dismiss. Split panes are off on a phone-sized touch screen; open tabs are listed under **Open tabs** in the left sidebar.
   - [[Reference/Platforms and mobile]] separates narrow-window behavior from native-app behavior and maps each platform's shipping surface.
 - ## Where next

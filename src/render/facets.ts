@@ -11,7 +11,7 @@
 // parses. A miss happens only for a raw the backend hasn't seen yet (the block being
 // edited); that one derives from a single wasm lsdoc parse. Robust to every mutation:
 // any raw → lookup → hit (backend-known) or one parse (novel).
-import { parseBlock } from "./parse";
+import { blockRegions, parseBlock } from "./parse";
 import { propertyKeyNorm } from "./block";
 import { DONE_MARKERS } from "../markers";
 import type { Block, Format, Inline } from "./ast";
@@ -157,6 +157,10 @@ function deriveFacets(raw: string, format: Format): Facets {
   }
   const properties: [string, string][] = [];
   for (const b of blocks) if (b.kind === "properties") properties.push(...b.props);
+  // GH #895: reuse the cached bundle's ownership of a swallowed author row.
+  if (format === "md" && raw.includes("::") && raw.includes(">") && !properties.some(([key]) => propertyKeyNorm(key) === "tine.author")) {
+    for (const p of blockRegions(raw, format).properties) if (p.primary && propertyKeyNorm(p.key) === "tine.author") properties.push([p.key, p.value]);
+  }
   const headingProperty = headingPropertyState(properties);
   if (headingLevel == null) headingLevel = headingProperty.level;
   const { scheduled, deadline } = planningDates(blocks, raw);

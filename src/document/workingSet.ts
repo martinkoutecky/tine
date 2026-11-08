@@ -4,7 +4,7 @@ import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHo
 import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, writeWholePages, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
-import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
+import { purgePageNodes, toFeedPage, reconcileLoadedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
 import { invalidateMatrixDimensionsForRows, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
@@ -99,21 +99,24 @@ function upsertPage(dto: PageDto & { id?: string }) {
   // is stale — replaying it would clobber the just-loaded (external) version, so
   // drop those entries. (A first load has no prior entries → no-op.)
   const replacing = !!existing;
-  // An editor open on this page holds no unsaved input here (every keystroke is
-  // already in the store, so unsaved text answers "conflict" before a reload is
-  // reached; an IME composition pins the page). Carry it across the reload:
-  // close it on the old block and reopen it on the same block in the new copy,
-  // caret clamped (the old editor instance's removal blur neither writes nor
-  // ends the carried edit: Editor `replacedUnderEditor`). Without this the page stayed stale for as long as a block on
-  // it was open in the editor (Syncthing while Tine was in the background).
+  // Admission has already protected unsaved input and pinned compositions.
+  // Keep an unchanged editor mounted; if its own block changes, carry its
+  // context to that block's new copy with the caret clamped. The old editor's
+  // removal blur neither writes nor ends the carried edit (`replacedUnderEditor`).
   const carried = existing ? editorOnPage(dto) : null;
   const matrixRows = matrixRowsForPage(dto.name);
+  const sameFile = existing && existing.id === dto.id && existing.kind === dto.kind;
+  const edited = editingId();
+  // Carry only an editor whose own loaded block changes. An offscreen update
+  // keeps the focused textarea and its native selection exactly as they are.
+  const editorChanges = edited && carried && (!sameFile || !dtoHasSameEditor(dto, edited));
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   setBaseRev(dto.name, dto.rev ?? null);
   batch(() => {
-    if (carried) endEdit("external-reload");
+    if (editorChanges) endEdit("external-reload");
     const write = () => writeWholePages([dto.name], () => setDoc(
       produce((s) => {
+        if (sameFile) { reconcileLoadedPage(dto, s); return; }
         purgePageNodes(s, dto.name);
         const fp = toFeedPage(dto, s.byId);
         const i = s.pages.findIndex((p) => p.name === dto.name);
@@ -122,11 +125,20 @@ function upsertPage(dto: PageDto & { id?: string }) {
       })
     ));
     if (replacing) write(); else hydrateWorkingSet(write);
-    if (carried) reopenEditor(dto.name, carried);
+    if (editorChanges) reopenEditor(dto.name, carried);
   });
   activatePageInstance(dto.name);
   invalidateMatrixDimensionsForRows([...matrixRows, ...matrixRowsForPage(dto.name)]);
   if (replacing) invalidateUndoForPage(dto.name);
+}
+
+function dtoHasSameEditor(dto: PageDto, id: string): boolean {
+  const current = doc.byId[id];
+  if (current.originatedFromPageHeader || (dto.format ?? "md") !== pageByName(dto.name)?.format) return false;
+  const visit = (blocks: BlockDto[], parent: string | null): boolean => blocks.some(block =>
+    (block.id === id && block.raw === current.raw && block.collapsed === current.collapsed && parent === current.parent)
+      || visit(block.children, block.id));
+  return visit(dto.blocks, null);
 }
 
 /** Install the page host's text (or, for null, its "no file") as loaded page

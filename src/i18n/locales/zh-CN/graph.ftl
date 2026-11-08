@@ -12,7 +12,7 @@ graph-some-pages-couldn-t-be-saved-resolve = 部分页面无法保存，请先�
 
 graph-couldn-t-prepare-the-icloud-graph = 无法准备 iCloud 图谱。（{ $error }）
 
-graph-tineoutline-can-only-open-folders-inside-on = TineOutline 只能打开“我的 iPhone → TineOutline”或“iCloud Drive → TineOutline”中的文件夹。
+graph-tineoutline-can-only-open-folders-inside-on = { $app } 只能打开“我的 iPhone → { $app }”或“iCloud Drive → { $app }”中的文件夹。
 
 graph-pdf-changes-couldn-t-be-saved-the = PDF 更改无法保存，当前图谱仍保持打开。
 
@@ -51,11 +51,11 @@ graph-tine-needs-a-folder-on-the-device-s = Tine 需要设备本地存储中的�
 
 graph-grant-all-files-access-for-tine-then = 请授予 Tine“所有文件访问权限”，然后再次点击“打开”。
 
-graph-choose-a-folder-inside-on-my-iphone = 请选择“我的 iPhone → TineOutline”或“iCloud Drive → TineOutline”中的文件夹。目前不支持其他应用的文件夹和“文件”提供商。
+graph-choose-a-folder-inside-on-my-iphone = 请选择“我的 iPhone → { $app }”或“iCloud Drive → { $app }”中的文件夹。目前不支持其他应用的文件夹和“文件”提供商。
 
 graph-couldn-t-prepare-the-icloud-location = 无法准备 iCloud 位置。（{ $error }）
 
-graph-tineoutline-can-only-create-graphs-inside-on = TineOutline 只能在“我的 iPhone → TineOutline”或“iCloud Drive → TineOutline”中创建图谱。
+graph-tineoutline-can-only-create-graphs-inside-on = { $app } 只能在“我的 iPhone → { $app }”或“iCloud Drive → { $app }”中创建图谱。
 
 graph-couldn-t-create-the-graph = { $graphState ->
     [open] 无法创建图谱。当前图谱仍保持打开。（{ $error }）

@@ -297,8 +297,11 @@ or is killed while its write stands in line does not cancel it: the write can la
   No implicit author property is added (including with `--author`, which still names run commits).
   Reply kind `written`, with `blocks: []` and `more: 0`: a header has no outline handle.
 - **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
-  built-ins including SRS keys, graph-configured hidden keys, and visible ones such as `status::`, `src::`,
-  `tine.author::`) is kept byte-exact; children are kept too. Removing a property takes `tine prop remove`. This is an
+  built-ins including SRS keys, graph-configured hidden keys, editor-hidden `tine.author::`, and visible ones such as
+  `status::`, `src::`) is kept byte-exact; children are kept too. The app also retains editor-hidden `tine.author::`
+  byte-exact when editing ordinary blocks; its author chip stays visible and offers **Remove author** in its menu.
+  OG reads `tine.author::` as an ordinary property; its file syntax is unchanged.
+  Removing a property from the CLI takes `tine prop remove`. This is an
   intentional difference from typing in the app, whose editor buffer owns visible properties, and from OG, which
   has no command line (#840, D-20261101-CLIE). A block whose parse failed is refused (`refused:kernel`): the
   in-scope threat is malformed input, where properties cannot be told from text.
@@ -557,7 +560,7 @@ One block per line, indented two spaces per level:
 ```
 # a
 id pages/a.md rev d24f22bfce0d5568
-1~xy4j47 [tine.author:: claude] one
+1~diekug [tine.author:: claude] one
          id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
   1.1~3as2k7 under one
 2~hl6h22 TODO two

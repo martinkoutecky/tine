@@ -23,11 +23,14 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
 
 - A comment is an **ordinary child block** of the commented block, appended after
   its existing children, whose text carries the property `quote:: <the selected
-  words>`. Replies are its children. When the quoted words occur more than once
-  in the parent, `quote-prefix::` and `quote-suffix::` (at most 32 characters of
-  surrounding text each) say which occurrence. They are **always written** when
-  the quote occurs in the parent, trimmed at a word boundary, so a later edit
-  that adds a second occurrence of the quoted words cannot re-anchor the comment
+  words>`. Replies are direct children of the thread root. Context starts at
+  32 characters on either side, trimmed at word boundaries, and grows until
+  the selected occurrence is unique within the parent block. Both context
+  properties are **always written** when the quote occurs in the parent:
+  an explicitly empty prefix/suffix means start/end of the block's prose, as
+  identified by the existing kernel text projection (property rows and Org
+  drawer delimiters do not shift that boundary). Context keeps a
+  later edit that adds a second occurrence from silently re-anchoring the comment
   (amendment, D-20261018-MC2; no released graph held margin comments, so there
   is no migration). Readers keep accepting comments without them. An empty `quote::` comments on the
   whole block. A block written by an assistant may carry `author:: <name>`;
@@ -45,7 +48,13 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
 - **Nothing else is persisted.** The anchor is re-derived at every render from the
   parent's current text (`anchorQuote`); there are no offsets, no index and no
   side file. A quote that no longer occurs is shown struck through with "quoted
-  text changed"; the comment is never dropped.
+  text changed"; the comment is never dropped. Equally supported occurrences
+  show "quoted text ambiguous" and contribute no highlight. Explicit empty
+  context scores a boundary only to break a text-context tie, so surviving text
+  still wins after edits. The old 32-character writer omitted empty context
+  properties; those absent properties remain unknown, never boundary markers.
+  Legacy text-context scores are preserved. A previously arbitrary first-match
+  tie becomes visible ambiguity; existing files are never migrated or rewritten.
 - A comment is **created through the document door** (`insertEmptyChildBlock` and
   `setRaw` inside one `withUndoUnit`), so it is one undo step and uses the audited
   save path; there is no margin-specific write path. The reader of the properties
@@ -53,8 +62,9 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
 - Surfaces: Ctrl/Cmd+R in the block editor (consumed, so the webview never
   reloads), the palette command **Comment on selection**, and the block menu's
   **Comment on selection** for words selected in a block's rendered text.
-  The editor selection toolbar also offers **Comment**. Within a thread this
-  creates a child reply whose selection is a compact quote inside that thread.
+  The editor selection toolbar and the touch rendered-text selection toolbar
+  also offer **Comment**. Within a thread this creates a direct child of its root,
+  whose selection is a compact quote inside that thread.
   Each thread offers a local **Reply…** draft at its bottom on hover or focus
   (also while active in the margin). Focus expands it; Enter submits, Shift+Enter
   adds a line, Escape/Cancel discards. No block or save exists until a nonempty
@@ -75,9 +85,13 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   quote above it, and the quoted words are marked in the parent. On a wide main
   pane (scroller at least 960 px, not split) a page that holds comments draws the
   threads in a right-hand column beside their passages; elsewhere they stay inline
-  under the commented block. Comments and their replies draw **no bullet**: depth
-  is a thin rule and a small indent, and the author chip is the handle (drag,
-  block menu).
+  under the commented block. Threads follow passage order, retaining file order
+  for ties. Focus pins a thread to its anchor line; neighbors cascade above and
+  below it without overlap. Comments and their replies draw **no bullet** and
+  read at one level in file pre-order, whatever their stored depth. Hand-nested
+  files stay unchanged. The badge counts thread roots, never replies.
+  The visibility command and Settings label are **Show/Hide comments**; the
+  command id and shortcut remain unchanged.
 - The question "does this page hold a comment" follows the page's **structure**,
   not the text of other blocks, so a keystroke in an unrelated block costs the
   margin nothing (GH #248 shape; `keystrokeScaling.guard.test.tsx`).

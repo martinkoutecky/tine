@@ -8,6 +8,7 @@ import { revealOutlineBlock } from "../outlineViewport";
 import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { formatForBlock } from "../document";
+import { stickyRow } from "../stickyGeometry";
 
 /** GH #643: above outline content (which stays at z-index 8 or below) and below
  * every resizer, menu, toolbar and modal (20 and up). Shallower pins stay on
@@ -22,7 +23,7 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
   const [depth, setDepth] = createSignal(0);
   onMount(() => {
     const block = host.parentElement!;
-    const row = block.querySelector<HTMLElement>(":scope > .block-main")!;
+    const row = stickyRow(block)!;
     // These are the existing scroll shells of pages/feeds/panes/windows and
     // sidebar cards. Do not re-measure computed styles at every ancestor of
     // every mounted parent (quadratic style reads on a deep chain).
@@ -33,7 +34,7 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
       if (el.hasAttribute("data-sticky-parent")) count++;
     }
     setDepth(count);
-    row.style.scrollMarginTop = `${count * 30}px`;
+    block.querySelector<HTMLElement>(":scope > .block-main")!.style.scrollMarginTop = `${count * 30}px`;
     let observer: IntersectionObserver | null = null;
     const observe = () => {
       observer?.disconnect();

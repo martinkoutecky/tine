@@ -94,6 +94,27 @@ async function openReady(name = "Alpha"): Promise<{ id: string; win: Realm }> {
 }
 
 describe("workspace window lifecycle (P4)", () => {
+  it("dispatches fixed milestones before open and focus, sharing only the native counter", async () => {
+    const stages = () => native.calls.filter(c => c.cmd === "diagnostic_workspace_open")
+      .map(c => c.args as { sequence: number; stage: string; openElapsedMs: number });
+    const originalOpen = vi.mocked(mainWindow.open).getMockImplementation()!;
+    vi.mocked(mainWindow.open).mockImplementation((...args) => {
+      expect(stages().map(s => s.stage)).toEqual(["prepare-done", "open-called"]);
+      const popup = originalOpen(...args) as Realm;
+      popup.focus = () => expect(stages().at(-1)?.stage).toBe("focus-called");
+      return popup;
+    });
+    await openReady("PRIVATE PAGE TITLE");
+    await vi.waitFor(() => expect(stages().at(-1)?.stage).toBe("focus-done"));
+    expect(stages().map(s => s.stage)).toEqual(["prepare-done", "open-called", "open-returned",
+      "document-ready", "bootstrap-done", "focus-called", "focus-done"]);
+    for (const event of stages()) {
+      expect(event).toEqual({ sequence: 1, stage: expect.any(String), openElapsedMs: expect.any(Number) });
+      expect(event.openElapsedMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(JSON.stringify(stages())).not.toMatch(/PRIVATE|ws-main/);
+  });
+
   it("installs the pane tree synchronously, then opens, mirrors styles and renders the shell", async () => {
     const style = document.createElement("style");
     style.textContent = ".probe{color:red}";

@@ -17,6 +17,9 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { marginFirstLineProblems } from "./lib/margin-first-line.mjs";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { seedJournalMargin, checkJournalMargin } from "./lib/e2e-journal-margin.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -24,6 +27,7 @@ const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(proce
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4518);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4519);
 const TMP = process.env.E2E_MARGIN_TMP || "/tmp/tine-margin-comment-e2e";
+const OUT = process.env.E2E_ARTIFACT_DIR || TMP;
 const GRAPH = `${TMP}/graph`;
 const PAGE_NAME = "Margin Test";
 const PAGE_FILE = `${GRAPH}/pages/${PAGE_NAME}.md`;
@@ -33,27 +37,32 @@ const REPLY = "I doubt this claim";
 const REPLY_2 = "A reply from me";
 const MY_NAME = "Ada Test";
 const SETTINGS = `${TMP}/xdg/data/${APP_ID}/tine-settings.json`;
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const proof = { testedCommit, delta: "working tree", app: APP, steps: [], screenshots: [] };
 
 if (process.env.E2E_MARGIN_TMP) {
   if (fs.existsSync(TMP)) throw new Error("E2E_MARGIN_TMP must be a fresh fixture directory");
 } else fs.rmSync(TMP, { recursive: true, force: true });
+fs.mkdirSync(OUT, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
+for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
+fs.mkdirSync(`${TMP}/home`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 // A graph under git is the one that asks for a name (tine#841); autocommit stays off.
 execFileSync("git", ["-C", GRAPH, "init", "-q", "-b", "main"]);
-fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n`);
-const now = new Date();
-const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- open [[${PAGE_NAME}]]\n`);
+fs.writeFileSync(PAGE_FILE, `- An agent wrote ${PHRASE} in this paragraph.\n  tine.author:: claude\n- A second block stays as it is.\n- Authored note\n  tine.author:: Ada Marks  \t\n- A following sentinel\n- > A quoted passage\n  tine.author:: Quote Agent  \t\n`);
+const journalFixture = seedJournalMargin(GRAPH, PAGE_NAME);
+const account = installAccountHome(TMP, OUT);
 
 const env = {
   ...process.env,
   TINE_GRAPH: GRAPH,
+  HOME: `${TMP}/home`, XDG_STATE_HOME: `${TMP}/xdg/state`,
   XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
+  TINE_E2E_TOUCH_GESTURES: "ios",
 };
-const log = fs.openSync(`${TMP}/tauri-driver.log`, "w");
+const log = fs.openSync(`${OUT}/tauri-driver.log`, "w");
 const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
   env, stdio: ["ignore", log, log], detached: true,
 });
@@ -74,16 +83,77 @@ async function settingsNameField(browser) {
 const deviceSettings = () => (fs.existsSync(SETTINGS) ? JSON.parse(fs.readFileSync(SETTINGS, "utf8")) : {});
 
 let browser;
+async function shot(name) {
+  await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+  execFileSync("import", ["-window", "root", `${OUT}/${name}.png`]);
+  proof.screenshots.push(`${name}.png`);
+}
+async function blockWith(text) {
+  const id = await browser.execute(text => [...document.querySelectorAll(".page-blocks .ls-block")]
+    .find(row => row.querySelector(":scope > .block-main .block-content")?.textContent.includes(text))?.dataset.blockId, text);
+  if (!id) throw new Error(`No block containing ${text}`);
+  return browser.$(`[data-block-id="${id}"]`);
+}
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  await assertAppLease(account);
   console.log("app bundle:", await browser.execute(() => document.querySelector('link[rel="modulepreload"][href*="app-"]')?.getAttribute("href")));
   // A window too narrow for the margin column (slice 2): comments stay inline.
   await browser.setWindowSize(1000, 820);
   await openPageByName(browser, PAGE_NAME);
+
+  // GH #894/#895: a real edit keeps hidden author bytes, author chrome and the
+  // following row's position. Opening a legacy quote never rewrites it.
+  const initialBytes = fs.readFileSync(PAGE_FILE, "utf8");
+  const quote = await blockWith("A quoted passage");
+  if ((await quote.$(".md-quote").getText()).includes("tine.author")) throw new Error("Author metadata rendered inside the quote");
+  if (await quote.$(".author-chip").getText() !== "Quote Agent") throw new Error("Quote lost its author mark");
+  await shot("00-author-and-quote");
+  if (fs.readFileSync(PAGE_FILE, "utf8") !== initialBytes) throw new Error("Viewing the quote rewrote its bytes");
+  const authored = await blockWith("Authored note");
+  const following = await blockWith("A following sentinel");
+  const before = (await following.getLocation()).y;
+  await authored.$(".block-content").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  if (await browser.$("textarea.block-editor").getValue() !== "Authored note") throw new Error("Ordinary author metadata is visible in the editor");
+  if (!await authored.$(".author-chip").isDisplayed()) throw new Error("Author chip disappeared during editing");
+  const after = (await following.getLocation()).y;
+  if (Math.abs(after - before) > 1) throw new Error(`Opening the authored block moved the following row: ${before} -> ${after}`);
+  proof.steps.push({ outcome: "author hidden; mark and chip visible; following row stable", before, after });
+  await shot("01-hidden-author-editor");
+  await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(ta.value.length, ta.value.length); });
+  await browser.keys(" revised");
+  await browser.keys(["Escape"]);
+  await waitForFileText(PAGE_FILE, text => text.includes("Authored note revised\n  tine.author:: Ada Marks  \t\n"), { timeoutMs: 20_000 });
+  await quote.$(".block-content").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  if (await browser.$("textarea.block-editor").getValue() !== "> A quoted passage") throw new Error("Quote editor exposes its author property");
+  await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); const at = ta.value.indexOf("quoted"); ta.setSelectionRange(at, at + 6); });
+  await browser.keys("revised"); await browser.keys(["Escape"]);
+  await waitForFileText(PAGE_FILE, text => text.includes("> A revised passage") && text.includes("tine.author:: Quote Agent  \t"), { timeoutMs: 20_000 });
+  await browser.refresh(); await ensureMainWindow(browser); await openPageByName(browser, PAGE_NAME);
+  const reopenedQuote = await blockWith("A revised passage");
+  if ((await reopenedQuote.$(".md-quote").getText()).includes("tine.author") || await reopenedQuote.$(".author-chip").getText() !== "Quote Agent") throw new Error("Saved quote lost its text/author separation after reload");
+  proof.steps.push("quote author never rendered as prose; retained author bytes survive an edit and reload");
+  const reopened = await blockWith("Authored note revised");
+  await reopened.$(".block-content").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(ta.value.length, ta.value.length); });
+  await browser.keys(" pending");
+  await reopened.$(".author-chip").click();
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".ctx-item")].some(b => b.textContent.trim() === "Remove author")), { timeout: 5000 });
+  await shot("02-remove-author-menu");
+  await browser.execute(() => [...document.querySelectorAll(".ctx-item")].find(b => b.textContent.trim() === "Remove author").click());
+  await waitForFileText(PAGE_FILE, text => text.includes("Authored note revised pending") && !text.includes("tine.author:: Ada Marks"), { timeoutMs: 20_000 });
+  await shot("03-author-removed");
+  await browser.keys(["Control", "z"]);
+  await waitForFileText(PAGE_FILE, text => text.includes("Authored note revised pending\n  tine.author:: Ada Marks  \t"), { timeoutMs: 20_000 });
+  proof.steps.push("chip menu removes only author, keeps pending draft; undo restores exact author bytes");
 
   // The agent block renders with its author chip, not an `author` row.
   const agent = await browser.$(`.page-blocks .ls-block.authored`);
@@ -117,6 +187,8 @@ try {
   const prompt = await browser.$('[role="dialog"].comment-name-prompt');
   await prompt.waitForExist({ timeout: 5_000, timeoutMsg: "the first comment in a git graph did not ask for a name" });
   const promptText = await prompt.getText();
+  if (!promptText.includes("How should your comments be signed?") || /git|github/i.test(promptText)) throw new Error(`Name prompt wording: ${promptText}`);
+  await shot("04-comment-name-question");
   if (!/Tine setting on this device, used in all your graphs, not a setting of this graph/.test(promptText)) throw new Error(`the name dialog does not say it is a device setting: ${JSON.stringify(promptText)}`);
   if (fs.readFileSync(PAGE_FILE, "utf8").includes("tine.quote::")) throw new Error("the comment was written before the name was answered");
   await browser.keys(MY_NAME);
@@ -232,12 +304,18 @@ try {
   if (problems.length) throw new Error(problems.join("; "));
   // The name given in the dialog is the one device setting Settings shows, and later comments did not ask again.
   if (await settingsNameField(browser) !== MY_NAME) throw new Error("Settings > Your name does not show the name given in the dialog");
-  console.log("PASS: first comment asks for a name once, rightmost Comment icon, Enter reply, empty draft cancellation without a save, draft submission with author, top delete, and Ctrl+R quoted reply in the wide thread");
+  proof.steps.push("first comment asks once using signing language without git/GitHub; name persists in device Settings");
+  await shot("05-completed-margin-journey");
+  await checkJournalMargin(browser, journalFixture, shot, proof);
+  fs.writeFileSync(`${OUT}/proof.json`, JSON.stringify(proof, null, 2));
+  console.log("PASS: signing prompt, author editing, comment/reply actions, per-day journal margins, synthetic iOS tap editing with exact retained metadata, width transitions and reload");
 } catch (error) {
-  console.error(JSON.stringify({ base: "c39d28a37 + margin-r4 working diff", journey: "margin-comment", expected: "local empty draft, ordinary submitted reply, delete on first content line, rightmost icon", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${TMP}/failure.png` }));
+  const failure = { testedCommit, delta: "working tree", journey: "margin-comment, author editing and journal/iOS metadata", expected: "hidden retained metadata, quote separation, removable chip, signing prompt, per-day journal margins and durable comment edits", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${OUT}/failure.png` };
+  console.error(JSON.stringify(failure));
+  fs.writeFileSync(`${OUT}/failure.json`, JSON.stringify(failure, null, 2));
   // External capture avoids WebKitGTK's occasionally hanging screenshot endpoint.
   const { execFileSync } = await import("node:child_process");
-  try { execFileSync("import", ["-window", "root", `${TMP}/failure.png`]); } catch {}
+  try { execFileSync("import", ["-window", "root", `${OUT}/failure.png`]); } catch {}
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

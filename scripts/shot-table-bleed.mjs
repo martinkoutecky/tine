@@ -72,6 +72,28 @@ try {
       return { boxLeft: b?.left, boxRight: b?.right, left: r.left, right: r.right, width: r.width, paneLeft: p.left, paneRight: p.left + pane.clientWidth, center: (c.left + c.right) / 2, scroll: wrap.scrollWidth - wrap.clientWidth, tableWidth: table.getBoundingClientRect().width, paneScroll: pane.scrollWidth - pane.clientWidth };
     });
     await page.screenshot({ path: `${out}/${name}.png` });
+    // GH #909: a table that bleeds left must cover the ancestors' outline guides it overlaps.
+    const guideHits = await page.evaluate(() => {
+      const wrap = document.querySelector('.md-table-wrap');
+      if (!wrap) return { overlapped: 0, hits: [] };
+      const r = wrap.getBoundingClientRect();
+      const hits = [];
+      let overlapped = 0;
+      for (const guide of document.querySelectorAll('.block-children-left-border')) {
+        const g = guide.getBoundingClientRect();
+        const x = g.left + g.width / 2;
+        if (g.width === 0 || x <= r.left || x >= r.right || g.bottom <= r.top || g.top >= r.bottom) continue;
+        overlapped++;
+        for (const row of wrap.querySelectorAll('tr')) {
+          const y = (row.getBoundingClientRect().top + row.getBoundingClientRect().bottom) / 2;
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest('.block-children-left-border')) hits.push(Math.round(y));
+        }
+      }
+      return { overlapped, hits };
+    });
+    console.log(name, 'guides under table', guideHits);
+    if (guideHits.hits.length) failures.push(`${name}: an outline guide shows through the table (GH #909)`);
     if (name === 'narrow') {
       const oldLayout = await page.addStyleTag({ content: '.md-table-wrap { width:100%; margin:1rem 0; } .md-table-wrap > .md-table { width:100%; min-width:0; }' });
       const original = await page.locator('.md-table-wrap').boundingBox();

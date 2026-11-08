@@ -3,11 +3,13 @@ import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
 import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount } from "../../toasts";
-import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
+import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
 import { batch, createSignal, createRoot, createMemo, createComputed, untrack } from "solid-js";
 import { ChangeKeyRegistry } from "../../changeKeyRegistry";
+import { threadRootOf } from "../commentThreads";
+import { previousBodySibling } from "../bodyStructure";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
@@ -39,10 +41,9 @@ export function selectionScope(): OutlineScope | null { return activeSelectionSc
  *  Arrow, Shift+Arrow) is dead on any routed page / reference / embed. */
 function selectionOrder(id: string | null, scope: OutlineScope | null = activeSelectionScope): string[] {
   if (!id) return [];
-  if (scope) return scopedVisibleOrder(scope);
-  if (visibleData().index.has(id)) return visibleOrder();
   const page = doc.byId[id]?.page;
-  return page ? pageVisibleOrder(page) : [];
+  const order = scope ? scopedVisibleOrder(scope) : visibleData().index.has(id) ? visibleOrder() : page ? pageVisibleOrder(page) : [];
+  return untrack(() => threadRootOf(id) === null ? order.filter(at => threadRootOf(at) === null) : order);
 }
 
 // ---------------------------------------------------------------------------
@@ -301,10 +302,8 @@ export function indentSelection() {
   const ids = topSelected();
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const first = ids[0];
-  const sibs = rootsOf(first);
-  const fi = sibs.indexOf(first);
-  if (fi <= 0) return;
-  const newParent = sibs[fi - 1];
+  const newParent = previousBodySibling(first);
+  if (!newParent) return;
   // A view rule: inside a scope, the new parent must be visible there.
   if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(newParent)) return;
   // Structural indent is single-page ONLY. The target (newParent) is on first's

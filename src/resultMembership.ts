@@ -42,6 +42,10 @@ export function createMembershipResource<S, T>(
   guardResults = false,
   // An unclassified caller must conservatively refresh on every publication.
   revisionSource: Accessor<unknown> = () => changed("publication"),
+  // A precisely classified reader's publication key owns invalidation. Global
+  // hydration epochs still gate adoption/actions, but unrelated page reloads
+  // need not execute its question again. `current` excludes coalesced changes.
+  scopedRevision?: { current: Accessor<boolean> },
 ) {
   let snapshot: T | undefined;
   let scope = "";
@@ -90,7 +94,7 @@ export function createMembershipResource<S, T>(
     if (next.held && previous?.scope === next.scope) return previous;
     return next;
   }, undefined, { equals: (a, b) => a?.scope === b?.scope && a?.input === b?.input
-    && a?.revision === b?.revision && a?.release === b?.release && a?.epoch === b?.epoch && a?.settled === b?.settled && a?.guarded === b?.guarded });
+    && a?.revision === b?.revision && a?.release === b?.release && (scopedRevision || a?.epoch === b?.epoch) && a?.settled === b?.settled && a?.guarded === b?.guarded });
   const [resource, actions] = createResource(
     () => runnable()?.input && runnable()?.settled ? runnable() : undefined,
     async (started) => {
@@ -98,8 +102,18 @@ export function createMembershipResource<S, T>(
       // its answer. Reuse this resource's current snapshot, without an IPC read.
       if (answered && snapshot !== undefined && answered.scope === started.scope
         && answered.input === started.input && answered.revision === started.revision
-        && answered.epoch === started.epoch && answered.release === started.release
-        && answered.guarded === started.guarded) return snapshot;
+        && (scopedRevision || answered.epoch === started.epoch) && answered.release === started.release
+        && answered.guarded === started.guarded) {
+        // Only renew provenance when the native dependency key proves that
+        // this answer is unchanged. A delayed relevant refresh keeps its old
+        // ticket and the existing live-source check continues to refuse edits.
+        if (started.guarded && scopedRevision?.current()) {
+          const ticket = captureResultsTicket();
+          adoptResults(snapshot, ticket);
+          snapshotEpoch = ticket.epoch;
+        }
+        return snapshot;
+      }
       const owner = graphOwner(() => alive && request().scope === started.scope
         && !request().held && runnable() === started);
       if (request().held) return snapshot;
