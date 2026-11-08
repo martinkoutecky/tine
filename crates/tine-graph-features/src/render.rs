@@ -1158,15 +1158,16 @@ fn render_outline_item<N: OutlineNode>(
     out.push_str("</li>");
 }
 
-fn collect_wanted_doc_blocks<'a>(
+fn collect_wanted_doc_blocks<'a, 'w>(
     blocks: &'a [DocBlock],
-    wanted: &std::collections::HashSet<&str>,
-    found: &mut std::collections::HashMap<&'a str, &'a DocBlock>,
+    wanted: &std::collections::HashSet<&'w str>,
+    found: &mut std::collections::HashMap<&'w str, &'a DocBlock>,
 ) {
     let mut stack: Vec<_> = blocks.iter().rev().collect();
     while let Some(block) = stack.pop() {
-        if wanted.contains(block.uuid.as_str()) {
-            found.insert(block.uuid.as_str(), block);
+        let id = block.uuid.text();
+        if let Some(wanted) = wanted.get(&*id) {
+            found.insert(*wanted, block);
         }
         // OG can retain a matching descendant below a non-matching child of a
         // retained ancestor. Keep walking so both roots hydrate from source.

@@ -5136,6 +5136,7 @@ dependencies = [
  "libc",
  "lsdoc",
  "memchr",
+ "postcard",
  "pretty_assertions",
  "regex",
  "serde",

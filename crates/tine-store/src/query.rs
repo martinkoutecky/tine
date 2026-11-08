@@ -650,7 +650,8 @@ fn page_property_block_with_config(
         "page-property:{:?}:{}",
         entry.kind,
         refs::page_key(&entry.name)
-    );
+    )
+    .into();
     Some(block)
 }
 
@@ -690,7 +691,7 @@ pub(crate) fn changed_explicit_reference_names(
         entry,
         doc,
         config,
-        &|block| changed.contains(&block.uuid),
+        &|block| changed.contains(&*block.uuid.text()),
         header_changed,
     )
 }
@@ -764,7 +765,7 @@ fn block_reference_evidence(
         config,
     );
     (!result.occurrences.is_empty()).then(|| ReferenceBlockEvidence {
-        block_id: block.uuid.clone(),
+        block_id: block.uuid.to_string(),
         occurrences: result.occurrences,
         total: result.total,
         truncated: result.truncated,
@@ -1117,7 +1118,7 @@ fn backlink_filter_entry(
     BacklinkFilterEntry {
         page: page.to_string(),
         kind,
-        block_id: block.uuid.clone(),
+        block_id: block.uuid.to_string(),
         text,
         facets,
         truncated: text_truncated || facets_truncated,
@@ -1163,7 +1164,7 @@ pub(crate) fn backlink_filter_context(
                     pre,
                     &tine_core::query::atom::ParseConfig::from_config(graph.config()),
                 ) {
-                    if ids.contains(&block.uuid) {
+                    if ids.contains(&*block.uuid.text()) {
                         let entry = backlink_filter_entry(
                             &page.name,
                             page.kind,
@@ -1195,7 +1196,7 @@ pub(crate) fn backlink_filter_context(
                 out: &mut Vec<&'a DocBlock>,
             ) {
                 for block in blocks {
-                    if ids.contains(&block.uuid) {
+                    if ids.contains(&*block.uuid.text()) {
                         out.push(block);
                     }
                     collect(&block.children, ids, out);
@@ -1504,7 +1505,7 @@ pub(crate) fn changed_reference_source_blocks<'a>(
         out: &mut Vec<&'a DocBlock>,
     ) {
         for block in roots {
-            if changed.contains(&block.uuid) {
+            if changed.contains(&*block.uuid.text()) {
                 out.push(block);
             }
             select(&block.children, changed, out);
@@ -1540,7 +1541,7 @@ pub(crate) fn changed_block_reference_targets(
         }
     }
     walk(&doc.roots, &mut |block| {
-        if changed.contains(&block.uuid) {
+        if changed.contains(&*block.uuid.text()) {
             targets.extend(block.projection().block_refs().iter().cloned());
         }
     });
@@ -2178,18 +2179,19 @@ pub(crate) fn export_query_subtrees(
                 .pre_block
                 .as_deref()
                 .and_then(|pre| page_property_block(entry, pre))
-                .filter(|header| wanted.contains(header.uuid.as_str()))
+                .filter(|header| wanted.contains(&*header.uuid.text()))
             {
                 headers.insert(
-                    (entry.kind, entry.name.clone(), header.uuid.clone()),
+                    (entry.kind, entry.name.clone(), header.uuid.to_string()),
                     header,
                 );
             }
             let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
             while let Some(block) = stack.pop() {
                 let property_id = block.property("id");
-                let matched = if wanted.contains(block.uuid.as_str()) {
-                    Some(block.uuid.as_str())
+                let uuid = block.uuid.text();
+                let matched = if wanted.contains(&*uuid) {
+                    Some(&*uuid)
                 } else {
                     property_id.as_deref().filter(|id| wanted.contains(*id))
                 };
@@ -2349,10 +2351,8 @@ fn resolve_ids_in_page<'a>(
         // A block's identity is its uuid AND its persisted `id::`: one block
         // can answer two requested ids. O(1) lookups, no per-id rescan.
         let property = b.property("id");
-        for key in [Some(b.uuid.as_str()), property.as_deref()]
-            .into_iter()
-            .flatten()
-        {
+        let uuid = b.uuid.text();
+        for key in [Some(&*uuid), property.as_deref()].into_iter().flatten() {
             let Some(&id) = want.get(key) else {
                 continue;
             };
@@ -3604,7 +3604,7 @@ mod tests {
             ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
             ("Fuzzy Existing", "pages/Fuzzy Existing.md", "- body\n"),
         ]);
-        let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+        let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
         // A context-free lookup correctly includes the now-saved reference.
         assert_eq!(quick_switch(&graph, "Fz", 8)[0].name, "Fz");
         let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
@@ -3633,7 +3633,7 @@ mod tests {
     fn completion_baseline_preserves_other_referrers_files_and_aliases() {
         for source in ["- [[Fz]]\n- #Fz\n", "- [[Fz]]\n  - [[Fz]]\n"] {
             let graph = graph_from_page_snapshot(&[("Notes", "pages/Notes.md", source)]);
-            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
             assert_eq!(
                 quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
                 "Fz"
@@ -3644,7 +3644,7 @@ mod tests {
                 ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
                 ("Other", "pages/Other.md", sibling),
             ]);
-            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
             assert_eq!(
                 quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
                 "Fz"
@@ -3655,7 +3655,7 @@ mod tests {
                 ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
                 (name, "pages/Owner.md", raw),
             ]);
-            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
             let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
             assert_eq!(results[0].name, "Fz");
             assert_eq!(results[0].rel_path_str(), "pages/Owner.md");

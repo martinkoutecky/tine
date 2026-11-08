@@ -1828,6 +1828,29 @@ impl BlockOwners {
     }
 }
 
+/// One key of [`SnapshotBlockIndex`]: binary when its text is a canonical UUID.
+#[derive(Clone, Copy)]
+enum BlockKey<'a> {
+    Uuid(u128),
+    Text(&'a str),
+}
+
+impl<'a> BlockKey<'a> {
+    fn of(id: &'a str) -> Self {
+        SnapshotBlockIndex::compact_uuid(id).map_or(Self::Text(id), Self::Uuid)
+    }
+}
+
+impl PartialEq<&str> for BlockKey<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        match (self, BlockKey::of(other)) {
+            (Self::Uuid(a), BlockKey::Uuid(b)) => *a == b,
+            (Self::Text(a), BlockKey::Text(b)) => *a == b,
+            _ => false,
+        }
+    }
+}
+
 /// Block id (runtime uuid or persisted `id::`) → the pages that hold it.
 /// Exact for the pages it was captured against: a full build walks every
 /// page, and each publication swaps a changed path's previous ids for its
@@ -1859,14 +1882,16 @@ impl SnapshotBlockIndex {
             .filter(|id| !id.is_empty())
     }
 
-    fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(&'a str)) {
-        fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(&'a str)) {
+    fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(BlockKey<'a>)) {
+        fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(BlockKey<'a>)) {
             for block in blocks {
-                if !block.uuid.is_empty() {
-                    visit(&block.uuid);
+                if let Some(id) = block.uuid.as_uuid() {
+                    visit(BlockKey::Uuid(id.as_u128()));
+                } else if let Some(id) = block.uuid.unpacked_text() {
+                    visit(BlockKey::of(id));
                 }
                 if let Some(id) = SnapshotBlockIndex::authored_id(block) {
-                    visit(id);
+                    visit(BlockKey::of(id));
                 }
                 walk(&block.children, visit);
             }
@@ -1878,7 +1903,10 @@ impl SnapshotBlockIndex {
     fn block_ids(doc: &Document) -> std::collections::HashSet<String> {
         let mut ids = std::collections::HashSet::new();
         Self::for_each_block_id(doc, |id| {
-            ids.insert(id.to_string());
+            ids.insert(match id {
+                BlockKey::Uuid(id) => uuid::Uuid::from_u128(id).to_string(),
+                BlockKey::Text(id) => id.to_string(),
+            });
         });
         ids
     }
@@ -1925,29 +1953,34 @@ impl SnapshotBlockIndex {
     }
 
     fn owners(&self, id: &str) -> Option<&BlockOwners> {
-        if let Some(id) = Self::compact_uuid(id) {
-            return match self.uuid_overlay.get(&id) {
+        self.owners_of(BlockKey::of(id))
+    }
+
+    fn owners_of(&self, id: BlockKey<'_>) -> Option<&BlockOwners> {
+        match id {
+            BlockKey::Uuid(id) => match self.uuid_overlay.get(&id) {
                 Some(changed) => changed.as_ref(),
                 None => self.uuids.get(&id),
-            };
-        }
-        match self.overlay.get(id) {
-            Some(changed) => changed.as_ref(),
-            None => self.base.get(id),
+            },
+            BlockKey::Text(id) => match self.overlay.get(id) {
+                Some(changed) => changed.as_ref(),
+                None => self.base.get(id),
+            },
         }
     }
 
     /// Apply `change` to `id`'s ascending owner slots, recording only a change.
-    fn edit(&mut self, id: &str, change: impl FnOnce(&mut Vec<usize>)) {
-        let prior = self.owners(id);
+    fn edit(&mut self, id: BlockKey<'_>, change: impl FnOnce(&mut Vec<usize>)) {
+        let prior = self.owners_of(id);
         let mut slots = prior.map_or_else(Vec::new, |owners| owners.slots().to_vec());
         change(&mut slots);
         let next = BlockOwners::from_slots(slots);
         if next.as_ref() != prior {
-            if let Some(id) = Self::compact_uuid(id) {
-                self.uuid_overlay.insert(id, next);
-            } else {
-                Arc::make_mut(&mut self.overlay).insert(id.to_owned(), next);
+            match id {
+                BlockKey::Uuid(id) => self.uuid_overlay.insert(id, next),
+                BlockKey::Text(id) => {
+                    Arc::make_mut(&mut self.overlay).insert(id.to_owned(), next);
+                }
             }
         }
     }
@@ -2009,17 +2042,14 @@ impl SnapshotBlockIndex {
     }
 
     /// Borrow ids until sorting/deduplication is complete, then allocate each
-    /// distinct key once and consume the sorted rows in one AVL build.
+    /// distinct key once and consume the sorted rows in one B+tree build.
     fn build(pages: &Pages) -> Self {
         let mut uuids = Vec::new();
         let mut strings = Vec::new();
         for (slot, (_, doc)) in pages.slots() {
-            Self::for_each_block_id(doc, |id| {
-                if let Some(id) = Self::compact_uuid(id) {
-                    uuids.push((id, slot));
-                } else {
-                    strings.push((id, slot));
-                }
+            Self::for_each_block_id(doc, |id| match id {
+                BlockKey::Uuid(id) => uuids.push((id, slot)),
+                BlockKey::Text(id) => strings.push((id, slot)),
             });
         }
         Self::from_rows(uuids, strings)
@@ -2131,9 +2161,54 @@ impl SnapshotPageDerivedIndex {
     }
 }
 
+/// Page name → the paths of the pages explicitly referencing it. A page's
+/// postings share one path allocation.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(from = "ExplicitIndexWire")]
 struct SnapshotExplicitIndex {
-    shards: Vec<Arc<SharedMap<String, Arc<SharedMap<PathBuf, ()>>>>>,
+    shards: Vec<Arc<ExplicitShard>>,
+}
+
+type ExplicitShard = SharedMap<String, Arc<SharedMap<Arc<Path>, ()>>>;
+
+/// The decoded form, whose paths are separate allocations until they are shared.
+#[derive(serde::Deserialize)]
+struct ExplicitIndexWire {
+    shards: Vec<ExplicitShard>,
+}
+
+impl From<ExplicitIndexWire> for SnapshotExplicitIndex {
+    fn from(wire: ExplicitIndexWire) -> Self {
+        let mut paths: HashSet<Arc<Path>> = HashSet::new();
+        let mut intern = |path: &Arc<Path>| match paths.get(path) {
+            Some(shared) => Arc::clone(shared),
+            None => {
+                paths.insert(Arc::clone(path));
+                Arc::clone(path)
+            }
+        };
+        let shards = wire
+            .shards
+            .into_iter()
+            .map(|shard| {
+                Arc::new(SharedMap::from_sorted_unique(
+                    shard
+                        .iter()
+                        .map(|(name, postings)| {
+                            let postings = SharedMap::from_sorted_unique(
+                                postings
+                                    .iter()
+                                    .map(|(path, ())| (intern(path), ()))
+                                    .collect(),
+                            );
+                            (name.clone(), Arc::new(postings))
+                        })
+                        .collect(),
+                ))
+            })
+            .collect();
+        Self { shards }
+    }
 }
 
 fn names_absent_from<'a, T: Eq + std::hash::Hash>(
@@ -2163,12 +2238,14 @@ impl SnapshotExplicitIndex {
                 }
             }
         }
+        let mut shared: Option<Arc<Path>> = None;
         for name in names_absent_from(new, old) {
             let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
             if !shard.contains_key(name) {
                 shard.insert(name.clone(), Arc::new(SharedMap::new()));
             }
-            Arc::make_mut(shard.get_mut(name).unwrap()).insert(path.to_path_buf(), ());
+            let path = Arc::clone(shared.get_or_insert_with(|| Arc::from(path)));
+            Arc::make_mut(shard.get_mut(name).unwrap()).insert(path, ());
         }
     }
 
@@ -2176,7 +2253,7 @@ impl SnapshotExplicitIndex {
         let mut paths = std::collections::BTreeSet::new();
         for name in names {
             if let Some(postings) = self.shards[Self::shard(name)].get(name) {
-                paths.extend(postings.iter().map(|(path, _)| path.clone()));
+                paths.extend(postings.iter().map(|(path, _)| path.to_path_buf()));
             }
         }
         paths
@@ -2231,19 +2308,20 @@ impl SnapshotExplicitIndex {
     /// threads used to wait on the same lazily built projections in page
     /// order, so one core did them all; S4: this index was serial).
     fn build(pages: &Pages, config: &Config) -> Self {
-        type Shard = SharedMap<String, Arc<SharedMap<PathBuf, ()>>>;
-        let shards: Vec<std::sync::Mutex<Shard>> = (0..Self::SHARDS)
+        let shards: Vec<std::sync::Mutex<ExplicitShard>> = (0..Self::SHARDS)
             .map(|_| std::sync::Mutex::new(SharedMap::new()))
             .collect();
         let insert = |chunk: &[&(PageEntry, Arc<Document>)]| {
             for (entry, doc) in chunk {
-                for name in crate::query::document_explicit_reference_names(entry, doc, config) {
+                let names = crate::query::document_explicit_reference_names(entry, doc, config);
+                let path: Arc<Path> = Arc::from(entry.path.as_path());
+                for name in names {
                     let mut shard = shards[Self::shard(&name)].lock().unwrap();
                     if let Some(paths) = shard.get_mut(&name) {
-                        Arc::make_mut(paths).insert(entry.path.clone(), ());
+                        Arc::make_mut(paths).insert(Arc::clone(&path), ());
                     } else {
                         let mut paths = SharedMap::new();
-                        paths.insert(entry.path.clone(), ());
+                        paths.insert(Arc::clone(&path), ());
                         shard.insert(name, Arc::new(paths));
                     }
                 }
@@ -5435,11 +5513,16 @@ mod explicit_index_diff_tests {
         };
         let expected = new
             .iter()
-            .map(|name| (name.clone(), [path.to_path_buf()].into_iter().collect()))
+            .map(|name| {
+                (
+                    name.clone(),
+                    [Arc::<Path>::from(path)].into_iter().collect(),
+                )
+            })
             .chain(["shared", "other"].map(|name| {
                 (
                     name.to_string(),
-                    [other_path.to_path_buf()].into_iter().collect(),
+                    [Arc::<Path>::from(other_path)].into_iter().collect(),
                 )
             }))
             .collect::<std::collections::BTreeMap<_, _>>();
@@ -5701,7 +5784,7 @@ mod tests {
         assert_ne!(roots[0].uuid, "dup-1234");
         assert_ne!(roots[1].uuid, "dup-1234");
 
-        let first_ids = roots.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>();
+        let first_ids = roots.iter().map(|b| b.uuid.to_string()).collect::<Vec<_>>();
         let mut same = vec![
             DocBlock::new("first\nid:: dup-1234"),
             DocBlock::new("first\nid:: dup-1234"),
@@ -5709,7 +5792,7 @@ mod tests {
         assign_doc_runtime_ids(&mut same, "pages/client-a/Foo.md");
         assert_eq!(
             first_ids,
-            same.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>()
+            same.iter().map(|b| b.uuid.to_string()).collect::<Vec<_>>()
         );
 
         let mut other_owner = vec![DocBlock::new("first\nid:: dup-1234")];
@@ -6218,7 +6301,7 @@ mod tests {
                     .1
                     .roots[0]
                     .uuid
-                    .clone()
+                    .to_string()
             });
             save_model_page(&store, "Notes", |page| page.blocks[0].raw = after.into());
             let live = published_snapshot(&store);

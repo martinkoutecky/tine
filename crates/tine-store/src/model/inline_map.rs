@@ -1,69 +1,108 @@
-//! Persistent AVL for small cloneable entries, stored inside each shared node.
-//! Path copying clones only O(log N) inline entries; bulk construction is O(N).
+//! Persistent B+tree for small cloneable entries, stored inside shared leaves.
+//! A leaf holds entries next to each other, so an entry pays no node, pointer or
+//! reference-count words of its own: at 1.84M block ids this costs about 37 B per
+//! entry where the binary tree it replaced cost 80 B. Path copying clones one node
+//! per level, O(log N) nodes of at most `MAX` entries; bulk construction is O(N).
 //! Unlike `persistent::Map`, there is no separate shared allocation per entry.
-use std::{cmp::Ordering, sync::Arc};
+use std::sync::Arc;
+
+/// A node splits above this many entries. Bounds the bytes one path copy clones.
+const MAX: usize = 32;
+/// Bulk construction leaves room to insert without an immediate split.
+const FILL: usize = 24;
 
 #[derive(Debug)]
-struct Node<K, V> {
-    entry: (K, V),
-    left: Option<Arc<Node<K, V>>>,
-    right: Option<Arc<Node<K, V>>>,
-    height: usize,
+enum Node<K, V> {
+    Leaf(Vec<(K, V)>),
+    /// Children with a lower bound on their keys. The first child also takes
+    /// every key below its bound, so a removal never has to update a bound.
+    Inner(Vec<(K, Arc<Node<K, V>>)>),
 }
 impl<K: Clone, V: Clone> Clone for Node<K, V> {
     fn clone(&self) -> Self {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::shared_tree_node_copy();
-        Self {
-            entry: self.entry.clone(),
-            left: self.left.clone(),
-            right: self.right.clone(),
-            height: self.height,
+        // One spare slot: a path is usually copied to change a row.
+        match self {
+            Self::Leaf(rows) => {
+                let mut copy = Vec::with_capacity(rows.len() + 1);
+                copy.extend_from_slice(rows);
+                Self::Leaf(copy)
+            }
+            Self::Inner(rows) => {
+                let mut copy = Vec::with_capacity(rows.len() + 1);
+                copy.extend_from_slice(rows);
+                Self::Inner(copy)
+            }
         }
     }
 }
-impl<K: Clone, V: Clone> Node<K, V> {
-    fn height(node: &Option<Arc<Self>>) -> usize {
-        node.as_ref().map_or(0, |node| node.height)
-    }
-    fn update(&mut self) {
-        self.height = 1 + Self::height(&self.left).max(Self::height(&self.right));
-    }
-    fn left(mut node: Arc<Self>) -> Arc<Self> {
-        let mut next = Arc::make_mut(&mut node).right.take().unwrap();
-        Arc::make_mut(&mut node).right = Arc::make_mut(&mut next).left.take();
-        Arc::make_mut(&mut node).update();
-        Arc::make_mut(&mut next).left = Some(node);
-        Arc::make_mut(&mut next).update();
-        next
-    }
-    fn right(mut node: Arc<Self>) -> Arc<Self> {
-        let mut next = Arc::make_mut(&mut node).left.take().unwrap();
-        Arc::make_mut(&mut node).left = Arc::make_mut(&mut next).right.take();
-        Arc::make_mut(&mut node).update();
-        Arc::make_mut(&mut next).right = Some(node);
-        Arc::make_mut(&mut next).update();
-        next
-    }
-    fn balance(mut node: Arc<Self>) -> Arc<Self> {
-        Arc::make_mut(&mut node).update();
-        if Self::height(&node.left) > Self::height(&node.right) + 1 {
-            let left = node.left.as_ref().unwrap();
-            if Self::height(&left.right) > Self::height(&left.left) {
-                let left = Arc::make_mut(&mut node).left.take().unwrap();
-                Arc::make_mut(&mut node).left = Some(Self::left(left));
+fn child_at<K: Ord, V>(rows: &[(K, V)], key: &K) -> usize {
+    // The first bound is never consulted: a key below it goes to child 0, and
+    // only the later bounds are guaranteed partitioned.
+    rows[1..].partition_point(|(bound, _)| bound <= key)
+}
+fn split<T>(rows: &mut Vec<T>) -> Vec<T> {
+    let tail = rows.split_off(rows.len() / 2);
+    rows.shrink_to_fit();
+    tail
+}
+impl<K: Ord + Clone, V: Clone> Node<K, V> {
+    /// Sets `key`; returns whether it is new, and the upper half of a split.
+    fn put(node: &mut Arc<Self>, key: K, value: V) -> (bool, Option<(K, Arc<Self>)>) {
+        match Arc::make_mut(node) {
+            Self::Leaf(rows) => {
+                let added = match rows.binary_search_by(|(k, _)| k.cmp(&key)) {
+                    Ok(at) => {
+                        rows[at].1 = value;
+                        false
+                    }
+                    Err(at) => {
+                        rows.reserve_exact(1);
+                        rows.insert(at, (key, value));
+                        true
+                    }
+                };
+                if rows.len() <= MAX {
+                    return (added, None);
+                }
+                let tail = split(rows);
+                let bound = tail[0].0.clone();
+                (added, Some((bound, Arc::new(Self::Leaf(tail)))))
             }
-            return Self::right(node);
-        }
-        if Self::height(&node.right) > Self::height(&node.left) + 1 {
-            let right = node.right.as_ref().unwrap();
-            if Self::height(&right.left) > Self::height(&right.right) {
-                let right = Arc::make_mut(&mut node).right.take().unwrap();
-                Arc::make_mut(&mut node).right = Some(Self::right(right));
+            Self::Inner(rows) => {
+                let at = child_at(rows, &key);
+                let (added, upper) = Self::put(&mut rows[at].1, key, value);
+                if let Some(upper) = upper {
+                    rows.reserve_exact(1);
+                    rows.insert(at + 1, upper);
+                    if rows.len() > MAX {
+                        let tail = split(rows);
+                        let bound = tail[0].0.clone();
+                        return (added, Some((bound, Arc::new(Self::Inner(tail)))));
+                    }
+                }
+                (added, None)
             }
-            return Self::left(node);
         }
-        node
+    }
+    /// Removes a present `key`; returns whether this node is now empty.
+    fn delete(node: &mut Arc<Self>, key: &K) -> bool {
+        match Arc::make_mut(node) {
+            Self::Leaf(rows) => {
+                if let Ok(at) = rows.binary_search_by(|(k, _)| k.cmp(key)) {
+                    rows.remove(at);
+                }
+                rows.is_empty()
+            }
+            Self::Inner(rows) => {
+                let at = child_at(rows, key);
+                if Self::delete(&mut rows[at].1, key) {
+                    rows.remove(at);
+                }
+                rows.is_empty()
+            }
+        }
     }
 }
 
@@ -80,129 +119,99 @@ impl<K: Ord + Clone, V: Clone> InlineMap<K, V> {
         self.len
     }
     pub(super) fn get(&self, key: &K) -> Option<&V> {
-        let mut node = self.root.as_deref();
-        while let Some(n) = node {
-            match key.cmp(&n.entry.0) {
-                Ordering::Less => node = n.left.as_deref(),
-                Ordering::Greater => node = n.right.as_deref(),
-                Ordering::Equal => return Some(&n.entry.1),
+        let mut node = self.root.as_deref()?;
+        loop {
+            match node {
+                Node::Leaf(rows) => {
+                    let at = rows.binary_search_by(|(k, _)| k.cmp(key)).ok()?;
+                    return Some(&rows[at].1);
+                }
+                Node::Inner(rows) => node = &rows[child_at(rows, key)].1,
             }
         }
-        None
     }
     pub(super) fn from_sorted_unique(entries: Vec<(K, V)>) -> Self {
         debug_assert!(entries.windows(2).all(|pair| pair[0].0 < pair[1].0));
-        fn build<K: Clone, V: Clone>(
-            rows: &mut impl Iterator<Item = (K, V)>,
-            len: usize,
-        ) -> Option<Arc<Node<K, V>>> {
-            if len == 0 {
-                return None;
-            }
-            let left = build(rows, len / 2);
-            let entry = rows.next().expect("counted sorted entries");
-            let right = build(rows, len - len / 2 - 1);
-            let mut node = Node {
-                entry,
-                left,
-                right,
-                height: 0,
-            };
-            node.update();
-            Some(Arc::new(node))
-        }
         let len = entries.len();
+        fn chunk<T>(rows: impl ExactSizeIterator<Item = T>) -> Vec<Vec<T>> {
+            let mut left = rows.len();
+            let mut chunks = Vec::with_capacity(left / FILL + 1);
+            let mut rows = rows.peekable();
+            while rows.peek().is_some() {
+                let take = FILL.min(left);
+                left -= take;
+                let mut chunk = Vec::with_capacity(take);
+                chunk.extend(rows.by_ref().take(take));
+                chunks.push(chunk);
+            }
+            chunks
+        }
+        let mut level: Vec<(K, Arc<Node<K, V>>)> = chunk(entries.into_iter())
+            .into_iter()
+            .map(|rows| (rows[0].0.clone(), Arc::new(Node::Leaf(rows))))
+            .collect();
+        while level.len() > 1 {
+            level = chunk(level.into_iter())
+                .into_iter()
+                .map(|rows| (rows[0].0.clone(), Arc::new(Node::Inner(rows))))
+                .collect();
+        }
         Self {
-            root: build(&mut entries.into_iter(), len),
+            root: level.pop().map(|(_, root)| root),
             len,
         }
     }
     pub(super) fn insert(&mut self, key: K, value: V) {
-        fn put<K: Ord + Clone, V: Clone>(
-            node: Option<Arc<Node<K, V>>>,
-            entry: (K, V),
-            added: &mut bool,
-        ) -> Arc<Node<K, V>> {
-            let Some(mut node) = node else {
-                *added = true;
-                return Arc::new(Node {
-                    entry,
-                    left: None,
-                    right: None,
-                    height: 1,
-                });
-            };
-            match entry.0.cmp(&node.entry.0) {
-                Ordering::Less => {
-                    let left = Arc::make_mut(&mut node).left.take();
-                    Arc::make_mut(&mut node).left = Some(put(left, entry, added));
-                }
-                Ordering::Greater => {
-                    let right = Arc::make_mut(&mut node).right.take();
-                    Arc::make_mut(&mut node).right = Some(put(right, entry, added));
-                }
-                Ordering::Equal => Arc::make_mut(&mut node).entry = entry,
-            }
-            Node::balance(node)
-        }
-        let mut added = false;
-        self.root = Some(put(self.root.take(), (key, value), &mut added));
+        let Some(root) = self.root.as_mut() else {
+            self.root = Some(Arc::new(Node::Leaf(vec![(key, value)])));
+            self.len = 1;
+            return;
+        };
+        let (added, upper) = Node::put(root, key, value);
         self.len += usize::from(added);
+        if let Some((bound, upper)) = upper {
+            let lower = self.root.take().expect("just used");
+            let first = match &*lower {
+                Node::Leaf(rows) => rows[0].0.clone(),
+                Node::Inner(rows) => rows[0].0.clone(),
+            };
+            self.root = Some(Arc::new(Node::Inner(vec![(first, lower), (bound, upper)])));
+        }
     }
     pub(super) fn remove(&mut self, key: &K) {
-        fn pop<K: Clone, V: Clone>(mut node: Arc<Node<K, V>>) -> ((K, V), Option<Arc<Node<K, V>>>) {
-            if let Some(left) = Arc::make_mut(&mut node).left.take() {
-                let (entry, left) = pop(left);
-                Arc::make_mut(&mut node).left = left;
-                (entry, Some(Node::balance(node)))
-            } else {
-                (node.entry.clone(), node.right.clone())
-            }
+        if self.get(key).is_none() {
+            return;
         }
-        fn delete<K: Ord + Clone, V: Clone>(
-            node: Option<Arc<Node<K, V>>>,
-            key: &K,
-        ) -> Option<Arc<Node<K, V>>> {
-            let mut node = node?;
-            match key.cmp(&node.entry.0) {
-                Ordering::Less => {
-                    let left = Arc::make_mut(&mut node).left.take();
-                    Arc::make_mut(&mut node).left = delete(left, key);
-                }
-                Ordering::Greater => {
-                    let right = Arc::make_mut(&mut node).right.take();
-                    Arc::make_mut(&mut node).right = delete(right, key);
-                }
-                Ordering::Equal => {
-                    if node.left.is_none() {
-                        return node.right.clone();
-                    }
-                    let Some(right) = Arc::make_mut(&mut node).right.take() else {
-                        return node.left.clone();
-                    };
-                    let (entry, right) = pop(right);
-                    Arc::make_mut(&mut node).entry = entry;
-                    Arc::make_mut(&mut node).right = right;
-                }
-            }
-            Some(Node::balance(node))
-        }
-        if self.get(key).is_some() {
-            self.root = delete(self.root.take(), key);
-            self.len -= 1;
+        self.len -= 1;
+        let root = self.root.as_mut().expect("the key is present");
+        if Node::delete(root, key) {
+            self.root = None;
         }
     }
     pub(super) fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
-        let mut stack = Vec::new();
+        let mut stack: Vec<std::slice::Iter<'_, (K, Arc<Node<K, V>>)>> = Vec::new();
+        let mut leaf: std::slice::Iter<'_, (K, V)> = [].iter();
         let mut next = self.root.as_deref();
-        std::iter::from_fn(move || {
-            while let Some(node) = next {
-                stack.push(node);
-                next = node.left.as_deref();
+        std::iter::from_fn(move || loop {
+            if let Some((key, value)) = leaf.next() {
+                return Some((key, value));
             }
-            let node = stack.pop()?;
-            next = node.right.as_deref();
-            Some((&node.entry.0, &node.entry.1))
+            match next.take() {
+                Some(Node::Leaf(rows)) => leaf = rows.iter(),
+                Some(Node::Inner(rows)) => {
+                    stack.push(rows.iter());
+                    next = Some(&*stack.last_mut()?.next()?.1);
+                }
+                None => {
+                    let top = stack.last_mut()?;
+                    match top.next() {
+                        Some((_, child)) => next = Some(child),
+                        None => {
+                            stack.pop();
+                        }
+                    }
+                }
+            }
         })
     }
 }
@@ -210,6 +219,60 @@ impl<K: Ord + Clone, V: Clone> InlineMap<K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn descending_inserts_below_every_bound_keep_every_key() {
+        let mut map =
+            InlineMap::from_sorted_unique((100_000..105_000u32).map(|i| (i, i)).collect());
+        for key in (0..100_000u32).rev() {
+            map.insert(key, key);
+        }
+        assert_eq!(map.len(), 105_000);
+        for key in 0..105_000u32 {
+            assert_eq!(map.get(&key), Some(&key));
+        }
+        assert!(map.iter().map(|(&k, _)| k).eq(0..105_000u32));
+    }
+    #[test]
+    fn splits_and_empties_match_a_btree_and_preserve_held_roots() {
+        let mut map = InlineMap::from_sorted_unique((0..5000u32).map(|i| (i * 2, i)).collect());
+        let mut expected: std::collections::BTreeMap<_, _> =
+            (0..5000u32).map(|i| (i * 2, i)).collect();
+        let held = map.clone();
+        let mut seed = 5u64;
+        for step in 0..40_000u32 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let key = ((seed >> 32) % 12_000) as u32;
+            // Grow, then drain almost everything so whole nodes empty out.
+            if (step < 20_000 && seed % 4 == 0) || (step >= 20_000 && seed % 8 != 0) {
+                map.remove(&key);
+                expected.remove(&key);
+            } else {
+                map.insert(key, step);
+                expected.insert(key, step);
+            }
+            assert_eq!(map.len(), expected.len());
+            assert_eq!(map.get(&key), expected.get(&key));
+        }
+        for key in 0..12_000u32 {
+            assert_eq!(map.get(&key), expected.get(&key));
+        }
+        assert_eq!(
+            map.iter().map(|(&k, &v)| (k, v)).collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>()
+        );
+        for key in map.iter().map(|(&k, _)| k).collect::<Vec<_>>() {
+            map.remove(&key);
+        }
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.iter().count(), 0);
+        map.insert(7, 1);
+        assert_eq!(map.get(&7), Some(&1));
+        assert_eq!(
+            held.iter().map(|(&k, &v)| (k, v)).collect::<Vec<_>>(),
+            (0..5000u32).map(|i| (i * 2, i)).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn inline_updates_match_a_btree_and_preserve_held_roots() {
         let mut map = InlineMap::from_sorted_unique((0..90).map(|i| (i, i)).collect());

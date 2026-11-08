@@ -4,6 +4,7 @@
 //! testable without the Tauri shell.
 
 pub mod asset_refs;
+pub mod block_id;
 pub use tine_outline::block_regions;
 pub mod concord_queue;
 pub mod config;
@@ -45,6 +46,7 @@ pub mod text_merge;
 /// (`tine_core::lsdoc::ast::Block`) without depending on lsdoc directly.
 pub use lsdoc;
 
+pub use block_id::BlockId;
 pub use config::{Config, Workflow};
 pub use corpus::{Corpus, CorpusPage};
 pub use date::JournalDate;

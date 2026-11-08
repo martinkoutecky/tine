@@ -126,7 +126,7 @@ impl PageFacts {
             for block in roots {
                 let projection = block.projection();
                 for (ordinal, (key, value)) in projection.properties().iter().enumerate() {
-                    note(&block.uuid, ordinal, key, value, false);
+                    note(&block.uuid.text(), ordinal, key, value, false);
                 }
                 refs.extend(
                     projection
