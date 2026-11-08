@@ -413,6 +413,7 @@ describe("identifier migration notice", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <App />, host);
+    await vi.dynamicImportSettled();
     await vi.waitFor(() => expect(take).toHaveBeenCalledWith("take_identifier_migration_notice"));
     dispose();
     finish(true);
@@ -428,12 +429,14 @@ describe("identifier migration notice", () => {
     document.body.append(host);
     let dispose = render(() => <App />, host);
     try {
+      await vi.dynamicImportSettled();
       await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(true));
       const shown = toasts().filter((toast) => toast.message.includes("moved your settings and backups"));
       expect(shown).toHaveLength(1);
       expect(shown[0].sticky).toBe(true);
       dispose();
       dispose = render(() => <App />, host);
+      await vi.dynamicImportSettled();
       await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
       expect(toasts().filter((toast) => toast.message.includes("moved your settings and backups"))).toHaveLength(1);
     } finally { dispose(); setToasts([]); }

@@ -1,0 +1,37 @@
+.math-display {
+  display: block;
+  margin: 6px 0;
+  text-align: center;
+}
+
+/* GH #915: OG leaves oversized KaTeX unconstrained. Tine keeps it reachable
+   locally on screen. Paper has no scroll position: retain print's unconstrained
+   KaTeX layout instead of clipping equations inside screen scrollports. */
+@media screen {
+  .math {
+    display: inline-grid;
+    max-width: 100%;
+  }
+
+  /* The grid carries the typeset child's baseline through scrolling. */
+  .math > span {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .math-display {
+    display: grid;
+  }
+
+  /* Shrink-to-fit preserves KaTeX breaks; indivisible bases grow from the
+     scroll origin rather than centering their left ends out of reach. */
+  .math-display .katex-display {
+    text-align: start;
+  }
+
+  .math-display .katex-display > .katex {
+    display: inline-block;
+    min-width: 100%;
+    white-space: normal;
+  }
+}

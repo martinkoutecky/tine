@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Advanced query lists honor `:breadcrumb-show? false`, hiding ancestor trails while retaining grouped page headings, including in the sidebar and embeds (GH #881).
 - Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).
