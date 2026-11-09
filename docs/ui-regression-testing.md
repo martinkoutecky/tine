@@ -65,6 +65,12 @@ platform, IPC and persistence boundaries.
   screenshots reviewed when their baselines changed.
 - Do not hide flakes with unconditional retries. On failure, retain artifacts;
   a diagnostic retry may classify a flake but the original failure remains.
+- The suite table in `scripts/run-e2e.mjs` owns which scenarios a suite fans out
+  to. A scenario marked `BY_NAME` runs only when dispatched by its id.
+  `node scripts/run-e2e.mjs windows-smoke --fan-out` prints the default list;
+  `ui-e2e` (`windows_scenario` empty or `all`) and the release workflow's
+  Windows scenarios read it, so a workflow keeps no list of its own
+  (`scripts/test-release-pipeline.mjs` fails on one).
 
 ## Container prerequisites
 

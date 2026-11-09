@@ -196,3 +196,24 @@ test("refuses, before any change, a target whose manual downloads are missing, a
     bridged.done();
   }
 });
+
+test("a bridge tag that is not the new Beta's commit after publishing fails the run, on every run", () => {
+  // Mutation 5 is the publish. A tag moved right after it (a concurrent retag) must
+  // not be reported as a finished bridge: only the final check of commits/beta sees it.
+  const state = legacyState();
+  state.moveTag = { tag: "beta", to: "c9", after: 5 };
+  const github = harness(state);
+  try {
+    const first = github.run(["--execute"]);
+    assert.notEqual(first.status, 0, "a bridge tag at another commit was reported as done");
+    assert.match(first.stderr, /tag beta is at c9, not c3/);
+    assert.doesNotMatch(first.stdout, /Bridge OK/);
+    const mutations = github.state().mutations;
+    const again = github.run(["--execute"]);
+    assert.notEqual(again.status, 0, "a rerun reported the wrong bridge tag as done");
+    assert.match(again.stderr, /tag beta is at c9, not c3/);
+    assert.equal(github.state().mutations, mutations, "a rerun changed GitHub although the tag is not repairable by it");
+  } finally {
+    github.done();
+  }
+});
