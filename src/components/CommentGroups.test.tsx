@@ -127,10 +127,23 @@ it("groups resolved ranges rather than quote strings and leaves uncertain anchor
     b("whole", "Whole\ntine.quote:: "), b("also-whole", "Whole too\ntine.quote:: "),
   ])]);
   expect(commentGroups("p", "md")).toEqual([["ambiguous"], ["also-ambiguous"], ["stale"], ["also-stale"], ["whole", "also-whole"], ["a"], ["z"]]);
-  expect(el.querySelectorAll(".comment-new-thread")).toHaveLength(3);
+  // Review round 3 (PC-4): only the shown passage is mounted, so walk the
+  // passages with the popup's own controls and ask each for New thread.
+  const newThreadPerGroup = () => {
+    const button = (cls: string) => el.querySelector<HTMLButtonElement>(`.comment-thread-popup ${cls}`)!;
+    while (!button(".comment-prev-thread").disabled) button(".comment-prev-thread").click();
+    const seen: boolean[] = [];
+    for (;;) {
+      expect(el.querySelectorAll(".comment-thread-popup .comment-group")).toHaveLength(1);
+      seen.push(!!el.querySelector(".comment-thread-popup .comment-new-thread"));
+      if (button(".comment-next-thread").disabled) return seen;
+      button(".comment-next-thread").click();
+    }
+  };
+  expect(newThreadPerGroup()).toEqual([false, false, false, false, true, true, true]);
   setRaw("p", "replacement", { timetracking: false });
   expect(commentGroups("p", "md").filter(ids => ids.includes("a") || ids.includes("z"))).toEqual([["a"], ["z"]]);
-  expect(el.querySelectorAll(".comment-new-thread")).toHaveLength(1);
+  expect(newThreadPerGroup().filter(Boolean)).toHaveLength(1);
 });
 it("collapsed subtree chip counts open descendant roots, excludes own threads and all replies, and expands", () => {
   const el = mount([b("p", "Parent", [b("own", "Own\ntine.quote:: Parent"), b("kid", "Child", [

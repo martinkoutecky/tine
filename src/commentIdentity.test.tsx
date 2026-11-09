@@ -1,7 +1,7 @@
 // "Your name" (D-20261017-LD1): comments and replies the user writes carry
 // `tine.author:: <name>` when a name is set; unset keeps today's behaviour (no author
 // written, rendered "you"); an author equal to the name renders as "you".
-import { openCommentThread } from "./tests/commentEntry";
+import { openCommentThread, showThread } from "./tests/commentEntry";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -111,7 +111,8 @@ describe("what is written", () => {
 });
 
 describe("what is shown", () => {
-  const chips = (root: HTMLElement) => ["c", "d", "e"].map(id => root.querySelector<HTMLElement>(`[data-block-id="${id}"] > .comment-header .author-chip`)!).map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
+  // Each passage has one thread; only the shown passage is mounted (review round 3).
+  const chips = (_root: HTMLElement) => ["c", "d", "e"].map(id => showThread(id)!.querySelector<HTMLElement>(":scope > .comment-header .author-chip")!).map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
   const fixture = () => [block("p", "A passage to discuss.", [
     block("c", "Mine.\ntine.quote:: passage\ntine.author:: Ada"),
     block("d", "Theirs.\ntine.quote:: discuss\ntine.author:: claude"),

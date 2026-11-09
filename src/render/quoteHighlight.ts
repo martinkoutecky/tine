@@ -6,7 +6,8 @@
 import { createContext, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 import { anchorQuote, quoteSelectorOf, resolvedOf, type QuoteSelector } from "../comments";
 import { node as docNode } from "../document";
-import { createCommentChildren, type CommentChildren } from "../commentChildren";
+import type { CommentChildren } from "../commentChildren";
+import { createCommentChildren } from "../commentIndex";
 import { facetsOf } from "./facets";
 import { utf8ByteLength } from "./spans";
 import type { Format } from "./ast";
@@ -105,7 +106,7 @@ export function rangesForSelectors(raw: string, selectors: Iterable<readonly [st
  * Sheet rows are ordinary children too: typing in one must not rescan every
  * sibling for comments. Pass the block's own producer to share it. */
 export function createQuotedSourceRanges(parentId: Accessor<string | null>, format: Accessor<Format>, source?: Accessor<CommentChildren>): Accessor<QuotedRange[]> {
-  const comments = source ?? createCommentChildren(parentId, format);
+  const comments = source ?? createCommentChildren(parentId);
   return createMemo(() => {
     const open = comments().entries.filter(entry => !entry.resolved);
     if (!open.length) return [];

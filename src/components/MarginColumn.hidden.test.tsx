@@ -4,7 +4,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // not the highlight of the commented words or the count on the commented block;
 // the arrow keys never stop on one; nothing is written to the graph.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { openCommentThread } from "../tests/commentEntry";
+import { openCommentThread, showThread } from "../tests/commentEntry";
 import { type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -151,7 +151,10 @@ describe("a hidden comment margin", () => {
       setCommentMarginVisible(true);
       expect(anywhere(pane)).toEqual([]);
       openCommentThread(pane, "c1");
-      expect(anywhere(document.body)).toEqual(COMMENTS);
+      // Separate passages: the shown one is mounted, the other when reached (review round 3).
+      expect(anywhere(document.body)).toEqual(["c1", "r1"]);
+      expect(showThread("c2")).not.toBeNull();
+      expect(anywhere(document.body)).toEqual(["c2"]);
       expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
     } finally {
       dispose();

@@ -1,6 +1,7 @@
 // D-20261107-MC3 §§6–7 / D-20261108-MC4, MC7, MC8: routed-page proof in both editors.
 // GH #891 finding 1: a native typing budget beside a commented block with many siblings,
-// and (review round 2) in a folded block above many hidden children.
+// and (review round 2) in a folded block above many hidden children; (round 3)
+// opening one of 64 passages mounts that passage's cards only, with its latency recorded.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -55,6 +56,12 @@ const foldedSeed = prefix => `- A folded block with many hidden children
   collapsed:: true
 ${Array.from({ length: SIBLINGS }, (_, i) => `  - Hidden ${i}\n${i === 0 ? "    - Hidden thread\n      tine.quote:: Hidden\n" : ""}`).join("")}`;
 for (const [mode, prefix] of [["textarea", "05"], ["cm6", "06"]]) fs.writeFileSync(path.join(graph, `pages/Folded ${mode}.md`), foldedSeed(prefix));
+// Review round 3 (PC-3/PC-4): one block with 64 passages, one thread each.
+// Opening one passage mounts that passage's cards only.
+const PASSAGES = 64;
+const passageSeed = prefix => `- ${Array.from({ length: PASSAGES }, (_, i) => `p${i}q`).join(" ")}
+${Array.from({ length: PASSAGES }, (_, i) => `  - Thread on p${i}q\n${i === 1 ? `    id:: ${prefix}000000-0000-4000-8000-000000000101\n` : ""}    tine.quote:: p${i}q\n`).join("")}`;
+for (const [mode, prefix] of [["textarea", "07"], ["cm6", "08"]]) fs.writeFileSync(path.join(graph, `pages/Passages ${mode}.md`), passageSeed(prefix));
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
@@ -73,7 +80,7 @@ const log = fs.openSync(path.join(out, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", ["--port", String(port), "--native-port", String(nativePort), "--native-driver", "/usr/bin/WebKitWebDriver"],
   { env: fixture.env, stdio: ["ignore", log, log], detached: true });
 const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-const proof = { base, delta: "working tree", app, modes, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"), outcomes: [], typing: [], focusProbes: [], controlProbes: [], menuProbes: [], screenshots: [] };
+const proof = { base, delta: "working tree", app, modes, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"), outcomes: [], typing: [], opening: [], focusProbes: [], controlProbes: [], menuProbes: [], screenshots: [] };
 let browser, stage = "startup", editorSelector, runtimeIds, siblingId;
 const row = id => `.ls-block[data-block-ref="${id}"]`;
 async function shot(name) {
@@ -280,6 +287,43 @@ try {
     const foldedTyped = foldedSeed(foldedPrefix).replace("- A folded block with many hidden children\n", `- A folded block with many hidden children${"x".repeat(12)}\n`);
     await waitForFileText(foldedFile, text => text === foldedTyped);
     assert.equal(fs.readFileSync(foldedFile, "utf8"), foldedTyped, "Typing in a folded block saves exact Markdown");
+    stage = `${mode}: one passage among ${PASSAGES} opens alone`;
+    const passagePrefix = mode === "cm6" ? "08" : "07", passageFile = path.join(graph, `pages/Passages ${mode}.md`);
+    await openPageByName(browser, `Passages ${mode}`);
+    // Highlights carry the runtime block id; pick passage p1q by its text.
+    await browser.$(".page-blocks .comment-quote-anchor").waitForExist();
+    const passageId = await browser.execute(() => [...document.querySelectorAll(".page-blocks .comment-quote-anchor")].find(mark => mark.textContent === "p1q")?.dataset.commentId);
+    assert.ok(passageId, "Passage p1q's highlight identifies its thread");
+    const passageMark = `.page-blocks .comment-quote-anchor[data-comment-id="${passageId}"]`;
+    // Keyboard entry (Enter on the focused highlight) skips the hover dwell, so
+    // the latency is the opening's own: keydown to the frame after the popup.
+    await browser.execute(selector => {
+      const p = window.__passageOpen = {};
+      p.key = event => {
+        if (event.key !== "Enter") return;
+        const at = performance.now();
+        const painted = () => requestAnimationFrame(() => setTimeout(() => { p.ms = performance.now() - at; }, 0));
+        const observer = new MutationObserver(() => { if (document.querySelector(".comment-thread-popup")) { observer.disconnect(); painted(); } });
+        observer.observe(document.body, { childList: true, subtree: true });
+      };
+      document.addEventListener("keydown", p.key, true);
+      document.querySelector(selector).focus();
+    }, passageMark);
+    await keys("Enter");
+    await browser.$(".comment-thread-popup").waitForDisplayed();
+    await browser.waitUntil(() => browser.execute(() => window.__passageOpen.ms !== undefined));
+    const opening = await browser.execute(() => {
+      const p = window.__passageOpen; document.removeEventListener("keydown", p.key, true);
+      const popup = document.querySelector(".comment-thread-popup");
+      return { ms: p.ms, groups: popup.querySelectorAll(".comment-group").length, cards: popup.querySelectorAll("[data-block-ref]").length, text: popup.textContent };
+    });
+    const openingResult = { mode, tier: "medium", passages: PASSAGES, ms: opening.ms, groups: opening.groups, cards: opening.cards, load: fs.readFileSync("/proc/loadavg", "utf8").trim() };
+    proof.opening.push(openingResult); console.log(JSON.stringify({ measurement: "open one passage", ...openingResult }));
+    assert.ok(opening.text.includes("Thread on p1q"), "The opened passage shows its thread");
+    assert.equal(opening.groups, 1, "Opening one passage mounts that passage's group only");
+    assert.equal(opening.cards, 1, "Opening one passage mounts that passage's cards only");
+    await closePopup();
+    assert.equal(fs.readFileSync(passageFile, "utf8"), passageSeed(passagePrefix), "Opening a passage changes nothing on disk");
     await browser.setWindowSize(1700, 1000);
     await openPageByName(browser, `Comments ${mode}`);
     stage = `${mode}: wide`;

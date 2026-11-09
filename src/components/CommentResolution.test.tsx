@@ -94,6 +94,39 @@ it.each(["md", "org"] as const)("%s reveals greyed threads, reopens by reply, an
   expect(node("c")!.raw).toBe(original);
 });
 
+// Review round 3 (AR-15, UI-4, TE-4): the scope's thread roots follow raw
+// property deltas, not only structure. Each transition below is a raw edit of a
+// block the scope did not already list as a root.
+it("the resolved control follows blocks gaining and losing a quote and roots becoming replies", () => {
+  loadSingle({ name: "Moves", title: "Moves", id: "/graph/pages/Moves.md", rev: "fixture", kind: "page", format: "md", pre_block: null,
+    blocks: [b("p", "some words here", [
+      b("c", "Comment\ntine.quote:: words"),
+      b("o", "Ordinary child"),
+      b("a", "Aside", [b("n", "Note\ntine.quote:: Aside\ntine.resolved:: true")]),
+    ])] });
+  const el = document.createElement("div"); document.body.append(el);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("comment-surface") ? 1400 : 0; });
+  dispose = render(() => <CommentSurface page={pageByName("Moves")}><Block id="p" /></CommentSurface>, el);
+  const toggle = () => el.querySelector<HTMLButtonElement>(".comment-resolved-toggle")?.textContent ?? null;
+  expect(toggle()).toBe("1 resolved");
+  // A root becomes a reply: its own flag no longer closes anything.
+  setRaw("a", "Aside\ntine.quote:: here", { timetracking: false });
+  expect(toggle()).toBeNull();
+  setRaw("a", "Aside", { timetracking: false });
+  expect(toggle()).toBe("1 resolved");
+  // A resolved root loses its quote: it is an ordinary block again.
+  setRaw("n", "Note\ntine.resolved:: true", { timetracking: false });
+  expect(toggle()).toBeNull();
+  // The reviewer's case: an existing ordinary child becomes a comment, then Resolve.
+  setRaw("o", "Ordinary child\ntine.quote:: some", { timetracking: false });
+  expect(el.querySelector('.margin-column [data-block-id="o"]')?.classList.contains("comment-card")).toBe(true);
+  setThreadResolved("o", true);
+  expect(el.querySelector('[data-block-id="o"]')).toBeNull();
+  expect(toggle(), "the resolved thread keeps its way back").toBe("1 resolved");
+  el.querySelector<HTMLButtonElement>(".comment-resolved-toggle")!.click();
+  expect(el.querySelector('[data-block-id="o"]')?.classList.contains("comment-resolved")).toBe(true);
+});
+
 it("resolved descendants are excluded from below counts", () => {
   // A body ancestor's below count includes this thread once, never its replies.
   loadSingle({ name: "Ancestor", title: "Ancestor", id: "/graph/pages/Ancestor.md", rev: "fixture", kind: "page", format: "md", pre_block: null,

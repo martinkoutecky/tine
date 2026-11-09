@@ -4,7 +4,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // as a card with a quote header, an author chip and a marked passage in the
 // parent. The comment is an ordinary child block written through the document
 // door, so undo removes it like any other insert.
-import { openCommentThread } from "../tests/commentEntry";
+import { openCommentThread, showThread } from "../tests/commentEntry";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -76,11 +76,12 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       block("s", "Missing response\ntine.quote:: vanished"),
     ])]);
     try {
-      expect(root.querySelector('[data-block-id="c"] .comment-quote')?.textContent).toContain("ambiguous");
-      expect(root.querySelector('[data-block-id="s"] .comment-quote')?.textContent).toContain("quoted text changed");
-      expect(root.querySelector(".comment-quote-anchor")).toBeNull();
+      // Separate passages: only the shown one is mounted (review round 3).
+      expect(showThread("c")?.querySelector(".comment-quote")?.textContent).toContain("ambiguous");
       expect(root.textContent).toContain("Ambiguous response");
+      expect(showThread("s")?.querySelector(".comment-quote")?.textContent).toContain("quoted text changed");
       expect(root.textContent).toContain("Missing response");
+      expect(root.querySelector(".comment-quote-anchor")).toBeNull();
     } finally { dispose(); }
   });
 
@@ -465,6 +466,7 @@ describe("comment rendering", () => {
   it("keeps a comment whose quote no longer occurs, struck through and labelled", () => {
     const { root, dispose } = renderedFixture();
     try {
+      showThread("c3"); // its own passage: mounted when shown (review round 3)
       const header = row(root, "c3").querySelector(":scope > .comment-quote") as HTMLElement;
       expect(header.classList.contains("stale")).toBe(true);
       expect(header.querySelector("s")?.textContent).toBe("a sentence that is gone");

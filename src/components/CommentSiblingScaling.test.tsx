@@ -21,6 +21,7 @@ import { persistCommentMarginHidden } from "../commentMarginPref";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { measure } from "../keystrokeProbe.test.support";
+import { tapHighlight } from "../tests/commentEntry";
 import type { BlockDto } from "../types";
 
 const facetCalls = vi.hoisted(() => ({ count: 0 }));
@@ -57,7 +58,7 @@ function mount(siblings: number, width: number, comments: number) {
   dispose = render(() => {
     let outline: HTMLDivElement | undefined;
     const margin = createMarginSurface({ page: () => pageByName("Scale"), eligible: () => true, outline: () => outline });
-    return <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Scale")?.roots ?? []} format="md"><MarginContext.Provider value={margin.placement}>
+    return <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Scale")?.roots ?? []}><MarginContext.Provider value={margin.placement}>
       <div class="page-section"><div class="page-blocks" ref={outline}><BlockList ids={pageByName("Scale")?.roots ?? []} /></div><margin.Column /></div>
     </MarginContext.Provider></CommentResolutionScope></SurfaceContext.Provider>;
   }, pane);
@@ -105,7 +106,7 @@ function mountFolded(children: number, hiddenThreads: number) {
   loadSingle({ name: "Folded", title: "Folded", kind: "page", pre_block: null, format: "md", blocks: [{ ...b("p", "A folded parent", kids), collapsed: true }] });
   const pane = document.createElement("main"); pane.className = "main-content";
   Object.defineProperty(pane, "clientWidth", { configurable: true, get: () => 800 }); document.body.append(pane);
-  dispose = render(() => <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Folded")?.roots ?? []} format="md">
+  dispose = render(() => <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Folded")?.roots ?? []}>
     <BlockList ids={pageByName("Folded")?.roots ?? []} />
   </CommentResolutionScope></SurfaceContext.Provider>, pane);
   return pane;
@@ -136,4 +137,46 @@ it.each([0, 1])("typing in a folded block costs the same at 4, 16 and 64 hidden 
   expect(results[2].foreignRaw, "no hidden descendant is read").toBe(0);
   // Timing is asserted natively (scripts/e2e-mc010-tiers.mjs, folded-parent
   // typing budget); jsdom milliseconds are only logged.
+});
+
+// Review round 3 (PC-1/PC-3/PC-4/PC-5/PC-9): opening one passage's threads
+// mounts that passage's cards only, whatever the number of other passages on the
+// block; the others mount when the reader moves to them. Each passage `pNq` has
+// one thread, so N passages are N groups.
+function openOnePassage(passages: number) {
+  const words = Array.from({ length: passages }, (_, i) => `p${i}q`);
+  loadSingle({ name: "Passages", title: "Passages", kind: "page", pre_block: null, format: "md",
+    blocks: [b("p", words.join(" "), words.map((word, i) => b(`t${i}`, `Thread on ${word}\ntine.quote:: ${word}`)))] });
+  const pane = document.createElement("main"); pane.className = "main-content";
+  Object.defineProperty(pane, "clientWidth", { configurable: true, get: () => 800 }); document.body.append(pane);
+  dispose = render(() => <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Passages")?.roots ?? []}>
+    <BlockList ids={pageByName("Passages")?.roots ?? []} />
+  </CommentResolutionScope></SurfaceContext.Provider>, pane);
+  const popup = () => document.querySelector<HTMLElement>(".comment-thread-popup");
+  const samples: number[] = [];
+  let counts = { groups: 0, cards: 0 };
+  for (let round = 0; round < 3; round++) {
+    const mark = pane.querySelector<HTMLElement>('.comment-quote-anchor[data-comment-id="t1"]')!;
+    const at = performance.now();
+    tapHighlight(mark);
+    samples.push(performance.now() - at);
+    expect(popup()?.textContent).toContain("Thread on p1q");
+    counts = { groups: popup()!.querySelectorAll(".comment-group").length, cards: popup()!.querySelectorAll("[data-block-id]").length };
+    popup()!.querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+    expect(popup()).toBeNull();
+  }
+  dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren();
+  return { ...counts, ms: Math.min(...samples) };
+}
+it("opening one passage mounts that passage's cards only at 4, 16 and 64 passages", () => {
+  const results = [4, 16, 64].map(n => ({ n, ...openOnePassage(n) }));
+  console.log(JSON.stringify({ measurement: "open one passage", results }));
+  for (const r of results) {
+    expect(r.groups, `mounted groups at ${r.n} passages`).toBe(1);
+    expect(r.cards, `mounted cards at ${r.n} passages`).toBe(1);
+  }
+  // Timing check: opening must not grow with the passages it does not show.
+  // Generous on purpose (shared host, jsdom); it fails when every passage's
+  // live tree is mounted (review probe: 53/207/401 ms at 4/16/64).
+  expect(results[2].ms, "opening at 64 passages vs 4").toBeLessThan(results[0].ms * 3 + 25);
 });

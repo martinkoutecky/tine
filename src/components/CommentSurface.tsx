@@ -17,7 +17,7 @@ export function CommentSurface(props: { page: FeedPage | undefined; roots?: read
   });
   return <div class={props.main ? "main-comment-surface" : "comment-surface"} ref={pane}>
     <div class="page-section">
-      <CommentResolutionScope roots={props.roots ?? props.page?.roots ?? []} format={props.page?.format ?? "md"}>
+      <CommentResolutionScope roots={props.roots ?? props.page?.roots ?? []}>
       <MarginContext.Provider value={{ ...margin.placement, surface }}>
         <div class="page-blocks" ref={outline} classList={{ "margin-active": !!props.main && margin.active(), "comment-margin-active": !props.main && margin.active() }}>{props.children}</div>
       </MarginContext.Provider>

@@ -1,5 +1,5 @@
-// The folded "N below" count follows structure and comment membership
-// (review round 2, PC-4) and keeps the imperative count's answer through every
+// The folded "N below" count reads the comment index (review rounds 2-3, PC-4)
+// and keeps the imperative count's answer through every
 // kind of change: resolve, reopen, a hidden block gaining or losing its quote, a
 // reply, structural moves, and the folded block itself joining a thread.
 import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
@@ -32,7 +32,7 @@ it("keeps the imperative answer through text, resolution and structural changes"
     ])]),
   ] });
   const [active, setActive] = createSignal(true);
-  const count = createRoot(root => { dispose = root; return createFoldedThreadCount(() => "p", () => "md", active); });
+  const count = createRoot(root => { dispose = root; return createFoldedThreadCount(() => "p", active); });
   const same = (expected: number) => { expect(count()).toBe(expected); expect(descendantOpenThreads("p", "md")).toBe(expected); };
   same(2);
   setRaw("p", "Folded parent, edited", { timetracking: false }); same(2);

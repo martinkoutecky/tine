@@ -404,7 +404,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Show>
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} source={commentChildren} coverage={quoteCoverage} />
-        <CommentBelowChip id={props.id} format={fmt()} collapsed={collapsed() && !props.forceExpanded && !bulletless()} expand={() => toggleViewFold(props.id, viewCollapseSurface(), true)} />
+        <CommentBelowChip id={props.id} collapsed={collapsed() && !props.forceExpanded && !bulletless()} expand={() => toggleViewFold(props.id, viewCollapseSurface(), true)} />
       </div>
       <SeenRemoved first={props.id} />
       <Show when={showRefs()}>

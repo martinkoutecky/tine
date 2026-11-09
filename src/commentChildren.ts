@@ -1,16 +1,9 @@
-// Which children of a block are comment thread roots, with their selectors and
-// resolution (vision §3.7; GH #891 review finding 1, PC-1/PC-4/PC-5). One
-// producer feeds the body outline's filter, the quote highlights, the compact
-// entry point and the margin column, and it follows deltas the way
-// `createQuotedSourceRanges` did: a structural change (children added, removed,
-// moved) rescans the children once with untracked reads; a raw edit of one child
-// re-derives only that child and notifies only when its membership, selector or
-// resolution changed. Typing in an ordinary sibling therefore costs one regex
-// test, whatever the number of siblings, and subscribes nothing to the others.
+// What one block's raw text says about it as a comment: whether it is one, its
+// selector and its resolution (vision §3.7). A pure function of the text; the
+// one owner that keeps these answers current for a surface, and that every
+// reader asks, is `commentIndex.ts` (GH #891 review round 3, PRINCIPLES 12).
 
-import { createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 import { quoteSelectorOf, resolvedOf, type QuoteSelector } from "./comments";
-import { node as docNode, onBlockRawChanged } from "./document";
 import { facetsOf } from "./render/facets";
 import type { Format } from "./render/ast";
 
@@ -34,44 +27,8 @@ export function commentChildOf(id: string, raw: string, format: Format): Comment
   return selector ? { id, selector, resolved: resolvedOf(properties) } : null;
 }
 
-function sameChild(a: CommentChild | undefined, b: CommentChild | null): boolean {
+export function sameChild(a: CommentChild | undefined, b: CommentChild | null): boolean {
   if (!a || !b) return !a && !b;
   return a.resolved === b.resolved && a.selector.quote === b.selector.quote
     && a.selector.prefix === b.selector.prefix && a.selector.suffix === b.selector.suffix;
-}
-
-/** O(children) untracked work per structural change of `parentId`; O(1) per raw
- * edit of an ordinary child; one facet lookup per raw edit of a comment child. */
-export function createCommentChildren(parentId: Accessor<string | null>, format: Accessor<Format>): Accessor<CommentChildren> {
-  const [revision, setRevision] = createSignal(0);
-  const structure = createMemo(() => {
-    const id = parentId();
-    const parent = id ? docNode(id) : null;
-    const children = parent?.children ?? [];
-    const fmt = format();
-    const found = new Map<string, CommentChild>();
-    for (const childId of children) {
-      // Track node replacement (page reloads), never a child's text.
-      const child = docNode(childId);
-      const entry = child && untrack(() => commentChildOf(childId, child.raw, fmt));
-      if (entry) found.set(childId, entry);
-    }
-    if (children.length) onCleanup(onBlockRawChanged(changed => {
-      const child = docNode(changed);
-      const next = child ? commentChildOf(changed, child.raw, fmt) : null;
-      if (sameChild(found.get(changed), next)) return;
-      if (next) found.set(changed, next); else found.delete(changed);
-      setRevision(value => value + 1);
-    }, children));
-    return { children, found };
-  });
-  return createMemo<CommentChildren>(previous => {
-    const { children, found } = structure();
-    revision();
-    if (!found.size) return NO_COMMENT_CHILDREN;
-    const entries = children.flatMap(id => found.get(id) ?? []);
-    if (previous.entries.length === entries.length && previous.entries.every((entry, i) => entry === entries[i])) return previous;
-    const ids = new Set(entries.map(entry => entry.id));
-    return { entries, has: id => ids.has(id) };
-  }, NO_COMMENT_CHILDREN);
 }

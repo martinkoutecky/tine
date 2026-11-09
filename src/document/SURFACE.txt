@@ -127,6 +127,7 @@ nextVisible
 nextVisibleOrExtend
 node
 onBlockRawChanged  # why: outline window geometry keeps one raw-change listener per window, not one tracked computation per row (BIGLOAD-090b); batch-og-bigload-090b
+onPageRawChanged  # why: one comment index per surface follows raw edits of its pages with one listener per page, not one per block (GH #891 review round 3); batch-og-mc010-popup
 orderedListMarker
 outdentBlock
 outdentSelection
@@ -196,6 +197,7 @@ someBlockInTrees  # why: the margin comment scan reads blocks untracked and re-r
 splitBlock
 stopOwnNumberedListOnEmptyEnter
 storedFold  # why: the bullet's fold including a query's authored default, read by Block and the query arrow; batch-og-query-fold-arrow
+structureRevision  # why: a comment reader re-picks its covering index after a structural edit moves its block (GH #891 review round 3); batch-og-mc010-popup
 subscribeOwnerFlush  # why: the window answers its graph owner's flush before a CLI write (CLI slice 2); batch-cli-slice2
 switcherPage
 threadRootOf  # why: GH #891: one thread-membership predicate for body editing, drag, paste and navigation; batch-fix-beta-mc-structure

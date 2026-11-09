@@ -7,7 +7,8 @@
 // ambiguous, whole block, inside code or across markup) put a marker on their
 // block. Phones: highlight or chip (no count) opens the bottom sheet. Only
 // mounted annotated rows own observers. No document writes or additional source
-// loads; grouping runs only while a thread view is open.
+// loads; grouping runs only while a thread view is open, and only the selected
+// passage's threads are mounted.
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext, type Accessor, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { MarginContext, type MarginApi } from "./marginContext";
@@ -70,10 +71,17 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   const groups = createMemo(() => opened()
     ? groupCommentEntries(node(props.parentId)?.raw ?? "", entries(), format())
     : []);
-  const selectedId = () => props.comments.includes(opened()?.id ?? "") ? opened()?.id : groups()[0]?.[0];
-  const index = () => Math.max(0, groups().findIndex(ids => ids.includes(selectedId() ?? "")));
+  // Indexed lookups (review round 3, PC-1): which group holds each thread.
+  const presented = createMemo(() => new Set(props.comments));
+  const groupOf = createMemo(() => {
+    const at = new Map<string, number>();
+    groups().forEach((ids, i) => { for (const id of ids) at.set(id, i); });
+    return at;
+  });
+  const selectedId = () => presented().has(opened()?.id ?? "") ? opened()?.id : groups()[0]?.[0];
+  const index = createMemo(() => groupOf().get(selectedId() ?? "") ?? 0);
   // The arrow keys walk exactly the threads this view presents (review finding 2).
-  const visibleOrder = () => groups()[index()] ?? [];
+  const visibleOrder = createMemo(() => groups()[index()] ?? [], [], { equals: sameIds });
   const openLabel = () => t("comment-margin-count", { count: openComments().length });
   const resolvedLabel = () => t("comment-resolved-count", { count: resolvedComments().length });
   const label = () => selectedId() && !openComments().includes(selectedId()!) ? resolvedLabel() : openLabel();
@@ -83,7 +91,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   const blockText = () => (row ?? host.closest<HTMLElement>(".block-main"))?.querySelector<HTMLElement>(":scope > .block-content-wrapper") ?? host;
   const finishThreadEdit = () => {
     const id = editingId();
-    if (id && (editingSurface() === null || editingSurface() === surface) && props.comments.includes(threadRootOf(id, formatForBlock(props.parentId)) ?? "")) endEdit("blur");
+    if (id && (editingSurface() === null || editingSurface() === surface) && presented().has(threadRootOf(id, formatForBlock(props.parentId)) ?? "")) endEdit("blur");
     const active = host.ownerDocument.activeElement as HTMLElement | null;
     if (active?.closest(".comment-thread-popup")) active.blur();
   };
@@ -127,7 +135,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
     onCleanup(() => watcher?.disconnect());
     const markOf = (event: Event) => {
       const mark = (event.target as Element | null)?.closest?.<HTMLElement>(HIGHLIGHT);
-      return mark && props.comments.includes(mark.dataset.commentId!) ? mark : null;
+      return mark && presented().has(mark.dataset.commentId!) ? mark : null;
     };
     // Mouse: hover opens, click places the caret. Touch and pen: tap opens.
     let pointer = "mouse";
@@ -175,7 +183,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
     const edit = editingId();
     const id = request && (request.surface === null || request.surface === surface) ? request.id
       : edit && (editingSurface() === null || editingSurface() === surface) ? threadRootOf(edit, formatForBlock(props.parentId)) : null;
-    if (id && props.comments.includes(id) && (!opened() || !groups()[index()]?.includes(id))) open(id, blockText());
+    if (id && presented().has(id) && (!opened() || groupOf().get(id) !== index())) open(id, blockText());
   });
   let touch: { x: number; y: number } | undefined;
   const content = () => <div class="comment-popup-content"
@@ -195,13 +203,11 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
       <button type="button" class="comment-popup-close" aria-label={t("comment-close-threads")} onClick={close}>×</button>
     </div>
     <SurfaceContext.Provider value={surface}>
-      {/* Keep all of this block's composers mounted while switching threads. */}
-      <For each={groups().map(ids => ids[0])}>{key => {
-        const ids = () => groups().find(ids => ids[0] === key) ?? [];
-        return <div hidden={!ids().includes(selectedId() ?? "")}>
-          <CommentGroup ids={ids()} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId, order: visibleOrder } }}><Block id={id} /></MarginContext.Provider>} />
-        </div>;
-      }}</For>
+      {/* Only the selected passage's threads are mounted (review round 3,
+          PC-4/PC-9); unsent drafts outlive their composers through the leases
+          this entry holds below (`commentDraftState`). */}
+      <Show when={visibleOrder()[0]} keyed>{_key =>
+        <CommentGroup ids={visibleOrder()} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId, order: visibleOrder } }}><Block id={id} /></MarginContext.Provider>} />}</Show>
     </SurfaceContext.Provider>
   </div>;
   return <span class="comment-entry" ref={host}>

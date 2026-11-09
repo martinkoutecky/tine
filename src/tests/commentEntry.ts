@@ -35,3 +35,19 @@ export function leaveHighlight(mark: Element): void {
   Object.defineProperty(event, "pointerType", { value: "mouse" });
   mark.dispatchEvent(event);
 }
+
+/** In an open thread view, walk passages with the view's own previous/next
+ * controls until thread `id` is shown (only the shown passage is mounted,
+ * review round 3). Returns its row, or null when the view has no such thread. */
+export function showThread(id: string, doc: Document = document): HTMLElement | null {
+  const popup = () => doc.querySelector<HTMLElement>(".comment-thread-popup");
+  const button = (cls: string) => popup()?.querySelector<HTMLButtonElement>(cls) ?? null;
+  const shown = () => popup()?.querySelector<HTMLElement>(`.ls-block[data-block-id="${id}"]`) ?? null;
+  while (!shown() && button(".comment-prev-thread") && !button(".comment-prev-thread")!.disabled) button(".comment-prev-thread")!.click();
+  for (;;) {
+    const row = shown();
+    const next = button(".comment-next-thread");
+    if (row || !next || next.disabled) return row;
+    next.click();
+  }
+}

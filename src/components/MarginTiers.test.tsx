@@ -56,7 +56,7 @@ function mount(width: number, surface = "main", blocks: BlockDto[] = TIERS()) {
     if (surface !== "main") return <SurfaceContext.Provider value={surface}><CommentSurface page={pageByName("Tiers")}><BlockList ids={pageByName("Tiers")?.roots ?? []} /></CommentSurface></SurfaceContext.Provider>;
     let outline: HTMLDivElement | undefined;
     const margin = createMarginSurface({ page: () => pageByName("Tiers"), eligible: () => true, outline: () => outline });
-    return <SurfaceContext.Provider value={surface}><CommentResolutionScope roots={pageByName("Tiers")?.roots ?? []} format="md"><MarginContext.Provider value={margin.placement}>
+    return <SurfaceContext.Provider value={surface}><CommentResolutionScope roots={pageByName("Tiers")?.roots ?? []}><MarginContext.Provider value={margin.placement}>
       <div class="page-section"><div class="page-blocks" ref={outline}><BlockList ids={pageByName("Tiers")?.roots ?? []} /></div><margin.Column /></div>
     </MarginContext.Provider></CommentResolutionScope></SurfaceContext.Provider>;
   }, pane);
@@ -106,7 +106,8 @@ it("phone swipes change passages and keep the selected source's threads reachabl
     Object.defineProperties(event, { touches: { value: [{ clientX: x, clientY: 30 }] }, changedTouches: { value: [{ clientX: x, clientY: 32 }] } }); content.dispatchEvent(event);
   }
   expect(popup().querySelector('[data-comment-group="two"]')?.parentElement?.hidden).toBe(false);
-  expect(popup().querySelector('[data-comment-group="one"]')?.parentElement?.hidden).toBe(true);
+  // Review round 3 (PC-4): the passage not shown is not mounted at all.
+  expect(popup().querySelector('[data-comment-group="one"]')).toBeNull();
 });
 it("resolved roots and a reply's quote metadata add no highlight, marker or count", () => {
   const pane = mount(800);

@@ -48,7 +48,8 @@ findings 1 and 2.
   the viewport height, leaving source text above; hover does not open at this
   tier. Swipe horizontally or use the
   previous/next controls to move between passages; same-passage threads stay
-  grouped. The block's composers retain drafts across navigation. The chip
+  grouped. Only the shown passage's threads are mounted; the block's composers
+  retain drafts across navigation through the entry's draft leases. The chip
   shows a comment glyph without a count (its accessible name still states the
   number of own open roots) and remains reachable when the
   block is folded. Show/Hide comments removes these entry points and surfaces.
@@ -70,13 +71,21 @@ findings 1 and 2.
   block after it. The margin walks every group of the block; the popover and
   sheet walk only the group they show. Interleaved A (alpha), B (beta),
   C (alpha) present and navigate as A, C, B.
-- Cost (GH #891 finding 1). Which children of a block are comment roots, and
-  their selectors and resolution, come from one delta-maintained producer
-  (`createCommentChildren`): a structural change of the block rescans its
-  children once with untracked reads; a raw edit of one child re-derives only
-  that child (one key screen, plus one facet lookup if it may quote) and
-  notifies only when membership, selector or resolution changed. The outline
-  filter, highlights, compact entry and margin column consume it. Typing in an
+- Comment membership has one owner (GH #891 review round 3): the comment index
+  of each resolution scope (page, journal day, sidebar item, reference group,
+  zoomed block; `commentIndex.ts`). It answers which blocks are comments (with
+  their selectors and resolution), which comments are thread roots rather than
+  replies, and which roots lie under a subtree. The "N resolved" control, the
+  folded "N below" count, and every block's comment children (outline filter,
+  highlights, compact entry and popup, margin column) read it. A structural
+  change rescans the scope's trees once with untracked reads. A raw edit of any
+  block on those pages runs one key screen (plus one facet lookup if it may
+  quote): a comment whose selector or resolution changed is updated in place
+  and notifies only its parent's readers and, for a root, the root readers; a
+  change of membership (an ordinary block gains a quote, a comment loses it, so
+  roots may become replies or back) rescans. Blocks outside every scope's trees
+  (quick capture) share one index per top-level tree.
+- Cost (GH #891 finding 1). Typing in an
   ordinary sibling therefore costs a constant number of store reads and at most
   one facet lookup, whatever the number of siblings (14 foreign raw reads and 1
   facet lookup at 4, 16 and 64 siblings in the counter test); the native typing
@@ -92,12 +101,9 @@ findings 1 and 2.
 - A collapsed body block shows an outlined “N below” chip for open thread roots
   on descendant body blocks. Own threads and all replies are excluded; a root
   with `tine.resolved:: true` is excluded from this count. The chip expands the
-  existing surface fold. The count is maintained from structure and comment
-  membership (`createFoldedThreadCount`), not text: a structural change walks
-  the hidden subtree once with untracked reads; a raw edit of a walked block
-  re-derives only that block (one key screen, plus one facet lookup if it may
-  quote), walks again only if its comment membership changed, and adjusts the
-  count if a counted root was resolved or reopened. Typing in the folded block
+  existing surface fold. The count reads the comment index's roots
+  (`createFoldedThreadCount`): O(roots × depth) when a root or the structure
+  changes, nothing on a comment-free page. Typing in the folded block
   reads none of its hidden descendants (0 foreign raw reads at 4, 16 and 64
   hidden children in the counter test); the native typing p95 budget above 64
   hidden children is 16 ms.
@@ -108,7 +114,10 @@ findings 1 and 2.
   A composer remounted during regrouping or width changes retains its unsent
   draft for that thread and surface. Compact entry keeps drafts while its source
   row remains mounted, including closing and reopening the thread view; leaving
-  the surface releases the state, and graph switches clear it.
+  the surface releases the state, and graph switches clear it. Opening one
+  passage mounts that passage's cards only (1 group and 1 card at 4, 16 and 64
+  single-thread passages in the counter test, was 4/16/64); moving to another
+  passage mounts it then.
 - Commenting again on the same anchored passage focuses its last thread's reply box.
   It does not write. The group's explicit New thread action appends a distinct
   root on the same resolved passage, through the existing guarded save path.

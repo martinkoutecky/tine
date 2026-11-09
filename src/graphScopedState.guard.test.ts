@@ -152,6 +152,8 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
   "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
   "src/document/model.ts#rawListeners": "one raw-change listener per mounted outline window geometry (BIGLOAD-090b); its Solid owner's cleanup removes it on rebuild or unmount; holds no graph payload",
+  "src/document/model.ts#pageRawListeners": "one raw-change listener per page per live comment index (GH #891 review round 3); the index's Solid owner's cleanup removes it on rescan or unmount; holds no graph payload",
+  "src/commentIndex.ts#shared": "one comment index per top-level tree read by a mounted block outside every resolution scope (quick capture); leased by those readers, disposed and deleted with the last lease, so a graph switch empties it with its surfaces",
   "src/seen/displayed.ts#displayed": "one entry per routed page showing seen marks (keyed by page identity; dropped on leave, rename, merge and delete); a leaf module so backend.ts can drop entries without an import cycle, so the binding clear lives in src/seen/seenState.ts (clearOnBindingInvalidated -> clearDisplayed) and each entry holds only the binding owner",
   "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",

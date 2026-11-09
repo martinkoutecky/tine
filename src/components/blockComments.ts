@@ -14,7 +14,7 @@ import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
-import { createCommentChildren } from "../commentChildren";
+import { createCommentChildren } from "../commentIndex";
 import { createQuoteCoverage } from "../render/quoteHighlight";
 export { commentEditorHide } from "../editor/commentProperties";
 
@@ -69,11 +69,11 @@ const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || s
 
 /** Body outlines omit annotations at every width. Thread views retain their
  * complete file pre-order, including quoted replies. Membership comes from the
- * block's one comment producer (`createCommentChildren`), so typing in an
- * ordinary child re-runs none of this (GH #891 review finding 1). */
+ * covering comment index (`createCommentChildren`), so typing in an ordinary
+ * child re-runs none of this (GH #891 review finding 1, round 3). */
 export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt: () => "md" | "org") {
   const showResolved = useResolvedComments();
-  const comments = createCommentChildren(() => node()?.id ?? null, fmt);
+  const comments = createCommentChildren(() => node()?.id ?? null);
   const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
   // A body editor that is hand-writing its first quote property must finish
   // that buffer before moving to an annotation surface. Otherwise accepting
