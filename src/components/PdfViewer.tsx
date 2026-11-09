@@ -7,7 +7,7 @@ import { PdfViewerView } from "./pdfViewerView";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
-import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, latestOwner, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
 import { activePane, requestBlockReferences } from "../ui";
 import { focusedRouter } from "../panes";
@@ -22,6 +22,10 @@ import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { acquirePdfHighlightState } from "./pdfHighlightState";
+import { readOnlyPdfHighlights } from "./pdfReadOnlyHighlights";
+import { loadPdfAnnotations } from "./pdfAnnotationLoad";
+import { isExternalPdf } from "../render/externalPdfPath";
+import type { ExternalPdfRead } from "../externalPdfSource";
 import { acquirePdfDocument } from "./pdfDocumentShare";
 import { openPdfDocument } from "./pdfOpenDocument";
 import { createPdfPageCache } from "./pdfPageCache";
@@ -54,12 +58,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 export { PDF_CANVAS_CACHE_PIXEL_BUDGET, isPdfAreaModifier } from "./pdfViewerPrimitives";
 export { KeyedPdfViewer } from "./KeyedPdfViewer";
 
-/** Render the active PDF and its highlights through the owned document paths.
- * Opening reads sidecar state, asset listing and up to 256 MiB of PDF data;
- * reading reports position to the pane session without graph writes. Annotation failures toast;
+/** Render the active PDF through owned document paths. Graph assets load their
+ * annotation state; outside PDFs use an authorized source and inert annotations.
+ * Reading reports position to the pane session without graph writes. Annotation failures toast;
  * failed highlight saves stay marked and block drain until resolved. */
 export function PdfViewer(props: {
   filename: string;
+  externalRead?: ExternalPdfRead;
   label: string;
   owner: PdfOwnership;
   page?: number;
@@ -73,6 +78,7 @@ export function PdfViewer(props: {
   onAnotherView?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const owner = props.owner, binding = captureBinding();
+  const readOnly = isExternalPdf(props.filename);
   // The Tine window this viewer renders in: its listeners and frames live there.
   const ownerWindow = useOwnerWindow();
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
@@ -292,7 +298,7 @@ export function PdfViewer(props: {
 
   // Shared with every other mounted view of this PDF; this view lends its page
   // geometry for writes once its document has loaded.
-  const highlightLease = acquirePdfHighlightState({
+  const highlightLease = readOnly ? readOnlyPdfHighlights() : acquirePdfHighlightState({
     filename: props.filename,
     label: props.label,
     backendGeneration: binding.backendGeneration,
@@ -1122,25 +1128,16 @@ export function PdfViewer(props: {
   // Reads and parses the PDF once for every view of it in this graph binding;
   // owned by the binding, not by this view, since a sibling may outlive it.
   const openSharedDocument = openPdfDocument(backend(), props.filename, binding.backendGeneration,
-    bindingOwner(() => isPdfOwnershipCurrent(owner)));
+    bindingOwner(() => isPdfOwnershipCurrent(owner)), props.externalRead);
 
   onMount(async () => {
     const loadOwner = graphOwner(() => !disposed && isPdfOwnershipCurrent(owner));
     setLoadError(null);
-    let restoredPage: number | null = null;
-    let restoredScale: number | null = null;
-    try {
-      const result = await readOwned(loadOwner, backend().openPdf(props.filename, props.label, binding.backendGeneration));
-      if (result.kind === "stale") return;
-      const state = result.value;
-      highlightState.loadInitial(state.highlights);
-      restoredPage = state.page;
-      restoredScale = state.scale;
-    } catch (error) {
-      if (!loadOwner()) return;
-      // Seed nothing: a sibling view's successful read must still win.
-      pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
-    }
+    const annotations = await loadPdfAnnotations(backend(), props.filename, props.label, binding.backendGeneration, loadOwner, readOnly);
+    if (!loadOwner()) return;
+    const state = annotations.kind === "ok" ? annotations.state : null;
+    if (state) highlightState.loadInitial(state.highlights);
+    const restoredPage = state?.page ?? null, restoredScale = state?.scale ?? null;
     const shared = acquirePdfDocument(
       `${pdfOwnershipKey(owner)}\0${binding.backendGeneration}\0${props.filename}`, openSharedDocument);
     releaseDocument = shared.release;
@@ -1437,7 +1434,7 @@ export function PdfViewer(props: {
   });
 
   const captureTextSelection = (target: EventTarget | null, anchor?: { x: number; y: number }) => {
-    if (areaMode() || areaDrag || pinch.suppressed()) return;
+    if (readOnly || areaMode() || areaDrag || pinch.suppressed()) return;
     pendingArea = null;
     const selected = pdfTextSelection(target, anchor, dims, scale());
     if (!selected) { setMenu(null); return; }
@@ -1507,7 +1504,7 @@ export function PdfViewer(props: {
   };
   const onAreaDown = (e: MouseEvent) => {
     pendingHighlight = null; // includes a scrollbar drag
-    if ((!areaMode() && !areaModifier(e)) || e.button !== 0) return;
+    if (readOnly || (!areaMode() && !areaModifier(e)) || e.button !== 0) return;
     const wrap = (e.target as HTMLElement).closest(".pdf-page") as HTMLElement | null;
     if (!wrap) return;
     e.preventDefault();
@@ -1819,7 +1816,7 @@ export function PdfViewer(props: {
   });
 
   return <PdfViewerView {...{
-    props, theme, ready, unsavedHighlights, highlightCleanupPending, curPage,
+    props, readOnly, theme, ready, unsavedHighlights, highlightCleanupPending, curPage,
     pageField, numPages, findOpen, scale, areaMode, outlineOpen, settingsOpen,
     highlightConflict, highlightDecisionBusy, outlineReady, outlineTruncated,
     outlineItems, expandedOutlineIds, findQuery, findCount, findCur,

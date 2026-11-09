@@ -50,6 +50,32 @@ fn graph(root: &Path, files: &[(&str, &str)]) -> Store {
     store
 }
 
+#[test]
+fn date_alias_group_wire_keeps_an_unclaimed_day_spelling() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = graph(
+        dir.path(),
+        &[
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
+            ),
+            ("pages/2026_10_23.md", "- unrelated ordinary file\n"),
+            ("pages/Owner.md", "alias:: 2026-10-23\n\n- owner\n"),
+        ],
+    );
+    let view = store.whole_graph().unwrap();
+    let group = tine_graph_features::inventory_wire::alias_group_wire(&view, "Owner");
+    assert!(
+        group.pages.is_empty(),
+        "unrelated file is not a related page: {group:?}"
+    );
+    assert_eq!(group.aliases, ["2026-10-23"]);
+    assert_eq!(view.link_target(&group.aliases[0]).name, "Owner");
+    assert_eq!(view.link_target("2026_10_23").name, "2026_10_23");
+    store.close();
+}
+
 /// Runtime block ids are fresh per parse: renumber them by first occurrence.
 fn normalize(doc: &mut Value) {
     fn collect(v: &Value, ids: &mut HashMap<String, String>) {
@@ -198,7 +224,8 @@ fn published_answer_fixtures_match_the_writer() {
     let _integration_guard = crate::integration_lock();
     let write = std::env::var("TINE_PUBLISHED_ANSWERS_FIXTURES").as_deref() == Ok("write");
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/published-answers");
-    for (case, files) in [("cases", CASES), ("formats", FORMATS)] {
+    // `cases.json` remains a frozen v1 reader fixture from before R13-C4.
+    for (case, files) in [("cases-real-file-first", CASES), ("formats", FORMATS)] {
         let root = tempfile::tempdir().unwrap();
         let snapshot = static_snapshot(root.path(), files, true);
         let text = serde_json::to_string_pretty(&snapshot).unwrap() + "\n";
@@ -292,7 +319,7 @@ fn assert_private_pages_matter(store: &Store) {
         .iter()
         .find(|row| row.name == "Empty Name")
         .unwrap();
-    assert!(empty.empty_alias, "{empty:?}");
+    assert!(!empty.empty_alias && empty.link.is_none(), "{empty:?}");
 }
 
 /// The request selecting the exported pages by name; `host` is the page the

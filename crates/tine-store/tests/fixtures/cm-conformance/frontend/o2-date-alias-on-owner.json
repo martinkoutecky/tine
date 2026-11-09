@@ -22,23 +22,6 @@
     {
       "day": null,
       "is_journal": false,
-      "key": "2026-10-26",
-      "link": {
-        "kind": "page",
-        "name": "A"
-      },
-      "name": "2026-10-26",
-      "namespace_excluded": true,
-      "target": {
-        "kind": "alias",
-        "owners": [
-          "pages/A.md"
-        ]
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
       "key": "a",
       "name": "A",
       "target": {
@@ -72,14 +55,31 @@
         "kind": "existing",
         "others": []
       }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "link": {
+        "kind": "page",
+        "name": "A"
+      },
+      "name": "Oct 26th, 2026",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/A.md"
+        ]
+      }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-26": "oct 26th, 2026",
     "A": "a",
     "Notes": "notes",
+    "Oct 26th, 2026": "oct 26th, 2026",
     "a": "a"
   },
   "namespaceNodes": [],
@@ -87,8 +87,8 @@
   "open": {
     "2026-10-26": {
       "journal": [
-        "journal",
-        "oct 26th, 2026"
+        "page",
+        "a"
       ],
       "page": [
         "page",
@@ -113,6 +113,16 @@
       "page": [
         "page",
         "notes"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "page",
+        "a"
+      ],
+      "page": [
+        "page",
+        "a"
       ]
     },
     "a": {
@@ -128,7 +138,7 @@
   },
   "owner": {
     "2026-10-26": {
-      "journal": null,
+      "journal": "pages/A.md",
       "page": "pages/A.md"
     },
     "A": {
@@ -138,6 +148,10 @@
     "Notes": {
       "journal": null,
       "page": "pages/Notes.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "pages/A.md",
+      "page": "pages/A.md"
     },
     "a": {
       "journal": null,

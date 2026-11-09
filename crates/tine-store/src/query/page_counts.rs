@@ -43,7 +43,7 @@ use crate::model::ReadSnapshot;
 
 /// Referring blocks per panel, by the panel's canonical page key. A key that
 /// is absent has no referring block.
-pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u32> {
+pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<(bool, String), u32> {
     let config = graph.config();
     let resolver = PanelResolver::new(graph);
     let resolve = |target: &str| resolver.resolve(target);
@@ -68,7 +68,7 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
     // Step 0. Panels: every listed page (the first entry of a key), its
     // own key, the key its panel excludes as `self_page`, and the names it
     // answers to.
-    let mut panel_ids: HashMap<String, u32> = HashMap::new();
+    let mut panel_ids: HashMap<(bool, String), u32> = HashMap::new();
     let mut panel_keys: Vec<String> = Vec::new();
     let mut panel_self: Vec<String> = Vec::new();
     let mut by_name: HashMap<String, Vec<u32>> = HashMap::new();
@@ -77,13 +77,17 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
     graph.with_pages(|pages| {
         for (entry, _) in pages.iter() {
             let key = refs::page_key(&entry.name);
-            if panel_ids.contains_key(&key) {
+            let identity = (
+                entry.kind == tine_core::model::PageKind::Journal,
+                key.clone(),
+            );
+            if panel_ids.contains_key(&identity) {
                 continue;
             }
             let panel = panel_keys.len() as u32;
             let (_, names, self_page) = resolve(&entry.name);
             register(panel, &names, &mut by_name, &mut by_property_key);
-            panel_ids.insert(key.clone(), panel);
+            panel_ids.insert(identity, panel);
             panel_keys.push(key);
             panel_self.push(refs::page_key(&self_page));
         }
@@ -171,7 +175,8 @@ pub(crate) fn referring_block_counts(graph: &ReadSnapshot) -> HashMap<String, u3
         let (canonical, names, self_page) = resolve(spelling);
         register(panel, &names, &mut by_name, &mut by_property_key);
         let key = refs::page_key(&canonical);
-        panel_ids.entry(key.clone()).or_insert(panel);
+        let journal = resolver.format().parse(spelling).is_some();
+        panel_ids.entry((journal, key.clone())).or_insert(panel);
         panel_keys.push(key);
         panel_self.push(refs::page_key(&self_page));
     }

@@ -39,10 +39,25 @@ impl RealPageOwners {
     }
     pub(crate) fn opening_entry(&self, key: &str) -> Option<&PageEntry> {
         let bucket = self.names.claimants.get(key)?;
-        bucket
-            .iter()
-            .map(|(_, entry)| entry)
-            .min_by(|a, b| crate::model::compare_page_claimants(a, b))
+        Self::opening_claimant(bucket.iter().map(|(_, entry)| entry))
+    }
+    fn opening_claimant<'a>(entries: impl Iterator<Item = &'a PageEntry>) -> Option<&'a PageEntry> {
+        entries.min_by(|a, b| crate::model::compare_page_claimants(a, b))
+    }
+    /// Active real-name owners under an identity prefix, in identity order.
+    /// O(log P + C) for C matching physical claimants; no document reads.
+    pub(crate) fn under<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a PageEntry> + 'a {
+        self.names
+            .claimants
+            .iter_from(prefix)
+            .take_while(move |(key, _)| key.starts_with(prefix))
+            .filter_map(|(_, bucket)| {
+                Self::opening_claimant(bucket.iter().map(|(_, entry)| {
+                    #[cfg(feature = "test-faults")]
+                    crate::cost_counters::namespace_name_visit();
+                    entry
+                }))
+            })
     }
 }
 impl RealPageNames {

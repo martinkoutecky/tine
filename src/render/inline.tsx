@@ -60,13 +60,13 @@ import { touchPrimary } from "../inputCapability";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
 import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
 import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
-import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
+import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
-import { annotationInfoForBlock, pdfAssetFile } from "../editor/annotation";
+import { annotationInfoForBlock } from "../editor/annotation";
 import { openAnnotationPdf } from "../openAnnotationPdf";
 import { PdfAreaImage } from "../components/PdfAreaImage";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -75,6 +75,9 @@ import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
 import { fileLinkTarget, fileUrlTitle } from "./relativeFileLink";
+import { externalPdfPath } from "./externalPdfPath";
+import { ExternalPdfLink } from "./ExternalPdfLink";
+import { PdfAssetLink, pdfFilenameFromDest } from "./PdfAssetLink";
 import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
@@ -350,7 +353,7 @@ function createPeekBridge(disabled: () => boolean) {
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-// `file`: open the file claiming `name` itself (the alias group's Related pages row; EMPTY-ALIAS, D-20261103-CMA).
+// `file`: carry the physical claimant path for the alias group's Related pages row (R13-C4).
 export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs; file?: boolean }): JSX.Element {
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
@@ -507,8 +510,12 @@ function renderLink(
   const assetTarget = assetLinkRel(dest);
   const fileTarget = assetTarget === null ? fileLinkTarget(dest) : null;
   if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
-  // File URLs use the OS viewer, preserving their full path (GH #577).
-  // File URLs must never enter the graph annotation reader.
+  // OG 6e7afa8eb block.cljs show-link?/media-link: Markdown requires !, Org media does not.
+  const outsidePath = externalPdfPath(dest);
+  if (outsidePath.kind === "pdf" && (s.image || format === "org") && !isMobilePlatform && !isQuickShareViewer()) {
+    const label = s.label?.length ? astText(s.label) : outsidePath.path.split("/").pop()!;
+    return <ExternalPdfLink dest={dest} path={outsidePath.path} label={label} spanAttrs={spanAttrs} />;
+  }
   const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
@@ -568,26 +575,6 @@ function renderLink(
       </a>
       <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
     </span>
-  );
-}
-
-/** The file name shown for a PDF link that has no label. The reader route
- * keeps the whole assets-relative path (`pdfAssetFile`), not this. */
-function pdfFilenameFromDest(dest: string): string {
-  const path = dest.replace(/\\/g, "/");
-  return path.split("/").pop() || path;
-}
-
-function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
-  if (isQuickShareViewer()) return <ShareMedia url={props.dest} label={props.label} />;
-  // The route names the PDF by its path under assets/: highlights, sidecar and
-  // hls page are keyed from it, so dropping `nested/` opened another resource.
-  const filename = pdfAssetFile(props.dest);
-  const label = props.label || pdfFilenameFromDest(props.dest);
-  return (
-    <a class="external-link pdf-link" {...(props.spanAttrs ?? {})} onClick={(e) => { e.stopPropagation(); openPdf(filename, label); }}>
-      📄 {label}
-    </a>
   );
 }
 

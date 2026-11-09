@@ -499,6 +499,8 @@ export interface Backend {
   readAsset(name: string, maxBytes: number): Promise<Uint8Array>;
   /** Native PDF range reads; browser/published backends retain their byte loader. */
   pdfAssetSource?(name: string, maxBytes: number, bindingGeneration: number): Promise<import("./pdfAssetSource").PdfAssetSource>;
+  /** Desktop-only bounded read, called only after opening a host-rendered PDF link. */
+  readExternalPdf?(url: string, bindingGeneration: number): Promise<Uint8Array>;
   /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
    *  copies the whole media file through IPC. */
   streamAsset(name: string): Promise<string>;

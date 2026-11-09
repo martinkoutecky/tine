@@ -55,6 +55,13 @@ impl Store {
         let Some(entry) = entry else {
             return Ok(None);
         };
+        if kind == PageKind::Journal
+            && literal.is_none()
+            && tine_core::refs::page_key(name) != tine_core::refs::page_key(claim_name)
+            && entry.kind == PageKind::Page
+        {
+            return Ok(None);
+        }
         let id = PageId::from(self.graph.rel_path(&entry.path));
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),

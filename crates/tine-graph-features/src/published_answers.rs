@@ -83,6 +83,16 @@ pub(crate) fn answers(
         .map(|entry| PageInventoryEntryWire {
             not_namespace: false,
             namespace_excluded: false,
+            parent: None,
+            // Frozen v1 viewers read alias lookup rows as ordinary names.
+            // Their stored `link` still carries the declarer's actual kind.
+            is_journal: entry.is_journal
+                && !matches!(entry.target, tine_store::Resolved::Alias { .. }),
+            day: if matches!(entry.target, tine_store::Resolved::Alias { .. }) {
+                None
+            } else {
+                entry.day.map(|day| day.0)
+            },
             ..entry_wire(entry)
         })
         .collect();
@@ -132,6 +142,7 @@ pub(crate) fn answers(
                 },
                 link: None,
                 namespace_parent: false,
+                parent: None,
                 empty_alias: false,
                 not_namespace: false,
                 namespace_excluded: false,

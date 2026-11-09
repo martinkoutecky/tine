@@ -92,6 +92,7 @@ async function openTine(bottom: boolean) {
   const unmount = render(() => <App />, host);
   const dispose = () => { unmount(); disposeApp = undefined; };
   disposeApp = dispose;
+  await vi.dynamicImportSettled();
   // Finish graph startup before choosing the page and seeding the preference;
   // rendering the unrelated journal feed is not a toolbar prerequisite.
   await until(host, () => firstLoadDone() ? true : null);

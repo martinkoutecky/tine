@@ -30,7 +30,7 @@ use tine_store::directory_durability;
 /// nonblocking on Unix so a path swapped for a FIFO after that check cannot
 /// hang either; opened-handle metadata rechecks the race. `O_NONBLOCK` has no
 /// effect on reads of a regular file.
-fn open_regular_file(path: &Path) -> io::Result<fs::File> {
+pub(crate) fn open_regular_file(path: &Path) -> io::Result<fs::File> {
     let not_a_file = || io::Error::new(io::ErrorKind::InvalidInput, "not a file");
     if !fs::metadata(path)?.is_file() {
         return Err(not_a_file());

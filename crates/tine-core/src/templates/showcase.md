@@ -53,6 +53,7 @@ icon:: 🧪
 - ---
 - Inline math $E = mc^2$ and display math:
 - $$\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$$
+- Long equations break at suitable operators when KaTeX permits it. If a formula cannot break, scroll the formula horizontally to read both ends, including in a narrow pane.
 - An inline image (sized): ![capture window](../assets/quick-capture.png){:width 320}
 - # 6 — Tasks, priorities, scheduling
 - TODO A plain task marker

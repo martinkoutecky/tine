@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import type { PageInventory } from "../types";
 
 const backendMock = vi.hoisted(() => {
   const referenced = (name: string) => ({
@@ -11,7 +12,7 @@ const backendMock = vi.hoisted(() => {
   });
   return {
     graphBindingGeneration: () => 0,
-    pageInventory: vi.fn(async () => ({
+    pageInventory: vi.fn(async (): Promise<PageInventory> => ({
       rev: "1",
       entries: [
         {
@@ -31,9 +32,12 @@ const backendMock = vi.hoisted(() => {
 
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
-import { NamespaceHierarchy, NamespaceMacro } from "./Namespace";
+import { NamespaceHierarchy, NamespaceMacro, buildNamespaceTree } from "./Namespace";
 import { createSignal } from "solid-js";
 import { resetReferenceSectionState } from "../referenceSectionState";
+import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import { route } from "../router";
+import { setJournalFormats } from "../journal";
 
 afterEach(() => {
   resetReferenceSectionState();
@@ -108,4 +112,65 @@ describe("GH #229 reference-only namespace descendants", () => {
       dispose();
     }
   });
+});
+
+it("attaches a date-prefixed child to the typed journal parent in the macro and hierarchy", async () => {
+  const canonical = "2026_23_10";
+  backendMock.pageInventory.mockResolvedValueOnce({ rev: "2", entries: [
+    { key: canonical, name: canonical, is_journal: true, day: 20261023,
+      target: { kind: "absent", id: "journals/23.10.2026.md" }, namespace_parent: true },
+    { key: "23.10.2026/child", name: "23.10.2026/child", is_journal: false, day: null,
+      target: { kind: "absent", id: "pages/23.10.2026___child.md" }, parent: { name: canonical, kind: "journal" } },
+  ] });
+  resetPageIndex();
+  await refreshPageIndex();
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <><NamespaceMacro root={canonical} /><NamespaceHierarchy name={canonical} /></>, root);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".ns-macro-tree .page-ref")?.textContent).toBe("child"));
+    expect(root.querySelectorAll(".ns-hier-row")).toHaveLength(1);
+    expect(root.querySelector(".ns-hier-row")?.textContent).toContain("child");
+    root.querySelector<HTMLAnchorElement>(".ns-macro-head .page-ref")!.click();
+    expect(route()).toMatchObject({ kind: "page", name: canonical, pageKind: "journal" });
+  } finally {
+    dispose();
+    resetPageIndex();
+  }
+});
+
+it("keeps same-title ordinary and virtual journal namespace parents distinct when navigating", async () => {
+  const canonical = "2026_10_23";
+  setJournalFormats("yyyy_MM_dd", "");
+  const entries: PageInventory["entries"] = [
+    { key: canonical, name: canonical, is_journal: false, day: null,
+      target: { kind: "existing", id: `pages/${canonical}.md`, others: [] } },
+    { key: canonical, name: canonical, is_journal: true, day: 20261023,
+      target: { kind: "absent", id: "journals/2026_10_23.md" }, namespace_parent: true,
+      link: { name: "2026-10-23", kind: "journal" } },
+    { key: "2026-10-23/child", name: "2026-10-23/child", is_journal: false, day: null,
+      target: { kind: "absent", id: "pages/2026-10-23___child.md" }, parent: { name: canonical, kind: "journal" } },
+    { key: `${canonical}/literal`, name: `${canonical}/literal`, is_journal: false, day: null,
+      target: { kind: "absent", id: `pages/${canonical}___literal.md` } },
+  ];
+  backendMock.pageInventory.mockResolvedValueOnce({ rev: "3", entries });
+  resetPageIndex();
+  await refreshPageIndex();
+  const tree = buildNamespaceTree(entries.map(entry => entry.name));
+  expect(tree.map(node => [node.full, node.kind ?? "page", node.children.map(child => child.seg)]))
+    .toEqual([[canonical, "journal", ["child"]], [canonical, "page", ["literal"]]]);
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <><NamespaceMacro root="2026-10-23" /><NamespaceHierarchy name="2026-10-23/child" /></>, root);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".ns-macro-tree .page-ref")?.textContent).toBe("child"));
+    root.querySelector<HTMLAnchorElement>(".ns-macro-head .page-ref")!.click();
+    expect(route()).toMatchObject({ kind: "page", name: "2026-10-23", pageKind: "journal" });
+    root.querySelector<HTMLAnchorElement>(".ns-hier-row .page-ref")!.click();
+    expect(route()).toMatchObject({ kind: "page", name: "2026-10-23", pageKind: "journal" });
+  } finally {
+    dispose();
+    resetPageIndex();
+    setJournalFormats("", "");
+  }
 });

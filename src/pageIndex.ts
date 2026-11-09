@@ -3,10 +3,11 @@ import { batch, createEffect, createMemo, createRoot, createSignal, getListener,
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { InventoryOrder } from "./inventoryOrder";
 import { backend } from "./backend";
+import { isPublishedExport } from "./publishedBackend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
-import { linkTargetIn, ownerPath, type LinkDestination } from "./inventoryRows";
+import { journalRowIn, linkTargetIn, ownerPath, type LinkDestination } from "./inventoryRows";
 import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
@@ -318,7 +319,8 @@ function ensureInstalled() {
       return current.names = names;
     };
     // The reference-only pages All pages lists (D-20261102-CM4 CM-REFONLY):
-    // the backend's absent entries that open themselves (no `link`), with
+    // the backend's absent entities (a live journal may carry a safe opening
+    // spelling beside an ordinary same-title file), with
     // their supplied kind and day, less what OG's `get-all-pages`
     // drops (built-in pages, UUID names, drawings) by the Rust answer
     // (`hidden_from_all_pages`; CM step 2 batches 5 and 8). A patch that
@@ -330,7 +332,7 @@ function ensureInstalled() {
       if (current.refsCurrent) return current.refs!;
       const rows: PageEntry[] = [];
       for (const entry of orderedEntries(current)) {
-        if (entry.target.kind !== "absent" || entry.link || hidden_from_all_pages(entry.name)) continue;
+        if (entry.target.kind !== "absent" || (entry.link && (isPublishedExport() || !entry.is_journal || entry.link.kind !== "journal")) || hidden_from_all_pages(entry.name)) continue;
         rows.push({ name: entry.name, kind: entry.is_journal ? "journal" : "page", date_key: entry.day, path: "" });
       }
       current.refsCurrent = true;
@@ -376,21 +378,56 @@ export { ownerPath, type LinkDestination } from "./inventoryRows";
  *  kind). O(1), no IPC. */
 export function linkTarget(name: string): LinkDestination {
   ensureInstalled();
-  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name);
+  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, !isPublishedExport(), nameAnswer);
+}
+
+/** The inventory's typed namespace identity, or its immediate parent.
+ *  Prefix spelling is only a fallback before inventory/for legacy rows. */
+export function namespaceTarget(name: string, parent = false, kind?: PageKind): LinkDestination | null {
+  ensureInstalled();
+  const key = pageIdentityKey(name);
+  const answer = nameAnswer(key);
+  const entry = kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
+    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? (!isPublishedExport() ? journalRowIn(answer, name, nameAnswer) : undefined);
+  if (kind && (!entry || entry.namespace_excluded)) return null;
+  if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
+  if (entry?.parent) return entry.parent;
+  const parts = name.split("/");
+  parts.pop();
+  while (parts.length && !parts.join("/")) parts.pop();
+  return parts.length ? { name: parts.join("/"), kind: "page" } : null;
+}
+
+/** Typed entity navigation preserves an absent day's safe opening spelling. */
+export function entityOpening(name: string, kind: PageKind): LinkDestination {
+  const answer = nameAnswer(pageIdentityKey(name));
+  const entry = (kind === "journal" ? answer?.journals : answer?.pages)?.get(pageIdentityKey(name));
+  return !isPublishedExport() && kind === "journal" && entry?.target.kind === "absent" && entry.link
+    ? entry.link : { name, kind };
 }
 
 /** A named ordinary-page route (not a link): an alias opens what the store
  *  says its link opens (the owner, of the owner's kind: a journal's alias
- *  opens the journal), and so does a content-free file the store marks
- *  `empty_alias` (EMPTY-ALIAS, as Logseq's `get-redirect-page-name`); any
+ *  opens the journal). Frozen published v1 rows retain their stored redirects; any
  *  other name stays an ordinary page of that name. A route carrying the
  *  file's path never comes here (the router keeps an exact owner). */
 export function navigationTarget(name: string): LinkDestination {
   ensureInstalled();
   if (!inventoryAvailable()) return { name, kind: "page" };
   const key = pageIdentityKey(name);
-  const entry = nameAnswer(key)?.pages.get(key);
-  if ((entry?.target.kind === "alias" || entry?.empty_alias) && entry.link) return entry.link;
+  const answer = nameAnswer(key);
+  if (!isPublishedExport()) {
+    const entry = answer?.pages.get(key) ?? answer?.journals.get(key);
+    if (entry?.target.kind === "existing") {
+      const id = ownerPath(entry.target);
+      return { name: (id === undefined ? undefined : answer?.nameById.get(id)) ?? entry.name,
+        kind: entry.is_journal ? "journal" : "page" };
+    }
+    if (entry?.target.kind === "alias" && !entry.link) return { name: navigationName(name), kind: "page" };
+    return linkTargetIn(answer, name, true, nameAnswer);
+  }
+  const entry = answer?.pages.get(key);
+  if ((entry?.target.kind === "alias" || (isPublishedExport() && entry?.empty_alias)) && entry.link) return entry.link;
   return { name: navigationName(name), kind: "page" };
 }
 
@@ -401,7 +438,9 @@ export function navigationName(name: string): string {
   ensureInstalled();
   if (!inventoryAvailable()) return name;
   const key = pageIdentityKey(name);
-  const entry = nameAnswer(key)?.pages.get(key);
+  const answer = nameAnswer(key);
+  const entry = answer?.pages.get(key) ?? (!isPublishedExport() ? answer?.journals.get(key) : undefined);
+  if (!entry && !isPublishedExport()) return linkTargetIn(answer, name, true, nameAnswer).name;
   const target = entry?.target;
   if (!target || target.kind === "absent") return name;
   if (target.kind === "alias" && entry?.link) return entry.link.name;

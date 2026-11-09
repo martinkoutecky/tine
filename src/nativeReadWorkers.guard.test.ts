@@ -9,7 +9,7 @@ function rustFiles(dir: string): string[] {
 }
 const handlers = rustFiles("src-tauri/src").flatMap(file => [...readFileSync(file, "utf8").matchAll(/^[ \t]*#\[tauri::command[^\n]*\]\s*(?:#\[[^\n]*\]\s*)*(?:pub(?:\([^)]+\))? )?(async )?fn (\w+)\([\s\S]*?\n\}/gm)]);
 describe("L7s4-03 native read dispatch", () => {
-  it.each(["read_asset", "read_local_image", "read_text_file", "read_journal_file", "sync_conflict_diff"])("dispatches %s through the blocking pool", name => {
+  it.each(["read_asset", "read_external_pdf", "read_local_image", "read_text_file", "read_journal_file", "sync_conflict_diff"])("dispatches %s through the blocking pool", name => {
     const handler = handlers.find(h => h[2] === name);
     expect(handler?.[1]).toBe("async ");
     expect(handler?.[0]).toMatch(/off_ui\(|spawn_blocking\(/);

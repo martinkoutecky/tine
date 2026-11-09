@@ -1,10 +1,6 @@
-// CM step 2 (S14, EMPTY-ALIAS, D-20261103-CMA): with `Machine Learning`
-// declaring `alias:: ML` and `pages/ML.md` having no real content, a click on a
-// rendered [[ML]] opens Machine Learning, as Logseq does
-// (`page-empty-or-dummy?` + `get-redirect-page-name`). The alias group's
-// "Related pages" row still opens the empty ML page itself; typing its first
-// character makes [[ML]] open it, and clearing it again makes [[ML]] open
-// Machine Learning, without a restart. UI-CM-EMPTY-ALIAS-LINK-OPENS-EMPTY-PAGE.
+// R13-C4: an existing page always opens itself, including an empty aliased
+// page. Typing and clearing its content never changes its destination.
+// UI-CM-REAL-FILE-FIRST supersedes the historical EMPTY-ALIAS journey.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -82,13 +78,14 @@ try {
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
 
   await clickMlFromSource();
-  await expectPage("Machine Learning", "Machine Learning body", "[[ML]] with an empty ML.md opens the alias owner");
+  await expectPage("ML", null, "[[ML]] with an empty ML.md opens ML");
 
   // The alias group's Related pages row opens the empty file on purpose.
+  await openPageByName(browser, "Machine Learning");
   await clickLink(".main-content [data-alias-group-pages] a.page-ref", "ML");
   await expectPage("ML", null, "the alias group's Related pages row opens the empty ML page itself");
 
-  // Typing its first text: [[ML]] now opens ML, no restart.
+  // Typing its first text keeps the same opening, no restart.
   await browser.$(".main-content [data-block-id] .block-content-wrapper").click();
   await browser.waitUntil(() => browser.execute(() => {
     const active = document.activeElement;
@@ -101,7 +98,7 @@ try {
   await clickMlFromSource();
   await expectPage("ML", "my own notes", "[[ML]] after typing into ML.md opens ML");
 
-  // Clearing it again: [[ML]] opens Machine Learning again.
+  // Clearing it again keeps ML as the opening.
   await browser.$(".main-content [data-block-id] .block-content-wrapper").click();
   await browser.waitUntil(() => browser.execute(() => {
     const active = document.activeElement;
@@ -113,7 +110,7 @@ try {
   await waitForFileText(ML, (text) => !text.includes("my own notes"), { timeoutMs: 15_000 });
   proof.steps.push(`cleared ML: file ${JSON.stringify(fs.readFileSync(ML, "utf8"))}`);
   await clickMlFromSource();
-  await expectPage("Machine Learning", "Machine Learning body", "[[ML]] after clearing ML.md opens the alias owner again");
+  await expectPage("ML", null, "[[ML]] after clearing ML.md still opens ML");
 
   const listed = fs.readdirSync(path.join(GRAPH, "pages")).sort();
   if (JSON.stringify(listed) !== JSON.stringify(["ML.md", "Machine Learning.md", "Source.md"])) throw new Error(`navigation created pages: ${listed}`);

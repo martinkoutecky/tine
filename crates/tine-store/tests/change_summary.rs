@@ -1155,7 +1155,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
 }
 
 #[test]
-fn change_summary_date_named_page_does_not_hide_mentions_of_a_real_journal() {
+fn change_summary_date_named_page_keeps_its_literal_self_exclusion() {
     let _guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture(1);
     let mut doc = store.page(&PageId::from("pages/A.md")).unwrap().doc;
@@ -1167,7 +1167,7 @@ fn change_summary_date_named_page_does_not_hide_mentions_of_a_real_journal() {
         doc.blocks[0].raw = "2026-10-22 changed mention".into()
     });
     assert_eq!(wire["summary"]["full"], false);
-    assert!(strings(&wire["summary"]["textTo"]).contains("2026-10-22"));
+    assert!(!strings(&wire["summary"]["textTo"]).contains("2026-10-22"));
     check(&before, &answers(&store, dir.path()), &wire["summary"]).unwrap();
     store.close();
 }

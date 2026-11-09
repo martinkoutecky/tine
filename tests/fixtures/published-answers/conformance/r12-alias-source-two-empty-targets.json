@@ -42,13 +42,8 @@
     "inventory": [
       {
         "day": null,
-        "empty_alias": true,
         "is_journal": false,
         "key": "ai",
-        "link": {
-          "kind": "page",
-          "name": "one"
-        },
         "name": "AI",
         "target": {
           "id": "pages/AI.md",

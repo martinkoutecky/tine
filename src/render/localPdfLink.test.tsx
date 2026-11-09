@@ -27,8 +27,6 @@ describe("GH #577: file PDF links are reads through the OS opener (I-2, I-4)", (
     ["[Test](<file://x:\\Bibliotheek\\Artikelen\\NRC\\iets.pdf>)", "file://x:\\Bibliotheek\\Artikelen\\NRC\\iets.pdf", "md"],
     ["[paper](<file:///C:\\papers\\paper.pdf>)", "file:///C:\\papers\\paper.pdf", "md"],
     ["[paper](file://server/share/paper.pdf)", "file://server/share/paper.pdf", "md"],
-    ["[[file:///tmp/external.pdf][paper]]", "file:///tmp/external.pdf", "org"],
-    ["![paper](file:///tmp/external.pdf)", "file:///tmp/external.pdf", "md"],
   ] as const) {
     it(`opens ${source} without entering the graph PDF write path`, () => {
       const external = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);

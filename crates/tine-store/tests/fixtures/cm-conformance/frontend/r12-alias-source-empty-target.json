@@ -58,13 +58,8 @@
   "inventory": [
     {
       "day": null,
-      "empty_alias": true,
       "is_journal": false,
       "key": "ai",
-      "link": {
-        "kind": "page",
-        "name": "Artificial Intelligence"
-      },
       "name": "AI",
       "target": {
         "id": "pages/AI.md",
@@ -246,7 +241,7 @@
     "AI": {
       "backend": [
         "page",
-        "artificial intelligence"
+        "ai"
       ],
       "day": null,
       "model": [

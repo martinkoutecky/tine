@@ -6,12 +6,13 @@ import { queryFieldEncodable } from "./tablePresentation";
 
 /** The current authored view and its guarded Display writer, plus complete
  * statistics and the executed view they belong to. An absent statistics
- * answer is not zero. Edits keep the current view's other settings. */
+ * answer is not zero. Edits keep the current view's other settings; without an
+ * apply callback, totals have no picker. */
 export interface QueryDisplayControl {
   view: ViewSettings;
   statistics?: QueryStatistics;
   statisticsView?: ViewSettings;
-  apply: (next: ViewSettings) => void;
+  apply?: (next: ViewSettings) => void;
 }
 
 /** One query property's footer; builtin/computed columns return undefined.
@@ -35,7 +36,8 @@ export function queryTableFooter(control: QueryDisplayControl | undefined, field
       const at = statistics?.aggregates.findIndex(([field, f]) => field === key && f === op) ?? -1;
       return querySummary({ statistics })?.overall[at]?.text ?? "";
     },
-    set: (next) => {
+    set: control.apply ? (next) => {
+      if (!control.apply) return;
       const entries = [...(control.view.aggregates ?? [])];
       const at = entries.findIndex(([k]) => k === key);
       if (next === null) {
@@ -44,6 +46,6 @@ export function queryTableFooter(control: QueryDisplayControl | undefined, field
       } else if (at >= 0) entries[at] = [key, next];
       else entries.push([key, next]);
       control.apply({ ...control.view, aggregates: entries });
-    },
+    } : undefined,
   };
 }

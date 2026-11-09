@@ -88,6 +88,26 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
+  it("lists and opens the virtual journal beside a same-title ordinary file", async () => {
+    const name = "2026_10_23";
+    const { host, router, dispose } = await mountAllPages([
+      existing(name),
+      { key: name, name, is_journal: true, day: 20261023,
+        target: { kind: "absent", id: "journals/2026_10_23.md" },
+        link: { name: "2026-10-23", kind: "journal" } },
+    ]);
+    try {
+      expect(rowNames(host)).toEqual([name]);
+      host.querySelector<HTMLInputElement>(".all-pages-journals input")!.click();
+      await vi.waitFor(() => expect(rowNames(host)).toEqual([name, name]));
+      const buttons = [...host.querySelectorAll<HTMLButtonElement>(".all-pages-open")];
+      buttons.find(button => button.title === "")!.click();
+      expect(router.openPageTarget).toHaveBeenLastCalledWith({ name: "2026-10-23", pageKind: "journal", path: undefined });
+      buttons.find(button => button.title !== "")!.click();
+      expect(router.openPageTarget).toHaveBeenLastCalledWith({ name, pageKind: "page", path: `pages/${name}.md` });
+    } finally { dispose(); }
+  });
+
   // A9 / HK3 (D-20261024): counts are a graph-wide read. They re-run only
   // once the graph is quiet (QUERY_QUIET_MS after the latest input), the idle
   // rule mounted queries use, with one read in flight; never while typing.
