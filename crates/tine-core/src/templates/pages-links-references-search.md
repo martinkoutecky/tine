@@ -36,7 +36,7 @@ icon:: 🔗
   - A key does not have to be plain ASCII. `klíč:: hodnota` is an ordinary property: it can be added, changed, and removed again like any other.
   - A read-only page — a bundled Guide page — offers no property editing at all, rather than a form whose writes would be dropped.
 - ## Block references and embeds
-  - Page menus keep reference, embed and link copying under **Copy as ▸**; open that submenu to choose the form you need. A block's menu lists **Copy block ref**, **Copy block embed** and **Copy link** directly, as Logseq does.
+  - Page menus keep reference, embed and link copying under **Copy as ▸**; open that submenu to choose the form you need. A block's menu lists **Copy block ref**, **Copy block embed** and **Copy link** directly, as Logseq does. Page and block menus use the same text size and font, including submenu choices.
   - Settings → **Editor** → **Click a block reference to zoom in** makes a plain reference click zoom into its source block, including on another page.
   - Fold a page embed with the host bullet's arrow or the ordinary **Collapse/Expand** keyboard commands. Only its page-name line remains; expanding restores its content. The choice is saved on the host block, never the embedded page. If the host has children, the same fold hides those too. This works in the main pane and right sidebar.
   - Folds inside a page or block embed belong to the source block: its arrow and the indent guide's **Collapse/Expand all children** save `collapsed::` on the source, keeping every open view in step. Enter after a folded branch creates a visible sibling, just as on the source page. If the source is read-only, its folds stay local to the session.
