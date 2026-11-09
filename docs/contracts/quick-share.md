@@ -223,11 +223,9 @@ page up to 253 blocks deep is shared, which is every page the app opens (128
 levels), and a deeper document is refused as nesting too deeply.
 
 Viewer (enforced while reading): envelope text 8.5 MiB; decoded envelope
-6.4 MiB; gunzip aborts at 32 MiB of output; gist API answer 16 MiB; 201 snapshot
-pages (200 plus the home list); 256 queries; 200,000 blocks;
+6.4 MiB; gunzip aborts at 32 MiB of output; gist API answer 16 MiB; JSON depth
+512; 201 snapshot pages (200 plus the home list); 256 queries; 200,000 blocks;
 any string or object key anywhere in the document, the title included, 1 MiB.
-The viewer does not count JSON depth: depth 512 is the writer's bound, and the
-viewer reads with its JSON parser's own limit.
 
 Unverified: that GitHub accepts an 8 MiB gist create. The first trial measures
 it, and the writer cap is lowered if it fails.
